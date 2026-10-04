@@ -3,25 +3,29 @@ import type {
   PullRequestAction,
   PullRequestDetail,
   PullRequestFile,
+  PullRequestFilesResult,
   PullRequestReviewThread,
 } from '@harness/contracts'
 import {
-  ArrowUpRight,
-  Check,
-  ChevronRight,
-  CircleAlert,
-  Ellipsis,
-  FileCode2,
-  LoaderCircle,
-  Pencil,
-  RotateCcw,
-  Trash2,
-  X,
-} from 'lucide-react'
+  IconArrowUpRight as ArrowUpRight,
+  IconCheck as Check,
+  IconChevronRight as ChevronRight,
+  IconAlertCircle as CircleAlert,
+  IconDots as Ellipsis,
+  IconFileCode2 as FileCode2,
+  IconLoader2 as LoaderCircle,
+  IconPencil as Pencil,
+  IconRotate as RotateCcw,
+  IconTrash as Trash2,
+  IconX as X,
+} from '@tabler/icons-react'
 import type { Transport } from '../../transport.js'
+import { IconMorph } from '../IconMorph.js'
 import { Markdown } from '../Markdown.js'
 import { Menu, MenuItem } from '../Menu.js'
+import { Skeleton, SkeletonCode, SkeletonStatus } from '../Skeleton.js'
 import { parsePullRequestPatch } from './diff.js'
+import { countLabel } from './pull-request-text.js'
 import type { PullRequestDiffAnnotation, PullRequestDiffSide } from './PullRequestDiffRenderer.js'
 
 const LazyPullRequestDiffRenderer = lazy(() =>
@@ -35,15 +39,20 @@ export function PullRequestFiles(props: {
   transport: Transport
   onAction: (action: PullRequestAction) => Promise<boolean>
   onConfirmAction: (action: PullRequestAction) => void
+  onComparisonChanged: () => void
   actionBusy: boolean
 }) {
   const [files, setFiles] = useState<PullRequestFile[]>([])
+  const [comparison, setComparison] =
+    useState<Pick<PullRequestFilesResult, 'headRefOid' | 'baseRefOid'>>()
   const [selectedPath, setSelectedPath] = useState<string>()
   const [nextPage, setNextPage] = useState(1)
   const [hasMore, setHasMore] = useState(true)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>()
   const request = useRef(0)
+  const onComparisonChanged = useRef(props.onComparisonChanged)
+  onComparisonChanged.current = props.onComparisonChanged
 
   const loadPage = useCallback(
     async (page: number, refresh = false) => {
@@ -54,10 +63,20 @@ export function PullRequestFiles(props: {
         const result = await props.transport.request('pullRequests.files', {
           repository: props.detail.repository,
           number: props.detail.number,
+          expectedHeadOid: props.detail.headRefOid,
+          expectedBaseOid: props.detail.baseRefOid,
           page,
           refresh,
         })
         if (id !== request.current) return
+        if (
+          result.headRefOid !== props.detail.headRefOid ||
+          result.baseRefOid !== props.detail.baseRefOid
+        )
+          throw new Error(
+            'Pull request comparison changed. Refresh the pull request before reviewing files.',
+          )
+        setComparison({ headRefOid: result.headRefOid, baseRefOid: result.baseRefOid })
         setFiles((current) =>
           page === 1 ? result.files : dedupeFiles([...current, ...result.files]),
         )
@@ -65,16 +84,32 @@ export function PullRequestFiles(props: {
         setHasMore(result.hasMore)
         setNextPage(page + 1)
       } catch (cause) {
-        if (id === request.current) setError(messageOf(cause))
+        if (id === request.current) {
+          const message = messageOf(cause)
+          setError(message)
+          if (message.includes('Pull request comparison changed')) {
+            setFiles([])
+            setComparison(undefined)
+            onComparisonChanged.current()
+          }
+        }
       } finally {
         if (id === request.current) setLoading(false)
       }
     },
-    [props.detail.number, props.detail.repository, props.transport],
+    [
+      props.detail.number,
+      props.detail.repository,
+      props.detail.headRefOid,
+      props.detail.baseRefOid,
+      props.transport,
+    ],
   )
 
   useEffect(() => {
-    void loadPage(1)
+    setFiles([])
+    setComparison(undefined)
+    void loadPage(1, true)
     return () => {
       request.current += 1
     }
@@ -87,14 +122,30 @@ export function PullRequestFiles(props: {
       <aside className="pr-files-nav">
         <header>
           <div>
-            <strong>{props.detail.changedFiles} files</strong>
+            <strong>{countLabel(props.detail.changedFiles, 'file')}</strong>
             <span>
               <b className="is-addition">+{props.detail.additions.toLocaleString()}</b>
               <b className="is-deletion">−{props.detail.deletions.toLocaleString()}</b>
             </span>
           </div>
         </header>
+        {props.detail.reviewThreadsUnavailable ? (
+          <p className="pr-list-note is-error" role="alert">
+            Review comments could not be loaded. Refresh to try again.
+          </p>
+        ) : null}
         <div className="pr-files-nav-scroll">
+          {loading && files.length === 0
+            ? Array.from({ length: Math.min(Math.max(props.detail.changedFiles, 1), 6) }).map(
+                (_, index) => (
+                  <span className="pr-files-skeleton-row skeleton-group" key={index}>
+                    <Skeleton />
+                    <Skeleton />
+                    <Skeleton />
+                  </span>
+                ),
+              )
+            : null}
           {files.map((file) => {
             const openThreads = props.detail.reviewThreads.filter(
               (thread) => thread.path === file.path && !thread.resolved,
@@ -117,7 +168,7 @@ export function PullRequestFiles(props: {
               </button>
             )
           })}
-          {hasMore ? (
+          {hasMore && files.length > 0 ? (
             <button
               type="button"
               className="pr-files-load"
@@ -128,14 +179,20 @@ export function PullRequestFiles(props: {
               Load more files
             </button>
           ) : null}
+          {error && files.length > 0 ? <p className="pr-files-nav-error">{error}</p> : null}
         </div>
       </aside>
 
       <div className="pr-file-stage">
         {loading && files.length === 0 ? (
-          <div className="pr-file-loading">
-            <LoaderCircle size={17} className="is-spinning" aria-hidden /> Loading file changes
-          </div>
+          <SkeletonStatus label="Loading file changes" className="pr-file-skeleton">
+            <header className="pr-file-skeleton-head">
+              <Skeleton className="skeleton--icon" />
+              <Skeleton width={188} height={9} />
+              <Skeleton width={52} height={8} />
+            </header>
+            <SkeletonCode lines={28} gutter />
+          </SkeletonStatus>
         ) : error && files.length === 0 ? (
           <div className="pr-file-loading is-error">
             <CircleAlert size={17} aria-hidden />
@@ -148,10 +205,12 @@ export function PullRequestFiles(props: {
               Try again
             </button>
           </div>
-        ) : selected ? (
+        ) : selected && comparison ? (
           <PullRequestFileDiff
+            key={`${comparison.baseRefOid}:${comparison.headRefOid}:${selected.path}`}
             file={selected}
-            headRefOid={props.detail.headRefOid}
+            headRefOid={comparison.headRefOid}
+            baseRefOid={comparison.baseRefOid}
             threads={props.detail.reviewThreads.filter((thread) => thread.path === selected.path)}
             busy={props.actionBusy}
             onAction={props.onAction}
@@ -170,6 +229,7 @@ type DiffCommentTarget = { line: number; side: 'LEFT' | 'RIGHT' }
 function PullRequestFileDiff(props: {
   file: PullRequestFile
   headRefOid: string
+  baseRefOid: string
   threads: PullRequestReviewThread[]
   busy: boolean
   onAction: (action: PullRequestAction) => Promise<boolean>
@@ -178,6 +238,8 @@ function PullRequestFileDiff(props: {
   const hunks = useMemo(() => parsePullRequestPatch(props.file.patch ?? ''), [props.file.patch])
   const [commentLine, setCommentLine] = useState<DiffCommentTarget>()
   const [comment, setComment] = useState('')
+  const draftRef = useRef({ comment, commentLine })
+  draftRef.current = { comment, commentLine }
   const visibleCoordinates = useMemo(() => {
     const result = new Set<string>()
     for (const hunk of hunks) {
@@ -228,14 +290,16 @@ function PullRequestFileDiff(props: {
   const submitComment = async () => {
     if (!commentLine) return
     if (
-      await props.onAction({
+      (await props.onAction({
         type: 'inline_comment',
         body: comment.trim(),
         commitId: props.headRefOid,
         path: props.file.path,
         line: commentLine.line,
         side: commentLine.side,
-      })
+      })) &&
+      draftRef.current.comment === comment &&
+      draftRef.current.commentLine === commentLine
     ) {
       setComment('')
       setCommentLine(undefined)
@@ -287,14 +351,14 @@ function PullRequestFileDiff(props: {
         ) : (
           <Suspense
             fallback={
-              <div className="pr-diffs-loading">
-                <LoaderCircle size={14} className="is-spinning" aria-hidden /> Preparing diff
-              </div>
+              <SkeletonStatus label="Preparing diff" className="pr-diffs-loading">
+                <SkeletonCode lines={8} gutter />
+              </SkeletonStatus>
             }
           >
             <LazyPullRequestDiffRenderer
               file={props.file}
-              cacheKey={`${props.headRefOid}:${props.file.sha}`}
+              cacheKey={`${props.baseRefOid}:${props.headRefOid}:${props.file.path}:${props.file.sha}`}
               annotations={annotations}
               onCommentLine={startComment}
               renderAnnotation={(annotation) => (
@@ -383,7 +447,9 @@ function InlineThread(props: {
 }) {
   const [replying, setReplying] = useState(false)
   const [reply, setReply] = useState('')
-  const last = props.thread.comments.at(-1)
+  const root = props.thread.comments[0]
+  const replyRef = useRef(reply)
+  replyRef.current = reply
   return (
     <article className={`pr-inline-thread${props.thread.resolved ? ' is-resolved' : ''}`}>
       <header>
@@ -399,11 +465,10 @@ function InlineThread(props: {
             })
           }
         >
-          {props.thread.resolved ? (
-            <RotateCcw size={11} aria-hidden />
-          ) : (
+          <IconMorph active={props.thread.resolved ? 1 : 0}>
             <Check size={11} aria-hidden />
-          )}
+            <RotateCcw size={11} aria-hidden />
+          </IconMorph>
           {props.thread.resolved ? 'Reopen' : 'Resolve'}
         </button>
       </header>
@@ -426,17 +491,18 @@ function InlineThread(props: {
             <button
               type="button"
               className="pr-button is-primary"
-              disabled={props.busy || !reply.trim() || !last?.databaseId}
+              disabled={props.busy || !reply.trim() || !root?.databaseId}
               onClick={() => {
-                if (!last?.databaseId) return
+                if (!root?.databaseId) return
+                const sentReply = reply
                 void props
                   .onAction({
                     type: 'reply_to_review',
-                    commentId: last.databaseId,
+                    commentId: root.databaseId,
                     body: reply.trim(),
                   })
                   .then((success) => {
-                    if (success) {
+                    if (success && replyRef.current === sentReply) {
                       setReply('')
                       setReplying(false)
                     }

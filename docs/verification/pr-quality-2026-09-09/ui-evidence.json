@@ -1,0 +1,51 @@
+{
+  "capturedAt": "2026-09-09T11:01:09.161Z",
+  "kind": "Electron with real Settings components and synthetic transport",
+  "report": {
+    "results": [
+      {
+        "theme": "dark",
+        "mcpKeyboard": true
+      },
+      {
+        "theme": "light",
+        "mcpKeyboard": true
+      },
+      {
+        "tooltip": {
+          "parent": "BODY",
+          "left": 580.53125,
+          "right": 880.53125,
+          "top": 95.6953125,
+          "bottom": 190.1953125,
+          "width": 1100,
+          "height": 800
+        },
+        "escapeKeepsSettings": true
+      },
+      {
+        "accountLabels": true,
+        "emailHover": true
+      },
+      {
+        "narrow": {
+          "width": 390,
+          "scrollWidth": 390,
+          "bodyWidth": 390,
+          "viewport": 390
+        }
+      }
+    ],
+    "errors": []
+  },
+  "hashes": {
+    "apps/web/src/ui/RowIssue.tsx": "9dec32dedcfa7807e24c5a3dc4820baaf04adef7b3c199fc95246561c09ebddf",
+    "apps/web/src/ui/McpSettings.tsx": "9d0ed2507791be91fbb1ddb31f71ea7333858cd5c9476c7f332341467f59fbc5",
+    "apps/web/src/ui/Settings.tsx": "254bdbd5ea6c72950794b7da765b9a14aac7760b3474d6773207a42f142532d7",
+    "apps/web/src/ui/ProviderRow.tsx": "7bada5cc1be23031a404f0d8baa57a2f7d2d3e4a9f264456b4f7e96a0136702b",
+    "apps/web/src/styles/settings.css": "612f02ad3fdf390d6e8756d183f791ce2600190a4c9627dbbe35b617b7dab295",
+    "docs/verification/pr-quality-2026-09-09/mcp-dark.png": "e2cc43919b3169d0b73d28ee343b93f503a4c0a178040087a0a5a4fb1f645f4c",
+    "docs/verification/pr-quality-2026-09-09/mcp-hide-narrow-light.png": "9562c7258cf470ddda0a93a61d5dfd7b470466de156ccdf3e3cfe2697fff1125",
+    "docs/verification/pr-quality-2026-09-09/about-tooltip-dark.png": "c8ee65b35dbf10ee699fdf5ef662d37969673981b80e6c901bf99a85bfc31e05"
+  }
+}

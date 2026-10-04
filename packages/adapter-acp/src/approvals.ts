@@ -13,12 +13,12 @@ import type { PermissionOptionKind, RequestPermissionParams } from './protocol.j
 
 export type PermissionOption = NonNullable<RequestPermissionParams['options']>[number]
 
-const DECISION_TO_KIND: Record<ApprovalDecision, PermissionOptionKind> = {
+const DECISION_TO_KIND = {
   approve: 'allow_once',
   'approve-session': 'allow_always',
   deny: 'reject_once',
   abort: 'reject_once',
-}
+} satisfies Record<ApprovalDecision, PermissionOptionKind>
 
 export function optionFor(
   options: readonly PermissionOption[],
@@ -29,12 +29,9 @@ export function optionFor(
   const exact = options.find((option) => option.kind === wanted)
   if (exact?.optionId) return exact.optionId
 
-  // Agents are not required to offer every kind. Fall back only within the
-  // same direction: a missing "always" must never become a rejection, and a
-  // missing "reject once" must never become an approval.
-  const prefix = wanted.startsWith('allow') ? 'allow' : 'reject'
-  const sameDirection = options.find(
-    (option) => option.kind?.startsWith(prefix) && option.optionId !== undefined,
-  )
-  return sameDirection?.optionId
+  // A session grant may be narrowed to one use, never the other way round.
+  if (decision === 'approve-session') {
+    return options.find((option) => option.kind === 'allow_once' && option.optionId)?.optionId
+  }
+  return undefined
 }

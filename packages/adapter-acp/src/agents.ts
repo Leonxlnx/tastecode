@@ -2,7 +2,22 @@ import { existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Account, Model, ProviderSetup } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
+import { z } from 'zod'
+
+const KimiModelsSchema = z.object({
+  models: z
+    .record(
+      z.string(),
+      z.object({
+        displayName: z.string().optional(),
+        supportEfforts: z.array(z.string()).optional(),
+        defaultEffort: z.string().optional(),
+      }),
+    )
+    .default({}),
+})
 
 /**
  * Agents we know how to launch in ACP mode.
@@ -201,20 +216,17 @@ function model(id: string, displayName: string, description: string, isDefault =
 }
 
 export function parseKimiModels(output: string): Model[] {
-  const parsed = JSON.parse(output) as { models?: Record<string, unknown> }
-  const entries = Object.entries(parsed.models ?? {})
-  return entries.map(([id, value], index) => {
-    const details = value && typeof value === 'object' ? (value as Record<string, unknown>) : {}
-    const efforts = Array.isArray(details.supportEfforts)
-      ? details.supportEfforts.filter((effort): effort is string => typeof effort === 'string')
-      : []
+  const parsed = KimiModelsSchema.parse(JSON.parse(output))
+  return Object.entries(parsed.models).map(([id, details], index) => {
     return {
       id,
-      displayName: typeof details.displayName === 'string' ? details.displayName : id,
+      displayName: details.displayName ?? id,
       isDefault: index === 0,
-      reasoningEfforts: efforts,
-      ...(typeof details.defaultEffort === 'string'
-        ? { defaultReasoningEffort: details.defaultEffort }
+      reasoningEfforts: details.supportEfforts ?? [],
+      ...(details.defaultEffort
+        ? {
+            defaultReasoningEffort: details.defaultEffort,
+          }
         : {}),
       serviceTiers: [],
     }
@@ -230,16 +242,18 @@ function captureCli(command: string, args: string[], timeoutMs = 5000): Promise<
       if (settled) return
       settled = true
       clearTimeout(timer)
-      error ? reject(error) : resolve(output)
+      void killTree(child).then(() => {
+        if (error) reject(error)
+        else resolve(output)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error(`${command} model discovery timed out`))
     }, timeoutMs)
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => (output += chunk))
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) =>
+    child.on('close', (code) =>
       finish(code === 0 ? undefined : new Error(`${command} model discovery failed`)),
     )
   })

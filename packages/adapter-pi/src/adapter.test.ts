@@ -1,14 +1,31 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { PiAdapter } from './adapter.js'
 
-class FakeChild extends EventEmitter {
-  readonly stdin = new PassThrough()
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
+const PiCommandSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  message: z.string().optional(),
+  provider: z.string().optional(),
+  modelId: z.string().optional(),
+  level: z.string().optional(),
+})
+type PiCommand = z.infer<typeof PiCommandSchema>
+
+class FakeChild extends ChildProcess {
+  override stdin = new PassThrough()
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  override stdio: [PassThrough, PassThrough, PassThrough, null, null] = [
+    this.stdin,
+    this.stdout,
+    this.stderr,
+    null,
+    null,
+  ]
 
   kill(): boolean {
     queueMicrotask(() => this.emit('exit', null))
@@ -16,21 +33,16 @@ class FakeChild extends EventEmitter {
   }
 }
 
-function attachRpc(
-  child: FakeChild,
-): Array<Record<string, unknown> & { id: string; type: string }> {
+function attachRpc(child: FakeChild): PiCommand[] {
   let buffered = ''
-  const commands: Array<Record<string, unknown> & { id: string; type: string }> = []
+  const commands: PiCommand[] = []
   child.stdin.setEncoding('utf8')
   child.stdin.on('data', (chunk: string) => {
     buffered += chunk
     for (;;) {
       const newline = buffered.indexOf('\n')
       if (newline < 0) break
-      const command = JSON.parse(buffered.slice(0, newline)) as Record<string, unknown> & {
-        id: string
-        type: string
-      }
+      const command = PiCommandSchema.parse(JSON.parse(buffered.slice(0, newline)))
       commands.push(command)
       buffered = buffered.slice(newline + 1)
       const data =
@@ -113,7 +125,7 @@ describe('Pi adapter', () => {
       displayName: 'DeepSeek Pi',
       spawn: (command, args, options) => {
         launch = { command, args, cwd: options.cwd }
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
     const events: DomainEvent[] = []
@@ -169,7 +181,7 @@ describe('Pi adapter', () => {
       command: '/opt/pi/bin/pi',
       spawn: (_command, args) => {
         launchArgs = args
-        return child as unknown as ChildProcessWithoutNullStreams
+        return child
       },
     })
 

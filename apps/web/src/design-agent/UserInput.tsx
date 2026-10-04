@@ -1,24 +1,37 @@
 import { useEffect, useRef, useState, type WheelEvent } from 'react'
 import { createPortal } from 'react-dom'
 import type { UserInputRequest } from '@harness/contracts'
-import { isIndeterminateRequestError } from '../transport.js'
+import { IconLoader2 } from '@tabler/icons-react'
+import { IndeterminateRequestError } from '../transport.js'
 import './user-input.css'
+
+type Answer = { options: string[]; custom: boolean; text: string }
+
+function answerValues(answer: Answer | undefined): string[] {
+  if (!answer) return []
+  const text = answer.custom ? answer.text.trim() : ''
+  return [...answer.options, ...(text ? [text] : [])]
+}
 
 export function UserInput(props: {
   request: UserInputRequest
   onSubmit: (answers: Record<string, string[]>) => void | Promise<void>
+  /** Render in place for a thread that has no composer of its own, such as a Side chat. */
+  inline?: boolean | undefined
 }) {
-  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [answers, setAnswers] = useState(() => new Map<string, Answer>())
   const [step, setStep] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [submissionError, setSubmissionError] = useState<'definite' | 'indeterminate'>()
   const previousRequest = useRef(props.request)
   const lastWheelAt = useRef(0)
   const question = props.request.questions[step]
-  const answer = question ? answers[question.id]?.trim() : undefined
+  const selected = question ? answers.get(question.id) : undefined
+  const answer = answerValues(selected).length > 0
   const lastStep = step === props.request.questions.length - 1
-  const composer =
-    typeof document === 'undefined' ? null : document.querySelector<HTMLElement>('.composer__box')
+  const composer = props.inline
+    ? null
+    : (globalThis.document?.querySelector<HTMLElement>('.composer__box') ?? null)
 
   useEffect(() => {
     if (previousRequest.current === props.request) return
@@ -31,7 +44,7 @@ export function UserInput(props: {
   if (submitting) {
     const status = (
       <div className="brief-input brief-input--status" role="status">
-        <span className="brief-input__spinner" aria-hidden="true" />
+        <IconLoader2 className="brief-input__spinner" size={14} aria-hidden />
         {submissionError === 'indeterminate'
           ? 'Checking whether answers were received…'
           : 'Submitting answers…'}
@@ -44,9 +57,17 @@ export function UserInput(props: {
 
   const options = question.options ?? []
   const custom = question.allowOther || options.length === 0
-  const customSelected =
-    Object.hasOwn(answers, question.id) &&
-    !options.some((option) => option.label === answers[question.id])
+  const customSelected = selected?.custom ?? false
+  const updateAnswer = (update: (current: Answer) => Answer) => {
+    setAnswers((current) => {
+      const next = new Map(current)
+      next.set(
+        question.id,
+        update(current.get(question.id) ?? { options: [], custom: false, text: '' }),
+      )
+      return next
+    })
+  }
 
   const goBack = () => {
     if (step === 0) return
@@ -90,7 +111,7 @@ export function UserInput(props: {
         setSubmitting(true)
         setSubmissionError(undefined)
         const retry = (error: unknown) => {
-          if (isIndeterminateRequestError(error)) {
+          if (error instanceof IndeterminateRequestError) {
             setSubmissionError('indeterminate')
             return
           }
@@ -101,7 +122,7 @@ export function UserInput(props: {
           void Promise.resolve(
             props.onSubmit(
               Object.fromEntries(
-                Object.entries(answers).map(([questionId, value]) => [questionId, [value.trim()]]),
+                [...answers].map(([questionId, answer]) => [questionId, answerValues(answer)]),
               ),
             ),
           ).catch(retry)
@@ -119,17 +140,26 @@ export function UserInput(props: {
 
           <div
             className="brief-input__options"
-            role="radiogroup"
+            role={question.multiSelect ? 'group' : 'radiogroup'}
             aria-labelledby={`brief-question-${question.id}`}
           >
             {options.map((option) => (
               <label className="brief-input__option" key={option.label}>
                 <input
-                  type="radio"
+                  type={question.multiSelect ? 'checkbox' : 'radio'}
                   name={question.id}
-                  checked={answers[question.id] === option.label}
+                  checked={selected?.options.includes(option.label) ?? false}
                   onChange={() =>
-                    setAnswers((current) => ({ ...current, [question.id]: option.label }))
+                    updateAnswer((current) =>
+                      question.multiSelect
+                        ? {
+                            ...current,
+                            options: current.options.includes(option.label)
+                              ? current.options.filter((label) => label !== option.label)
+                              : [...current.options, option.label],
+                          }
+                        : { options: [option.label], custom: false, text: '' },
+                    )
                   }
                 />
                 <span>{option.label}</span>
@@ -139,22 +169,28 @@ export function UserInput(props: {
             {custom ? (
               <label className="brief-input__option brief-input__option--custom">
                 <input
-                  type="radio"
+                  type={question.multiSelect ? 'checkbox' : 'radio'}
                   name={question.id}
                   checked={customSelected}
                   aria-label="Write your own answer"
-                  onChange={() => setAnswers((current) => ({ ...current, [question.id]: '' }))}
+                  onChange={() =>
+                    updateAnswer((current) => ({
+                      options: question.multiSelect ? current.options : [],
+                      custom: question.multiSelect ? !current.custom : true,
+                      text: '',
+                    }))
+                  }
                 />
                 {customSelected ? (
                   <input
                     className="brief-input__custom"
                     type={question.secret ? 'password' : 'text'}
-                    value={answers[question.id] ?? ''}
+                    value={selected?.text ?? ''}
                     placeholder="Type your answer…"
                     aria-label={`Custom answer: ${question.question}`}
                     autoFocus
                     onChange={(event) =>
-                      setAnswers((current) => ({ ...current, [question.id]: event.target.value }))
+                      updateAnswer((current) => ({ ...current, text: event.target.value }))
                     }
                   />
                 ) : (

@@ -1,0 +1,25 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+.performance-fixture {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr);
+}
+.performance-fixture nav {
+  display: flex;
+  gap: 8px;
+  padding: 6px 12px;
+}
+.performance-fixture nav button {
+  padding: 4px 12px;
+}
+.highlighting-fixture {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg);
+}

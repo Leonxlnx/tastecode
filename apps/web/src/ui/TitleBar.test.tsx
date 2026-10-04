@@ -10,7 +10,12 @@ describe('TitleBar', () => {
     const onToggleRail = vi.fn()
     render(<TitleBar collapsed={false} onToggleRail={onToggleRail} />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Hide sidebar' }))
+    const toggle = screen.getByRole('button', { name: 'Hide sidebar' })
+    expect(toggle.getAttribute('type')).toBe('button')
+    expect(document.querySelector('.titlebar__drag-region')?.getAttribute('aria-hidden')).toBe(
+      'true',
+    )
+    fireEvent.click(toggle)
     expect(onToggleRail).toHaveBeenCalledOnce()
     expect(screen.queryByRole('button', { name: /workspace/i })).toBeNull()
   })

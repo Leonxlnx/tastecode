@@ -20,7 +20,60 @@ import {
   SkillSchema,
   ThreadLifecycleSchema,
   UsageHistoryResultSchema,
+  type ProviderLimit,
+  type ProviderLimitSource,
 } from './protocol.js'
+
+describe('audit recovery contracts', () => {
+  it('preserves a named base branch and rejects empty or excessive refs', () => {
+    const start = {
+      provider: 'codex',
+      workspacePath: '/repo',
+      isolate: true,
+      baseRef: 'feature/example',
+    }
+    expect(methods['thread.start'].params.parse(start)).toMatchObject(start)
+    expect(methods['thread.start'].params.safeParse({ ...start, baseRef: '' }).success).toBe(false)
+    expect(
+      methods['thread.start'].params.safeParse({ ...start, baseRef: 'x'.repeat(1025) }).success,
+    ).toBe(false)
+  })
+
+  it('requires valid offsets for recovered terminal results and accepts legacy output', () => {
+    const terminalId = '217b92e8-4a22-4ee7-901f-76a336efb32e'
+    const result = { status: 'exited', output: 'done', outputOffset: 200004, exitCode: 0 }
+    expect(methods['terminal.status'].result.parse(result)).toEqual(result)
+    expect(
+      methods['terminal.status'].result.safeParse({ ...result, outputOffset: -1 }).success,
+    ).toBe(false)
+    expect(channels['terminal.output'].parse({ terminalId, data: 'legacy' })).toEqual({
+      terminalId,
+      data: 'legacy',
+    })
+    expect(
+      channels['terminal.output'].safeParse({ terminalId, data: 'bad', outputOffset: 0.5 }).success,
+    ).toBe(false)
+  })
+
+  it('validates capture cancellation and bounded provider-watch targets', () => {
+    const requestId = '217b92e8-4a22-4ee7-901f-76a336efb32e'
+    expect(channels['preview.captureCancelled'].parse({ requestId })).toEqual({ requestId })
+    expect(
+      methods['providers.watch'].params.parse({
+        provider: 'api',
+        projectPath: '/repo',
+        targets: ['mcp', 'skills'],
+      }),
+    ).toMatchObject({ provider: 'api' })
+    expect(
+      methods['providers.watch'].params.safeParse({
+        provider: 'codex',
+        projectPath: '/repo',
+        targets: ['mcp', 'skills', 'mcp'],
+      }).success,
+    ).toBe(false)
+  })
+})
 
 describe('domain events', () => {
   it('accepts a streaming delta', () => {
@@ -80,6 +133,23 @@ describe('domain events', () => {
     expect(ItemSchema.parse({ ...legacy, phase: 'commentary' }).phase).toBe('commentary')
     expect(ItemSchema.parse({ ...legacy, phase: 'final_answer' }).phase).toBe('final_answer')
     expect(() => ItemSchema.parse({ ...legacy, phase: 'analysis' })).toThrow()
+  })
+
+  it('preserves attachments on user messages without changing legacy messages', () => {
+    const message = {
+      id: 'i1',
+      turnId: 't1',
+      type: 'message',
+      status: 'completed',
+      role: 'user',
+      text: 'Review this',
+      createdAt: 1,
+    }
+
+    expect(ItemSchema.parse(message)).toEqual(message)
+    expect(
+      ItemSchema.parse({ ...message, attachments: ['/work/reference.png'] }).attachments,
+    ).toEqual(['/work/reference.png'])
   })
 
   it('carries one item ID through a complete lifecycle', () => {
@@ -214,6 +284,15 @@ describe('protocol envelopes', () => {
     }
 
     expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
+  })
+
+  it('keeps local usage history separate from earned provider reset credits', () => {
+    const history = { range: '30d', refresh: true }
+    expect(methods['usage.history'].params.parse(history)).toEqual(history)
+    expect(methods['usage.history'].params.safeParse({ range: 'forever' }).success).toBe(false)
+    expect(methods['usage.resetHistory'].result.parse({ started: true })).toEqual({ started: true })
+    expect(methods['usage.resetHistory'].result.safeParse({ outcome: 'reset' }).success).toBe(false)
+    expect(methods['usage.consumeReset'].result.safeParse({ started: true }).success).toBe(false)
   })
 
   it('requires a sequence on every push so clients can detect gaps', () => {
@@ -554,6 +633,65 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('accepts a consume-reset limit action and a UUID redemption attempt', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const limit = {
+      label: 'Rate limit resets',
+      usedPercent: 0,
+      valueLabel: '1 available',
+      action: 'consume-reset' as const,
+      resetCredits: [{ id: 'reset-fixture', expiresAt: 1_791_173_958_000 }, { expiresAt: null }],
+    }
+    expect(
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [limit],
+        limitSource: { provider: 'codex', status: 'ready', limits: [limit] },
+      }).limits[0],
+    ).toEqual(limit)
+    expect(() =>
+      methods['usage.summary'].result.parse({
+        session: usage,
+        today: usage,
+        limits: [{ label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' }],
+        limitSource: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [
+            { label: 'Rate limit resets', usedPercent: 0, valueLabel: '1', action: 'refund' },
+          ],
+        },
+      }),
+    ).toThrow()
+
+    const key = '8ae96ff3-3425-4f4c-8772-b6fd61502868'
+    const selected = { provider: 'codex', idempotencyKey: key, creditId: 'reset-fixture' }
+    expect(methods['usage.consumeReset'].params.parse(selected)).toEqual(selected)
+    expect(() =>
+      methods['usage.consumeReset'].params.parse({ ...selected, creditId: '' }),
+    ).toThrow()
+    expect(
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: key }),
+    ).toEqual({
+      provider: 'codex',
+      idempotencyKey: key,
+    })
+    expect(() =>
+      methods['usage.consumeReset'].params.parse({ provider: 'codex', idempotencyKey: 'retry-1' }),
+    ).toThrow()
+    expect(methods['usage.consumeReset'].result.parse({ outcome: 'reset' })).toEqual({
+      outcome: 'reset',
+    })
+    expect(() => methods['usage.consumeReset'].result.parse({ outcome: 'ok' })).toThrow()
+  })
+
   it('keeps one authoritative provider limit source with a legacy fallback', () => {
     const usage = {
       inputTokens: 0,
@@ -562,12 +700,12 @@ describe('protocol envelopes', () => {
       reasoningTokens: 0,
       totalTokens: 0,
     }
-    const parse = (limits: unknown[], limitSource?: unknown) =>
+    const parse = (limits: ProviderLimit[], limitSource?: ProviderLimitSource) =>
       methods['usage.summary'].result.parse({
         session: usage,
         today: usage,
         limits,
-        ...(limitSource === undefined ? {} : { limitSource }),
+        ...(!(limitSource === undefined) ? { limitSource } : {}),
       })
 
     expect(parse([]).limitSource).toBeUndefined()
@@ -1182,6 +1320,21 @@ describe('protocol envelopes', () => {
     })
   })
 
+  it('keeps update requests limited to a provider and terminal size', () => {
+    const request = { provider: 'codex', columns: 100, rows: 30 }
+    expect(
+      methods['providers.update'].params.parse({
+        ...request,
+        command: 'untrusted command',
+        version: 'untrusted version',
+      }),
+    ).toEqual(request)
+    expect(() =>
+      methods['providers.update'].params.parse({ ...request, provider: 'unlisted-cli' }),
+    ).toThrow()
+    expect(methods['providers.updates'].params.parse({ refresh: true })).toEqual({ refresh: true })
+  })
+
   it('names a launch target without carrying any command text', () => {
     const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
@@ -1195,6 +1348,63 @@ describe('protocol envelopes', () => {
     expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
     })
+  })
+
+  it('names a fixed GitHub CLI setup action without carrying command text', () => {
+    const valid = { action: 'login', columns: 320, rows: 30 }
+    expect(methods['pullRequests.setup'].params.parse(valid)).toEqual(valid)
+    expect(methods['pullRequests.setup'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
+      valid,
+    )
+    expect(() =>
+      methods['pullRequests.setup'].params.parse({ action: 'remove', columns: 100, rows: 30 }),
+    ).toThrow()
+    expect(methods['pullRequests.setup'].result.parse({ terminalId: 'term-github' })).toEqual({
+      terminalId: 'term-github',
+    })
+  })
+
+  it('loads bounded image bytes only from GitHub file and upload URLs', () => {
+    const blob = {
+      url: 'https://github.com/Blueemi/harness/blob/abc123/docs/before.png?raw=true',
+    }
+    const raw = { url: 'https://raw.githubusercontent.com/Blueemi/harness/main/docs/after.png' }
+    expect(methods['pullRequests.image'].params.parse(blob)).toEqual(blob)
+    expect(methods['pullRequests.image'].params.parse(raw)).toEqual(raw)
+    for (const url of [
+      'https://github.com/user-attachments/assets/12345678-1234-1234-1234-123456789abc',
+      'https://private-user-images.githubusercontent.com/123/456-12345678-1234-1234-1234-123456789abc.png',
+    ])
+      expect(methods['pullRequests.image'].params.parse({ url })).toEqual({ url })
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'https://example.com/image.png' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'http://github.com/o/r/blob/x/a.png' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].params.parse({ url: 'https://github.com.evil.test/a.png' }),
+    ).toThrow()
+
+    const image = { mediaType: 'image/png', data: 'iVBORw0KGgo=' }
+    expect(methods['pullRequests.image'].result.parse(image)).toEqual(image)
+    expect(() =>
+      methods['pullRequests.image'].result.parse({ mediaType: 'text/html', data: 'PGh0bWw+' }),
+    ).toThrow()
+    expect(() =>
+      methods['pullRequests.image'].result.parse({ mediaType: 'image/png', data: '' }),
+    ).toThrow()
+    for (const data of ['not base64!', 'AAA', 'A'.repeat(14 * 1024 * 1024)]) {
+      expect(
+        methods['pullRequests.image'].result.safeParse({ mediaType: 'image/png', data }).success,
+      ).toBe(false)
+    }
+    expect(
+      methods['pullRequests.image'].result.safeParse({
+        mediaType: 'image/svg+xml',
+        data: 'PHN2Zy8+',
+      }).success,
+    ).toBe(true)
   })
 
   it('validates data for every declared channel', () => {
@@ -1245,5 +1455,107 @@ describe('protocol envelopes', () => {
       threadId: 'side-1',
     })
     expect(() => methods['sideChat.start'].params.parse({ parentThreadId: '' })).toThrow()
+  })
+
+  it('keeps background model settings source-aware and non-secret', () => {
+    const target = {
+      mode: 'manual' as const,
+      target: {
+        provider: 'api' as const,
+        connectionId: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
+        effort: 'low',
+      },
+    }
+    expect(methods['backgroundModel.updateSettings'].params.parse(target)).toEqual(target)
+    const fast = {
+      mode: 'manual' as const,
+      target: { provider: 'codex' as const, model: 'gpt-5.6-luna', serviceTier: 'priority' },
+    }
+    expect(methods['backgroundModel.updateSettings'].params.parse(fast)).toEqual(fast)
+    expect(() =>
+      methods['backgroundModel.updateSettings'].params.parse({
+        ...fast,
+        target: { ...fast.target, serviceTier: '' },
+      }),
+    ).toThrow()
+    expect(() =>
+      methods['backgroundModel.updateSettings'].params.parse({
+        mode: 'manual',
+        target: { provider: 'api', model: 'missing-connection' },
+      }),
+    ).toThrow()
+    expect(
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            provider: 'codex',
+            models: [
+              {
+                id: 'gpt-5.6-luna',
+                displayName: 'GPT-5.6 Luna',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium'],
+                serviceTiers: [],
+              },
+            ],
+          },
+        ],
+        resolved: {
+          provider: 'codex',
+          model: 'gpt-5.6-luna',
+          effort: 'medium',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+      }).resolved,
+    ).toMatchObject({ model: 'gpt-5.6-luna', effort: 'medium' })
+    expect(() =>
+      methods['backgroundModel.settings'].result.parse({
+        preference: { mode: 'automatic' },
+        sources: [],
+        resolved: {
+          provider: 'api',
+          model: 'missing-connection',
+          sourceName: 'API',
+          automatic: true,
+        },
+      }),
+    ).toThrow()
+  })
+})
+
+describe('backward history page contract', () => {
+  const params = methods['thread.history'].params
+  it('keeps legacy replay compatible and supports bounded whole-turn page requests', () => {
+    expect(params.parse({ threadId: 'fixture' })).toEqual({ threadId: 'fixture' })
+    expect(params.parse({ threadId: 'fixture', afterSeq: 12 })).toMatchObject({ afterSeq: 12 })
+    expect(
+      params.parse({ threadId: 'fixture', page: { before: 'opaque-cursor', turnLimit: 50 } }),
+    ).toMatchObject({ page: { before: 'opaque-cursor', turnLimit: 50 } })
+  })
+  it.each([
+    { page: { turnLimit: 0 } },
+    { page: { turnLimit: 101 } },
+    { page: { turnLimit: 1.5 } },
+    { page: { before: '' } },
+    { page: { before: 'x'.repeat(513) } },
+    { page: {}, afterSeq: 0 },
+  ])('rejects ambiguous or unbounded page parameters: %j', (request) => {
+    expect(() => params.parse({ threadId: 'fixture', ...request })).toThrow()
+  })
+  it('distinguishes an exhausted page from a legacy response', () => {
+    const schema = methods['thread.history'].result
+    expect(schema.parse({ events: [], running: false }).page).toBeUndefined()
+    expect(
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: 42 } })
+        .page,
+    ).toEqual({ olderCursor: null, snapshotSeq: 42 })
+    expect(() =>
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: -1 } }),
+    ).toThrow()
   })
 })

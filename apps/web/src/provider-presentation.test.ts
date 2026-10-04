@@ -2,7 +2,6 @@ import type { ProviderId } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   agentPresentation,
-  connectionMark,
   providerPresentation,
   sessionSourcePresentation,
   sourcePresentation,
@@ -44,7 +43,7 @@ describe('provider presentation', () => {
       sourcePresentation({
         provider: 'api',
         sourceName: 'Work OpenRouter',
-        mark: connectionMark('openrouter'),
+        mark: 'openrouter',
       }),
     ).toEqual({ label: 'Work OpenRouter', mark: 'openrouter' })
   })

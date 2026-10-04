@@ -4,8 +4,12 @@ import { Store } from './store.js'
 const control = vi.hoisted(() => ({
   constructed: 0,
   started: 0,
+  disposed: 0,
   releases: [] as Array<() => void>,
   usageChanged: undefined as (() => void) | undefined,
+  login: undefined as
+    | ((result: { loginId: string | null; success: boolean; error: string | null }) => void)
+    | undefined,
 }))
 
 vi.mock('@harness/adapter-codex', async (importOriginal) => {
@@ -17,13 +21,27 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
         control.constructed += 1
       }
 
-      on(): void {}
+      on(
+        event: string,
+        listener: (result: {
+          loginId: string | null
+          success: boolean
+          error: string | null
+        }) => void,
+      ): void {
+        if (event === 'login') control.login = listener
+      }
       onUsageChanged(listener: () => void): void {
         control.usageChanged = listener
       }
-      dispose(): void {}
+      dispose(): void {
+        control.disposed += 1
+      }
       listModels(): [] {
         return []
+      }
+      startLogin() {
+        return { loginId: 'login-1', authUrl: 'https://example.test/login' }
       }
 
       start(): Promise<void> {
@@ -39,8 +57,10 @@ import { Orchestrator } from './orchestrator.js'
 beforeEach(() => {
   control.constructed = 0
   control.started = 0
+  control.disposed = 0
   control.releases = []
   control.usageChanged = undefined
+  control.login = undefined
 })
 
 describe('control adapter startup', () => {
@@ -96,6 +116,53 @@ describe('control adapter startup', () => {
     expect(control.constructed).toBe(1)
     control.releases[0]?.()
     await expect(Promise.all([first, second])).resolves.toEqual([[], []])
+    await orchestrator.disposeAll()
+  })
+
+  it('releases an idle control adapter and starts a fresh one for a later request', async () => {
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      controlIdleMs: 0,
+    })
+
+    const first = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    control.releases[0]?.()
+    await first
+    await vi.waitFor(() => expect(control.disposed).toBe(1))
+
+    const second = orchestrator.listModels('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(2))
+    control.releases[1]?.()
+    await second
+    await vi.waitFor(() => expect(control.disposed).toBe(2))
+
+    expect(control.constructed).toBe(2)
+    await orchestrator.disposeAll()
+  })
+
+  it('keeps the control adapter alive until an interactive login completes', async () => {
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      controlIdleMs: 0,
+    })
+
+    const login = orchestrator.startLogin('codex')
+    await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+    control.releases[0]?.()
+    await expect(login).resolves.toEqual({
+      loginId: 'login-1',
+      authUrl: 'https://example.test/login',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(control.disposed).toBe(0)
+
+    control.login?.({ loginId: 'login-1', success: true, error: null })
+    await vi.waitFor(() => expect(control.disposed).toBe(1))
     await orchestrator.disposeAll()
   })
 })

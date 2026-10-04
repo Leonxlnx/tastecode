@@ -7,57 +7,87 @@ import type {
 } from '@harness/contracts'
 import type { WebSocket } from 'ws'
 
-type PendingCapture = {
-  socket: WebSocket
+type PendingCapture<Client extends object> = {
+  socket?: Client
   request: PreviewCaptureRequest
   resolve: (screenshots: PreviewScreenshot[]) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
 }
 
-type QueuedCapture = Omit<PendingCapture, 'socket' | 'timer'>
+type QueuedCapture<Client extends object> = Omit<PendingCapture<Client>, 'socket' | 'timer'>
 
-export class PreviewCaptureCoordinator {
-  #clients = new Set<WebSocket>()
-  #pending = new Map<string, PendingCapture>()
-  #queue: QueuedCapture[] = []
+function captureAborted(): Error {
+  return Object.assign(new Error('Preview capture cancelled'), { name: 'AbortError' })
+}
+
+export class PreviewCaptureCoordinator<Client extends object = WebSocket> {
+  #clients = new Set<Client>()
+  #pending = new Map<string, PendingCapture<Client>>()
+  #queue: Array<QueuedCapture<Client>> = []
 
   constructor(
-    private readonly send: (socket: WebSocket, request: PreviewCaptureRequest) => void,
+    private readonly send: (socket: Client, request: PreviewCaptureRequest) => void,
     private readonly timeoutMs = 35_000,
+    private readonly cancel: (socket: Client, requestId: string) => void = () => undefined,
   ) {}
 
   get available(): boolean {
     return this.#clients.size > 0
   }
 
-  setCapability(socket: WebSocket, available: boolean): void {
-    if (available) this.#clients.add(socket)
-    else this.remove(socket)
+  setCapability(socket: Client, available: boolean): void {
+    if (available) {
+      this.#clients.add(socket)
+      this.#dispatchNext()
+    } else this.remove(socket)
   }
 
-  remove(socket: WebSocket): void {
+  remove(socket: Client): void {
     this.#clients.delete(socket)
     for (const [requestId, pending] of this.#pending) {
       if (pending.socket !== socket) continue
-      clearTimeout(pending.timer)
       this.#pending.delete(requestId)
-      pending.reject(new Error('Preview capture client disconnected'))
+      this.#cancel(socket, requestId)
+      delete pending.socket
+      // Keep the original deadline, but give the replacement native capture a
+      // fresh identity so late cancellation/results cannot affect its retry.
+      pending.request = { ...pending.request, requestId: randomUUID() }
+      this.#pending.set(pending.request.requestId, pending)
     }
     this.#dispatchNext()
   }
 
-  capture(url: string, viewports: PreviewViewport[]): Promise<PreviewScreenshot[]> {
+  capture(
+    url: string,
+    viewports: PreviewViewport[],
+    signal?: AbortSignal,
+  ): Promise<PreviewScreenshot[]> {
+    if (signal?.aborted) return Promise.reject(captureAborted())
     if (!this.available) return Promise.reject(new Error('Preview capture is unavailable'))
+    if (this.#queue.length >= 16) return Promise.reject(new Error('Preview capture queue is full'))
 
     const request = { requestId: randomUUID(), url, viewports }
     return new Promise((resolve, reject) => {
-      this.#queue.push({ request, resolve, reject })
+      const onAbort = () => this.#abort(queued.resolve)
+      const queued: QueuedCapture<Client> = {
+        request,
+        resolve: (screenshots) => {
+          signal?.removeEventListener('abort', onAbort)
+          resolve(screenshots)
+        },
+        reject: (error) => {
+          signal?.removeEventListener('abort', onAbort)
+          reject(error)
+        },
+      }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.#queue.push(queued)
       this.#dispatchNext()
     })
   }
 
-  complete(socket: WebSocket, result: PreviewCaptureResult): void {
+  complete(socket: Client, result: PreviewCaptureResult): void {
     const pending = this.#pending.get(result.requestId)
     if (!pending || pending.socket !== socket) throw new Error('Unknown preview capture request')
     clearTimeout(pending.timer)
@@ -86,29 +116,71 @@ export class PreviewCaptureCoordinator {
   }
 
   #dispatchNext(): void {
-    if (this.#pending.size > 0 || this.#queue.length === 0) return
-    const socket = this.#clients.values().next().value as WebSocket | undefined
+    const interrupted = this.#pending.values().next().value
+    if (interrupted?.socket || (!interrupted && this.#queue.length === 0)) return
+    let socket: Client | undefined
+    for (const client of this.#clients) {
+      socket = client
+      break
+    }
     if (!socket) {
+      if (interrupted) return
       for (const queued of this.#queue.splice(0)) {
         queued.reject(new Error('Preview capture client disconnected'))
       }
       return
     }
+    if (interrupted) {
+      interrupted.socket = socket
+      try {
+        this.send(socket, interrupted.request)
+      } catch {
+        this.remove(socket)
+      }
+      return
+    }
     const queued = this.#queue.shift()!
     const timer = setTimeout(() => {
-      this.#pending.delete(queued.request.requestId)
+      this.#pending.delete(pending.request.requestId)
+      if (pending.socket) this.#cancel(pending.socket, pending.request.requestId)
       queued.reject(new Error('Preview capture timed out'))
       this.#dispatchNext()
     }, this.timeoutMs)
     timer.unref()
-    this.#pending.set(queued.request.requestId, { socket, timer, ...queued })
+    const pending = { socket, timer, ...queued }
+    this.#pending.set(queued.request.requestId, pending)
     try {
       this.send(socket, queued.request)
-    } catch (error) {
-      clearTimeout(timer)
-      this.#pending.delete(queued.request.requestId)
-      queued.reject(error instanceof Error ? error : new Error(String(error)))
+    } catch {
+      this.remove(socket)
+    }
+  }
+
+  // A pending entry is a copy of its queued entry and a reconnect can renew
+  // its request ID, so the settle callback is the only stable identity.
+  #abort(resolve: QueuedCapture<Client>['resolve']): void {
+    const index = this.#queue.findIndex((queued) => queued.resolve === resolve)
+    if (index >= 0) {
+      this.#queue.splice(index, 1)[0]!.reject(captureAborted())
+      return
+    }
+    for (const [requestId, pending] of this.#pending) {
+      if (pending.resolve !== resolve) continue
+      clearTimeout(pending.timer)
+      this.#pending.delete(requestId)
+      if (pending.socket) this.#cancel(pending.socket, requestId)
+      pending.reject(captureAborted())
       this.#dispatchNext()
+      return
+    }
+  }
+
+  #cancel(socket: Client, requestId: string): void {
+    try {
+      this.cancel(socket, requestId)
+    } catch {
+      // A disconnected client cannot receive cancellation. Its own bounded
+      // capture lifetime still releases the window and isolated session.
     }
   }
 }

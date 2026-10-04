@@ -150,6 +150,21 @@ describe('project file links', () => {
     ).toEqual({ kind: 'safe', path: '/Users/blue/Developer/site/src/index.ts' })
   })
 
+  it('accepts slash-prefixed Windows drives without allowing traversal or other projects', () => {
+    const root = 'E:/randomtesting/A_personalharness/AAAA/test24'
+    expect(projectFileReference(`/${root}/dist/index.html`, root)).toEqual({
+      kind: 'safe',
+      path: 'E:\\randomtesting\\A_personalharness\\AAAA\\test24\\dist\\index.html',
+    })
+    for (const candidate of [
+      `/${root}/../test25/index.html`,
+      '/C:/other/index.html',
+      '//server/share/index.html',
+    ]) {
+      expect(projectFileReference(candidate, root)?.kind).toBe('blocked')
+    }
+  })
+
   it('accepts files inside a stored home-relative macOS project', () => {
     expect(
       projectFileReference('/Users/blue/Developer/site/src/index.ts:42', '~/Developer/site'),

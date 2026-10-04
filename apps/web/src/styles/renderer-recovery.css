@@ -1,0 +1,48 @@
+.renderer-recovery {
+  display: grid;
+  min-height: 100dvh;
+  padding: 32px;
+  place-items: center;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.renderer-recovery section {
+  max-width: 480px;
+}
+
+.renderer-recovery h1 {
+  font-size: 20px;
+}
+
+.renderer-recovery p {
+  margin-block: 16px;
+}
+
+.renderer-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.renderer-recovery button {
+  padding: 10px 16px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-lg);
+  background: var(--bg);
+  color: inherit;
+  cursor: pointer;
+}
+
+.renderer-recovery button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 4px;
+}
+
+/* A single surface's recovery covers the window the way the surface did. */
+.surface-recovery {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  min-height: 0;
+}

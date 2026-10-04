@@ -1,10 +1,13 @@
+import * as fs from 'node:fs'
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { McpConfigStore } from './mcp-config.js'
 
-function setup(): { project: string; location: string; store: McpConfigStore } {
+vi.mock('node:fs', { spy: true })
+
+function setup() {
   const root = mkdtempSync(path.join(tmpdir(), 'harness-mcp-config-'))
   const project = path.join(root, 'project')
   mkdirSync(project)
@@ -53,5 +56,113 @@ describe('project MCP config', () => {
     const backups = readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-'))
     expect(backups).toHaveLength(1)
     expect(store.list('codex', project)).toEqual([{ id: 'fresh', enabled: false }])
+  })
+
+  it('keeps provider blocks this build does not ship when it saves', () => {
+    const { project, location, store } = setup()
+    mkdirSync(path.dirname(location))
+    const projectKey = fs.realpathSync.native(project)
+    const unsupported = { docs: { id: 'docs', enabled: true, futureField: ['kept'] } }
+    writeFileSync(
+      location,
+      JSON.stringify({
+        version: 1,
+        projects: { [projectKey]: { 'future-provider': unsupported } },
+      }),
+    )
+
+    store.add('codex', project, { id: 'fresh', enabled: false })
+    store.remove('codex', project, 'fresh')
+
+    const saved = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, Record<string, unknown>>
+    }
+    expect(saved.projects[projectKey]).toEqual({ 'future-provider': unsupported })
+    expect(
+      readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-')),
+    ).toEqual([])
+  })
+
+  it('leaves the active file in place when a repairing save fails', () => {
+    const { project, location, store } = setup()
+    mkdirSync(path.dirname(location))
+    const original = '{"version":1,"projects":{"bad":{"codex":{"x":{"id":"y","enabled":false}}}}}'
+    writeFileSync(location, original)
+    store.list('codex', project)
+    vi.mocked(fs.writeFileSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error('no space left on device'), { code: 'ENOSPC' })
+    })
+
+    expect(() => store.add('codex', project, { id: 'fresh', enabled: false })).toThrow(
+      'no space left',
+    )
+
+    expect(readFileSync(location, 'utf8')).toBe(original)
+    store.add('codex', project, { id: 'fresh', enabled: false })
+    expect(
+      readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-')),
+    ).toHaveLength(1)
+  })
+
+  it('treats inherited object names as ordinary server IDs', () => {
+    const { project, location } = setup()
+    const store = new McpConfigStore(location)
+    store.add('codex', project, { id: 'constructor', enabled: false })
+    store.add('codex', project, { id: '__proto__', enabled: false })
+    expect(() => store.update('codex', project, { id: 'toString', enabled: true })).toThrow(
+      'does not exist',
+    )
+
+    const reloaded = new McpConfigStore(location)
+    expect(reloaded.list('codex', project)).toEqual([
+      { id: 'constructor', enabled: false },
+      { id: '__proto__', enabled: false },
+    ])
+    expect(Object.getPrototypeOf(reloaded.list('codex', project)[1])).toBe(Object.prototype)
+  })
+
+  it('reloads hand edits after the short read cache expires', () => {
+    const { project, location } = setup()
+    let now = 1_000
+    const store = new McpConfigStore(location, () => now)
+    store.add('codex', project, {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+    expect(store.list('codex', project)).toEqual([
+      {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      },
+    ])
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['docs']!.enabled = false
+    writeFileSync(location, JSON.stringify(edited))
+
+    expect(store.list('codex', project)[0]?.enabled).toBe(true)
+    now += 101
+    expect(store.list('codex', project)[0]?.enabled).toBe(false)
+  })
+
+  it('merges app writes with hand edits even inside the read cache window', () => {
+    const { project, location, store } = setup()
+    store.add('codex', project, { id: 'docs', enabled: false })
+    store.list('codex', project)
+
+    const edited = JSON.parse(readFileSync(location, 'utf8')) as {
+      projects: Record<string, { codex: Record<string, { id: string; enabled: boolean }> }>
+    }
+    const projectKey = Object.keys(edited.projects)[0]!
+    edited.projects[projectKey]!.codex['external'] = { id: 'external', enabled: false }
+    writeFileSync(location, JSON.stringify(edited))
+    store.add('codex', project, { id: 'fresh', enabled: false })
+
+    expect(store.list('codex', project).map(({ id }) => id)).toEqual(['docs', 'external', 'fresh'])
   })
 })

@@ -1,6 +1,8 @@
 import {
   forwardRef,
+  lazy,
   memo,
+  Suspense,
   useCallback,
   useImperativeHandle,
   useLayoutEffect,
@@ -8,7 +10,12 @@ import {
   useState,
   type ComponentProps,
 } from 'react'
-import { SessionSearch } from './SessionSearch.js'
+import type { SessionSearch as SessionSearchComponent } from './SessionSearch.js'
+import { ChatSearchSkeleton } from './SurfaceSkeletons.js'
+
+const SessionSearch = lazy(() =>
+  import('./SessionSearch.js').then((module) => ({ default: module.SessionSearch })),
+)
 
 export type SessionSearchHandle = {
   open: (initialProjectPath?: string) => void
@@ -16,7 +23,7 @@ export type SessionSearchHandle = {
 }
 
 type SessionSearchHostProps = Omit<
-  ComponentProps<typeof SessionSearch>,
+  ComponentProps<typeof SessionSearchComponent>,
   'initialProjectPath' | 'onClose'
 >
 
@@ -63,15 +70,17 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
 
     if (!request) return null
     return (
-      <SessionSearch
-        {...props}
-        initialProjectPath={request.initialProjectPath}
-        onSelect={(threadId, turnId) => {
-          close()
-          props.onSelect(threadId, turnId)
-        }}
-        onClose={close}
-      />
+      <Suspense fallback={<ChatSearchSkeleton />}>
+        <SessionSearch
+          {...props}
+          initialProjectPath={request.initialProjectPath}
+          onSelect={(threadId, turnId) => {
+            close()
+            props.onSelect(threadId, turnId)
+          }}
+          onClose={close}
+        />
+      </Suspense>
     )
   },
 )

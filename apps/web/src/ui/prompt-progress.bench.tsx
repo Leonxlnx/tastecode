@@ -18,38 +18,18 @@ vi.mock('@tanstack/react-virtual', () => ({
         key: getItemKey(index),
         start: index * 72,
         end: (index + 1) * 72,
-        size: 72,
-        lane: 0,
       }
     })
     return {
       getVirtualItems: () => rows,
       getTotalSize: () => count * 72,
-      getOffsetForIndex: (index: number) => [index * 72],
-      getScrollElement: () => null,
+      getOffsetForIndex: (index: number) => [index * 72, 'start'],
       scrollToIndex: () => undefined,
       measureElement: () => undefined,
-      measurementsCache: rows,
+      measurementsCache: Array.from({ length: count }, (_, index) => ({ start: index * 72 })),
     }
   },
 }))
-
-vi.mock('thinking-orbs', () => ({ ThinkingOrb: () => <span aria-label="Working…" /> }))
-vi.mock('./highlighter.js', () => {
-  const plugin = {
-    type: 'code-highlighter',
-    name: 'prompt-progress-highlighter',
-    getSupportedLanguages: () => [],
-    getThemes: () => [],
-    supportsLanguage: () => true,
-    highlight: () => ({ tokens: [] }),
-  }
-  return {
-    onHighlighterChange: () => () => undefined,
-    shikiPlugin: plugin,
-    plainCodePlugin: plugin,
-  }
-})
 
 import { PROMPT_PROGRESS_SCENARIOS, runPromptProgress } from './prompt-progress.fixture.js'
 

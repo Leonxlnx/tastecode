@@ -8,33 +8,43 @@ import type {
   Capabilities,
   DomainEvent,
   Model,
+  ProviderId,
   Thread,
 } from '@harness/contracts'
-import { spawnCli, StdioJsonRpc } from '@harness/proc'
+import {
+  spawnCli,
+  StdioJsonRpc,
+  type JsonRpcRequestOptions,
+  type JsonRpcValue,
+  type ParsedJsonRpcRequestOptions,
+  type ServerRequestHandler,
+} from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
 import { Streamer } from './events.js'
+import type { AcpMcpServer } from './mcp.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
 import {
   PROTOCOL_VERSION,
+  InitializeResultSchema,
+  NewSessionResultSchema,
+  PromptResultSchema,
+  RequestPermissionParamsSchema,
+  SessionNotificationSchema,
   type InitializeResult,
-  type NewSessionResult,
   type PermissionOptionKind,
   type PromptResult,
   type ContentBlock,
-  type RequestPermissionParams,
-  type SessionNotification,
 } from './protocol.js'
 
 /**
- * One adapter for every agent that speaks the Agent Client Protocol.
+ * Client for the Agent Client Protocol.
  *
- * This is the whole argument for supporting ACP: Gemini, Kimi, Qwen and
- * anything else that adopts it arrive through this file rather than through a
- * new package each. Agent-specific knowledge is limited to a launch command in
- * agents.ts.
+ * The registered agents and Grok's MCP mode share this client. Agent-specific
+ * launch commands and model discovery stay in the registry in agents.ts.
  *
- * Verified against gemini-cli in `--experimental-acp` mode.
+ * Verified against gemini-cli in `--experimental-acp` mode; the fixtures in
+ * the tests are those captured frames.
  *
  * As with every adapter here, we spawn the vendor's binary and let it
  * authenticate itself. See rules/security.md.
@@ -43,6 +53,7 @@ import {
 export type AcpAdapterEvents = {
   event: [DomainEvent]
   log: [string]
+  disconnected: []
 }
 
 export type AcpStartOptions = {
@@ -51,25 +62,62 @@ export type AcpStartOptions = {
   model?: string | undefined
 }
 
+export type AcpTurnSettings = {
+  model?: string | undefined
+  effort?: string | undefined
+}
+
 export type AcpLaunchOptions = {
   name: string
   command: string
   args?: string[]
+  /**
+   * Launch arguments for a model and effort the agent accepts only at startup.
+   * When set, a turn that asks for other settings restarts the agent and
+   * reloads its session first.
+   */
+  argsFor?: (settings: AcpTurnSettings) => string[]
+  /** The settings `argsFor` launches with first. */
+  settings?: AcpTurnSettings
   spawn?: typeof spawnCli
+  provider?: ProviderId
+  mcpServers?: AcpMcpServer[]
+  /** Added to the inherited environment, for engines tuned through it. */
+  env?: Record<string, string> | undefined
 }
+
+export interface AcpRpc {
+  onStderr(handler: (text: string) => void): void
+  onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void
+  onServerRequest(handler: ServerRequestHandler): void
+  request(
+    method: string,
+    params?: unknown,
+    options?: JsonRpcRequestOptions,
+  ): Promise<JsonRpcValue | undefined>
+  request<Result>(
+    method: string,
+    params: unknown,
+    options: ParsedJsonRpcRequestOptions<Result>,
+  ): Promise<Result>
+  notify(method: string, params?: unknown): void
+  dispose(): void | Promise<void>
+}
+
+export { prepareAcpMcpServers, type AcpMcpServer } from './mcp.js'
 
 type AcpLaunchSpec = Pick<
   AcpAgentSpec,
   'id' | 'name' | 'command' | 'args' | 'supportedVersion' | 'modelArg' | 'modelConfigId'
 >
 
-const IMAGE_MIME_TYPES: Record<string, string> = {
-  '.gif': 'image/gif',
-  '.jpeg': 'image/jpeg',
-  '.jpg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-}
+const IMAGE_MIME_TYPES = new Map([
+  ['.gif', 'image/gif'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.webp', 'image/webp'],
+])
 
 export function acpPromptContent(
   text: string,
@@ -80,7 +128,7 @@ export function acpPromptContent(
   return [
     { type: 'text', text },
     ...attachments.map((file) => {
-      const mimeType = IMAGE_MIME_TYPES[path.extname(file).toLowerCase()]
+      const mimeType = IMAGE_MIME_TYPES.get(path.extname(file).toLowerCase())
       if (!mimeType) throw new Error(`ACP image type is not supported: ${path.extname(file)}`)
       return {
         type: 'image',
@@ -93,13 +141,22 @@ export function acpPromptContent(
 }
 
 export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   #spec: AcpLaunchSpec
   readonly #spawn: typeof spawnCli
-  #rpc: StdioJsonRpc | undefined
+  readonly #provider: ProviderId
+  readonly #mcpServers: AcpMcpServer[]
+  readonly #env: Record<string, string> | undefined
+  readonly #argsFor: ((settings: AcpTurnSettings) => string[]) | undefined
+  #settings: AcpTurnSettings
+  #relaunching = false
+  #rpc: AcpRpc | undefined
   #initialize: InitializeResult | undefined
   #sessionId: string | undefined
+  #workspacePath = ''
   #model: string | undefined
   #streamer: Streamer | undefined
+  #activeTurn: { threadId: string; turnId: string } | undefined
   #turnCounter = 0
   #instructions: string | undefined
   #instructionsPending = false
@@ -113,13 +170,18 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
    * held here rather than answered eagerly — replying early would be answering
    * on the user's behalf, which is the one thing an approval must never do.
    */
-  #pendingApprovals = new Map<string, (result: unknown) => void>()
+  #pendingApprovals = new Map<string, (result: JsonRpcValue) => void>()
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
 
   constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
     this.#spawn = launch?.spawn ?? spawnCli
+    this.#provider = launch?.provider ?? 'acp'
+    this.#mcpServers = launch?.mcpServers ?? []
+    this.#env = launch?.env
+    this.#argsFor = launch?.argsFor
+    this.#settings = { ...launch?.settings }
     if (launch) {
       this.#spec = {
         id: agentId,
@@ -132,6 +194,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const spec = findAgentSpec(agentId)
     if (!spec) throw new Error(`unknown ACP agent "${agentId}"`)
     this.#spec = spec
+  }
+
+  /** Whether the connected agent can reload this session after its process ends. */
+  get resumable(): boolean {
+    return this.#loadSession
   }
 
   get capabilities(): Capabilities {
@@ -155,19 +222,26 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const rpc = await this.#connect(workspacePath, options.model)
 
     const session = await rpc
-      .request<NewSessionResult>('session/new', { cwd: workspacePath, mcpServers: [] })
-      .catch((error: unknown) => {
+      .request(
+        'session/new',
+        {
+          cwd: workspacePath,
+          mcpServers: this.#mcpServers,
+        },
+        { result: NewSessionResultSchema },
+      )
+      .catch((cause) => {
         // Agents report an expired or missing login as a bare protocol error.
         // Passing that through gives the user two words and no way forward, so
         // it becomes the one instruction that actually fixes it.
-        const message = error instanceof Error ? error.message : String(error)
+        const message = cause instanceof Error ? cause.message : String(cause)
         if (/auth/i.test(message)) {
           throw new Error(
             `${this.#spec.name} is not signed in. Run \`${this.#spec.command}\` once in a ` +
               `terminal and sign in there — we deliberately never handle its credentials.`,
           )
         }
-        throw error
+        throw cause
       })
     if (!session.sessionId) throw new Error(`${this.#spec.name} started no session`)
     this.#sessionId = session.sessionId
@@ -175,7 +249,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     return {
       id: `acp-${this.#spec.id}-${session.sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }
@@ -193,21 +267,33 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const sessionId = parseAcpThreadId(threadId, this.#spec.id)
     const rpc = await this.#connect(workspacePath, options.model)
     if (!this.#loadSession) {
-      this.dispose()
+      await this.dispose()
       throw new Error(`${this.#spec.name} does not support session resume`)
     }
-    await rpc.request('session/load', { sessionId, cwd: workspacePath, mcpServers: [] })
+    await rpc.request('session/load', {
+      sessionId,
+      cwd: workspacePath,
+      mcpServers: this.#mcpServers,
+    })
     this.#sessionId = sessionId
     await this.#selectSessionModel(options.model)
     return {
       id: `acp-${this.#spec.id}-${sessionId}`,
-      provider: 'acp',
+      provider: this.#provider,
       workspacePath,
       createdAt: Date.now(),
     }
   }
 
-  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+  async sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[] = [],
+    settings: AcpTurnSettings = {},
+  ): Promise<string> {
+    if (!this.#rpc || !this.#sessionId) throw new Error('session not started')
+    if (this.#activeTurn || this.#relaunching) throw new Error('ACP already has a running turn')
+    await this.#applySettings(settings)
     const rpc = this.#rpc
     if (!rpc || !this.#sessionId) throw new Error('session not started')
 
@@ -223,8 +309,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // the persisted turns of the process it replaced — a bare counter reset
     // to zero on every construction and merged two different turns' items.
     const turnId = `${threadId}-turn-${++this.#turnCounter}-${crypto.randomUUID().slice(0, 8)}`
-    const streamer = new Streamer(turnId)
+    const streamer = new Streamer(turnId, this.#workspacePath)
     this.#streamer = streamer
+    this.#activeTurn = { threadId, turnId }
 
     this.emit('event', {
       type: 'turn.started',
@@ -235,20 +322,22 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // and the caller needs the turn id now to route them.
     this.#instructionsPending = false
     void rpc
-      .request<PromptResult>('session/prompt', {
-        sessionId: this.#sessionId,
-        prompt: promptContent,
-      })
+      .request(
+        'session/prompt',
+        {
+          sessionId: this.#sessionId,
+          prompt: promptContent,
+        },
+        { result: PromptResultSchema },
+      )
       .then((result) => this.#finishTurn(threadId, turnId, result, streamer))
-      .catch((error: unknown) => {
-        // A rejected prompt ends the turn just as a stop reason does; items and
-        // approvals it opened must not outlive it.
-        this.#finishStreamer('failed', streamer)
-        this.#cancelPendingApprovals()
+      .catch((cause) => {
+        if (this.#streamer !== streamer) return
+        this.#clearTurn('failed')
         this.emit('event', {
           type: 'thread.error',
           threadId,
-          message: error instanceof Error ? error.message : String(error),
+          message: cause instanceof Error ? cause.message : String(cause),
         })
         this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
       })
@@ -287,8 +376,19 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#setApproval(approval)
   }
 
+  onDisconnected(listener: () => void): () => void {
+    this.on('disconnected', listener)
+    return () => this.off('disconnected', listener)
+  }
+
   async listModels(): Promise<Model[]> {
     return discoverAgentModels(this.#spec.id)
+  }
+
+  #clearTurn(toolStatus: 'completed' | 'failed' = 'failed'): void {
+    this.#finishStreamer(toolStatus)
+    this.#activeTurn = undefined
+    this.#cancelPendingApprovals()
   }
 
   /** Complete the ACP initialize handshake without creating a paid session. */
@@ -299,44 +399,119 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   }> {
     await this.#connect(workspacePath, undefined)
     const initialize = this.#initialize
+    const protocolVersion = initialize?.protocolVersion
+    const agentName = initialize?.agentInfo?.name
+    const agentVersion = initialize?.agentInfo?.version
     return {
-      ...(initialize?.protocolVersion === undefined
-        ? {}
-        : { protocolVersion: initialize.protocolVersion }),
-      ...(initialize?.agentInfo?.name ? { agentName: initialize.agentInfo.name } : {}),
-      ...(initialize?.agentInfo?.version ? { agentVersion: initialize.agentInfo.version } : {}),
+      ...(protocolVersion !== null && protocolVersion !== undefined ? { protocolVersion } : {}),
+      ...(agentName ? { agentName } : {}),
+      ...(agentVersion ? { agentVersion } : {}),
     }
   }
 
-  dispose(): void {
-    this.#rpc?.dispose()
+  dispose(): Promise<void> {
+    this.#clearTurn()
+    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#initialize = undefined
     this.#sessionId = undefined
     this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
+    this.#processStop = stopped
+    return stopped
   }
 
-  async #connect(workspacePath: string, model: string | undefined): Promise<StdioJsonRpc> {
-    const args =
-      model && this.#spec.modelArg
+  /** Restart with launch-only settings, keeping the session through `session/load`. */
+  async #applySettings(settings: AcpTurnSettings): Promise<void> {
+    if (!this.#argsFor) return
+    const next = {
+      model: settings.model ?? this.#settings.model,
+      effort: settings.effort ?? this.#settings.effort,
+    }
+    if (next.model === this.#settings.model && next.effort === this.#settings.effort) return
+    if (!this.#loadSession) {
+      throw new Error(
+        `${this.#spec.name} cannot reload this chat, so it keeps the model and effort it started with. Start a new chat to change them.`,
+      )
+    }
+    const sessionId = this.#sessionId!
+    const previous = this.#rpc
+    this.#relaunching = true
+    this.#rpc = undefined
+    this.#sessionId = undefined
+    try {
+      await previous?.dispose()
+      this.#settings = next
+      const rpc = await this.#connect(this.#workspacePath, next.model)
+      if (!this.#loadSession)
+        throw new Error(`${this.#spec.name} no longer supports session resume`)
+      await rpc.request('session/load', {
+        sessionId,
+        cwd: this.#workspacePath,
+        mcpServers: this.#mcpServers,
+      })
+      this.#sessionId = sessionId
+      this.#model = next.model
+    } catch (error) {
+      // The old process is gone. Report the session lost so it is resumed afresh.
+      await this.dispose()
+      this.emit('disconnected')
+      throw error
+    } finally {
+      this.#relaunching = false
+    }
+  }
+
+  async #connect(workspacePath: string, model: string | undefined): Promise<AcpRpc> {
+    this.#workspacePath = workspacePath
+    const args = this.#argsFor
+      ? this.#argsFor(this.#settings)
+      : model && this.#spec.modelArg
         ? [...this.#spec.args, this.#spec.modelArg, model]
         : this.#spec.args
     // A second connect (retry after a failed resume, say) must not orphan the
     // agent process the first one spawned.
-    this.#rpc?.dispose()
-    const child = this.#spawn(this.#spec.command, args, { cwd: workspacePath })
-    const rpc = new StdioJsonRpc(child, this.#spec.name)
+    await this.#rpc?.dispose()
+    const rpc = new StdioJsonRpc(
+      this.#spawn(this.#spec.command, args, {
+        cwd: workspacePath,
+        ...(this.#env ? { env: this.#env } : {}),
+      }),
+      this.#spec.name,
+      {
+        onFailure: (error) => {
+          if (this.#rpc !== rpc) return
+          this.#rpc = undefined
+          this.#sessionId = undefined
+          const turn = this.#activeTurn
+          this.#clearTurn()
+          if (turn) {
+            this.emit('event', {
+              type: 'thread.error',
+              threadId: turn.threadId,
+              message: error.message,
+            })
+            this.emit('event', { type: 'turn.completed', turnId: turn.turnId, status: 'failed' })
+          }
+          this.#processStop = Promise.resolve(rpc.dispose())
+          this.emit('disconnected')
+        },
+      },
+    )
     this.#rpc = rpc
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => this.#onNotification(method, params))
     rpc.onServerRequest((method, params, respond) => this.#onRequest(method, params, respond))
-    const init = await rpc.request<InitializeResult>('initialize', {
-      protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
-      clientInfo: { name: 'personal-harness', version: '0.0.0' },
-    })
+    const init = await rpc.request(
+      'initialize',
+      {
+        protocolVersion: PROTOCOL_VERSION,
+        clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+        clientInfo: { name: 'tastecode', version: '0.0.0' },
+      },
+      { result: InitializeResultSchema },
+    )
     this.#initialize = init
     if (init.protocolVersion !== undefined && init.protocolVersion !== PROTOCOL_VERSION) {
       this.emit(
@@ -376,9 +551,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#approval = approval ?? 'ask'
   }
 
-  #onNotification(method: string, params: unknown): void {
+  #onNotification(method: string, params: JsonRpcValue | undefined): void {
     if (method !== 'session/update') return
-    const update = (params as SessionNotification | undefined)?.update
+    const notification = SessionNotificationSchema.safeParse(params)
+    if (!notification.success) return
+    const update = notification.data.update
     if (!update) return
 
     if (update.sessionUpdate === 'usage_update') {
@@ -401,7 +578,11 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     }
   }
 
-  #onRequest(method: string, params: unknown, respond: (result: unknown) => void): void {
+  #onRequest(
+    method: string,
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+  ): void {
     if (method !== 'session/request_permission') {
       // We declared no filesystem capability, so fs/* should never arrive. If
       // one does, refusing is better than silently reading a file.
@@ -410,7 +591,17 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
 
-    const request = params as RequestPermissionParams
+    const parsed = RequestPermissionParamsSchema.safeParse(params)
+    if (!parsed.success) {
+      this.emit('log', `invalid permission request from ${this.#spec.name}`)
+      respond(null)
+      return
+    }
+    const request = parsed.data
+    if (!this.#streamer) {
+      respond({ outcome: { outcome: 'cancelled' } })
+      return
+    }
     const call = request.toolCall ?? {}
     const id = call.toolCallId ?? `approval-${Date.now()}`
     const options = request.options ?? []
@@ -465,7 +656,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
    * ones that do not run a command, and `ask` answers none.
    */
   #autoDecision(kind: string | undefined): PermissionOptionKind | undefined {
-    if (this.#approval === 'full') return 'allow_always'
+    if (this.#approval === 'full') return 'allow_once'
     // `auto` has no sandbox under ACP, so it may only wave through actions
     // that cannot mutate anything. Deletes, moves, edits and fetches stay
     // questions for the user.
@@ -479,10 +670,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     const stopReason = result.stopReason
     const status =
       stopReason === 'cancelled' ? 'interrupted' : stopReason === 'refusal' ? 'failed' : 'completed'
-    this.#finishStreamer(status === 'completed' ? 'completed' : 'failed', streamer)
+    // Finish the streamer this turn owns, never whichever one is current —
+    // a late completion must not close the next turn's open items.
+    const owned = streamer ?? this.#streamer
+    if (owned !== this.#streamer) return
+    this.#clearTurn(status === 'completed' ? 'completed' : 'failed')
     const usage = acpTurnUsage(result.usage, this.#model)
     if (usage) this.emit('event', { type: 'usage.updated', usage })
-    this.#cancelPendingApprovals()
 
     // A refused or truncated turn must not look identical to a successful
     // one — the stop reason goes to the user, not into a log nobody reads.
@@ -517,7 +711,7 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // Anything still waiting is now unanswerable — the turn it belonged to is
     // over. The agent is still blocked on its request, so it must hear
     // "cancelled", not silence; the UI must hear "resolved".
-    for (const [id, respond] of [...this.#pendingApprovals]) {
+    for (const [id, respond] of this.#pendingApprovals) {
       respond({ outcome: { outcome: 'cancelled' } })
       this.emit('event', { type: 'approval.resolved', id })
     }

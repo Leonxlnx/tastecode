@@ -732,7 +732,7 @@ function writeJsonLines(filePath: string, records: unknown[]): void {
   writeFileSync(filePath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
 }
 
-function codexTokenRecord(timestamp: string, total: Record<string, number>): unknown {
+function codexTokenRecord(timestamp: string, total: Record<string, number>) {
   return {
     timestamp,
     type: 'event_msg',
@@ -753,7 +753,7 @@ function claudeAssistantRecord(options: {
   cacheWrite5m?: number
   cacheWrite1h?: number
   output: number
-}): unknown {
+}) {
   return {
     type: 'assistant',
     uuid: `${options.id}-snapshot`,

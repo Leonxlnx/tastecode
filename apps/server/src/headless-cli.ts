@@ -10,6 +10,11 @@ export async function runHeadlessCli(
   args: string[],
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
+  if (args[0] === 'history') {
+    const { runHistoryCli } = await import('./history-cli.js')
+    await runHistoryCli(args.slice(1), env)
+    return
+  }
   const options = parseCliOptions(args, env)
   if (options.command === 'help') {
     process.stdout.write(helpText())
@@ -23,7 +28,7 @@ export async function runHeadlessCli(
     accessToken: env['HARNESS_ACCESS_TOKEN'],
   })
   installShutdownHandlers(server)
-  process.stdout.write('Harness is running without the desktop app.\n')
+  process.stdout.write('TasteCode is running without the desktop app.\n')
 }
 
 export function parseCliOptions(args: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
@@ -77,13 +82,15 @@ function installShutdownHandlers(server: { close(): Promise<void> }): void {
 }
 
 function helpText(): string {
-  return `Harness headless CLI
+  return `TasteCode headless CLI
 
 Usage:
   harness serve [--port <port>]
+  harness history --help
 
 Commands:
   serve  Run the core server without Electron or the web renderer.
+  history  Measure, export, or explicitly clean saved task history.
 
 Environment:
   HARNESS_PORT          Local control port (default: ${DEFAULT_PORT})

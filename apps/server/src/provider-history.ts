@@ -1,0 +1,461 @@
+import { createHash } from 'node:crypto'
+import { statSync } from 'node:fs'
+import path from 'node:path'
+import type {
+  DomainEvent,
+  Item,
+  ProviderHistorySession,
+  ProviderHistorySource,
+  ProviderId,
+} from '@harness/contracts'
+import { Store } from './store.js'
+import { projectHistoryItems } from './side-chat.js'
+import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+
+type Source = { provider: ProviderId; history: ProviderHistorySource }
+type Imported = {
+  provider: ProviderId
+  threadId: string
+  session: ProviderHistorySession
+  loadedRevision: string | null
+}
+
+/** Metadata is refreshed in the background; transcripts are read only when opened. */
+export class ProviderHistory {
+  #entries = new Map<string, Imported>()
+  #byThread = new Map<string, Imported>()
+  #refreshing: Promise<void> | undefined
+  #reading = new Map<string, Promise<boolean>>()
+  /** Internal sessions are never imported, so one absent copy stays absent. */
+  #internalWithoutCopy = new Set<string>()
+  #closed = false
+
+  constructor(
+    private store: Store,
+    private sources: Source[],
+    private hooks: {
+      isBusy(threadId: string): boolean
+      canImport?(): boolean
+      changed(threadIds: string[]): void
+      log(message: string): void
+    },
+  ) {
+    for (const entry of store.providerHistories()) this.#remember(entry)
+  }
+
+  #remember(entry: Imported): void {
+    const previous = this.#entries.get(`${entry.provider}:${entry.session.id}`)
+    if (previous && previous.threadId !== entry.threadId) this.#byThread.delete(previous.threadId)
+    this.#entries.set(`${entry.provider}:${entry.session.id}`, entry)
+    this.#byThread.set(entry.threadId, entry)
+  }
+
+  refresh(): Promise<void> {
+    if (this.#closed) return Promise.resolve()
+    return (this.#refreshing ??= this.#refresh().finally(() => {
+      this.#refreshing = undefined
+    }))
+  }
+
+  async #refresh(): Promise<void> {
+    await Promise.all(
+      this.sources.map(async ({ provider, history }) => {
+        try {
+          const sessions = await history.list()
+          if (this.#closed || this.hooks.canImport?.() === false) return
+          // Temporary sessions can close between scans, or disappear on restart.
+          // Their durable marker must win even before discovery has seen a row.
+          for (const entry of this.store.providerHistories()) {
+            if (entry.provider !== provider || !entry.session.internal) continue
+            this.#remember({
+              ...entry,
+              session: {
+                ...entry.session,
+                id: history.resolveSessionId?.(entry.session.id) ?? entry.session.id,
+              },
+            })
+          }
+          // Starting a provider and scanning its saved sessions can overlap. Resolve
+          // ownership only after the scan, preferring native tasks over imported copies.
+          const nativeThreads = new Map(
+            this.store.nativeProviderThreads(provider).map((thread) => {
+              const id = thread.providerSessionId ?? thread.id
+              return [history.resolveSessionId?.(id) ?? id, thread]
+            }),
+          )
+          const changed: string[] = []
+          const imported: Imported[] = []
+          const repair = new Set<string>()
+          for (const session of sessions) {
+            if (!session.internal) continue
+            const threadId = `external:${provider}:${session.id}`
+            if (this.#internalWithoutCopy.has(threadId)) continue
+            const thread = this.store.thread(threadId)
+            if (!thread) this.#internalWithoutCopy.add(threadId)
+            // Repair old read-only imports without touching native sessions or local replies.
+            else if (
+              !thread.worktreePath &&
+              !this.hooks.isBusy(threadId) &&
+              !this.store.queuedTurns(threadId).length &&
+              !this.store.localHistory(threadId).length
+            ) {
+              this.store.deleteThread(threadId)
+              this.#byThread.delete(threadId)
+              this.#internalWithoutCopy.add(threadId)
+              changed.push(threadId)
+            }
+          }
+          this.store.batchLifecycleUpdates(() => {
+            // Saved sessions share a few folders, and the store does not cache a
+            // folder that is not a project.
+            const projectFolders = new Map<string, string | undefined>()
+            let aliases: Map<string, string[]> | undefined
+            const projectFor = (folder: string) => {
+              if (projectFolders.has(folder)) return projectFolders.get(folder)
+              let project = this.store.project(folder)?.path
+              if (project === undefined) {
+                // Providers may save the same folder with another case or separator.
+                // Only the file system can say whether such a spelling is the same folder.
+                if (!aliases) {
+                  aliases = new Map()
+                  for (const { path: stored } of this.store.projects()) {
+                    const spelling = folderSpelling(stored)
+                    aliases.set(spelling, [...(aliases.get(spelling) ?? []), stored])
+                  }
+                }
+                const candidates = aliases.get(folderSpelling(folder))
+                const identity = candidates && folderIdentity(folder)
+                if (identity)
+                  project = candidates.find((candidate) => folderIdentity(candidate) === identity)
+              }
+              projectFolders.set(folder, project)
+              return project
+            }
+            for (const session of sessions) {
+              if (session.internal || !session.id) continue
+              if (!path.isAbsolute(session.workspacePath) || !Number.isFinite(session.createdAt))
+                continue
+              const native = nativeThreads.get(session.id)
+              // An isolated chat runs its provider in a private worktree, but
+              // belongs to the project it was started from.
+              const projectPath = projectFor(native?.projectPath ?? session.workspacePath)
+              if (projectPath === undefined) continue
+              const key = `${provider}:${session.id}`
+              const previous = this.#entries.get(key)
+              if (previous?.session.internal) continue
+              const duplicateId = `external:${provider}:${session.id}`
+              const duplicate = native && this.store.thread(duplicateId)
+              if (
+                duplicate &&
+                (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
+              )
+                continue
+              const repairing = Boolean(
+                duplicate &&
+                (!previous ||
+                  previous.threadId !== native?.id ||
+                  previous.loadedRevision !== session.revision ||
+                  this.store.localHistory(duplicateId).length === 0),
+              )
+              if (
+                !repairing &&
+                (!native || native.id === previous?.threadId) &&
+                previous?.session.revision === session.revision &&
+                previous.session.title === session.title
+              )
+                continue
+              // Retain a tombstone when a user deletes the local copy.
+              if (previous && !native && !this.store.thread(previous.threadId)) continue
+              const existing =
+                native ?? (previous ? this.store.thread(previous.threadId) : undefined)
+              if (existing?.ephemeral) {
+                const internal = { ...session, internal: true }
+                this.store.saveProviderHistory(provider, existing.id, internal)
+                imported.push({
+                  provider,
+                  threadId: existing.id,
+                  session: internal,
+                  loadedRevision: null,
+                })
+                continue
+              }
+              const threadId = existing?.id ?? `external:${provider}:${session.id}`
+              if (!existing) {
+                this.store.addProviderThread(threadId, provider, session, projectPath)
+                this.#internalWithoutCopy.delete(threadId)
+              } else if (
+                previous?.threadId === threadId &&
+                existing.title === previous.session.title &&
+                session.title
+              ) {
+                this.store.renameThread(threadId, session.title)
+              }
+              const entry = {
+                provider,
+                threadId,
+                session,
+                loadedRevision:
+                  !repairing && previous?.threadId === threadId ? previous.loadedRevision : null,
+              }
+              this.store.saveProviderHistory(provider, threadId, session)
+              imported.push(entry)
+              changed.push(threadId)
+              if (repairing) repair.add(threadId)
+            }
+          })
+          for (const entry of imported) this.#remember(entry)
+          if (changed.length) this.hooks.changed(changed)
+          for (const threadId of repair) await this.load(threadId)
+        } catch {
+          // Never log source content or paths from a malformed provider record.
+          this.hooks.log(`${provider} history could not be refreshed; will retry`)
+        }
+      }),
+    )
+  }
+
+  async load(threadId: string): Promise<boolean> {
+    if (this.#closed || this.hooks.isBusy(threadId)) return false
+    const pending = this.#reading.get(threadId)
+    if (pending) return pending
+    let entry = this.#byThread.get(threadId)
+    if (
+      !entry ||
+      entry.session.internal ||
+      !this.store.thread(threadId) ||
+      entry.loadedRevision === entry.session.revision
+    )
+      return false
+    const provider = entry.provider
+    const source = this.sources.find((source) => source.provider === provider)
+    if (!source) return false
+    const reading = (async () => {
+      let changed = false
+      while (entry && entry.loadedRevision !== entry.session.revision) {
+        const current = entry
+        const seq = this.store.lastSeq(threadId)
+        let local = this.store.localHistory(threadId).map(({ event }) => event)
+        const events = await source.history.read(current.session, {
+          localTurnIds: startedTurnIds(local),
+        })
+        if (
+          this.#closed ||
+          this.hooks.isBusy(threadId) ||
+          !this.store.thread(threadId) ||
+          !this.#byThread.has(threadId)
+        )
+          return changed
+        const duplicateId = `external:${provider}:${current.session.id}`
+        if (
+          duplicateId !== threadId &&
+          (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
+        )
+          return changed
+        if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
+        // A turn that finished during the read is local too; its echo must still be dropped.
+        if (this.store.lastSeq(threadId) !== seq)
+          local = this.store.localHistory(threadId).map(({ event }) => event)
+        const entries = importedEvents(events, threadId, local)
+        const duplicate =
+          duplicateId !== threadId &&
+          this.store.thread(duplicateId) !== undefined &&
+          !this.hooks.isBusy(duplicateId) &&
+          !this.store.queuedTurns(duplicateId).length
+        const duplicateLocal = duplicate
+          ? this.store.localHistory(duplicateId).map(({ event }) => event)
+          : []
+        const mirror =
+          duplicate && duplicateLocal.length === 0 && !this.store.thread(duplicateId)?.worktreePath
+        // The canonical merge records the loaded revision that stops later repairs,
+        // so a duplicate holding real replies is repaired first.
+        if (duplicate && !mirror)
+          this.store.mergeProviderHistory(
+            duplicateId,
+            current.session.revision,
+            importedEvents(events, duplicateId, [...local, ...duplicateLocal]),
+          )
+        changed =
+          this.store.mergeProviderHistory(threadId, current.session.revision, entries) || changed
+        current.loadedRevision = current.session.revision
+        if (duplicate) {
+          // Only remove a read-only mirror after its real outside turns have been
+          // imported successfully. Replies written in the duplicate remain intact.
+          if (mirror) this.store.deleteThread(duplicateId)
+          this.hooks.changed([threadId, duplicateId])
+        }
+        entry = this.#byThread.get(threadId)
+      }
+      return changed
+    })().finally(() => {
+      this.#reading.delete(threadId)
+    })
+    this.#reading.set(threadId, reading)
+    return reading
+  }
+
+  async close(): Promise<void> {
+    this.#closed = true
+    await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
+    await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
+  }
+}
+
+function folderSpelling(folder: string): string {
+  return path.resolve(folder).toLowerCase()
+}
+
+/** Same device and file id; a missing folder has none. */
+function folderIdentity(folder: string): string | undefined {
+  try {
+    const stat = statSync(folder, { bigint: true })
+    return stat.ino === 0n ? undefined : `${stat.dev}:${stat.ino}`
+  } catch {
+    return undefined
+  }
+}
+
+function startedTurnIds(events: DomainEvent[]): Set<string> {
+  return new Set(events.flatMap((event) => (event.type === 'turn.started' ? [event.turn.id] : [])))
+}
+
+function turnId(event: DomainEvent): string | undefined {
+  if (event.type === 'turn.started') return event.turn.id
+  if (event.type === 'item.started' || event.type === 'item.completed') return event.item.turnId
+  return 'turnId' in event ? event.turnId : undefined
+}
+
+export function importedEvents(
+  events: DomainEvent[],
+  threadId: string,
+  local: DomainEvent[],
+): Array<{ key: string; event: DomainEvent }> {
+  const finalItems = new Map(
+    projectHistoryItems(events.map((event, seq) => ({ seq, event }))).map((item) => [
+      item.id,
+      item,
+    ]),
+  )
+  const seenItems = new Set<string>()
+  events = events.flatMap((event): DomainEvent[] => {
+    const id =
+      event.type === 'item.started' || event.type === 'item.completed'
+        ? event.item.id
+        : event.type === 'item.delta'
+          ? event.itemId
+          : undefined
+    if (!id) return [event]
+    if (seenItems.has(id)) return []
+    seenItems.add(id)
+    const item = finalItems.get(id)
+    return item ? [{ type: 'item.completed', item }] : []
+  })
+  // A queued prompt keeps its enqueue time for display, but the provider saw it
+  // when its turn started; either moment can be the native row's time.
+  const localTurnStarts = new Map(
+    local.flatMap((event) =>
+      event.type === 'turn.started' ? [[event.turn.id, event.turn.createdAt] as const] : [],
+    ),
+  )
+  const localTurns = new Set(localTurnStarts.keys())
+  const users = local.flatMap((event) =>
+    (event.type === 'item.completed' || event.type === 'item.started') && event.item.role === 'user'
+      ? [event.item]
+      : [],
+  )
+  const echoed = new Set<string>()
+  for (const event of events) {
+    const id = turnId(event)
+    if (!id) continue
+    if (localTurns.has(id)) echoed.add(id)
+  }
+  const candidates = events
+    .flatMap((event) => {
+      if (
+        (event.type !== 'item.completed' && event.type !== 'item.started') ||
+        event.item.role !== 'user' ||
+        echoed.has(event.item.turnId)
+      )
+        return []
+      const native = event.item
+      return users.flatMap((item) => {
+        if (echoed.has(item.turnId) || !sameUserMessage(item, native)) return []
+        const started = localTurnStarts.get(item.turnId)
+        const distance = Math.min(
+          Math.abs(item.createdAt - native.createdAt),
+          started === undefined ? Infinity : Math.abs(started - native.createdAt),
+        )
+        return distance < 60_000 ? [{ local: item.turnId, native: native.turnId, distance }] : []
+      })
+    })
+    .sort((a, b) => a.distance - b.distance)
+  const matched = new Set<string>()
+  for (const candidate of candidates) {
+    if (matched.has(candidate.local) || echoed.has(candidate.native)) continue
+    matched.add(candidate.local)
+    echoed.add(candidate.native)
+  }
+  const result = new Map<string, DomainEvent>()
+  const usageCounts = new Map<string, number>()
+  let currentTurn = ''
+  for (const event of events) {
+    const id = turnId(event)
+    if (id) currentTurn = id
+    if (echoed.has(id ?? currentTurn) && event.type !== 'thread.started') continue
+    // Historical permission requests must never become actionable approvals.
+    if (
+      event.type.startsWith('approval.') ||
+      event.type.startsWith('user_input.') ||
+      event.type === 'thread.error'
+    )
+      continue
+    let mapped: DomainEvent = event
+    if (event.type === 'thread.started')
+      mapped = { ...event, thread: { ...event.thread, id: threadId } }
+    else if (event.type === 'turn.started')
+      mapped = { ...event, turn: { ...event.turn, id: `import:${event.turn.id}`, threadId } }
+    else if (event.type === 'item.completed' || event.type === 'item.started')
+      mapped = {
+        type: 'item.completed',
+        item: {
+          ...event.item,
+          id: `import:${event.item.id}`,
+          turnId: `import:${event.item.turnId}`,
+        },
+      }
+    else if (event.type === 'item.delta')
+      mapped = { ...event, turnId: `import:${event.turnId}`, itemId: `import:${event.itemId}` }
+    else if ('turnId' in event) mapped = { ...event, turnId: `import:${event.turnId}` }
+    const key =
+      mapped.type === 'usage.updated'
+        ? `usage:${currentTurn}:${usageCounts.get(currentTurn) ?? 0}`
+        : mapped.type === 'thread.started'
+          ? 'thread'
+          : mapped.type === 'turn.started'
+            ? `start:${mapped.turn.id}`
+            : mapped.type === 'item.completed' || mapped.type === 'item.started'
+              ? `item:${mapped.item.id}`
+              : 'turnId' in mapped
+                ? `${mapped.type}:${mapped.turnId}`
+                : `${mapped.type}:${createHash('sha256').update(JSON.stringify(mapped)).digest('hex')}`
+    result.set(key, mapped)
+    if (mapped.type === 'usage.updated')
+      usageCounts.set(currentTurn, (usageCounts.get(currentTurn) ?? 0) + 1)
+  }
+  return [...result].map(([key, event]) => ({ key, event }))
+}
+
+function sameUserMessage(left: Item, right: Item): boolean {
+  let text = right.text
+  if (text?.startsWith(RESTORE_CONTEXT_NOTICE)) text = text.slice(RESTORE_CONTEXT_NOTICE.length)
+  // Native logs contain our Design follow-up envelope; local history keeps only
+  // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
+  if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {
+    const marker = '\n\nUser request:\n'
+    const start = text.indexOf(marker)
+    if (start !== -1) text = text.slice(start + marker.length)
+  }
+  return (
+    (left.text === right.text || left.text === text) &&
+    JSON.stringify(left.attachments ?? []) === JSON.stringify(right.attachments ?? [])
+  )
+}

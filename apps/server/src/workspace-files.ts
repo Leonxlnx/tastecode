@@ -1,9 +1,13 @@
-import { open, readdir, realpath, stat } from 'node:fs/promises'
+import { stat as callbackStat, type Dirent } from 'node:fs'
+import { open, opendir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
+const WORKSPACE_ENTRY_COLLATOR = new Intl.Collator(undefined, { numeric: true })
+const MAX_SEARCH_ENTRIES = 20_000
+const MAX_SEARCH_DEPTH = 32
 
 export type WorkspaceFileEntry = {
   name: string
@@ -35,38 +39,124 @@ export async function listWorkspaceDirectory(
   const directory = await containedRealPath(workspace, relativeDirectory)
   if (!(await stat(directory)).isDirectory()) throw new Error('path must be a directory')
 
+  const protocolDirectory = toProtocolPath(path.relative(workspace, directory))
   const children = await readdir(directory, { withFileTypes: true })
-  const entries = (
-    await Promise.all(
-      children.map(async (entry): Promise<WorkspaceFileEntry | undefined> => {
-        if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) return undefined
-        const absolute = path.join(directory, entry.name)
-        try {
-          const metadata = await stat(absolute)
-          const relative = toProtocolPath(path.relative(workspace, absolute))
-          return {
-            name: entry.name,
-            path: relative,
-            kind: entry.isDirectory() ? 'directory' : 'file',
-            size: metadata.size,
-            modifiedAt: metadata.mtimeMs,
-            restricted: relative.split('/').some(isSecretWorkspaceName),
-          }
-        } catch {
-          // A watcher, build or package manager may replace entries while the
-          // directory is being read. One disappearing child is not a failed tree.
-          return undefined
-        }
-      }),
-    )
-  )
-    .filter((entry): entry is WorkspaceFileEntry => entry !== undefined)
-    .sort((left, right) => {
-      if (left.kind !== right.kind) return left.kind === 'directory' ? -1 : 1
-      return left.name.localeCompare(right.name, undefined, { numeric: true })
-    })
+  const entries = await workspaceEntries(protocolDirectory, directory, children)
 
-  return { path: toProtocolPath(path.relative(workspace, directory)), entries }
+  return { path: protocolDirectory, entries }
+}
+
+/** Breadth-first search keeps unopened folders discoverable without an unbounded tree walk. */
+export async function searchWorkspaceFiles(
+  workspacePath: string,
+  query: string,
+  limit = 200,
+): Promise<{ entries: WorkspaceFileEntry[]; truncated: boolean }> {
+  const workspace = await realpath(workspacePath)
+  const needle = query.trim().toLowerCase()
+  const directories = [{ relative: '', depth: 0 }]
+  const entries: WorkspaceFileEntry[] = []
+  let visited = 0
+  let truncated = false
+
+  walk: for (const { relative, depth } of directories) {
+    try {
+      const directory = await containedRealPath(workspace, relative)
+      const protocolDirectory = toProtocolPath(path.relative(workspace, directory))
+      // Streaming entries bounds memory even when one directory alone exceeds the budget.
+      const children = await opendir(directory)
+      for await (const child of children) {
+        visited += 1
+        if (!child.isSymbolicLink() && (child.isDirectory() || child.isFile())) {
+          const relativeChild = path.join(protocolDirectory, child.name)
+          if (toProtocolPath(relativeChild).toLowerCase().includes(needle)) {
+            entries.push(...(await workspaceEntries(protocolDirectory, directory, [child])))
+          }
+          if (child.isDirectory()) {
+            if (depth < MAX_SEARCH_DEPTH) {
+              directories.push({ relative: relativeChild, depth: depth + 1 })
+            } else {
+              truncated = true
+            }
+          }
+        }
+        if (entries.length >= limit || visited >= MAX_SEARCH_ENTRIES) {
+          truncated = true
+          break walk
+        }
+      }
+    } catch (error) {
+      if (!relative) throw error
+      // A removed, unreadable or replaced directory must not hide other matches.
+      truncated = true
+    }
+  }
+
+  return { entries: entries.sort(compareWorkspaceEntries), truncated }
+}
+
+/** Queue every stat for maximum file-system throughput without one promise per child. */
+function workspaceEntries(
+  protocolDirectory: string,
+  directory: string,
+  children: Dirent[],
+): Promise<WorkspaceFileEntry[]> {
+  return new Promise((resolve) => {
+    const entries: Array<WorkspaceFileEntry | undefined> = []
+    entries.length = children.length
+    const absoluteDirectory = directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`
+    const directoryRestricted = protocolDirectory.split('/').some(isSecretWorkspaceName)
+    let entryCount = 0
+    let pending = 0
+    let queued = true
+    const finish = () => {
+      if (queued || pending > 0) return
+      const completeEntries =
+        entryCount === entries.length
+          ? (entries as WorkspaceFileEntry[])
+          : entries.filter((entry): entry is WorkspaceFileEntry => entry !== undefined)
+      resolve(completeEntries.sort(compareWorkspaceEntries))
+    }
+
+    for (let index = 0; index < children.length; index += 1) {
+      const entry = children[index]!
+      if (entry.isSymbolicLink() || (!entry.isDirectory() && !entry.isFile())) continue
+      const absolute = `${absoluteDirectory}${entry.name}`
+      const relative = protocolDirectory ? `${protocolDirectory}/${entry.name}` : entry.name
+      const kind = entry.isDirectory() ? 'directory' : 'file'
+      const restricted = directoryRestricted || isSecretWorkspaceName(entry.name)
+      pending += 1
+      try {
+        callbackStat(absolute, (error, metadata) => {
+          pending -= 1
+          if (!error) {
+            entries[index] = {
+              name: entry.name,
+              path: relative,
+              kind,
+              size: metadata.size,
+              modifiedAt: metadata.mtimeMs,
+              restricted,
+            }
+            entryCount += 1
+          }
+          finish()
+        })
+      } catch {
+        pending -= 1
+      }
+    }
+    queued = false
+    finish()
+  })
+}
+
+export function compareWorkspaceEntries(
+  left: WorkspaceFileEntry,
+  right: WorkspaceFileEntry,
+): number {
+  if (left.kind !== right.kind) return left.kind === 'directory' ? -1 : 1
+  return WORKSPACE_ENTRY_COLLATOR.compare(left.name, right.name)
 }
 
 /** Reads at most two MiB of one public UTF-8 workspace file. */
@@ -98,12 +188,12 @@ export async function readWorkspaceTextFile(
     size: metadata.size,
     binary,
     truncated: metadata.size > bytesRead,
-    ...(binary ? {} : { content: bytes.toString('utf8') }),
+    ...(!binary ? { content: bytes.toString('utf8') } : {}),
   }
 }
 
 async function containedRealPath(workspace: string, relativePath: string): Promise<string> {
-  if (typeof relativePath !== 'string' || relativePath.includes('\0')) {
+  if (relativePath.includes('\0')) {
     throw new Error('workspace path must be a string')
   }
   if (path.isAbsolute(relativePath)) throw new Error('workspace path must be relative')

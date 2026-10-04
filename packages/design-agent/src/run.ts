@@ -1,3 +1,4 @@
+import { boundedInteger, member, record, string } from './parse.js'
 export const DESIGN_PHASES = [
   'brief',
   'brand',
@@ -103,30 +104,10 @@ function optionalError(value: unknown): DesignRunState['error'] {
   }
 }
 
-function record(value: unknown, field: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${field} must be an object`)
-  }
-  return value as Record<string, unknown>
-}
-
-function string(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim() === '') {
-    throw new Error(`${field} must be a non-empty string`)
-  }
-  return value
-}
-
 function count(value: unknown, field: string): number {
-  if (!Number.isInteger(value) || (value as number) < 0) {
+  const result = boundedInteger(value, 0, Number.MAX_SAFE_INTEGER)
+  if (result === undefined) {
     throw new Error(`${field} must be a non-negative integer`)
   }
-  return value as number
-}
-
-function member<T extends string>(value: unknown, values: readonly T[], field: string): T {
-  if (typeof value !== 'string' || !values.includes(value as T)) {
-    throw new Error(`${field} must be one of ${values.join(', ')}`)
-  }
-  return value as T
+  return result
 }

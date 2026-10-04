@@ -1,0 +1,105 @@
+.rollback {
+  max-width: 520px;
+}
+
+.rollback__intro {
+  margin: 3px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+.rollback__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 3px;
+}
+
+.rollback__checkpoint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 7px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--r-popup-item);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.rollback__checkpoint:hover,
+.rollback__checkpoint:focus-visible,
+.rollback__checkpoint.is-selected {
+  background: var(--menu-hover);
+  border-color: var(--chrome-border);
+  box-shadow: var(--chrome-shadow);
+  color: var(--text);
+  outline: 0;
+}
+
+.rollback__checkpoint > span:not(.spinner) {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rollback__checkpoint strong,
+.rollback__checkpoint small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rollback__checkpoint strong {
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.rollback__checkpoint small {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.rollback__confirm {
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+}
+
+.rollback__confirm p {
+  margin: 0;
+}
+
+.rollback__confirm ul {
+  max-height: 120px;
+  overflow-y: auto;
+  margin: 8px 0;
+  padding-left: 24px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+}
+
+.rollback__safe {
+  margin-top: 8px !important;
+  color: var(--text-3);
+}
+
+.rollback__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 14px;
+}

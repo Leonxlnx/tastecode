@@ -1,0 +1,130 @@
+.composer__dictation-options {
+  display: grid;
+  grid-template-columns: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-columns var(--dur-slow) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out),
+    visibility var(--dur-slow);
+}
+
+.composer__dictation-options[data-hidden] {
+  grid-template-columns: 0fr;
+  opacity: 0;
+  visibility: hidden;
+}
+
+.composer__dictation-options-clip {
+  min-width: 0;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer__dictation-options {
+    transition: opacity var(--dur-press) var(--ease-out);
+  }
+}
+
+.composer-voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.composer-voice-bar__track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  overflow: hidden;
+}
+
+.composer-voice-bar__duration {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.composer-voice-bar__button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-circle);
+  cursor: pointer;
+}
+
+.composer-voice-bar__button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.composer-voice-bar__button--stop {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.composer-voice-bar__button--stop:hover:not(:disabled) {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.composer-voice-bar__button--submit {
+  background: var(--light);
+  color: var(--on-light);
+}
+
+.composer__voice-error {
+  max-width: var(--chat-w);
+  margin: 5px auto 0;
+  padding: 0 12px;
+  color: var(--error);
+  font-size: var(--t-xs);
+  line-height: 1.4;
+}
+
+.composer-voice-bar.is-idle {
+  flex: none;
+}
+
+.composer-voice-bar [hidden] {
+  display: none;
+}
+
+.composer-voice-wave {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color: #fff;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.composer-voice-bar.is-transcribing .composer-voice-wave {
+  opacity: 0.4;
+}
+
+.composer-voice-bar__button {
+  transition:
+    transform var(--dur-press) var(--ease-out),
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.composer-voice-bar__button:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-voice-bar__button:active:not(:disabled) {
+    transform: none;
+  }
+}

@@ -11,9 +11,11 @@ export function isCursorSignedIn(output: string): boolean {
   return !/not authenticated|not logged in/i.test(output) && /authenticated|logged in/i.test(output)
 }
 
+export type CursorLogin = { loginId: string; cancel: () => Promise<void> }
+
 export function startCursorLogin(
   onComplete: (result: { loginId: string; success: boolean; error: string | null }) => void,
-): { loginId: string; cancel: () => void } {
+): CursorLogin {
   const loginId = crypto.randomUUID()
   const child = spawnCli('cursor-agent', ['login'])
   // Nothing reads these pipes; an undrained pipe blocks the CLI once it has
@@ -26,11 +28,13 @@ export function startCursorLogin(
     if (settled) return
     settled = true
     clearTimeout(deadline)
-    onComplete({ loginId, success, error })
+    void killTree(child).then(
+      () => onComplete({ loginId, success, error }),
+      () => onComplete({ loginId, success: false, error: 'Cursor sign-in could not stop.' }),
+    )
   }
   const deadline = setTimeout(
     () => {
-      killTree(child)
       finish(false, 'Cursor sign-in timed out.')
     },
     10 * 60 * 1000,

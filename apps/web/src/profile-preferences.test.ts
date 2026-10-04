@@ -2,7 +2,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   PROFILE_IMAGE_MAX_BYTES,
-  profileInitials,
   readProfileIdentityPreferences,
   readProfileImage,
   writeProfileIdentityPreferences,
@@ -11,12 +10,10 @@ import {
 afterEach(() => localStorage.clear())
 
 describe('profile preferences', () => {
-  it('persists a bounded local identity and derives stable initials', () => {
+  it('persists a bounded local identity', () => {
     writeProfileIdentityPreferences({ displayName: '  Blue Emi  ', avatarDataUrl: undefined })
 
     expect(readProfileIdentityPreferences()).toEqual({ displayName: 'Blue Emi' })
-    expect(profileInitials('Blue Emi')).toBe('BE')
-    expect(profileInitials('Codex')).toBe('CO')
   })
 
   it('accepts signed raster images and rejects unsafe or oversized files', async () => {

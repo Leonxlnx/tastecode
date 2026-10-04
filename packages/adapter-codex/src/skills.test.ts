@@ -49,4 +49,43 @@ describe('Codex skills inventory', () => {
       errors: [{ path: brokenPath, message: 'invalid frontmatter' }],
     })
   })
+
+  it('keeps skills without a description so the inventory still names them', () => {
+    const cwd = path.resolve('repo')
+    const skillPath = path.join(cwd, '.agents', 'skills', 'animate', 'SKILL.md')
+    expect(
+      mapSkillList(
+        {
+          data: [
+            {
+              cwd,
+              skills: [
+                {
+                  name: 'animate',
+                  path: skillPath,
+                  scope: 'user',
+                  enabled: true,
+                },
+              ],
+              errors: [],
+            },
+          ],
+        },
+        cwd,
+      ),
+    ).toEqual({
+      skills: [
+        {
+          id: skillPath,
+          name: 'animate',
+          description: '',
+          source: { type: 'folder', path: path.dirname(skillPath) },
+          scope: 'user',
+          enabled: true,
+          dependencyErrors: [],
+        },
+      ],
+      errors: [],
+    })
+  })
 })

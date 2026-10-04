@@ -1,15 +1,31 @@
-import { EventEmitter } from 'node:events'
+import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MAX_CONSECUTIVE_FAILURES, restartDelayMs, ServerSupervisor } from './server-supervisor.js'
+import {
+  MAX_CONSECUTIVE_FAILURES,
+  SERVER_SHUTDOWN_TIMEOUT_MS,
+  restartDelayMs,
+  ServerSupervisor,
+  type SupervisedServerProcess,
+} from './server-supervisor.js'
 
-class FakeChild extends EventEmitter {
-  readonly stdout = new PassThrough()
-  readonly stderr = new PassThrough()
-  killed = false
-  kill(): boolean {
-    this.killed = true
+class FakeChild extends ChildProcess {
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+  wasKilled = false
+  override kill(): boolean {
+    this.wasKilled = true
     return true
+  }
+}
+
+function supervised(child: FakeChild): SupervisedServerProcess {
+  return {
+    stdout: child.stdout,
+    stderr: child.stderr,
+    kill: () => child.kill(),
+    onError: (listener) => child.on('error', (error) => listener(error)),
+    onExit: (listener) => child.on('exit', listener),
   }
 }
 
@@ -37,11 +53,11 @@ describe('ServerSupervisor', () => {
       env: {},
       onLog: (line) => logs.push(line),
       onGaveUp: gaveUp,
-      spawnFn: (() => {
+      spawnFn: () => {
         const child = new FakeChild()
         children.push(child)
         return child
-      }) as never,
+      },
     })
     return { sup, children, logs, gaveUp }
   }
@@ -84,9 +100,29 @@ describe('ServerSupervisor', () => {
     }
     expect(gaveUp).toHaveBeenCalledOnce()
     expect(children.length).toBe(MAX_CONSECUTIVE_FAILURES + 1)
+    expect(sup.gaveUp).toBe(true)
   })
 
-  it('stop kills the child and cancels any pending restart', () => {
+  it('restarts only on request after giving up, with a fresh backoff', () => {
+    const { sup, children } = supervisor()
+    expect(sup.restart()).toBe(false)
+    sup.start()
+    expect(sup.restart()).toBe(false)
+    for (let round = 0; round <= MAX_CONSECUTIVE_FAILURES; round++) {
+      children[children.length - 1]!.emit('exit', 1, null)
+      vi.advanceTimersByTime(15_000)
+    }
+    const beforeRestart = children.length
+
+    expect(sup.restart()).toBe(true)
+    expect(sup.gaveUp).toBe(false)
+    expect(children).toHaveLength(beforeRestart + 1)
+    children.at(-1)!.emit('exit', 1, null)
+    vi.advanceTimersByTime(500)
+    expect(children).toHaveLength(beforeRestart + 2)
+  })
+
+  it('stop kills a child with no IPC channel and cancels any pending restart', async () => {
     const { sup, children } = supervisor()
     sup.start()
     children[0]!.emit('exit', 1, null)
@@ -96,8 +132,8 @@ describe('ServerSupervisor', () => {
 
     const again = supervisor()
     again.sup.start()
-    again.sup.stop()
-    expect(again.children[0]!.killed).toBe(true)
+    await again.sup.stop()
+    expect(again.children[0]!.wasKilled).toBe(true)
     again.children[0]!.emit('exit', null, 'SIGTERM')
     vi.advanceTimersByTime(60_000)
     expect(again.children).toHaveLength(1)
@@ -124,5 +160,101 @@ describe('ServerSupervisor', () => {
     sup.start()
     children[0]!.stdout.write('listening on 4311\npartial')
     expect(logs).toContain('listening on 4311')
+    expect(logs).not.toContain('partial')
+  })
+
+  it('joins a line the pipe split across chunks and flushes the rest at end', () => {
+    const { sup, children, logs } = supervisor()
+    sup.start()
+    children[0]!.stdout.write('[server] listen')
+    children[0]!.stdout.write('ing on http://127.0.0.1:4311\r\ntail')
+    expect(logs).toEqual(['[server] listening on http://127.0.0.1:4311'])
+    children[0]!.stdout.end()
+    return vi.waitFor(() => expect(logs).toContain('tail'))
+  })
+
+  it('supervises an Electron utility-process launcher', () => {
+    const children: FakeChild[] = []
+    const logs: string[] = []
+    const launch = vi.fn(() => {
+      const child = new FakeChild()
+      children.push(child)
+      return supervised(child)
+    })
+    const sup = new ServerSupervisor({ launch, onLog: (line) => logs.push(line) })
+
+    sup.start()
+    children[0]!.stdout.write('listening on 4311\n')
+    expect(logs).toContain('listening on 4311')
+
+    children[0]!.emit('exit', 1, null)
+    vi.advanceTimersByTime(500)
+    expect(launch).toHaveBeenCalledTimes(2)
+
+    sup.stop()
+    expect(children[1]!.wasKilled).toBe(true)
+  })
+
+  it('waits for a graceful utility-process exit without killing or restarting it', async () => {
+    const child = new FakeChild()
+    const requestShutdown = vi.fn()
+    const launch = vi.fn(() => ({ ...supervised(child), requestShutdown }))
+    const sup = new ServerSupervisor({ launch, onLog: vi.fn() })
+    sup.start()
+    const stopped = sup.stop()
+    expect(sup.stop()).toBe(stopped)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(requestShutdown).toHaveBeenCalledOnce()
+    expect(child.wasKilled).toBe(false)
+    child.emit('exit', 0, null)
+    await stopped
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(child.wasKilled).toBe(false)
+    expect(launch).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('force-kills a server that ignores the shutdown request after a short deadline', async () => {
+    const child = new FakeChild()
+    const requestShutdown = vi.fn(() => new Promise<void>(() => {}))
+    const sup = new ServerSupervisor({
+      launch: () => ({ ...supervised(child), requestShutdown }),
+      onLog: vi.fn(),
+    })
+    sup.start()
+    const stopped = sup.stop()
+    await vi.advanceTimersByTimeAsync(SERVER_SHUTDOWN_TIMEOUT_MS - 1)
+    expect(child.wasKilled).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await stopped
+    expect(child.wasKilled).toBe(true)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('sends shutdown over the legacy child IPC channel', async () => {
+    const child = new FakeChild()
+    child.connected = true
+    child.send = vi.fn((_message, callback) => {
+      callback?.(null)
+      return true
+    }) as typeof child.send
+    const spawnFn = vi.fn(() => child)
+    const sup = new ServerSupervisor({
+      command: 'node',
+      args: ['server.js'],
+      env: {},
+      spawnFn,
+      onLog: vi.fn(),
+    })
+    sup.start()
+    expect(spawnFn.mock.calls[0]![2]).toMatchObject({
+      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+    })
+    const stopped = sup.stop()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(child.send).toHaveBeenCalledWith({ type: 'harness:shutdown' }, expect.any(Function))
+    child.emit('exit', 0, null)
+    await stopped
+    expect(child.wasKilled).toBe(false)
   })
 })

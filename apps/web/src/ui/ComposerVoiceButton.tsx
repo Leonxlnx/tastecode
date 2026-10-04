@@ -1,4 +1,5 @@
-import { LoaderCircle, Mic } from 'lucide-react'
+import { IconLoader2 as LoaderCircle, IconMicrophone as Mic } from '@tabler/icons-react'
+import { IconMorph } from './IconMorph.js'
 
 export function ComposerVoiceButton(props: {
   disabled?: boolean
@@ -21,11 +22,10 @@ export function ComposerVoiceButton(props: {
       aria-label={label}
       onClick={props.onClick}
     >
-      {props.isTranscribing ? (
-        <LoaderCircle className="spinner" size={15} aria-hidden />
-      ) : (
+      <IconMorph active={props.isTranscribing ? 1 : 0}>
         <Mic size={15} aria-hidden />
-      )}
+        <LoaderCircle className="spinner" size={15} aria-hidden />
+      </IconMorph>
     </button>
   )
 }

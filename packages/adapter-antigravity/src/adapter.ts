@@ -1,9 +1,11 @@
 import { EventEmitter } from 'node:events'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson } from '@harness/proc'
+import { killTree, spawnOwned, readNdjson } from '@harness/proc'
+import { captureCli } from '@harness/proc/cli'
+import { z } from 'zod'
 import {
   collapseAntigravityModels,
   getAntigravityIndex,
@@ -107,25 +109,34 @@ export function antigravityCommand(): string {
   return existsSync(installed) ? installed : 'agy.exe'
 }
 
-type AgyFrame = {
-  event?: string
-  conversation_id?: string
-  step_update?: {
-    state?: string
-    step_type?: string
-    text_delta?: string
-    usage?: AgyUsage
-  }
-  result?: { conversation_id?: string; status?: string; response?: string; usage?: AgyUsage }
-}
+const AgyUsageSchema = z.object({
+  input_tokens: z.number().optional(),
+  output_tokens: z.number().optional(),
+  thinking_tokens: z.number().optional(),
+  cache_read_tokens: z.number().optional(),
+  total_tokens: z.number().optional(),
+})
 
-type AgyUsage = {
-  input_tokens?: number
-  output_tokens?: number
-  thinking_tokens?: number
-  cache_read_tokens?: number
-  total_tokens?: number
-}
+const AgyFrameSchema = z.object({
+  event: z.string().optional(),
+  conversation_id: z.string().optional(),
+  step_update: z
+    .object({
+      state: z.string().optional(),
+      step_type: z.string().optional(),
+      text_delta: z.string().optional(),
+      usage: AgyUsageSchema.optional(),
+    })
+    .optional(),
+  result: z
+    .object({
+      conversation_id: z.string().optional(),
+      status: z.string().optional(),
+      response: z.string().optional(),
+      usage: AgyUsageSchema.optional(),
+    })
+    .optional(),
+})
 
 export type AntigravityAdapterEvents = {
   event: [DomainEvent]
@@ -139,6 +150,7 @@ type SpawnFn = (
 ) => ChildProcessWithoutNullStreams
 
 export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
+  #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: SpawnFn
   #workspacePath = ''
   #options: AntigravityStartOptions = {}
@@ -154,7 +166,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawn
+    this.#spawn = options.spawn ?? spawnOwned
   }
 
   get capabilities(): Capabilities {
@@ -205,7 +217,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below —
     // its exit handler must also not clobber the new child's reference.
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) await this.#stop(this.#child)
     const child = this.#spawn(antigravityCommand(), args, {
       cwd: this.#workspacePath,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -226,7 +238,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     readNdjson(
       child.stdout,
       (value) => {
-        const frame = value as AgyFrame
+        const frame = AgyFrameSchema.parse(value)
         if (frame.event === 'init' && frame.conversation_id) {
           this.#conversationId = frame.conversation_id
           return
@@ -276,7 +288,11 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
             this.emit('event', {
               type: 'usage.updated',
               usage: {
-                ...(this.#options.model ? { model: this.#options.model } : {}),
+                ...(this.#options.model
+                  ? {
+                      model: this.#options.model,
+                    }
+                  : {}),
                 inputTokens: usage.input_tokens ?? 0,
                 cachedInputTokens: usage.cache_read_tokens ?? 0,
                 outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
@@ -298,12 +314,18 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
         }
       },
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
+      {
+        onError: (error) => {
+          this.emit('event', { type: 'thread.error', threadId, message: error.message })
+          void killTree(child)
+        },
+      },
     )
 
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (this.#child === child) this.#child = undefined
       if (this.#intentionalKills.has(child)) return
       // An exit without a result frame would otherwise look like a hang.
@@ -329,7 +351,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
   }
 
   async interrupt(): Promise<void> {
-    if (this.#child) this.#stop(this.#child)
+    if (this.#child) await this.#stop(this.#child)
   }
 
   /**
@@ -343,46 +365,29 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    * through helpers that keep it open.
    */
   async listModels(): Promise<Model[]> {
-    return new Promise((resolve, reject) => {
-      const child = this.#spawn(antigravityCommand(), ['models'], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        windowsHide: true,
-      })
-      let stdout = ''
-      let settled = false
-      const finish = (result: Model[] | Error) => {
-        if (settled) return
-        settled = true
-        clearTimeout(timer)
-        result instanceof Error ? reject(result) : resolve(result)
-      }
-      const timer = setTimeout(() => {
-        killTree(child)
-        finish(new Error('Antigravity model discovery timed out'))
-      }, 15000)
-      child.stdout.setEncoding('utf8')
-      child.stdout.on('data', (chunk: string) => (stdout += chunk))
-      child.on('error', (error) => finish(error))
-      child.on('exit', (code) =>
-        finish(
-          code === 0
-            ? parseAntigravityModels(stdout)
-            : new Error('Antigravity model discovery failed'),
-        ),
-      )
-      child.stdin.on('error', () => undefined)
-      child.stdin.end()
+    const child = this.#spawn(antigravityCommand(), ['models'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     })
+    const captured = captureCli(child, 15_000)
+    child.stdin.on('error', () => undefined)
+    child.stdin.end()
+    const result = await captured
+    if (result.code !== 0) throw new Error('Antigravity model discovery failed')
+    return parseAntigravityModels(result.stdout)
   }
 
-  dispose(): void {
-    if (this.#child) this.#stop(this.#child)
+  dispose(): Promise<void> {
+    const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
+    this.#processStop = stopped
+    return stopped
   }
 
-  #stop(child: ChildProcessWithoutNullStreams): void {
+  #stop(child: ChildProcessWithoutNullStreams): Promise<void> {
     this.#intentionalKills.add(child)
-    killTree(child)
+    this.#processStop = killTree(child)
+    return this.#processStop
   }
 }
 

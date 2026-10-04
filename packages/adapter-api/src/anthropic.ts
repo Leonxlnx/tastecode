@@ -1,8 +1,14 @@
+import { serializeContextRequest } from './context-budget.js'
 import { ModelEndpointSchema, type Model } from '@harness/contracts'
+import {
+  type JsonObject,
+  jsonNumber as number,
+  jsonObject as object,
+  parseJsonValue,
+  jsonString as string,
+} from './json.js'
 import type { ApiMessage, ApiStreamEvent, ApiTool, ApiTransport } from './runtime.js'
 import { httpError, serverSentEvents } from './sse.js'
-
-type JsonObject = Record<string, unknown>
 
 export type AnthropicOptions = {
   apiKey: string
@@ -16,17 +22,20 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
   const maxTokens = options.maxTokens ?? 8192
   if (!Number.isInteger(maxTokens) || maxTokens < 1) throw new Error('maxTokens must be positive')
 
-  return async function* ({ model, messages, tools, signal }) {
+  return async function* ({ model, messages, tools, signal, contextBudgetBytes }) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: headers(apiKey, true),
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        messages: toMessages(messages),
-        tools: tools.map(toTool),
-        stream: true,
-      }),
+      body: serializeContextRequest(
+        {
+          model,
+          max_tokens: maxTokens,
+          messages: toMessages(messages),
+          tools: tools.map(toTool),
+          stream: true,
+        },
+        contextBudgetBytes,
+      ),
       signal,
     })
     if (!response.ok) throw new Error(await httpError('Anthropic', response, [apiKey]))
@@ -68,7 +77,7 @@ export function createAnthropicMessagesTransport(options: AnthropicOptions): Api
         const block = blocks.get(index) ?? {}
         if (block.type === 'tool_use') {
           const input = json.get(index)
-          block.input = input ? JSON.parse(input) : (block.input ?? {})
+          block.input = input ? parseJsonValue(input) : (block.input ?? {})
           yield {
             type: 'tool_call',
             call: {
@@ -129,7 +138,7 @@ export async function listAnthropicModels(
   while (true) {
     const response = await fetch(endpoint, { headers: headers(apiKey) })
     if (!response.ok) throw new Error(`Anthropic model listing failed with HTTP ${response.status}`)
-    const body = object(await response.json())
+    const body = object(parseJsonValue(await response.text()))
     if (Array.isArray(body.data)) {
       for (const entry of body.data.map(object)) {
         const id = string(entry.id)
@@ -196,12 +205,13 @@ function toTool(tool: ApiTool): JsonObject {
   return { name: tool.name, description: tool.description, input_schema: tool.inputSchema }
 }
 
-function headers(apiKey: string, json = false): Record<string, string> {
-  return {
+function headers(apiKey: string, json = false): Headers {
+  const result = new Headers({
     'x-api-key': apiKey,
     'anthropic-version': '2023-06-01',
-    ...(json ? { 'content-type': 'application/json' } : {}),
-  }
+  })
+  if (json) result.set('content-type', 'application/json')
+  return result
 }
 
 function endpointFor(baseUrl = 'https://api.anthropic.com/v1', path: string): URL {
@@ -212,16 +222,4 @@ function endpointFor(baseUrl = 'https://api.anthropic.com/v1', path: string): UR
 function requiredKey(value: string): string {
   if (!value.trim()) throw new Error('Anthropic API key is required')
   return value
-}
-
-function object(value: unknown): JsonObject {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as JsonObject) : {}
-}
-
-function string(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function number(value: unknown): number {
-  return typeof value === 'number' ? value : 0
 }

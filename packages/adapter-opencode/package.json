@@ -19,7 +19,8 @@
   "dependencies": {
     "@harness/contracts": "workspace:*",
     "@harness/proc": "workspace:*",
-    "@opencode-ai/sdk": "1.18.11"
+    "@opencode-ai/sdk": "1.18.11",
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",

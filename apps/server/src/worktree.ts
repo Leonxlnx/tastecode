@@ -2,6 +2,8 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
+import { z } from 'zod'
+import { listWorkspaceBranches } from './workspace.js'
 
 const run = promisify(execFile)
 
@@ -23,6 +25,11 @@ export type Worktree = {
   branch: string
   /** The repository it belongs to. */
   repoPath: string
+  /**
+   * The selected project folder inside the checkout. Differs from `path` when
+   * the project is a subfolder of its repository.
+   */
+  workPath?: string
 }
 
 export class NotARepository extends Error {
@@ -58,8 +65,12 @@ export async function createWorktree(
   repoPath: string,
   threadId: string,
   root: string,
+  baseRef?: string,
 ): Promise<Worktree> {
   if (!(await isRepository(repoPath))) throw new NotARepository(repoPath)
+  if (baseRef !== undefined && !(await listWorkspaceBranches(repoPath)).includes(baseRef)) {
+    throw new Error(`unknown local branch: ${baseRef}`)
+  }
 
   const branch = `harness/${short(threadId)}`
   const target = path.join(root, short(threadId))
@@ -69,10 +80,22 @@ export async function createWorktree(
   // worktrees whose directory is already gone.
   await git(repoPath, ['worktree', 'prune'])
 
-  const result = await gitOrThrow(repoPath, ['worktree', 'add', '-b', branch, target, 'HEAD'])
+  const result = await gitOrThrow(repoPath, [
+    'worktree',
+    'add',
+    '-b',
+    branch,
+    target,
+    baseRef === undefined ? 'HEAD' : `refs/heads/${baseRef}`,
+  ])
   if (result instanceof Error) throw result
 
-  return { path: target, branch, repoPath }
+  // A project opened at a repository subfolder keeps that scope in its
+  // checkout. A folder the commit does not contain falls back to the root.
+  const prefix = (await git(repoPath, ['rev-parse', '--show-prefix'])) ?? ''
+  const nested = prefix ? path.join(target, ...prefix.split('/').filter(Boolean)) : target
+  const workPath = existsSync(nested) ? nested : target
+  return { path: target, branch, repoPath, workPath }
 }
 
 /**
@@ -155,7 +178,8 @@ async function gitOrThrow(cwd: string, args: string[]): Promise<string | Error> 
     const { stdout } = await run('git', args, { cwd, windowsHide: true, timeout: 30000 })
     return stdout.trim()
   } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr
+    const parsed = z.object({ stderr: z.string().optional() }).safeParse(error)
+    const stderr = parsed.success ? parsed.data.stderr : undefined
     return new Error(stderr?.trim() || (error instanceof Error ? error.message : String(error)))
   }
 }

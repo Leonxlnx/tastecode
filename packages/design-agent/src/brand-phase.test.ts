@@ -69,6 +69,8 @@ describe('brand phase', () => {
 
   it('locks supplied identity before filling open brand decisions', () => {
     const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('Animate new websites by default')
+    expect(prompt).toContain('Do not turn missing material into an invented requirement')
     expect(prompt).toContain('explicit user requirements')
     expect(prompt).toContain('Never replace a supplied logo, color, typeface')
     expect(prompt).toContain('Fill every supplied decision into its final destination')
@@ -77,10 +79,47 @@ describe('brand phase', () => {
     expect(prompt).toContain('The only valid locked role keys are canvas, surface, surfaceAlt')
     expect(prompt).toContain('Leave locked empty when no exact color is supplied')
     expect(prompt).toContain('Treat 60/30/10 only as loose composition guidance')
+    expect(prompt).toContain('Use one primary typeface family')
+    expect(prompt).toContain('spacing rhythm, content widths, section density')
+    expect(prompt).toContain("project's established icon system")
+    expect(prompt).toContain('Make motionDirection operational')
+    expect(prompt).toContain('Return each motionDirection.principles entry as one string')
+    expect(prompt).toContain('Do not apply the same fade-up to every section')
+    expect(prompt).toContain('including monumental type or monospace when present')
+    expect(prompt).toContain(
+      'Preserve rules, panels, card edges and dividers visible in the reference',
+    )
+    expect(prompt).toContain('Derive card padding, radius, surface depth')
+    expect(prompt).toContain('primary action, focus and selected states')
+    expect(prompt).toContain('prefer relevant supplied, generated, or properly sourced photographs')
   })
 
   it('parses fenced provider output through the brand validator', () => {
     expect(parseBrandPhaseOutput(`\`\`\`json\n${JSON.stringify(brand)}\n\`\`\``)).toEqual(brand)
+  })
+
+  it('normalizes structured motion principles into the persisted string format', () => {
+    const parsed = parseBrandPhaseOutput(
+      JSON.stringify({
+        ...brand,
+        motionDirection: {
+          ...brand.motionDirection,
+          principles: [
+            {
+              purpose: 'Confirm navigation state changes',
+              trigger: 'A route becomes active',
+              affectedRelationship: 'The active link and destination view',
+              timingRange: '160-220ms',
+              easingCharacter: 'Strong ease-out',
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(parsed.motionDirection.principles).toEqual([
+      'purpose: Confirm navigation state changes; trigger: A route becomes active; affected relationship: The active link and destination view; timing range: 160-220ms; easing character: Strong ease-out',
+    ])
   })
 
   it('turns a compact palette recipe into verified semantic color records', () => {
@@ -108,5 +147,33 @@ describe('brand phase', () => {
         usage: expect.stringContaining('Sparse accent.'),
       }),
     )
+  })
+
+  it.each(['IBM Plex Mono', 'Archivo', 'Archivo Narrow'])(
+    'preserves the reference or brand typeface %s',
+    (family) => {
+      expect(
+        parseBrandPhaseOutput(
+          JSON.stringify({
+            ...brand,
+            typefaces: [{ ...brand.typefaces[0], family }],
+          }),
+        ),
+      ).toMatchObject({ typefaces: [{ family }] })
+    },
+  )
+
+  it('rejects more than two typeface families', () => {
+    expect(() =>
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...brand,
+          typefaces: ['Geist', 'Newsreader', 'Inter'].map((family) => ({
+            ...brand.typefaces[0],
+            family,
+          })),
+        }),
+      ),
+    ).toThrow('at most two typeface families')
   })
 })

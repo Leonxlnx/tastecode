@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type {
+  JsonValue,
   PullRequestAccount,
   PullRequestAction,
   PullRequestActionResult,
@@ -16,7 +17,10 @@ import type {
   PullRequestReviewThread,
   PullRequestReviewer,
 } from '@harness/contracts'
-import { isInstalled, killTree, spawnCli } from '@harness/proc'
+import { isInstalled, spawnCli } from '@harness/proc/cli'
+import { killTree } from '@harness/proc/kill'
+import { z } from 'zod'
+import { PullRequestImageService } from './pull-request-images.js'
 
 const runFile = promisify(execFile)
 const LIST_TTL_MS = 30_000
@@ -32,11 +36,31 @@ const METADATA_OPTIONS_LIMIT = 1_000
 const FILES_PAGE_SIZE = 30
 const REVIEW_THREAD_LIMIT = 500
 const DEFAULT_OUTPUT_LIMIT = 32 * 1024 * 1024
+const DETAIL_CACHE_LIMIT = 16
+const FILES_CACHE_LIMIT = 12
+const METADATA_OPTIONS_CACHE_LIMIT = 8
+const REPOSITORY_CACHE_LIMIT = 64
+const REVIEW_THREADS_CACHE_LIMIT = 16
+const PULL_REQUEST_TEXT_COLLATOR = new Intl.Collator(undefined, { sensitivity: 'base' })
+
+export type GitHubSetupAction = 'install' | 'login'
+
+/** Fixed server-owned commands keep PR setup interactive without exposing a shell RPC. */
+export function githubSetupCommand(
+  action: GitHubSetupAction,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (action === 'login') return 'gh auth login'
+  if (platform === 'darwin') return 'brew install gh'
+  if (platform === 'win32') return 'winget install --id GitHub.cli'
+  throw new Error('GitHub CLI installation is not scripted on this platform')
+}
 
 type GhRunOptions = {
   stdin?: string
   timeoutMs?: number
   maxBytes?: number
+  encoding?: 'utf8' | 'base64'
 }
 
 export type GhRunner = (args: string[], options?: GhRunOptions) => Promise<string>
@@ -46,6 +70,38 @@ type Cache<T> = {
   value: T
 }
 
+function readCache<T>(cache: Map<string, Cache<T>>, key: string, now: number): T | undefined {
+  const entry = cache.get(key)
+  if (!entry) return undefined
+  if (entry.expiresAt <= now) {
+    cache.delete(key)
+    return undefined
+  }
+  // Map insertion order is the LRU order. A hit becomes the newest entry.
+  cache.delete(key)
+  cache.set(key, entry)
+  return entry.value
+}
+
+function writeCache<T>(
+  cache: Map<string, Cache<T>>,
+  key: string,
+  entry: Cache<T>,
+  limit: number,
+  now: number,
+): void {
+  cache.delete(key)
+  cache.set(key, entry)
+  for (const [cachedKey, cached] of cache) {
+    if (cached.expiresAt <= now) cache.delete(cachedKey)
+  }
+  while (cache.size > limit) {
+    const oldest = cache.keys().next().value
+    if (oldest === undefined) break
+    cache.delete(oldest)
+  }
+}
+
 type MetadataSource<T> = {
   items: T[]
   truncated: boolean
@@ -53,169 +109,235 @@ type MetadataSource<T> = {
 }
 
 type ReviewThreadsResult = {
-  threads: RawReviewThread[]
+  threads: ParsedRawReviewThread[]
   truncated: boolean
+  unavailable?: true
 }
 
 type ApiMutation = {
   method: 'POST' | 'PATCH' | 'DELETE'
   endpoint: string
-  input?: Record<string, unknown>
+  input?: Record<string, JsonValue>
 }
 
 type UpdateMetadataAction = Extract<PullRequestAction, { type: 'update_metadata' }>
 
 type PullRequestSearch = 'authored' | 'review-requested' | 'reviewed'
 
-type RawActor = {
-  login?: string | null
-  name?: string | null
-  slug?: string | null
-  is_bot?: boolean
-  type?: string
-}
+const RawActorSchema = z.object({
+  login: z.string().nullable().optional(),
+  name: z.string().nullable().optional(),
+  slug: z.string().nullable().optional(),
+  is_bot: z.boolean().optional(),
+  type: z.string().optional(),
+  __typename: z.string().optional(),
+})
+const RawMetadataLabelSchema = z.object({
+  name: z.string().optional(),
+  color: z.string().optional(),
+  description: z.string().nullable().optional(),
+})
+const RawMetadataMilestoneSchema = z.object({
+  number: z.number().optional(),
+  title: z.string().optional(),
+})
+const RawMetadataBranchSchema = z.object({ name: z.string().optional() })
+const RawCheckSchema = z.object({
+  __typename: z.enum(['CheckRun', 'StatusContext']).optional(),
+  name: z.string().optional(),
+  context: z.string().optional(),
+  workflowName: z.string().optional(),
+  status: z.string().optional(),
+  conclusion: z.string().nullable().optional(),
+  state: z.string().optional(),
+  detailsUrl: z.string().optional(),
+  targetUrl: z.string().optional(),
+  startedAt: z.string().nullable().optional(),
+  completedAt: z.string().nullable().optional(),
+})
+const RawCommentSchema = z.object({
+  id: z.string().optional(),
+  databaseId: z.number().nullable().optional(),
+  author: RawActorSchema.nullable().optional(),
+  body: z.string().optional(),
+  createdAt: z.string().optional(),
+  updatedAt: z.string().nullable().optional(),
+  url: z.string().optional(),
+})
+const RawReviewSchema = z.object({
+  id: z.string().optional(),
+  author: RawActorSchema.nullable().optional(),
+  body: z.string().optional(),
+  state: z.string().optional(),
+  submittedAt: z.string().nullable().optional(),
+})
+const RawSearchNodeSchema = z.object({
+  id: z.string(),
+  number: z.number(),
+  title: z.string(),
+  url: z.string(),
+  state: z.string(),
+  isDraft: z.boolean(),
+  updatedAt: z.string(),
+  additions: z.number(),
+  deletions: z.number(),
+  comments: z.object({ totalCount: z.number().optional() }).optional(),
+  author: RawActorSchema.nullable().optional(),
+  repository: z.object({ nameWithOwner: z.string().optional() }).optional(),
+  headRefName: z.string().optional(),
+  baseRefName: z.string().optional(),
+  reviewDecision: z.string().nullable().optional(),
+  mergeStateStatus: z.string().nullable().optional(),
+})
+const RawSearchCliItemSchema = z.object({
+  id: z.string().optional(),
+  number: z.number().optional(),
+  title: z.string().optional(),
+  url: z.string().optional(),
+  state: z.string().optional(),
+  isDraft: z.boolean().optional(),
+  updatedAt: z.string().optional(),
+  commentsCount: z.number().optional(),
+  author: RawActorSchema.nullable().optional(),
+  repository: z.object({ nameWithOwner: z.string().optional() }).optional(),
+})
+const RawSearchPageSchema = z.object({
+  data: z
+    .object({
+      search: z
+        .object({
+          nodes: z.array(RawSearchNodeSchema.nullable()).optional(),
+          pageInfo: z
+            .object({
+              hasNextPage: z.boolean().optional(),
+              endCursor: z.string().nullable().optional(),
+            })
+            .optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+})
+const RawPullRequestSchema = RawSearchNodeSchema.omit({ comments: true }).extend({
+  body: z.string().optional(),
+  createdAt: z.string().optional(),
+  closedAt: z.string().nullable().optional(),
+  mergedAt: z.string().nullable().optional(),
+  headRefOid: z.string().optional(),
+  baseRefOid: z.string().optional(),
+  changedFiles: z.number().optional(),
+  mergeable: z.string().optional(),
+  maintainerCanModify: z.boolean().optional(),
+  autoMergeRequest: z
+    .object({
+      mergeMethod: z.string().optional(),
+      enabledAt: z.string().nullable().optional(),
+      enabledBy: RawActorSchema.nullable().optional(),
+    })
+    .nullable()
+    .optional(),
+  reviewRequests: z.array(RawActorSchema).optional(),
+  assignees: z.array(RawActorSchema).optional(),
+  labels: z
+    .array(z.object({ name: z.string().optional(), color: z.string().optional() }))
+    .optional(),
+  milestone: z.object({ title: z.string().optional() }).nullable().optional(),
+  statusCheckRollup: z.array(RawCheckSchema).optional(),
+  comments: z.array(RawCommentSchema).optional(),
+  reviews: z.array(RawReviewSchema).optional(),
+})
+const RawReviewThreadSchema = z.object({
+  id: z.string().optional(),
+  isResolved: z.boolean().optional(),
+  isOutdated: z.boolean().optional(),
+  path: z.string().optional(),
+  line: z.number().nullable().optional(),
+  startLine: z.number().nullable().optional(),
+  originalLine: z.number().nullable().optional(),
+  originalStartLine: z.number().nullable().optional(),
+  diffSide: z.string().nullable().optional(),
+  startDiffSide: z.string().nullable().optional(),
+  comments: z
+    .object({
+      totalCount: z.number().optional(),
+      nodes: z.array(RawCommentSchema).optional(),
+    })
+    .optional(),
+})
+const RawRepositorySchema = z.object({
+  allow_merge_commit: z.boolean().optional(),
+  allow_rebase_merge: z.boolean().optional(),
+  allow_squash_merge: z.boolean().optional(),
+  delete_branch_on_merge: z.boolean().optional(),
+  permissions: z
+    .object({
+      admin: z.boolean().optional(),
+      push: z.boolean().optional(),
+      maintain: z.boolean().optional(),
+    })
+    .optional(),
+})
+const ReviewThreadPageSchema = z.object({
+  data: z
+    .object({
+      repository: z
+        .object({
+          pullRequest: z
+            .object({
+              reviewThreads: z
+                .object({
+                  nodes: z.array(RawReviewThreadSchema.nullable()).optional(),
+                  pageInfo: z
+                    .object({
+                      hasNextPage: z.boolean().optional(),
+                      endCursor: z.string().nullable().optional(),
+                    })
+                    .optional(),
+                })
+                .optional(),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .optional(),
+})
+const RawFileSchema = z.object({
+  sha: z.string().optional(),
+  filename: z.string().optional(),
+  previous_filename: z.string().optional(),
+  status: z.string().optional(),
+  additions: z.number().optional(),
+  deletions: z.number().optional(),
+  changes: z.number().optional(),
+  patch: z.string().optional(),
+  blob_url: z.string().optional(),
+})
+const AccountSchema = z.object({ login: z.string().optional() })
+const CheckRunSchema = z.object({
+  bucket: z.string().optional(),
+  link: z.string().optional(),
+})
 
-type RawMetadataLabel = { name?: string; color?: string; description?: string | null }
-type RawMetadataMilestone = { number?: number; title?: string }
-type RawMetadataBranch = { name?: string }
-
-type RawSearchNode = {
-  id: string
-  number: number
-  title: string
-  url: string
-  state: string
-  isDraft: boolean
-  updatedAt: string
-  additions: number
-  deletions: number
-  comments?: { totalCount?: number }
-  author?: RawActor | null
-  repository?: { nameWithOwner?: string }
-  headRefName?: string
-  baseRefName?: string
-  reviewDecision?: string | null
-  mergeStateStatus?: string | null
-}
-
-type RawSearchCliItem = {
-  id?: string
-  number?: number
-  title?: string
-  url?: string
-  state?: string
-  isDraft?: boolean
-  updatedAt?: string
-  commentsCount?: number
-  author?: RawActor | null
-  repository?: { nameWithOwner?: string }
-}
-
-type RawSearchPage = {
-  data?: {
-    search?: {
-      nodes?: Array<RawSearchNode | null>
-      pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
-    }
-  }
-}
-
-type RawPullRequest = Omit<RawSearchNode, 'comments'> & {
-  body?: string
-  createdAt?: string
-  closedAt?: string | null
-  mergedAt?: string | null
-  headRefOid?: string
-  baseRefOid?: string
-  changedFiles?: number
-  mergeable?: string
-  maintainerCanModify?: boolean
-  autoMergeRequest?: {
-    mergeMethod?: string
-    enabledAt?: string | null
-    enabledBy?: RawActor | null
-  } | null
-  reviewRequests?: RawActor[]
-  assignees?: RawActor[]
-  labels?: Array<{ name?: string; color?: string }>
-  milestone?: { title?: string } | null
-  statusCheckRollup?: RawCheck[]
-  comments?: RawComment[]
-  reviews?: RawReview[]
-}
-
-type RawCheck = {
-  __typename?: 'CheckRun' | 'StatusContext'
-  name?: string
-  context?: string
-  workflowName?: string
-  status?: string
-  conclusion?: string | null
-  state?: string
-  detailsUrl?: string
-  targetUrl?: string
-  startedAt?: string | null
-  completedAt?: string | null
-}
-
-type RawComment = {
-  id?: string
-  databaseId?: number | null
-  author?: RawActor | null
-  body?: string
-  createdAt?: string
-  updatedAt?: string | null
-  url?: string
-}
-
-type RawReview = {
-  id?: string
-  author?: RawActor | null
-  body?: string
-  state?: string
-  submittedAt?: string
-}
-
-type RawReviewThread = {
-  id?: string
-  isResolved?: boolean
-  isOutdated?: boolean
-  path?: string
-  line?: number | null
-  startLine?: number | null
-  originalLine?: number | null
-  originalStartLine?: number | null
-  diffSide?: string | null
-  startDiffSide?: string | null
-  comments?: { nodes?: RawComment[] }
-}
-
-type RawRepository = {
-  allow_merge_commit?: boolean
-  allow_rebase_merge?: boolean
-  allow_squash_merge?: boolean
-  delete_branch_on_merge?: boolean
-  permissions?: { admin?: boolean; push?: boolean; maintain?: boolean }
-}
-
-type ReviewThreadPage = {
-  data?: {
-    repository?: {
-      pullRequest?: {
-        reviewThreads?: {
-          nodes?: Array<RawReviewThread | null>
-          pageInfo?: { hasNextPage?: boolean; endCursor?: string | null }
-        }
-      } | null
-    } | null
-  }
-}
+type ParsedRawActor = z.infer<typeof RawActorSchema>
+type ParsedRawMetadataLabel = z.infer<typeof RawMetadataLabelSchema>
+type ParsedRawMetadataMilestone = z.infer<typeof RawMetadataMilestoneSchema>
+type ParsedRawSearchNode = z.infer<typeof RawSearchNodeSchema>
+type ParsedRawSearchCliItem = z.infer<typeof RawSearchCliItemSchema>
+type ParsedRawPullRequest = z.infer<typeof RawPullRequestSchema>
+type ParsedRawCheck = z.infer<typeof RawCheckSchema>
+type ParsedRawComment = z.infer<typeof RawCommentSchema>
+type ParsedRawReview = z.infer<typeof RawReviewSchema>
+type ParsedRawReviewThread = z.infer<typeof RawReviewThreadSchema>
+type ParsedRawRepository = z.infer<typeof RawRepositorySchema>
 
 const SEARCH_QUERY =
   'query($q:String!,$cursor:String){search(query:$q,type:ISSUE,first:100,after:$cursor){nodes{... on PullRequest{id number title url state isDraft updatedAt additions deletions comments{totalCount} author{login} repository{nameWithOwner} headRefName baseRefName reviewDecision mergeStateStatus}}pageInfo{hasNextPage endCursor}}}'
 
 const REVIEW_THREADS_QUERY =
-  'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide comments(first:100){nodes{id databaseId body createdAt updatedAt url author{login}}}}pageInfo{hasNextPage endCursor}}}}}'
+  'query($owner:String!,$name:String!,$number:Int!,$cursor:String){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100,after:$cursor){nodes{id isResolved isOutdated path line startLine originalLine originalStartLine diffSide startDiffSide comments(first:100){totalCount nodes{id databaseId body createdAt updatedAt url author{login}}}}pageInfo{hasNextPage endCursor}}}}}'
 
 const PULL_REQUEST_FIELDS = [
   'additions',
@@ -269,6 +391,7 @@ const PULL_REQUEST_SEARCH_FIELDS = [
  * the token; neither its token nor GitHub response headers cross into the UI.
  */
 export class PullRequestService {
+  readonly images: PullRequestImageService
   readonly #run: GhRunner
   readonly #installed: () => Promise<boolean>
   readonly #now: () => number
@@ -279,14 +402,14 @@ export class PullRequestService {
   #detailCache = new Map<string, Cache<PullRequestDetail>>()
   #filesCache = new Map<string, Cache<PullRequestFilesResult>>()
   #metadataOptionsCache = new Map<string, Cache<PullRequestMetadataOptions>>()
-  #repositoryCache = new Map<string, Cache<RawRepository>>()
+  #repositoryCache = new Map<string, Cache<ParsedRawRepository>>()
   #reviewThreadsCache = new Map<string, Cache<ReviewThreadsResult>>()
   #projectCache: (Cache<Map<string, string>> & { projectKey: string }) | undefined
   #listInFlight: { projectKey: string; promise: Promise<PullRequestListResult> } | undefined
   #detailInFlight = new Map<string, Promise<PullRequestDetail>>()
   #filesInFlight = new Map<string, Promise<PullRequestFilesResult>>()
   #metadataOptionsInFlight = new Map<string, Promise<PullRequestMetadataOptions>>()
-  #repositoryInFlight = new Map<string, Promise<RawRepository>>()
+  #repositoryInFlight = new Map<string, Promise<ParsedRawRepository>>()
   #reviewThreadsInFlight = new Map<string, Promise<ReviewThreadsResult>>()
 
   constructor(
@@ -301,6 +424,7 @@ export class PullRequestService {
     this.#installed = options.installed ?? (() => isInstalled('gh'))
     this.#now = options.now ?? Date.now
     this.#resolveProjects = options.resolveProjects ?? resolveProjectRepositories
+    this.images = new PullRequestImageService(this.#run, this.#now)
   }
 
   async list(projectPaths: readonly string[], refresh = false): Promise<PullRequestListResult> {
@@ -329,14 +453,32 @@ export class PullRequestService {
     refresh = false,
   ): Promise<PullRequestDetail> {
     const key = targetKey(repository, number)
-    const cached = this.#detailCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#detailCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#detailInFlight.get(key)
     if (existing) return existing
 
-    const pending = this.#loadDetail(repository, number, projectPaths, refresh).finally(() => {
-      if (this.#detailInFlight.get(key) === pending) this.#detailInFlight.delete(key)
-    })
+    const pending = this.#loadDetail(repository, number, projectPaths, refresh)
+      .then((value) => {
+        if (this.#detailInFlight.get(key) !== pending) {
+          throw new Error('Pull request changed while loading. Refresh and try again.')
+        }
+        this.#invalidateFiles(key)
+        // A detail missing its conversations retries them on the next open.
+        if (value.reviewThreadsUnavailable) return value
+        const now = this.#now()
+        writeCache(
+          this.#detailCache,
+          key,
+          { value, expiresAt: now + DETAIL_TTL_MS },
+          DETAIL_CACHE_LIMIT,
+          now,
+        )
+        return value
+      })
+      .finally(() => {
+        if (this.#detailInFlight.get(key) === pending) this.#detailInFlight.delete(key)
+      })
     this.#detailInFlight.set(key, pending)
     return pending
   }
@@ -344,26 +486,43 @@ export class PullRequestService {
   async files(
     repository: string,
     number: number,
+    comparison: Pick<PullRequestFilesResult, 'headRefOid' | 'baseRefOid'>,
     page = 1,
     refresh = false,
   ): Promise<PullRequestFilesResult> {
-    const key = `${targetKey(repository, number)}:${page}`
-    const cached = this.#filesCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const key = `${targetKey(repository, number)}:${comparison.headRefOid}:${comparison.baseRefOid}:${page}`
+    const cached = refresh ? undefined : readCache(this.#filesCache, key, this.#now())
+    if (cached) return cached
+    if (refresh) this.#invalidateFiles(targetKey(repository, number))
     const existing = this.#filesInFlight.get(key)
     if (existing) return existing
 
-    const pending = this.#loadFiles(repository, number, page).finally(() => {
-      if (this.#filesInFlight.get(key) === pending) this.#filesInFlight.delete(key)
-    })
+    const pending = this.#loadFiles(repository, number, comparison, page)
+      .then((value) => {
+        if (this.#filesInFlight.get(key) !== pending) {
+          throw new Error('Pull request comparison changed while loading. Refresh and try again.')
+        }
+        const now = this.#now()
+        writeCache(
+          this.#filesCache,
+          key,
+          { value, expiresAt: now + FILES_TTL_MS },
+          FILES_CACHE_LIMIT,
+          now,
+        )
+        return value
+      })
+      .finally(() => {
+        if (this.#filesInFlight.get(key) === pending) this.#filesInFlight.delete(key)
+      })
     this.#filesInFlight.set(key, pending)
     return pending
   }
 
   async metadataOptions(repository: string, refresh = false): Promise<PullRequestMetadataOptions> {
     const key = repository.toLowerCase()
-    const cached = this.#metadataOptionsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#metadataOptionsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#metadataOptionsInFlight.get(key)
     if (existing) return existing
 
@@ -393,15 +552,17 @@ export class PullRequestService {
         break
 
       case 'review': {
-        const flag =
+        const event =
           action.verdict === 'approve'
-            ? '--approve'
+            ? 'APPROVE'
             : action.verdict === 'request_changes'
-              ? '--request-changes'
-              : '--comment'
-        const args = ['pr', 'review', url, flag]
-        if (action.body) args.push('--body-file', '-')
-        await this.#run(args, action.body ? { stdin: action.body } : undefined)
+              ? 'REQUEST_CHANGES'
+              : 'COMMENT'
+        await runApiMutation(this.#run, 'POST', `repos/${repository}/pulls/${number}/reviews`, {
+          event,
+          body: action.body,
+          commit_id: action.commitId,
+        })
         message =
           action.verdict === 'approve'
             ? 'Review approved'
@@ -532,19 +693,30 @@ export class PullRequestService {
         break
 
       case 'merge':
-        await this.#run([
-          'pr',
-          'merge',
-          url,
-          `--${action.method}`,
-          ...(action.deleteBranch ? ['--delete-branch'] : []),
-        ])
-        message = 'Pull request merged'
-        break
-
       case 'enable_auto_merge':
-        await this.#run(['pr', 'merge', url, '--auto', `--${action.method}`])
-        message = 'Auto-merge enabled'
+        try {
+          await this.#run([
+            'pr',
+            'merge',
+            url,
+            ...(action.type === 'enable_auto_merge' ? ['--auto'] : []),
+            `--${action.method}`,
+            '--match-head-commit',
+            action.expectedHeadOid,
+            ...(action.type === 'merge' && action.deleteBranch ? ['--delete-branch'] : []),
+          ])
+        } catch (cause) {
+          if (
+            cause instanceof Error &&
+            /head.*(?:match|changed|modified|moved)|(?:commit|sha).*mismatch/i.test(cause.message)
+          ) {
+            throw new Error(
+              'The pull request head changed since you reviewed it. Review the latest commits before merging.',
+            )
+          }
+          throw cause
+        }
+        message = action.type === 'merge' ? 'Pull request merged' : 'Auto-merge enabled'
         break
 
       case 'disable_auto_merge':
@@ -562,21 +734,22 @@ export class PullRequestService {
     const [reviewerSource, assigneeSource, labelSource, milestoneSource, branchSource] =
       await Promise.all([
         optionalMetadataSource(
-          this.#loadMetadataPages<RawActor>(endpoint('collaborators?per_page=100')),
+          this.#loadMetadataPages(endpoint('collaborators?per_page=100'), RawActorSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawActor>(endpoint('assignees?per_page=100')),
+          this.#loadMetadataPages(endpoint('assignees?per_page=100'), RawActorSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataLabel>(endpoint('labels?per_page=100')),
+          this.#loadMetadataPages(endpoint('labels?per_page=100'), RawMetadataLabelSchema),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataMilestone>(
+          this.#loadMetadataPages(
             endpoint('milestones?state=open&per_page=100'),
+            RawMetadataMilestoneSchema,
           ),
         ),
         optionalMetadataSource(
-          this.#loadMetadataPages<RawMetadataBranch>(endpoint('branches?per_page=100')),
+          this.#loadMetadataPages(endpoint('branches?per_page=100'), RawMetadataBranchSchema),
         ),
       ])
     const unavailable: PullRequestMetadataOptions['unavailable'] = []
@@ -592,27 +765,37 @@ export class PullRequestService {
       labels: uniqueMetadataLabels(labelSource.items),
       milestones: uniqueMetadataMilestones(milestoneSource.items),
       baseBranches: uniqueStrings(branchSource.items.flatMap((branch) => branch.name ?? [])).sort(
-        compareText,
+        comparePullRequestText,
       ),
       unavailable,
       truncated: [reviewerSource, assigneeSource, labelSource, milestoneSource, branchSource].some(
         (source) => source.truncated,
       ),
     }
-    this.#metadataOptionsCache.set(repository.toLowerCase(), {
-      value,
-      expiresAt: this.#now() + METADATA_OPTIONS_TTL_MS,
-    })
+    const now = this.#now()
+    writeCache(
+      this.#metadataOptionsCache,
+      repository.toLowerCase(),
+      { value, expiresAt: now + METADATA_OPTIONS_TTL_MS },
+      METADATA_OPTIONS_CACHE_LIMIT,
+      now,
+    )
     return value
   }
 
-  async #loadMetadataPages<T>(endpoint: string): Promise<{ items: T[]; truncated: boolean }> {
+  async #loadMetadataPages<T>(
+    endpoint: string,
+    itemSchema: z.ZodType<T>,
+  ): Promise<{ items: T[]; truncated: boolean }> {
     const output = await this.#run(['api', endpoint, '--paginate', '--slurp'], {
       maxBytes: 16 * 1024 * 1024,
     })
-    const pages = parseJson<unknown>(output, `metadata options from ${endpoint}`)
-    if (!Array.isArray(pages)) throw new Error('GitHub returned invalid metadata options')
-    const items = pages.flatMap((page) => (Array.isArray(page) ? (page as T[]) : []))
+    const pages = parseJson(
+      output,
+      `metadata options from ${endpoint}`,
+      z.array(z.array(itemSchema)),
+    )
+    const items = pages.flat()
     return {
       items: items.slice(0, METADATA_OPTIONS_LIMIT),
       truncated: items.length > METADATA_OPTIONS_LIMIT,
@@ -698,19 +881,26 @@ export class PullRequestService {
         this.#cachedReviewThreads(repository, number, refresh),
         this.#projects(projectPaths, refresh),
       ])
-    const raw = parseJson<RawPullRequest>(pullRequestOutput, 'pull-request detail')
+    const raw = parseJson(pullRequestOutput, 'pull-request detail', RawPullRequestSchema)
     const repo = repositoryOutput
     const viewerLogin = account.login ?? ''
     const relationship: PullRequestListItem['relationship'] =
       actor(raw.author).login.toLowerCase() === viewerLogin.toLowerCase() ? 'authored' : 'reviewing'
-    const comments = (raw.comments ?? [])
+    const allComments = raw.comments ?? []
+    const comments = allComments
       .slice(-100)
       .map((comment) => normalizeComment(comment, viewerLogin))
-    const reviews = (raw.reviews ?? [])
-      .slice(-100)
-      .map((review) => normalizeReview(review, viewerLogin))
-    const requestedReviewers = (raw.reviewRequests ?? []).map(actor)
-    const reviewers = mergeReviewers(requestedReviewers, reviews)
+    // A pending review is the viewer's unsubmitted draft and has no submission time.
+    const allReviews = (raw.reviews ?? []).flatMap((review) =>
+      review.submittedAt ? [normalizeReview(review, viewerLogin)] : [],
+    )
+    const reviews = allReviews.slice(-100)
+    const owner = repository.split('/')[0] ?? ''
+    const requestedReviewers = (raw.reviewRequests ?? []).map((request) =>
+      reviewRequestActor(request, owner),
+    )
+    // Reviewer state must see reviews older than the displayed tail too.
+    const reviewers = mergeReviewers(requestedReviewers, allReviews)
     const localProjectPath = projects.get(repository.toLowerCase())
     const listItem = normalizeListItem(
       {
@@ -723,13 +913,29 @@ export class PullRequestService {
         updatedAt: raw.updatedAt,
         additions: raw.additions,
         deletions: raw.deletions,
-        comments: { totalCount: comments.length },
+        comments: { totalCount: allComments.length },
         repository: { nameWithOwner: repository },
-        ...(raw.author === undefined ? {} : { author: raw.author }),
-        ...(raw.headRefName === undefined ? {} : { headRefName: raw.headRefName }),
-        ...(raw.baseRefName === undefined ? {} : { baseRefName: raw.baseRefName }),
-        ...(raw.reviewDecision === undefined ? {} : { reviewDecision: raw.reviewDecision }),
-        ...(raw.mergeStateStatus === undefined ? {} : { mergeStateStatus: raw.mergeStateStatus }),
+        ...(!(raw.author === undefined) ? { author: raw.author } : {}),
+        ...(!(raw.headRefName === undefined)
+          ? {
+              headRefName: raw.headRefName,
+            }
+          : {}),
+        ...(!(raw.baseRefName === undefined)
+          ? {
+              baseRefName: raw.baseRefName,
+            }
+          : {}),
+        ...(!(raw.reviewDecision === undefined)
+          ? {
+              reviewDecision: raw.reviewDecision,
+            }
+          : {}),
+        ...(!(raw.mergeStateStatus === undefined)
+          ? {
+              mergeStateStatus: raw.mergeStateStatus,
+            }
+          : {}),
       },
       relationship,
     )
@@ -746,7 +952,7 @@ export class PullRequestService {
       changedFiles: raw.changedFiles ?? 0,
       mergeable: normalizeMergeable(raw.mergeable),
       maintainerCanModify: raw.maintainerCanModify === true,
-      ...(normalizeAutoMerge(raw.autoMergeRequest) ?? {}),
+      ...normalizeAutoMerge(raw.autoMergeRequest),
       reviewers,
       requestedReviewers,
       assignees: (raw.assignees ?? []).map(actor),
@@ -755,7 +961,7 @@ export class PullRequestService {
           ? [{ name: label.name, color: label.color! }]
           : [],
       ),
-      ...(raw.milestone?.title ? { milestone: raw.milestone.title } : {}),
+      ...(raw.milestone?.title ? { milestone: raw.milestone?.title } : {}),
       checks: (raw.statusCheckRollup ?? []).map(normalizeCheck),
       comments,
       reviews,
@@ -763,6 +969,7 @@ export class PullRequestService {
         normalizeReviewThread(thread, viewerLogin),
       ),
       reviewThreadsTruncated: threadResult.truncated,
+      ...(threadResult.unavailable ? { reviewThreadsUnavailable: true } : {}),
       permissions: {
         canPush:
           repo.permissions?.push === true ||
@@ -777,29 +984,50 @@ export class PullRequestService {
         deleteBranchOnMerge: repo.delete_branch_on_merge === true,
       },
     }
-    const key = targetKey(repository, number)
-    this.#detailCache.set(key, { value: detail, expiresAt: this.#now() + DETAIL_TTL_MS })
     return detail
   }
 
   async #loadFiles(
     repository: string,
     number: number,
+    comparison: Pick<PullRequestFilesResult, 'headRefOid' | 'baseRefOid'>,
     page: number,
   ): Promise<PullRequestFilesResult> {
+    const verifyComparison = async () => {
+      const output = await this.#run([
+        'pr',
+        'view',
+        pullRequestUrl(repository, number),
+        '--json',
+        'headRefOid,baseRefOid',
+      ])
+      const actual = parseJson(
+        output,
+        'pull-request comparison',
+        z.object({
+          headRefOid: z.string().min(1),
+          baseRefOid: z.string().min(1),
+        }),
+      )
+      if (
+        actual.headRefOid !== comparison.headRefOid ||
+        actual.baseRefOid !== comparison.baseRefOid
+      ) {
+        this.#invalidateFiles(targetKey(repository, number))
+        throw new Error(
+          'Pull request comparison changed. Refresh the pull request before reviewing files.',
+        )
+      }
+    }
+    await verifyComparison()
     const output = await this.#run([
       'api',
       `repos/${repository}/pulls/${number}/files?per_page=${FILES_PAGE_SIZE}&page=${page}`,
     ])
-    const raw = parseJson<unknown[]>(output, 'pull-request files')
-    if (!Array.isArray(raw)) throw new Error('GitHub returned an invalid file list')
+    const raw = parseJson(output, 'pull-request files', z.array(RawFileSchema))
+    await verifyComparison()
     const files = raw.map(normalizeFile)
-    const value = { files, page, hasMore: files.length === FILES_PAGE_SIZE }
-    this.#filesCache.set(`${targetKey(repository, number)}:${page}`, {
-      value,
-      expiresAt: this.#now() + FILES_TTL_MS,
-    })
-    return value
+    return { ...comparison, files, page, hasMore: files.length === FILES_PAGE_SIZE }
   }
 
   async #searchHistory(search: PullRequestSearch): Promise<{
@@ -828,8 +1056,7 @@ export class PullRequestService {
       '--json',
       PULL_REQUEST_SEARCH_FIELDS,
     ])
-    const raw = parseJson<RawSearchCliItem[]>(output, 'pull-request search')
-    if (!Array.isArray(raw)) throw new Error('GitHub returned an invalid pull-request search')
+    const raw = parseJson(output, 'pull-request search', z.array(RawSearchCliItemSchema))
     return {
       items: raw.map((item) => normalizeSearchItem(item, relationship)),
       truncated: raw.length >= SEARCH_LIMIT,
@@ -856,7 +1083,7 @@ export class PullRequestService {
     while (hasNextPage && items.length < SEARCH_LIMIT) {
       const args = ['api', 'graphql', '-f', `query=${SEARCH_QUERY}`, '-f', `q=${query}`]
       if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson<RawSearchPage>(await this.#run(args), 'pull-request search')
+      const page = parseJson(await this.#run(args), 'pull-request search', RawSearchPageSchema)
       const search = page.data?.search
       for (const node of search?.nodes ?? []) {
         if (node) items.push(normalizeListItem(node, relationship))
@@ -869,12 +1096,10 @@ export class PullRequestService {
     return { items: items.slice(0, SEARCH_LIMIT), truncated: hasNextPage }
   }
 
-  async #reviewThreads(
-    repository: string,
-    number: number,
-  ): Promise<{ threads: RawReviewThread[]; truncated: boolean }> {
-    const [owner, name] = repository.split('/') as [string, string]
-    const threads: RawReviewThread[] = []
+  async #reviewThreads(repository: string, number: number): Promise<ReviewThreadsResult> {
+    const [owner, name] = repository.split('/')
+    if (!owner || !name) throw new Error('GitHub repository must have an owner and name')
+    const threads: ParsedRawReviewThread[] = []
     let cursor: string | undefined
     let hasNextPage = true
 
@@ -892,7 +1117,7 @@ export class PullRequestService {
         `number=${number}`,
       ]
       if (cursor) args.push('-f', `cursor=${cursor}`)
-      const page = parseJson<ReviewThreadPage>(await this.#run(args), 'review threads')
+      const page = parseJson(await this.#run(args), 'review threads', ReviewThreadPageSchema)
       const connection = page.data?.repository?.pullRequest?.reviewThreads
       for (const thread of connection?.nodes ?? []) {
         if (thread) threads.push(thread)
@@ -919,10 +1144,7 @@ export class PullRequestService {
       }
     } else {
       try {
-        const raw = parseJson<{ login?: string }>(
-          await this.#run(['api', 'user']),
-          'GitHub account',
-        )
+        const raw = parseJson(await this.#run(['api', 'user']), 'GitHub account', AccountSchema)
         value = raw.login
           ? { available: true, authenticated: true, login: raw.login }
           : {
@@ -957,21 +1179,25 @@ export class PullRequestService {
     return value
   }
 
-  async #repository(repository: string, refresh: boolean): Promise<RawRepository> {
+  async #repository(repository: string, refresh: boolean): Promise<ParsedRawRepository> {
     const key = repository.toLowerCase()
-    const cached = this.#repositoryCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#repositoryCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#repositoryInFlight.get(key)
     if (existing) return existing
 
+    // A failed read must not stand in for real permissions and merge methods.
     const pending = this.#run(['api', `repos/${repository}`])
-      .then((output) => parseJson<RawRepository>(output, 'repository detail'))
-      .catch(() => ({}))
+      .then((output) => parseJson(output, 'repository detail', RawRepositorySchema))
       .then((value) => {
-        this.#repositoryCache.set(key, {
-          value,
-          expiresAt: this.#now() + REPOSITORY_TTL_MS,
-        })
+        const now = this.#now()
+        writeCache(
+          this.#repositoryCache,
+          key,
+          { value, expiresAt: now + REPOSITORY_TTL_MS },
+          REPOSITORY_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -987,18 +1213,27 @@ export class PullRequestService {
     refresh: boolean,
   ): Promise<ReviewThreadsResult> {
     const key = targetKey(repository, number)
-    const cached = this.#reviewThreadsCache.get(key)
-    if (!refresh && cached && cached.expiresAt > this.#now()) return cached.value
+    const cached = refresh ? undefined : readCache(this.#reviewThreadsCache, key, this.#now())
+    if (cached) return cached
     const existing = this.#reviewThreadsInFlight.get(key)
     if (existing) return existing
 
     const pending = this.#reviewThreads(repository, number)
-      .catch(() => ({ threads: [], truncated: true }))
+      .catch((): ReviewThreadsResult => ({ threads: [], truncated: false, unavailable: true }))
       .then((value) => {
-        this.#reviewThreadsCache.set(key, {
-          value,
-          expiresAt: this.#now() + REVIEW_THREADS_TTL_MS,
-        })
+        if (this.#reviewThreadsInFlight.get(key) !== pending) {
+          throw new Error('Review conversations changed while loading. Refresh and try again.')
+        }
+        // The rest of the detail stays useful; the next read retries the conversations.
+        if (value.unavailable) return value
+        const now = this.#now()
+        writeCache(
+          this.#reviewThreadsCache,
+          key,
+          { value, expiresAt: now + REVIEW_THREADS_TTL_MS },
+          REVIEW_THREADS_CACHE_LIMIT,
+          now,
+        )
         return value
       })
       .finally(() => {
@@ -1018,10 +1253,7 @@ export class PullRequestService {
       '--json',
       'bucket,link,name,state,workflow',
     ])
-    const checks = parseJson<Array<{ bucket?: string; link?: string }>>(
-      output,
-      'pull-request checks',
-    )
+    const checks = parseJson(output, 'pull-request checks', z.array(CheckRunSchema))
     const runIds = new Set<string>()
     for (const check of checks) {
       if (failedOnly && check.bucket !== 'fail' && check.bucket !== 'cancel') continue
@@ -1059,14 +1291,25 @@ export class PullRequestService {
     }
 
     this.#detailCache.delete(target)
+    this.#detailInFlight.delete(target)
 
-    if (action.type === 'update_branch') {
-      for (const key of this.#filesCache.keys()) {
-        if (key.startsWith(`${target}:`)) this.#filesCache.delete(key)
+    const comparisonChanged =
+      action.type === 'update_branch' ||
+      (action.type === 'update_metadata' && action.baseRefName !== undefined)
+    if (comparisonChanged) this.#invalidateFiles(target)
+
+    if (comparisonChanged || actionChangesReviewThreads(action)) {
+      this.#reviewThreadsCache.delete(target)
+      this.#reviewThreadsInFlight.delete(target)
+    }
+  }
+
+  #invalidateFiles(target: string): void {
+    for (const cache of [this.#filesCache, this.#filesInFlight]) {
+      for (const key of cache.keys()) {
+        if (key.startsWith(`${target}:`)) cache.delete(key)
       }
     }
-
-    if (actionChangesReviewThreads(action)) this.#reviewThreadsCache.delete(target)
   }
 }
 
@@ -1078,7 +1321,10 @@ function applyActionToListItem(
     case 'comment':
       return { ...item, commentsCount: item.commentsCount + 1 }
     case 'edit':
-      return { ...item, ...(action.title === undefined ? {} : { title: action.title }) }
+      return {
+        ...item,
+        ...(action.title === undefined ? {} : { title: action.title }),
+      }
     case 'update_metadata':
       return {
         ...item,
@@ -1111,7 +1357,7 @@ async function runApiMutation(
   run: GhRunner,
   method: ApiMutation['method'],
   endpoint: string,
-  input?: Record<string, unknown>,
+  input?: Record<string, JsonValue>,
 ): Promise<void> {
   if (input === undefined) {
     await run(['api', '--silent', '--method', method, endpoint])
@@ -1121,6 +1367,18 @@ async function runApiMutation(
   await run(['api', '--silent', '--method', method, endpoint, '--input', '-'], {
     stdin: JSON.stringify(input),
   })
+}
+
+/** GitHub takes user logins and bare team slugs in separate fields. */
+function reviewerInput(names: string[]) {
+  const reviewers = names.filter((name) => !name.includes('/'))
+  const teams = names.flatMap((name) =>
+    name.includes('/') ? [name.slice(name.indexOf('/') + 1)] : [],
+  )
+  return {
+    ...(reviewers.length ? { reviewers } : {}),
+    ...(teams.length ? { team_reviewers: teams } : {}),
+  }
 }
 
 function directMetadataMutation(
@@ -1156,14 +1414,14 @@ function directMetadataMutation(
       return {
         method: 'POST',
         endpoint: `repos/${repository}/pulls/${number}/requested_reviewers`,
-        input: { reviewers: action.addReviewers },
+        input: reviewerInput(action.addReviewers),
       }
     }
     if (action.removeReviewers.length > 0 && action.addReviewers.length === 0) {
       return {
         method: 'DELETE',
         endpoint: `repos/${repository}/pulls/${number}/requested_reviewers`,
-        input: { reviewers: action.removeReviewers },
+        input: reviewerInput(action.removeReviewers),
       }
     }
     return undefined
@@ -1216,7 +1474,7 @@ async function optionalMetadataSource<T>(
   }
 }
 
-function uniqueActors(values: RawActor[]): PullRequestMetadataOptions['reviewers'] {
+function uniqueActors(values: ParsedRawActor[]): PullRequestMetadataOptions['reviewers'] {
   const actors = new Map<string, PullRequestMetadataOptions['reviewers'][number]>()
   for (const value of values) {
     const login = value.login?.trim()
@@ -1229,10 +1487,12 @@ function uniqueActors(values: RawActor[]): PullRequestMetadataOptions['reviewers
       })
     }
   }
-  return [...actors.values()].sort((left, right) => compareText(left.login, right.login))
+  return [...actors.values()].sort((left, right) => comparePullRequestText(left.login, right.login))
 }
 
-function uniqueMetadataLabels(values: RawMetadataLabel[]): PullRequestMetadataOptions['labels'] {
+function uniqueMetadataLabels(
+  values: ParsedRawMetadataLabel[],
+): PullRequestMetadataOptions['labels'] {
   const labels = new Map<string, PullRequestMetadataOptions['labels'][number]>()
   for (const value of values) {
     const name = value.name?.trim()
@@ -1240,18 +1500,23 @@ function uniqueMetadataLabels(values: RawMetadataLabel[]): PullRequestMetadataOp
     if (!name || !color || !/^[0-9a-fA-F]{6}$/.test(color)) continue
     const key = name.toLowerCase()
     if (!labels.has(key)) {
+      const description = value.description?.trim()
       labels.set(key, {
         name,
         color,
-        ...(value.description?.trim() ? { description: value.description.trim() } : {}),
+        ...(description
+          ? {
+              description: description,
+            }
+          : {}),
       })
     }
   }
-  return [...labels.values()].sort((left, right) => compareText(left.name, right.name))
+  return [...labels.values()].sort((left, right) => comparePullRequestText(left.name, right.name))
 }
 
 function uniqueMetadataMilestones(
-  values: RawMetadataMilestone[],
+  values: ParsedRawMetadataMilestone[],
 ): PullRequestMetadataOptions['milestones'] {
   const milestones = new Map<number, PullRequestMetadataOptions['milestones'][number]>()
   for (const value of values) {
@@ -1260,27 +1525,33 @@ function uniqueMetadataMilestones(
     if (!milestones.has(value.number!))
       milestones.set(value.number!, { number: value.number!, title })
   }
-  return [...milestones.values()].sort((left, right) => compareText(left.title, right.title))
+  return [...milestones.values()].sort((left, right) =>
+    comparePullRequestText(left.title, right.title),
+  )
 }
 
+/** Git refs are case-sensitive: `release` and `Release` are different branches. */
 function uniqueStrings(values: string[]): string[] {
-  const unique = new Map<string, string>()
+  const unique = new Set<string>()
   for (const value of values) {
     const trimmed = value.trim()
-    if (trimmed && !unique.has(trimmed.toLowerCase())) unique.set(trimmed.toLowerCase(), trimmed)
+    if (trimmed) unique.add(trimmed)
   }
-  return [...unique.values()]
+  return [...unique]
 }
 
-function compareText(left: string, right: string): number {
-  return left.localeCompare(right, undefined, { sensitivity: 'base' })
+export function comparePullRequestText(left: string, right: string): number {
+  return PULL_REQUEST_TEXT_COLLATOR.compare(left, right)
 }
 
 /** The only process boundary used by the feature; bodies always travel over stdin. */
 export function runGh(args: string[], options: GhRunOptions = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawnCli('gh', args)
+    // Every target here is a github.com URL. An inherited GH_HOST would send the
+    // bare API and search calls to another host.
+    const child = spawnCli('gh', args, { env: { GH_HOST: 'github.com' } })
     let stdout = ''
+    const binary: Buffer[] = []
     let stderr = ''
     let bytes = 0
     let settled = false
@@ -1289,38 +1560,43 @@ export function runGh(args: string[], options: GhRunOptions = {}): Promise<strin
       if (settled) return
       settled = true
       clearTimeout(timer)
-      result instanceof Error ? reject(result) : resolve(result)
+      void killTree(child).then(() => {
+        if (result instanceof Error) reject(result)
+        else resolve(result)
+      }, reject)
     }
     const timer = setTimeout(() => {
-      killTree(child)
       finish(new Error('GitHub did not respond in time'))
     }, options.timeoutMs ?? 30_000)
 
-    child.stdout.setEncoding('utf8')
+    if (options.encoding !== 'base64') child.stdout.setEncoding('utf8')
     child.stderr.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
+    child.stdout.on('data', (chunk: string | Buffer) => {
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
-      stdout += chunk
+      if (typeof chunk === 'string') stdout += chunk
+      else binary.push(chunk)
     })
     child.stderr.on('data', (chunk: string) => {
       if (settled) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > maxBytes) {
-        killTree(child)
         finish(new Error('GitHub response was too large to display safely'))
         return
       }
       stderr += chunk
     })
     child.on('error', (error) => finish(error))
-    child.on('exit', (code) => {
-      if (code === 0) finish(stdout)
+    child.stdin.on('error', () =>
+      finish(new Error('GitHub CLI stopped accepting request input. Retry the action.')),
+    )
+    child.on('close', (code) => {
+      if (code === 0)
+        finish(options.encoding === 'base64' ? Buffer.concat(binary).toString('base64') : stdout)
       else
         finish(new Error(firstUsefulLine(stderr) || firstUsefulLine(stdout) || 'GitHub CLI failed'))
     })
@@ -1368,7 +1644,7 @@ export function githubRepositoryFromRemote(remote: string): string | undefined {
 }
 
 function normalizeSearchItem(
-  raw: RawSearchCliItem,
+  raw: ParsedRawSearchCliItem,
   relationship: PullRequestListItem['relationship'],
 ): PullRequestListItem {
   return normalizeListItem(
@@ -1383,7 +1659,7 @@ function normalizeSearchItem(
       additions: 0,
       deletions: 0,
       comments: { totalCount: nonnegative(raw.commentsCount) },
-      ...(raw.author === undefined ? {} : { author: raw.author }),
+      ...(!(raw.author === undefined) ? { author: raw.author } : {}),
       repository: {
         nameWithOwner: requiredString(raw.repository?.nameWithOwner, 'repository'),
       },
@@ -1393,7 +1669,7 @@ function normalizeSearchItem(
 }
 
 function normalizeListItem(
-  raw: RawSearchNode,
+  raw: ParsedRawSearchNode,
   relationship: PullRequestListItem['relationship'],
 ): PullRequestListItem {
   const repository = requiredString(raw.repository?.nameWithOwner, 'repository')
@@ -1414,12 +1690,16 @@ function normalizeListItem(
     headRefName: raw.headRefName ?? '',
     baseRefName: raw.baseRefName ?? '',
     ...(reviewDecision ? { reviewDecision } : {}),
-    ...(raw.mergeStateStatus ? { mergeStateStatus: raw.mergeStateStatus } : {}),
+    ...(raw.mergeStateStatus
+      ? {
+          mergeStateStatus: raw.mergeStateStatus,
+        }
+      : {}),
     relationship,
   }
 }
 
-function normalizeComment(raw: RawComment, viewerLogin: string): PullRequestComment {
+function normalizeComment(raw: ParsedRawComment, viewerLogin: string): PullRequestComment {
   const url = raw.url ?? 'https://github.com/'
   const author = actor(raw.author)
   const parsedDatabaseId = Number(/(?:issuecomment|discussion_r)-(\d+)/.exec(url)?.[1] ?? 0)
@@ -1436,7 +1716,7 @@ function normalizeComment(raw: RawComment, viewerLogin: string): PullRequestComm
   }
 }
 
-function normalizeReview(raw: RawReview, viewerLogin: string): PullRequestReview {
+function normalizeReview(raw: ParsedRawReview, viewerLogin: string): PullRequestReview {
   const author = actor(raw.author)
   return {
     id: raw.id ?? `${author.login}:${raw.submittedAt ?? ''}`,
@@ -1448,25 +1728,42 @@ function normalizeReview(raw: RawReview, viewerLogin: string): PullRequestReview
   }
 }
 
-function normalizeReviewThread(raw: RawReviewThread, viewerLogin: string): PullRequestReviewThread {
+function normalizeReviewThread(
+  raw: ParsedRawReviewThread,
+  viewerLogin: string,
+): PullRequestReviewThread {
+  const diffSide: PullRequestReviewThread['diffSide'] =
+    raw.diffSide === 'LEFT' || raw.diffSide === 'RIGHT' ? raw.diffSide : undefined
+  const startDiffSide: PullRequestReviewThread['startDiffSide'] =
+    raw.startDiffSide === 'LEFT' || raw.startDiffSide === 'RIGHT' ? raw.startDiffSide : undefined
+  const comments = (raw.comments?.nodes ?? []).map((comment) =>
+    normalizeComment(comment, viewerLogin),
+  )
   return {
     id: requiredString(raw.id, 'reviewThread.id'),
     path: requiredString(raw.path, 'reviewThread.path'),
     ...(raw.line ? { line: raw.line } : {}),
     ...(raw.startLine ? { startLine: raw.startLine } : {}),
     ...(raw.originalLine ? { originalLine: raw.originalLine } : {}),
-    ...(raw.originalStartLine ? { originalStartLine: raw.originalStartLine } : {}),
-    ...(raw.diffSide === 'LEFT' || raw.diffSide === 'RIGHT' ? { diffSide: raw.diffSide } : {}),
-    ...(raw.startDiffSide === 'LEFT' || raw.startDiffSide === 'RIGHT'
-      ? { startDiffSide: raw.startDiffSide }
+    ...(raw.originalStartLine
+      ? {
+          originalStartLine: raw.originalStartLine,
+        }
+      : {}),
+    ...(diffSide ? { diffSide: diffSide } : {}),
+    ...(startDiffSide
+      ? {
+          startDiffSide: startDiffSide,
+        }
       : {}),
     resolved: raw.isResolved === true,
     outdated: raw.isOutdated === true,
-    comments: (raw.comments?.nodes ?? []).map((comment) => normalizeComment(comment, viewerLogin)),
+    comments,
+    ...((raw.comments?.totalCount ?? 0) > comments.length ? { commentsTruncated: true } : {}),
   }
 }
 
-function normalizeCheck(raw: RawCheck): PullRequestDetail['checks'][number] {
+function normalizeCheck(raw: ParsedRawCheck): PullRequestDetail['checks'][number] {
   const checkRun = raw.__typename === 'CheckRun'
   const name = checkRun ? raw.name : raw.context
   const detailsUrl = checkRun ? raw.detailsUrl : raw.targetUrl
@@ -1480,10 +1777,8 @@ function normalizeCheck(raw: RawCheck): PullRequestDetail['checks'][number] {
   }
 }
 
-function normalizeFile(value: unknown): PullRequestFile {
-  if (!value || typeof value !== 'object') throw new Error('GitHub returned an invalid file')
-  const raw = value as Record<string, unknown>
-  const status = raw['status']
+function normalizeFile(raw: z.infer<typeof RawFileSchema>): PullRequestFile {
+  const status = raw.status
   const validStatus =
     status === 'added' ||
     status === 'removed' ||
@@ -1494,20 +1789,17 @@ function normalizeFile(value: unknown): PullRequestFile {
     status === 'unchanged'
       ? status
       : 'modified'
+  const blobUrl = raw.blob_url && isUrl(raw.blob_url) ? raw.blob_url : undefined
   return {
-    sha: requiredString(raw['sha'], 'file.sha'),
-    path: requiredString(raw['filename'], 'file.filename'),
-    ...(typeof raw['previous_filename'] === 'string'
-      ? { previousPath: raw['previous_filename'] }
-      : {}),
+    sha: requiredString(raw.sha, 'file.sha'),
+    path: requiredString(raw.filename, 'file.filename'),
+    ...(raw.previous_filename === undefined ? {} : { previousPath: raw.previous_filename }),
     status: validStatus,
-    additions: nonnegative(raw['additions']),
-    deletions: nonnegative(raw['deletions']),
-    changes: nonnegative(raw['changes']),
-    ...(typeof raw['patch'] === 'string' ? { patch: raw['patch'] } : {}),
-    ...(typeof raw['blob_url'] === 'string' && isUrl(raw['blob_url'])
-      ? { blobUrl: raw['blob_url'] }
-      : {}),
+    additions: nonnegative(raw.additions),
+    deletions: nonnegative(raw.deletions),
+    changes: nonnegative(raw.changes),
+    ...(raw.patch === undefined ? {} : { patch: raw.patch }),
+    ...(blobUrl ? { blobUrl } : {}),
   }
 }
 
@@ -1540,7 +1832,7 @@ function mergeReviewers(
 }
 
 function normalizeAutoMerge(
-  raw: RawPullRequest['autoMergeRequest'],
+  raw: ParsedRawPullRequest['autoMergeRequest'],
 ): Pick<PullRequestDetail, 'autoMerge'> | null {
   if (!raw?.mergeMethod) return null
   const mergeMethod = raw.mergeMethod.toUpperCase()
@@ -1554,7 +1846,13 @@ function normalizeAutoMerge(
   }
 }
 
-function actor(raw: RawActor | null | undefined): PullRequestDetail['author'] {
+/** Teams are named `org/slug`, which no user login can collide with. */
+function reviewRequestActor(raw: ParsedRawActor, owner: string): PullRequestDetail['author'] {
+  if (raw.__typename !== 'Team' || !raw.slug) return actor(raw)
+  return { login: raw.slug.includes('/') ? raw.slug : `${owner}/${raw.slug}`, isBot: false }
+}
+
+function actor(raw: ParsedRawActor | null | undefined): PullRequestDetail['author'] {
   const login = raw?.login || raw?.slug || raw?.name || 'ghost'
   return { login, isBot: raw?.is_bot === true || /(?:\[bot\]|-bot$|bot$)/i.test(login) }
 }
@@ -1601,7 +1899,7 @@ function normalizeReviewState(
   return 'COMMENTED'
 }
 
-function checkState(raw: RawCheck): PullRequestDetail['checks'][number]['state'] {
+function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['state'] {
   const value = (raw.conclusion || raw.state || raw.status || '').toUpperCase()
   if (value === 'SUCCESS') return 'success'
   if (
@@ -1618,30 +1916,32 @@ function checkState(raw: RawCheck): PullRequestDetail['checks'][number]['state']
   return 'pending'
 }
 
-function parseJson<T>(output: string, label: string): T {
+function parseJson<T>(output: string, label: string, schema: z.ZodType<T>): T {
   try {
-    return JSON.parse(output) as T
+    return schema.parse(JSON.parse(output))
   } catch {
     throw new Error(`GitHub returned invalid ${label} data`)
   }
 }
 
-function requiredString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.length === 0) {
+function requiredString(value: string | null | undefined, field: string): string {
+  if (!value) {
     throw new Error(`GitHub response is missing ${field}`)
   }
   return value
 }
 
-function requiredNumber(value: unknown, field: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+function requiredNumber(value: number | undefined, field: string): number {
+  if (value === undefined || !Number.isFinite(value)) {
     throw new Error(`GitHub response is missing ${field}`)
   }
   return value
 }
 
-function nonnegative(value: unknown): number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0
+function nonnegative(value: number | null | undefined): number {
+  return value !== null && value !== undefined && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
 }
 
 function isUrl(value: string): boolean {

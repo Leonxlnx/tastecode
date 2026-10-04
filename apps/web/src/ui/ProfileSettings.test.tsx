@@ -1,13 +1,52 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ResultOf, UsageHistoryTotals } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ResultOf, UsageHistoryTotals } from '@harness/contracts'
 import type { Transport } from '../transport.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { ProfileSettings } from './ProfileSettings.js'
+
+const transport = { request: () => new Promise(() => {}) } as unknown as Transport
 
 afterEach(cleanup)
 
+function renderedAvatarCells(): string {
+  return document.querySelector('.profile-identity__avatar svg')!.innerHTML
+}
+
+/** What the picture for `name` looks like when rendered on its own. */
+function expectedAvatarCells(name: string): string {
+  const view = render(<GeneratedAvatar name={name} />)
+  const markup = view.container.querySelector('svg')!.innerHTML
+  view.unmount()
+  return markup
+}
+
 describe('profile settings', () => {
+  it('keeps the identity editor mounted when local activity finishes loading', async () => {
+    let finishHistory: (result: ResultOf<'usage.history'>) => void = () => {}
+    const request = vi.fn(
+      () => new Promise<ResultOf<'usage.history'>>((resolve) => (finishHistory = resolve)),
+    )
+    render(
+      <ProfileSettings
+        transport={{ request } as unknown as Transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Leon' }}
+      />,
+    )
+    const editor = screen.getByRole('textbox', { name: 'Display name' })
+    editor.focus()
+
+    finishHistory(historyResult())
+
+    await screen.findByText('1.2M')
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBe(editor)
+    expect(document.activeElement).toBe(editor)
+    expect(request).toHaveBeenCalledTimes(1)
+  })
+
   it('builds the profile from real local history and explicitly refreshes it', async () => {
     const result = historyResult()
     const request = vi.fn(async () => result)
@@ -23,9 +62,9 @@ describe('profile settings', () => {
 
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'Display name' })).toBeTruthy()
-    expect(screen.getByRole('heading', { name: 'Blue Emi' })).toBeTruthy()
-    expect(document.querySelector('.profile-identity__avatar')?.textContent).toBe('BE')
-    expect(screen.getByText('@blue.emi')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Local profile' })).toBeTruthy()
+    expect(renderedAvatarCells()).toBe(expectedAvatarCells('Local profile'))
+    expect(screen.queryByText('@blue.emi')).toBeNull()
     expect(screen.getByText('Pro')).toBeTruthy()
     expect(await screen.findByText('1.2M')).toBeTruthy()
     expect(screen.getByText('7', { selector: '.profile-stats dd' })).toBeTruthy()
@@ -108,11 +147,146 @@ describe('profile settings', () => {
     })
   })
 
+  it('reserves the plan line while the account loads and fills the same slot', () => {
+    const view = render(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        accountLoading
+        providerName="Codex"
+      />,
+    )
+    const loading = screen.getByText('Loading account plan…').closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('profile-identity__meta')).toBe(true)
+    expect(screen.getByText('Loading account plan…').className).toBe('visually-hidden')
+    expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 9px')
+    expect(screen.queryByText('Pro')).toBeNull()
+    const editor = screen.getByRole('textbox', { name: 'Display name' })
+
+    view.rerender(
+      <ProfileSettings
+        transport={transport}
+        account={{ signedIn: true, plan: 'Pro' }}
+        providerName="Codex"
+      />,
+    )
+    expect(screen.queryByText('Loading account plan…')).toBeNull()
+    expect(screen.getByText('Pro').closest('.profile-identity__meta')).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBe(editor)
+  })
+
+  it('does not reserve an unknown plan without an active account request', () => {
+    const view = render(
+      <ProfileSettings transport={transport} account={undefined} providerName="Codex" />,
+    )
+    expect(view.container.querySelector('.profile-identity__meta')).toBeNull()
+    view.rerender(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        accountLoading
+        providerName="Codex"
+      />,
+    )
+    expect(screen.getByText('Loading account plan…')).toBeTruthy()
+    view.rerender(
+      <ProfileSettings transport={transport} account={{ signedIn: false }} providerName="Codex" />,
+    )
+    expect(view.container.querySelector('.profile-identity__meta')).toBeNull()
+  })
+
+  it('keeps an already known plan visible during account refresh', () => {
+    render(
+      <ProfileSettings
+        transport={transport}
+        account={{ signedIn: true, plan: 'Pro' }}
+        accountLoading
+        providerName="Codex"
+      />,
+    )
+    expect(screen.getByText('Pro')).toBeTruthy()
+    expect(screen.queryByText('Loading account plan…')).toBeNull()
+  })
+
+  it('keeps the onboarding name when switching to Grok', () => {
+    const view = render(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Blue Emi' }}
+      />,
+    )
+    view.rerender(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Grok"
+        identity={{ displayName: 'Blue Emi' }}
+      />,
+    )
+    expect(screen.getByRole('heading', { name: 'Blue Emi' })).toBeTruthy()
+    expect(renderedAvatarCells()).toBe(expectedAvatarCells('Blue Emi'))
+    expect(screen.queryByText('Grok')).toBeNull()
+  })
+
+  it('shows the local identity while usage history loads', () => {
+    render(
+      <ProfileSettings
+        transport={transport}
+        account={{ signedIn: true, email: 'blue.emi@example.com', plan: 'Pro' }}
+        providerName="Codex"
+      />,
+    )
+
+    expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy()
+    expect(screen.getByRole('textbox', { name: 'Display name' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Local profile' })).toBeTruthy()
+    expect(renderedAvatarCells()).toBe(expectedAvatarCells('Local profile'))
+    expect(screen.getByText(/Generated from your name/u)).toBeTruthy()
+    expect(screen.queryByText('@blue.emi')).toBeNull()
+    expect(screen.getByText('Pro')).toBeTruthy()
+  })
+
+  it('regenerates the picture from the name until a photo replaces it', () => {
+    const view = render(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Leon' }}
+      />,
+    )
+    const leon = renderedAvatarCells()
+    expect(leon).toBe(expectedAvatarCells('Leon'))
+
+    view.rerender(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Bluedev' }}
+      />,
+    )
+    expect(renderedAvatarCells()).toBe(expectedAvatarCells('Bluedev'))
+    expect(renderedAvatarCells()).not.toBe(leon)
+
+    view.rerender(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        identity={{ displayName: 'Bluedev', avatarDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }}
+      />,
+    )
+    expect(document.querySelector('.profile-identity__avatar svg')).toBeNull()
+    expect(document.querySelector('.profile-identity__avatar img')).toBeTruthy()
+    expect(screen.getByText(/Remove the photo to go back/u)).toBeTruthy()
+  })
+
   it('edits the local display name and validates profile photos', async () => {
     const onIdentityChange = vi.fn()
-    const transport = {
-      request: vi.fn(async () => historyResult()),
-    } as unknown as Transport
     const { rerender } = render(
       <ProfileSettings
         transport={transport}
@@ -122,7 +296,6 @@ describe('profile settings', () => {
         onIdentityChange={onIdentityChange}
       />,
     )
-    await screen.findByRole('heading', { name: 'Profile' })
 
     fireEvent.change(screen.getByRole('textbox', { name: 'Display name' }), {
       target: { value: 'Leon' },
@@ -130,15 +303,16 @@ describe('profile settings', () => {
     expect(onIdentityChange).toHaveBeenLastCalledWith({ displayName: 'Leon' })
 
     const input = document.querySelector<HTMLInputElement>('input[type="file"]')!
+    expect(input.closest('.profile-identity__portrait')).toBeTruthy()
+    expect(input.closest('label')?.textContent).toBe('Upload photo')
+    expect(screen.queryByRole('button', { name: 'Remove photo' })).toBeNull()
     fireEvent.change(input, {
       target: {
         files: [
           new File(
             [new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])],
             'avatar.png',
-            {
-              type: 'image/png',
-            },
+            { type: 'image/png' },
           ),
         ],
       },
@@ -166,20 +340,23 @@ describe('profile settings', () => {
     expect(document.querySelector('.profile-identity__avatar img')?.getAttribute('src')).toBe(
       avatarDataUrl,
     )
-    fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+    expect(input.closest('label')?.textContent).toBe('Change photo')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove photo' }))
     expect(onIdentityChange).toHaveBeenLastCalledWith({ avatarDataUrl: undefined })
   })
 
   it('ignores an image read that finishes after the profile closes', async () => {
     let finishRead: (value: ArrayBuffer) => void = () => {}
     const file = new File(['avatar'], 'avatar.png', { type: 'image/png' })
-    vi.spyOn(file, 'slice').mockReturnValue({
-      arrayBuffer: () => new Promise((resolve) => (finishRead = resolve)),
-    } as Blob)
+    const slicedFile = new Blob()
+    vi.spyOn(slicedFile, 'arrayBuffer').mockImplementation(
+      () => new Promise((resolve) => (finishRead = resolve)),
+    )
+    vi.spyOn(file, 'slice').mockReturnValue(slicedFile)
     const onIdentityChange = vi.fn()
     const view = render(
       <ProfileSettings
-        transport={{ request: vi.fn(async () => historyResult()) } as unknown as Transport}
+        transport={transport}
         account={undefined}
         providerName="Codex"
         identity={{ displayName: 'Leon' }}

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UsageSummaryController } from './usage-summary-state.js'
 
 type Summary = ResultOf<'usage.summary'>
+type DeferredFailure = Error | string
 
 const summary = (marker: number): Summary => ({
   session: {
@@ -24,7 +25,7 @@ const summary = (marker: number): Summary => ({
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  let reject!: (error: unknown) => void
+  let reject!: (error: DeferredFailure) => void
   const promise = new Promise<T>((accept, fail) => {
     resolve = accept
     reject = fail

@@ -1,15 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
-import { CircleAlert, ImagePlus, RefreshCw, Trash2 } from 'lucide-react'
+import {
+  IconAlertCircle as CircleAlert,
+  IconPencil as Pencil,
+  IconRefresh as RefreshCw,
+  IconTrash as Trash2,
+} from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import {
   PROFILE_IMAGE_ACCEPT,
-  profileInitials,
   readProfileImage,
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
+import { Skeleton, SkeletonStatus } from './Skeleton.js'
 
 const PROFILE_ACTIVITY_DAYS = 365
 const integer = new Intl.NumberFormat('en-US')
@@ -34,6 +40,7 @@ const shortDate = new Intl.DateTimeFormat('en-US', {
 export function ProfileSettings(props: {
   transport: Transport
   account: Account | undefined
+  accountLoading?: boolean | undefined
   providerName: string
   identity?: ProfileIdentityPreferences | undefined
   onIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
@@ -102,23 +109,45 @@ export function ProfileSettings(props: {
     setRequestVersion((version) => version + 1)
   }, [])
 
-  const identity = profileIdentity(props.account, props.providerName, props.identity?.displayName)
+  const name = props.identity?.displayName?.trim() || 'Local profile'
+  const hasPhoto = Boolean(props.identity?.avatarDataUrl)
   const identityEditor = (
-    <section className="profile-identity" aria-label="Profile identity">
-      <div className="profile-identity__avatar" aria-hidden>
-        {props.identity?.avatarDataUrl ? (
-          <img src={props.identity.avatarDataUrl} alt="" />
-        ) : (
-          identity.initials
-        )}
+    <section key="identity" className="profile-identity" aria-label="Profile identity">
+      <div className="profile-identity__portrait">
+        <div className="profile-identity__avatar" aria-hidden>
+          {props.identity?.avatarDataUrl ? (
+            <img src={props.identity.avatarDataUrl} alt="" />
+          ) : (
+            <GeneratedAvatar name={name} />
+          )}
+        </div>
+        <label
+          className="profile-identity__edit"
+          title={hasPhoto ? 'Change photo' : 'Upload photo'}
+        >
+          <Pencil size={13} aria-hidden />
+          <span className="visually-hidden">{hasPhoto ? 'Change photo' : 'Upload photo'}</span>
+          <input
+            className="visually-hidden"
+            type="file"
+            accept={PROFILE_IMAGE_ACCEPT}
+            onChange={(event) => {
+              void chooseImage(event.target.files?.[0])
+              event.target.value = ''
+            }}
+          />
+        </label>
       </div>
-      <h2>{identity.name}</h2>
-      <div className="profile-identity__meta">
-        <span>{identity.handle}</span>
-        {props.account?.plan ? (
-          <span className="profile-identity__plan">{props.account.plan}</span>
-        ) : null}
-      </div>
+      <h2>{name}</h2>
+      {props.account?.plan ? (
+        <div className="profile-identity__meta">
+          <span>{props.account.plan}</span>
+        </div>
+      ) : props.accountLoading && !props.account ? (
+        <SkeletonStatus label="Loading account plan…" className="profile-identity__meta">
+          <Skeleton width={64} height={9} />
+        </SkeletonStatus>
+      ) : null}
       <div className="profile-identity__editor">
         <label className="profile-identity__field">
           <span>Display name</span>
@@ -126,25 +155,12 @@ export function ProfileSettings(props: {
             type="text"
             maxLength={64}
             value={props.identity?.displayName ?? ''}
-            placeholder={identity.name}
+            placeholder={name}
             onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
           />
         </label>
-        <div className="profile-identity__photo-actions">
-          <label className="settings__action profile-identity__photo">
-            <ImagePlus size={14} aria-hidden />
-            <span>{props.identity?.avatarDataUrl ? 'Change photo' : 'Add photo'}</span>
-            <input
-              className="visually-hidden"
-              type="file"
-              accept={PROFILE_IMAGE_ACCEPT}
-              onChange={(event) => {
-                void chooseImage(event.target.files?.[0])
-                event.target.value = ''
-              }}
-            />
-          </label>
-          {props.identity?.avatarDataUrl ? (
+        {hasPhoto ? (
+          <div className="profile-identity__photo-actions">
             <button
               className="settings__action profile-identity__remove-photo"
               type="button"
@@ -155,11 +171,17 @@ export function ProfileSettings(props: {
               }}
             >
               <Trash2 size={14} aria-hidden />
-              <span>Remove</span>
+              <span>Remove photo</span>
             </button>
-          ) : null}
-        </div>
-        <p className="profile-identity__photo-note">PNG, JPEG, or WebP · 1 MB maximum</p>
+          </div>
+        ) : null}
+        <p className="profile-identity__photo-note">
+          {hasPhoto
+            ? 'Remove the photo to go back to the picture generated from your name.'
+            : 'Generated from your name. Use the pencil to upload your own photo.'}
+          <br />
+          PNG, JPEG, or WebP · 1 MB maximum
+        </p>
         {imageError ? (
           <p className="profile-identity__photo-error" role="alert">
             {imageError}
@@ -509,24 +531,6 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
     weeks: cells.length / 7,
     maxTokens: days.reduce((maximum, day) => Math.max(maximum, day.tokens), 0),
   }
-}
-
-function profileIdentity(
-  account: Account | undefined,
-  providerName: string,
-  displayName: string | undefined,
-) {
-  const localPart = account?.email?.split('@')[0]?.trim()
-  const name = displayName?.trim() || (localPart ? titleCase(localPart) : 'Local profile')
-  return {
-    name,
-    handle: localPart ? `@${localPart}` : providerName,
-    initials: profileInitials(name || providerName),
-  }
-}
-
-function titleCase(value: string): string {
-  return value.replace(/[._-]+/g, ' ').replace(/\b\p{L}/gu, (letter) => letter.toUpperCase())
 }
 
 function streakSummary(daily: UsageHistoryDay[]) {

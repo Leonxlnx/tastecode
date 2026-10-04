@@ -1,11 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { PullRequestListResult } from '@harness/contracts'
-import type { Transport } from '../../transport.js'
+import { resetInstalls } from '../../provider-install.js'
+import { TestTransport } from '../../test-transport.js'
 import { PullRequestsView } from './PullRequestsView.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  resetInstalls()
+})
 
 const result: PullRequestListResult = {
   account: { available: true, authenticated: true, login: 'Blueemi' },
@@ -89,15 +93,34 @@ const result: PullRequestListResult = {
   ],
 }
 
+function pullRequestTransport(): TestTransport {
+  return new TestTransport(async (method) => {
+    if (method === 'pullRequests.list') return result
+    throw new Error(`Unexpected request: ${method}`)
+  })
+}
+
+/** Lists that answer in order: an Error entry rejects, anything else resolves. */
+function scriptedListTransport(...replies: Array<PullRequestListResult | Error>): TestTransport {
+  return new TestTransport(async (method) => {
+    if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+    const reply = replies.shift() ?? result
+    if (reply instanceof Error) throw reply
+    return reply
+  })
+}
+
+// The detail pane beside the list makes its own requests and has its own
+// alerts; these tests are about the list.
+const listPane = () => within(document.querySelector<HTMLElement>('.pr-list-pane')!)
+
 describe('PullRequestsView', () => {
   it('shows authored and reviewing work, then filters without another request', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
-    render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
 
     expect(await screen.findByText('Authored change')).toBeTruthy()
     expect(screen.getByText('Needs my review')).toBeTruthy()
@@ -118,17 +141,17 @@ describe('PullRequestsView', () => {
       target: { value: 'no-match' },
     })
     expect(screen.getByText('No matching pull requests')).toBeTruthy()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
   })
 
   it('filters open, draft, merged, and closed history locally', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
-    render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
     expect(await screen.findByText('Closed draft change')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
@@ -148,17 +171,17 @@ describe('PullRequestsView', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /Merged/ }))
     expect(screen.getByText('Merged change')).toBeTruthy()
     expect(screen.queryByText('Closed draft change')).toBeNull()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
   })
 
   it('combines review and repository filters and clears them together', async () => {
-    const never = new Promise<never>(() => undefined)
-    const request = vi.fn((method: string) =>
-      method === 'pullRequests.list' ? Promise.resolve(result) : never,
-    )
-    const transport = { request } as unknown as Transport
+    const transport = pullRequestTransport()
 
-    render(<PullRequestsView transport={transport} onOpenChat={vi.fn()} />)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
     expect(await screen.findByText('Needs my review')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
@@ -168,6 +191,8 @@ describe('PullRequestsView', () => {
     expect(screen.queryByText('Authored change')).toBeNull()
 
     fireEvent.click(screen.getByRole('menuitem', { name: /Repository All repositories/ }))
+    expect(screen.getByRole('menuitem', { name: /friend\/project 1 pull requests/ })).toBeTruthy()
+    expect(screen.getByRole('menuitem', { name: /Blueemi\/harness 0 pull requests/ })).toBeTruthy()
     fireEvent.click(screen.getByRole('menuitem', { name: /friend\/project/ }))
     expect(
       screen.getByRole('button', { name: 'Filter pull requests: 2 active filters' }),
@@ -180,6 +205,141 @@ describe('PullRequestsView', () => {
     ).toBeTruthy()
     expect(screen.getByText('Authored change')).toBeTruthy()
     expect(screen.getByText('Closed draft change')).toBeTruthy()
-    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.list')).toHaveLength(1)
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      1,
+    )
+  })
+
+  it('keeps stale pull requests visible and offers a retry when a refresh fails', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'), result)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(listPane().queryByRole('alert')).toBeNull())
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      3,
+    )
+  })
+
+  it('dismisses a failed refresh notice without discarding the stale list', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Needs my review')).toBeTruthy()
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    fireEvent.click(
+      within(await listPane().findByRole('alert')).getByRole('button', { name: 'Dismiss' }),
+    )
+
+    expect(listPane().queryByRole('alert')).toBeNull()
+    expect(listPane().getByText('Needs my review')).toBeTruthy()
+  })
+
+  it('still surfaces a failed refresh when the current search matches nothing', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    fireEvent.change(listPane().getByRole('textbox', { name: 'Search pull requests' }), {
+      target: { value: 'no-match' },
+    })
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    expect((await listPane().findByRole('alert')).textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('No matching pull requests')).toBeTruthy()
+  })
+
+  it('announces the first load, then its failure, and recovers on retry', async () => {
+    let failFirst!: (cause: Error) => void
+    let listRequests = 0
+    const transport = new TestTransport(async (method) => {
+      if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+      listRequests += 1
+      if (listRequests > 1) return result
+      return new Promise<PullRequestListResult>((_resolve, reject) => {
+        failFirst = reject
+      })
+    })
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(listPane().getByRole('status', { name: 'Loading pull requests' })).toBeTruthy()
+    await waitFor(() => expect(failFirst).toBeDefined())
+    failFirst(new Error('GitHub is unreachable'))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain("Couldn't load pull requests")
+    expect(alert.textContent).toContain('GitHub is unreachable')
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listPane().queryByRole('alert')).toBeNull()
+  })
+
+  it.each([
+    {
+      account: { available: false, authenticated: false, error: 'GitHub CLI is not installed' },
+      action: 'install' as const,
+      button: 'Install GitHub CLI',
+      displayName: 'GitHub CLI',
+      terminalId: 'term-github-install',
+    },
+    {
+      account: { available: true, authenticated: false, error: 'Sign in with gh auth login' },
+      action: 'login' as const,
+      button: 'Sign in',
+      displayName: 'GitHub',
+      terminalId: 'term-github-login',
+    },
+  ])('opens GitHub $action in the shared terminal card', async (scenario) => {
+    const setupResult: PullRequestListResult = { ...result, account: scenario.account, items: [] }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return setupResult
+      if (method === 'pullRequests.setup') return { terminalId: scenario.terminalId }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const onSetupTerminalOpen = vi.fn()
+
+    render(
+      <PullRequestsView
+        transport={transport}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={onSetupTerminalOpen}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: scenario.button }))
+
+    await waitFor(() =>
+      expect(onSetupTerminalOpen).toHaveBeenCalledWith({
+        displayName: scenario.displayName,
+        installKey: `pull-requests:github:${scenario.action}`,
+        operation: scenario.action,
+        source: 'pull-requests',
+      }),
+    )
+    expect(transport.requests).toContainEqual({
+      method: 'pullRequests.setup',
+      params: {
+        action: scenario.action,
+        columns: scenario.action === 'login' ? 320 : 100,
+        rows: 30,
+      },
+    })
   })
 })

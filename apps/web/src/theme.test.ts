@@ -5,9 +5,20 @@ import {
   BACKDROP_KEY,
   GLASS_KEY,
   THEME_KEY,
+  applyAccentPreference,
+  applyBackdropPreference,
+  applyFontPreference,
   applyGlassPreference,
+  applyTheme,
+  colorSchemeForTheme,
+  fontFamilyFromPreference,
+  fontPreferenceForFamily,
   readAccentPreference,
+  readAppearancePreferences,
+  appearanceKey,
+  FONT_KEY,
   readBackdropPreference,
+  readFontPreference,
   readGlassPreference,
   readThemePreference,
 } from './theme.js'
@@ -18,23 +29,143 @@ import {
  * the default, never to a broken UI state.
  */
 
-afterEach(() => localStorage.clear())
+afterEach(() => {
+  localStorage.clear()
+  document.documentElement.removeAttribute('data-theme')
+  document.documentElement.removeAttribute('data-font')
+  document.documentElement.style.removeProperty('--font-ui')
+  document.documentElement.classList.remove('dark')
+  applyAccentPreference('neutral')
+  applyBackdropPreference('default')
+})
 
 describe('preference readers', () => {
+  it('inherits legacy preferences and restores independent mode values', () => {
+    localStorage.setItem(FONT_KEY, 'inter')
+    localStorage.setItem(ACCENT_KEY, 'ocean')
+    expect(readAppearancePreferences().light).toEqual(readAppearancePreferences().dark)
+    localStorage.setItem(appearanceKey(FONT_KEY, 'light'), 'serif')
+    localStorage.setItem(appearanceKey(ACCENT_KEY, 'dark'), '#abc')
+    localStorage.setItem(appearanceKey(BACKDROP_KEY, 'light'), '#fff')
+    localStorage.setItem(appearanceKey(GLASS_KEY, 'dark'), '0')
+    expect(readAppearancePreferences()).toEqual({
+      light: { font: 'serif', accent: 'ocean', backdrop: '#FFFFFF', glass: 35 },
+      dark: { font: 'inter', accent: '#AABBCC', backdrop: 'default', glass: 0 },
+    })
+  })
+
+  it('defaults to the system theme when no choice is stored', () => {
+    expect(readThemePreference()).toBe('system')
+  })
+
   it('fall back to defaults on unknown stored values', () => {
     localStorage.setItem(THEME_KEY, 'solarized')
     localStorage.setItem(ACCENT_KEY, 'automatic')
     localStorage.setItem(BACKDROP_KEY, '42')
-    expect(readThemePreference()).toBe('dark')
+    expect(readThemePreference()).toBe('system')
     expect(readAccentPreference()).toBe('neutral')
     expect(readBackdropPreference()).toBe('default')
   })
 
   it('accept every advertised value', () => {
-    localStorage.setItem(THEME_KEY, 'system')
-    expect(readThemePreference()).toBe('system')
+    for (const theme of ['system', 'light', 'dark']) {
+      localStorage.setItem(THEME_KEY, theme)
+      expect(readThemePreference()).toBe(theme)
+    }
     localStorage.setItem(BACKDROP_KEY, 'midnight')
     expect(readBackdropPreference()).toBe('midnight')
+  })
+
+  it('falls back to system for the removed Codex theme', () => {
+    localStorage.setItem(THEME_KEY, 'codex')
+    expect(readThemePreference()).toBe('system')
+  })
+
+  it.each(['dark', 'light'] as const)('applies the %s browser color scheme', (theme) => {
+    applyTheme(theme)
+
+    expect(document.documentElement.dataset['theme']).toBe(theme)
+    expect(document.documentElement.classList.contains('dark')).toBe(theme === 'dark')
+    expect(colorSchemeForTheme(theme)).toBe(theme)
+  })
+})
+
+describe('custom colors', () => {
+  it('restores normalized custom colors from saved preferences', () => {
+    localStorage.setItem(ACCENT_KEY, '#5e6ad2')
+    localStorage.setItem(BACKDROP_KEY, '#fff')
+    expect(readAccentPreference()).toBe('#5E6AD2')
+    expect(readBackdropPreference()).toBe('#FFFFFF')
+  })
+
+  it.each(['#nope', '#12345678', '#12', '#ff00zz', '#fff; color:red'])(
+    'rejects invalid stored color %s',
+    (color) => {
+      localStorage.setItem(ACCENT_KEY, color)
+      localStorage.setItem(BACKDROP_KEY, color)
+      expect(readAccentPreference()).toBe('neutral')
+      expect(readBackdropPreference()).toBe('default')
+    },
+  )
+
+  it('clears custom overrides when presets are restored', () => {
+    const root = document.documentElement
+    applyAccentPreference('#5E6AD2')
+    applyBackdropPreference('#FFFFFF')
+    expect(root.dataset['accent']).toBe('custom')
+    expect(root.dataset['backdrop']).toBe('custom')
+    expect(root.style.getPropertyValue('--custom-accent')).toBe('#5E6AD2')
+    expect(root.style.getPropertyValue('--custom-backdrop')).toBe('#FFFFFF')
+
+    applyAccentPreference('ocean')
+    applyBackdropPreference('slate')
+    expect(root.dataset['accent']).toBe('ocean')
+    expect(root.dataset['backdrop']).toBe('slate')
+    expect(root.style.getPropertyValue('--custom-accent')).toBe('')
+    expect(root.style.getPropertyValue('--custom-backdrop')).toBe('')
+  })
+})
+
+describe('font preference', () => {
+  it('defaults both appearance modes to the native system font', () => {
+    expect(readFontPreference()).toBe('system')
+    expect(readAppearancePreferences().light.font).toBe('system')
+    expect(readAppearancePreferences().dark.font).toBe('system')
+    localStorage.setItem(FONT_KEY, 'unknown-font')
+    expect(readFontPreference()).toBe('system')
+  })
+
+  it.each(['geist', 'inter', 'system', 'humanist', 'rounded', 'serif', 'mono'])(
+    'preserves the saved %s font instead of replacing it with the default',
+    (font) => {
+      localStorage.setItem(FONT_KEY, font)
+      expect(readFontPreference()).toBe(font)
+    },
+  )
+
+  it('round-trips an installed font family and rejects malformed stored values', () => {
+    const preference = fontPreferenceForFamily('  Atkinson Hyperlegible  ')
+
+    expect(preference).toBe('local:Atkinson Hyperlegible')
+    expect(fontFamilyFromPreference(preference!)).toBe('Atkinson Hyperlegible')
+    localStorage.setItem('harness.font', preference!)
+    expect(readFontPreference()).toBe(preference)
+
+    localStorage.setItem('harness.font', 'local:Broken\nFamily')
+    expect(readFontPreference()).toBe('system')
+  })
+
+  it('applies a quoted local family and clears it when returning to a preset', () => {
+    applyFontPreference('local:Atkinson Hyperlegible')
+
+    expect(document.documentElement.dataset['font']).toBe('local')
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe(
+      '"Atkinson Hyperlegible", system-ui, sans-serif',
+    )
+
+    applyFontPreference('inter')
+    expect(document.documentElement.dataset['font']).toBe('inter')
+    expect(document.documentElement.style.getPropertyValue('--font-ui')).toBe('')
   })
 })
 

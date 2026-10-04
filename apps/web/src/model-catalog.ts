@@ -1,6 +1,6 @@
 import type { Model, ProviderId } from '@harness/contracts'
 import type { ProviderMark } from './provider-presentation.js'
-import { sourcePresentation } from './provider-presentation.js'
+import { providerPresentation, sourcePresentation } from './provider-presentation.js'
 
 export {
   agentMark,
@@ -43,13 +43,32 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
   })
 }
 
-/** Curate the first-run picker without overriding a user's saved toggles.
- * Unknown models stay visible: vendors can add models at any time, so only
- * generations explicitly superseded in the current beta roster start hidden. */
+const DEFAULT_HIDDEN_MODELS = new Set([
+  'gpt-6-sol',
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex-spark',
+  'gpt-5.2',
+  'claude-opus-5',
+  'claude-sonnet-5',
+  'claude-fable-5',
+  'claude-haiku-4-5',
+  'haiku',
+  'claude-opus-4-8',
+  'claude-opus-4-7',
+  'claude-opus-4-6',
+  'claude-opus-4-5',
+  'claude-sonnet-4-6',
+  'grok-4.7-build-fast',
+])
+
+/** Hide known older models while letting newly discovered models start enabled. */
 export function modelVisibleByDefault(model: Model): boolean {
-  const id = model.id.toLowerCase()
-  if (/^gpt-5\.(?:4|5)(?:$|-)/.test(id)) return false
-  return !['haiku', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-sonnet-4-6'].includes(id)
+  return !DEFAULT_HIDDEN_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
 }
 
 const REASONING_EFFORT_RANKS = new Map([
@@ -140,7 +159,7 @@ export function modelChoiceKey(source: string, modelId: string): string {
   return `${source}:${encodeURIComponent(modelId || 'automatic')}`
 }
 
-export function automaticModel(): Model {
+function automaticModel(): Model {
   return {
     id: '',
     // Only shown when a provider cannot enumerate its models at all — name
@@ -158,7 +177,7 @@ export function automaticModel(): Model {
  * provider's own source key: a custom id may already exist in the provider's
  * catalog, and the two must never share a choice key.
  */
-export function customModelSource(provider: ProviderId): string {
+function customModelSource(provider: ProviderId): string {
   return `custom:${provider}`
 }
 
@@ -168,8 +187,8 @@ export function customModelKey(input: CustomModelInput): string {
 
 export function customModelChoice(
   input: CustomModelInput,
-  sourceName: string,
-  mark: ProviderMark,
+  sourceName = providerPresentation(input.provider).label,
+  mark = providerPresentation(input.provider).mark,
 ): ModelChoice {
   const presentation = sourcePresentation({ provider: input.provider, sourceName, mark })
   return {

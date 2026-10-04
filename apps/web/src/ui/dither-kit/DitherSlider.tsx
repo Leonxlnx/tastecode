@@ -124,19 +124,14 @@ export function DitherSlider({ active, cell = 4 }: { active: boolean; cell?: num
     if (!wrapper || !dither || !bloom) return
 
     const interactionSurface = wrapper.closest<HTMLElement>('.model-selector__slider')
-    const mediaQuery =
-      typeof window.matchMedia === 'function'
-        ? window.matchMedia('(prefers-reduced-motion: reduce)')
-        : null
+    const mediaQuery = window.matchMedia?.('(prefers-reduced-motion: reduce)') ?? null
     let reducedMotion = Boolean(mediaQuery?.matches)
     let pointer: PointerPosition | null = null
     let strength = 0
     let strengthAnimation: StrengthAnimation | null = null
     let animationFrame: number | null = null
 
-    const useAnimationFrame =
-      typeof window.requestAnimationFrame === 'function' &&
-      /\[native code\]/.test(String(window.requestAnimationFrame))
+    const useAnimationFrame = /\[native code\]/.test(window.requestAnimationFrame?.toString() ?? '')
     const requestFrame = (callback: FrameRequestCallback) =>
       useAnimationFrame
         ? window.requestAnimationFrame(callback)
@@ -288,8 +283,9 @@ export function DitherSlider({ active, cell = 4 }: { active: boolean; cell?: num
 
     paint()
 
-    const observer =
-      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(handleGeometryChange)
+    const observer = globalThis.ResizeObserver
+      ? new globalThis.ResizeObserver(handleGeometryChange)
+      : null
     observer?.observe(wrapper)
     window.addEventListener('pointermove', handlePointer, { passive: true })
     window.addEventListener('pointerdown', handlePointer, { passive: true })
@@ -297,7 +293,7 @@ export function DitherSlider({ active, cell = 4 }: { active: boolean; cell?: num
     window.addEventListener('blur', handleWindowBlur)
     window.addEventListener('resize', handleGeometryChange)
     interactionSurface?.addEventListener('pointerenter', handlePointer, { passive: true })
-    if (typeof mediaQuery?.addEventListener === 'function') {
+    if (mediaQuery?.addEventListener) {
       mediaQuery.addEventListener('change', handleMotionChange)
     } else {
       mediaQuery?.addListener?.(handleMotionChange)
@@ -311,7 +307,7 @@ export function DitherSlider({ active, cell = 4 }: { active: boolean; cell?: num
       window.removeEventListener('blur', handleWindowBlur)
       window.removeEventListener('resize', handleGeometryChange)
       interactionSurface?.removeEventListener('pointerenter', handlePointer)
-      if (typeof mediaQuery?.removeEventListener === 'function') {
+      if (mediaQuery?.removeEventListener) {
         mediaQuery.removeEventListener('change', handleMotionChange)
       } else {
         mediaQuery?.removeListener?.(handleMotionChange)

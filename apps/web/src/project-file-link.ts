@@ -53,7 +53,10 @@ export function preserveProjectFileLinks(markdown: string): string {
   return result + markdown.slice(cursor)
 }
 
-export function projectFileLinkParseWindow(markdown: string): { end: number; scanned: number } {
+type ProjectFileLinkParseWindow = { end: number; scanned: number }
+type ResourceEnd = { end?: number; scanned: number }
+
+export function projectFileLinkParseWindow(markdown: string): ProjectFileLinkParseWindow {
   const candidatePattern = /\]\(\s*<?(?:file:\/\/|[a-z]:[\\/])/gi
   let parseEnd = 0
   let scanned = 0
@@ -75,7 +78,7 @@ function resourceEndAt(
   markdown: string,
   openingParenthesis: number,
   maximumScan: number,
-): { end?: number; scanned: number } {
+): ResourceEnd {
   let depth = 0
   let quote: string | undefined
   let angle = false
@@ -180,6 +183,8 @@ function isWindowsRoot(value: string): boolean {
 }
 
 function windowsReference(candidate: string, projectPath: string): ProjectFileReference {
+  // Models also emit URL-style drive paths outside a file: URL.
+  if (/^\/[a-z]:[\\/]/i.test(candidate)) candidate = candidate.slice(1)
   if (candidate.startsWith('\\\\') || candidate.startsWith('//')) {
     return { kind: 'blocked', path: candidate, reason: 'Network file links are not allowed' }
   }

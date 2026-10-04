@@ -214,7 +214,7 @@ function tokenCount(
   timestamp: string,
   total: Record<string, unknown>,
   last?: Record<string, unknown>,
-): unknown {
+) {
   return {
     timestamp,
     type: 'event_msg',

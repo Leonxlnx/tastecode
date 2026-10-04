@@ -19,10 +19,7 @@ function message(id: string, text = id): Item {
   }
 }
 
-function trackedItems(items: Item[]): {
-  items: Item[]
-  reads: () => number
-} {
+function trackedItems(items: Item[]) {
   let reads = 0
   return {
     items: new Proxy(items, {

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ComponentProps } from 'react'
 import type { Transport } from '../transport.js'
 import { Composer, insertTranscriptAtCursor } from './Composer.js'
@@ -30,6 +30,32 @@ beforeEach(() => vi.clearAllMocks())
 afterEach(cleanup)
 
 describe('Composer voice dictation', () => {
+  it('drops a send-after transcript when a different draft is restored', async () => {
+    let resolve!: (transcript: string) => void
+    const onTranscribeVoice = vi.fn(
+      () =>
+        new Promise<string>((done) => {
+          resolve = done
+        }),
+    )
+    const onSend = vi.fn()
+    const view = renderVoiceComposer({
+      draftRequest: { text: 'First chat', request: 1 },
+      onTranscribeVoice,
+      onSend,
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
+    await waitFor(() => expect(onTranscribeVoice).toHaveBeenCalledOnce())
+    view.rerenderComposer({ draftRequest: { text: 'Second chat', request: 2 } })
+    await act(async () => resolve('First chat voice'))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Second chat',
+    )
+    expect(onSend).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Record voice note' })).toBeTruthy()
+  })
+
   it('records, transcribes, and inserts at the cursor without sending', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
@@ -39,7 +65,7 @@ describe('Composer voice dictation', () => {
     fireEvent.change(textarea, { target: { value: 'hello world' } })
     textarea.setSelectionRange(5, 5)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
 
     await waitFor(() => expect(textarea.value).toBe('hello spoken words world'))
@@ -48,12 +74,38 @@ describe('Composer voice dictation', () => {
     expect(onSend).not.toHaveBeenCalled()
   })
 
+  it('hides mode controls but keeps file attachments working during dictation', async () => {
+    const originalPrompt = window.prompt
+    window.prompt = vi.fn(() => '/work/reference.txt')
+    const onSend = vi.fn()
+    renderVoiceComposer({ onSend, onTranscribeVoice: async () => 'spoken words' })
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+      await screen.findByRole('button', { name: 'Stop and transcribe voice note' })
+      expect(screen.queryByRole('button', { name: 'Permissions' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Design' })).toBeNull()
+      const add = screen.getByRole('button', { name: 'Attach files' })
+      expect((add as HTMLButtonElement).disabled).toBe(false)
+      fireEvent.click(add)
+      await screen.findByText('reference.txt')
+      expect(recorder.cancel).not.toHaveBeenCalled()
+      fireEvent.click(screen.getByRole('button', { name: 'Transcribe and send voice note' }))
+      await waitFor(() =>
+        expect(onSend).toHaveBeenCalledWith('spoken words', ['/work/reference.txt']),
+      )
+      expect(screen.getByRole('button', { name: 'Permissions' })).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Design' })).toBeTruthy()
+    } finally {
+      window.prompt = originalPrompt
+    }
+  })
+
   it('transcribes and sends from the arrow action', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onSend, onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', []))
@@ -64,7 +116,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(async () => 'spoken words')
     renderVoiceComposer({ onTranscribeVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Discard voice note' }))
 
     await waitFor(() =>
@@ -83,7 +135,7 @@ describe('Composer voice dictation', () => {
       sendAvailability: 'setup-required',
     })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
 
     await waitFor(() =>
@@ -99,7 +151,7 @@ describe('Composer voice dictation', () => {
     const onTranscribeVoice = vi.fn(() => new Promise<string>(() => {}))
     renderVoiceComposer({ onTranscribeVoice, onCancelVoice })
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
     fireEvent.click(await screen.findByRole('button', { name: 'Cancel transcription' }))
 
@@ -113,7 +165,7 @@ describe('Composer voice dictation', () => {
     recorder.start.mockRejectedValueOnce(denied)
     renderVoiceComposer()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'Microphone access was denied.',
@@ -130,14 +182,53 @@ describe('insertTranscriptAtCursor', () => {
   })
 })
 
+describe('Dictation startup and recovery', () => {
+  it('puts the microphone before Send', async () => {
+    renderVoiceComposer()
+    const mic = await screen.findByRole('button', { name: 'Record voice note' })
+    const send = screen.getByRole('button', { name: 'Send' })
+    expect(mic.compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('shows startup at once and lets Escape cancel a pending microphone', async () => {
+    let finish!: () => void
+    recorder.start.mockImplementationOnce(
+      () =>
+        new Promise<undefined>((resolve) => {
+          finish = () => resolve(undefined)
+        }),
+    )
+    const onTranscribeVoice = vi.fn()
+    renderVoiceComposer({ onTranscribeVoice })
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    expect(screen.getByText('Starting…')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await screen.findByRole('button', { name: 'Record voice note' })
+    finish()
+    await waitFor(() => expect(recorder.cancel).toHaveBeenCalled())
+    expect(onTranscribeVoice).not.toHaveBeenCalled()
+  })
+
+  it('returns to idle if audio encoding fails', async () => {
+    recorder.stop.mockRejectedValueOnce(new Error('Could not encode audio'))
+    renderVoiceComposer()
+    fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop and transcribe voice note' }))
+    await screen.findByRole('button', { name: 'Record voice note' })
+    expect(screen.getByText('Could not encode audio')).toBeTruthy()
+  })
+})
+
 function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
-  return render(
+  const transport = voiceTransport()
+  let currentOverrides = overrides
+  const composer = () => (
     <Composer
-      transport={voiceTransport()}
+      transport={transport}
       provider="codex"
-      projects={[{ path: '/work/harness', name: 'Harness', sessions: [] }]}
+      projects={[{ path: '/work/harness', name: 'TasteCode' }]}
       projectPath="/work/harness"
-      projectName="Harness"
+      projectName="TasteCode"
       branch="main"
       branches={['main']}
       models={[]}
@@ -176,9 +267,16 @@ function renderVoiceComposer(overrides: Partial<ComponentProps<typeof Composer>>
       onDeleteQueuedTurn={vi.fn()}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
-      {...overrides}
-    />,
+      {...currentOverrides}
+    />
   )
+  const view = render(composer())
+  return Object.assign(view, {
+    rerenderComposer(next: Partial<ComponentProps<typeof Composer>>) {
+      currentOverrides = { ...currentOverrides, ...next }
+      view.rerender(composer())
+    },
+  })
 }
 
 function voiceTransport(): Transport {

@@ -1,0 +1,100 @@
+{
+  "date": "2026-09-12",
+  "startingHead": "fbeb433a1ac2c916cbb9ab523ec697371db5986b",
+  "startingPaths": 82,
+  "merged": [
+    {
+      "name": "release",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1095",
+      "head": "d46db887983efcd0baa29ec7c30e2bf0a9cdaef7",
+      "mergeCommit": "ebf7212e0b1c9208c3c7754a991ac1807d56cc77"
+    },
+    {
+      "name": "copy-image",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1083",
+      "head": "06cb355c28ba54085d940e07cf0a811796ce688b",
+      "mergeCommit": "cbd09a783aeecd5ec74b45bd707f275911bf2a60"
+    },
+    {
+      "name": "design",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1096",
+      "head": "741c40aae470f36af130534b8022879d135f528e",
+      "mergeCommit": "82b32c79611457aea6854f8ca0f7a4f06a03ed1e"
+    },
+    {
+      "name": "shortcuts",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1084",
+      "head": "96627ff395077b2298e9cae6598f22bddc9f9269",
+      "mergeCommit": "658f6e04531594a1d462910c286fa8778a2cf0c2"
+    },
+    {
+      "name": "fonts",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1085",
+      "head": "fe88575184aa7e6de6f0e7cd842e021729ce8dbe",
+      "mergeCommit": "e4494a74bc49d6ff254ba4fb41cbcbc7d702bf37"
+    },
+    {
+      "name": "provider-updates",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1086",
+      "head": "a8fcc540d0469d7d933b02c0a20eb464dd736ebb",
+      "mergeCommit": "057a570934b4854784bcdd87dd5cb6004085e767"
+    },
+    {
+      "name": "usage",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1087",
+      "head": "24559583ff22a6eaf5a33d00c1ddf32559931633",
+      "mergeCommit": "ccb86322a6942f303eaf38f8ac54bf5014e47443"
+    },
+    {
+      "name": "queue-motion",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1088",
+      "head": "21b530646bcb9f66e7bb83d86cc065fbed061cab",
+      "mergeCommit": "9f688c9f29a72a013089255b678672b79badc22c"
+    },
+    {
+      "name": "button-feedback",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1089",
+      "head": "e8d02a1cac9a2159e362ece6ea6d5c4ea7869cc3",
+      "mergeCommit": "062bad00a588ad502aec8995b1625ea0940f30a6"
+    },
+    {
+      "name": "media-preview",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1090",
+      "head": "d493e30d207297ce5d7a90ccf14757e7b1f30545",
+      "mergeCommit": "1d149e66e19301e1588abf698558d8dca7b46fe1"
+    },
+    {
+      "name": "activity",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1091",
+      "head": "24790934c9f878a7d374c7e5c690dfd87437bebd",
+      "mergeCommit": "f894c21dbd0b6b7142842d0cc1f63b1d8b7cdcdf"
+    },
+    {
+      "name": "quiet-reviews",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1092",
+      "head": "9330bf5c636db4c1dd37ed0b45d2721946769847",
+      "mergeCommit": "340f5c44778baab37ac2083a96a3e7ba9a90d471"
+    },
+    {
+      "name": "draft-media",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1093",
+      "head": "c6e5f25759140d10ad1721ec813cf8fb82903915",
+      "mergeCommit": "43e179f8e053c64e4b290781940d051c95b0b5a0"
+    },
+    {
+      "name": "codex-approval",
+      "url": "https://github.com/Leonxlnx/tastecode/pull/1094",
+      "head": "8024fbf0ea25e7147c0898868c0be0c50930f2fb",
+      "mergeCommit": "14e6f12cd41337e2ac5020cedec133d34ff7cf80"
+    }
+  ],
+  "packageProof": {
+    "unsigned": true,
+    "macOS": true,
+    "nativePtyAndKeyring": true,
+    "referenceImages": 132,
+    "finishedAt": "2026-09-12T13:11:11.978Z"
+  },
+  "releasePublication": false,
+  "hostedCiStarted": false
+}

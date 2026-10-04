@@ -1,14 +1,124 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WebSocket } from 'ws'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
 
-const socket = {} as WebSocket
+const socket = {}
 const viewports = [{ width: 1_440, height: 900 }]
 
 describe('preview capture coordinator', () => {
+  it('rejects an already-aborted capture without dispatching it', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    const controller = new AbortController()
+    controller.abort()
+    coordinator.setCapability(socket, true)
+
+    await expect(
+      coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(send).not.toHaveBeenCalled()
+  })
+
+  it('drops an aborted queued capture without dispatching it', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports)
+    const queued = coordinator.capture('http://127.0.0.1:5184/', viewports, controller.signal)
+    controller.abort()
+
+    await expect(queued).rejects.toMatchObject({ name: 'AbortError' })
+    const firstRequest = send.mock.calls[0]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: firstRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\first.png', ...viewports[0]! }],
+    })
+    await expect(first).resolves.toHaveLength(1)
+    expect(send).toHaveBeenCalledOnce()
+  })
+
+  it('cancels an aborted in-flight capture and dispatches the next one', async () => {
+    const send = vi.fn()
+    const cancel = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send, 35_000, cancel)
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal)
+    const firstRequest = send.mock.calls[0]![1]
+    const next = coordinator.capture('http://127.0.0.1:5184/', viewports)
+    controller.abort()
+
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+    expect(cancel).toHaveBeenCalledWith(socket, firstRequest.requestId)
+    expect(send).toHaveBeenCalledTimes(2)
+    const nextRequest = send.mock.calls[1]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: nextRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\next.png', ...viewports[0]! }],
+    })
+    await expect(next).resolves.toHaveLength(1)
+  })
+
+  it('refuses a late native reply for an aborted capture without disturbing the next one', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send, 35_000, vi.fn())
+    const controller = new AbortController()
+    coordinator.setCapability(socket, true)
+
+    const first = coordinator.capture('http://127.0.0.1:5183/', viewports, controller.signal)
+    const firstRequest = send.mock.calls[0]![1]
+    const next = coordinator.capture('http://127.0.0.1:5184/', viewports)
+    controller.abort()
+    await expect(first).rejects.toMatchObject({ name: 'AbortError' })
+
+    expect(() =>
+      coordinator.complete(socket, {
+        status: 'failed',
+        requestId: firstRequest.requestId,
+        error: 'late result',
+      }),
+    ).toThrow('Unknown preview capture request')
+    const nextRequest = send.mock.calls[1]![1]
+    coordinator.complete(socket, {
+      status: 'completed',
+      requestId: nextRequest.requestId,
+      screenshots: [{ path: 'C:\\tmp\\next.png', ...viewports[0]! }],
+    })
+    await expect(next).resolves.toHaveLength(1)
+  })
+
+  it('cancels timed-out desktop work before sending the next queued capture', async () => {
+    vi.useFakeTimers()
+    try {
+      const operations: string[] = []
+      const coordinator = new PreviewCaptureCoordinator<object>(
+        () => operations.push('send'),
+        10,
+        () => operations.push('cancel'),
+      )
+      coordinator.setCapability(socket, true)
+      const first = coordinator.capture('http://127.0.0.1:5101/', viewports)
+      const firstFailure = expect(first).rejects.toThrow(/timed out/)
+      const next = coordinator.capture('http://127.0.0.1:5102/', viewports)
+      const nextFailure = expect(next).rejects.toThrow(/timed out/)
+      await vi.advanceTimersByTimeAsync(10)
+      await firstFailure
+      expect(operations).toEqual(['send', 'cancel', 'send'])
+      coordinator.remove(socket)
+      await vi.advanceTimersByTimeAsync(10)
+      await nextFailure
+      expect(operations.at(-1)).toBe('cancel')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
   it('round-trips a capture through a capable client', async () => {
     const send = vi.fn()
-    const coordinator = new PreviewCaptureCoordinator(send)
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
     coordinator.setCapability(socket, true)
     const capture = coordinator.capture('http://127.0.0.1:5183/', viewports)
     const request = send.mock.calls[0]![1]
@@ -19,6 +129,70 @@ describe('preview capture coordinator', () => {
     })
 
     await expect(capture).resolves.toEqual([{ path: 'C:\\tmp\\desktop.png', ...viewports[0]! }])
+  })
+
+  it.each(['disconnect', 'send failure'])(
+    'retries a capture after %s without restarting its deadline or blocking the queue',
+    async (failure) => {
+      vi.useFakeTimers()
+      try {
+        const send = vi.fn()
+        if (failure === 'send failure')
+          send.mockImplementationOnce(() => {
+            throw new Error('closed')
+          })
+        const cancel = vi.fn()
+        const coordinator = new PreviewCaptureCoordinator<object>(send, 100, cancel)
+        coordinator.setCapability(socket, true)
+        const first = coordinator.capture('http://127.0.0.1:5101/', viewports)
+        const firstFailure = expect(first).rejects.toThrow('Preview capture timed out')
+        const original = send.mock.calls[0]![1]
+        if (failure === 'disconnect') coordinator.remove(socket)
+        expect(cancel).toHaveBeenCalledWith(socket, original.requestId)
+        await vi.advanceTimersByTimeAsync(70)
+        const replacement = {}
+        coordinator.setCapability(replacement, true)
+        const retry = send.mock.calls[1]![1]
+        expect(retry.requestId).not.toBe(original.requestId)
+        expect(retry.url).toBe(original.url)
+        expect(() =>
+          coordinator.complete(socket, {
+            status: 'failed',
+            requestId: original.requestId,
+            error: 'old capture',
+          }),
+        ).toThrow('Unknown preview capture request')
+        const next = coordinator.capture('http://127.0.0.1:5102/', viewports)
+        await vi.advanceTimersByTimeAsync(30)
+        await firstFailure
+        expect(cancel).toHaveBeenCalledWith(replacement, retry.requestId)
+        const last = send.mock.calls[2]![1]
+        coordinator.complete(replacement, {
+          status: 'completed',
+          requestId: last.requestId,
+          screenshots: [{ path: 'C:\\tmp\\next.png', ...viewports[0]! }],
+        })
+        await expect(next).resolves.toHaveLength(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    },
+  )
+
+  it('finishes the same capture on a replacement client', async () => {
+    const send = vi.fn()
+    const coordinator = new PreviewCaptureCoordinator<object>(send)
+    coordinator.setCapability(socket, true)
+    const capture = coordinator.capture('http://127.0.0.1:5101/', viewports)
+    coordinator.remove(socket)
+    const replacement = {}
+    coordinator.setCapability(replacement, true)
+    coordinator.complete(replacement, {
+      status: 'completed',
+      requestId: send.mock.calls[1]![1].requestId,
+      screenshots: [{ path: 'C:\\tmp\\recovered.png', ...viewports[0]! }],
+    })
+    await expect(capture).resolves.toMatchObject([{ path: 'C:\\tmp\\recovered.png' }])
   })
 
   it('fails fast without a capable client', async () => {

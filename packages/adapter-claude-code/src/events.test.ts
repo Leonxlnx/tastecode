@@ -86,7 +86,10 @@ describe('claude event translation', () => {
     expect(completedItemIds(replay)).toEqual(itemIds)
     expect(first).toMatchObject([
       { type: 'item.completed', item: { type: 'message', text: 'I will inspect the fixture.' } },
-      { type: 'item.completed', item: { type: 'tool_call', text: 'Read' } },
+      {
+        type: 'item.completed',
+        item: { type: 'tool_call', text: 'Read\n{"file_path":"inspection.txt"}' },
+      },
     ])
   })
 
@@ -101,6 +104,111 @@ describe('claude event translation', () => {
       't1',
     )
     expect(events[0]).toMatchObject({ item: { type: 'file_change', path: 'src/app.ts' } })
+    expect(events[0]).not.toHaveProperty('item.text')
+  })
+
+  it('carries an edit as a unified diff with line counts', () => {
+    const [edit] = toDomainEvents(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              name: 'Edit',
+              input: { file_path: 'src/app.ts', old_string: 'a\nb', new_string: 'a\nc\nd' },
+            },
+          ],
+        },
+      },
+      't1',
+    )
+    expect(edit).toMatchObject({
+      item: {
+        type: 'file_change',
+        path: 'src/app.ts',
+        linesAdded: 3,
+        linesRemoved: 2,
+        text: [
+          'diff --git a/src/app.ts b/src/app.ts',
+          '--- a/src/app.ts',
+          '+++ b/src/app.ts',
+          '@@ -1,2 +1,3 @@',
+          '-a',
+          '-b',
+          '+a',
+          '+c',
+          '+d',
+        ].join('\n'),
+      },
+    })
+
+    const [write] = toDomainEvents(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', name: 'Write', input: { file_path: 'notes.md', content: 'x\n' } },
+          ],
+        },
+      },
+      't1',
+    )
+    expect(write).toMatchObject({
+      item: {
+        type: 'file_change',
+        linesAdded: 1,
+        linesRemoved: 0,
+        text: 'diff --git a/notes.md b/notes.md\n--- /dev/null\n+++ b/notes.md\n@@ -0,0 +1,1 @@\n+x',
+      },
+    })
+  })
+
+  it('lands a tool result on the call that produced it', () => {
+    const tools = new Map()
+    const [started] = toDomainEvents(
+      {
+        type: 'assistant',
+        message: {
+          content: [
+            { type: 'tool_use', id: 'tu1', name: 'Bash', input: { command: 'node --version' } },
+            { type: 'tool_use', id: 'tu2', name: 'WebFetch', input: { url: 'https://x.test' } },
+          ],
+        },
+      },
+      't1',
+      tools,
+    )
+    expect(started).toMatchObject({
+      type: 'item.completed',
+      item: { id: 'tu1-call', type: 'command', status: 'started', command: 'node --version' },
+    })
+
+    const results = toDomainEvents(
+      {
+        type: 'user',
+        message: {
+          content: [
+            { type: 'tool_result', tool_use_id: 'tu1', content: 'v22' },
+            { type: 'tool_result', tool_use_id: 'tu2', content: 'timed out', is_error: true },
+          ],
+        },
+      },
+      't1',
+      tools,
+    )
+    expect(results).toMatchObject([
+      { item: { id: 'tu1-call', type: 'command', status: 'completed', text: 'v22' } },
+      {
+        item: {
+          id: 'tu2-call',
+          type: 'tool_call',
+          status: 'failed',
+          text: 'WebFetch\n{"url":"https://x.test"}\ntimed out',
+        },
+      },
+    ])
+    expect(tools.size).toBe(0)
   })
 
   it('maps thinking blocks to reasoning', () => {

@@ -1,0 +1,268 @@
+// @vitest-environment happy-dom
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ProviderUpdate } from '@harness/contracts'
+import { TestTransport } from './test-transport.js'
+import {
+  ProviderUpdatesStore,
+  SIMULATED_INSTALL_MS,
+  SIMULATED_START_MS,
+  SIMULATED_VERIFY_MS,
+} from './provider-updates.js'
+import { installState, resetInstalls, updateKey } from './provider-install.js'
+
+const available: ProviderUpdate = {
+  provider: 'codex',
+  displayName: 'Codex',
+  currentVersion: '0.9.0',
+  latestVersion: '0.11.0',
+  updateAvailable: true,
+  canUpdate: true,
+  updateUrl: 'https://developers.openai.com/codex/cli',
+}
+
+afterEach(() => {
+  resetInstalls()
+  vi.useRealTimers()
+})
+
+describe('provider updates lifecycle', () => {
+  it('clears an old failure when a manual recheck finds the CLI was updated elsewhere', async () => {
+    let updated = false
+    const transport = new TestTransport((method) =>
+      method === 'providers.update'
+        ? { terminalId: 'update' }
+        : {
+            updates: [
+              {
+                ...available,
+                currentVersion: updated ? available.latestVersion : available.currentVersion,
+                updateAvailable: !updated,
+              },
+            ],
+          },
+    )
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    await store.start('codex')
+    transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 })
+    expect(store.snapshot().operations.codex?.phase).toBe('failed')
+    updated = true
+    await store.refresh(true)
+    expect(store.snapshot().operations.codex).toBeUndefined()
+  })
+  it('does not remain stuck updating when the connection loses the terminal exit', async () => {
+    let exited = false
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.update') return { terminalId: 'update' }
+      if (method === 'terminal.status')
+        return {
+          status: exited ? 'exited' : 'running',
+          output: 'final error',
+          outputOffset: 0,
+          exitCode: exited ? 1 : null,
+        }
+      return { updates: [available] }
+    })
+    const store = new ProviderUpdatesStore(transport)
+    await store.start('codex')
+    transport.emitState('reconnecting')
+    expect(store.snapshot().operations.codex?.phase).toBe('running')
+    exited = true
+    transport.emitState('open')
+    await vi.waitFor(() => expect(store.snapshot().operations.codex?.phase).toBe('failed'))
+    expect(installState(updateKey('codex'))?.log).toBe('final error')
+    expect(
+      transport.requests.filter((request) => request.method === 'providers.update'),
+    ).toHaveLength(1)
+  })
+  it('deduplicates checks and skips disconnected requests', async () => {
+    const transport = new TestTransport(() => ({ updates: [available] }))
+    const store = new ProviderUpdatesStore(transport)
+    transport.state = 'closed'
+    await store.refresh()
+    expect(transport.requests).toHaveLength(0)
+    transport.state = 'open'
+    await Promise.all([store.refresh(), store.refresh()])
+    await store.refresh()
+    expect(transport.requests).toHaveLength(1)
+    await store.refresh(true)
+    expect(transport.requests).toHaveLength(2)
+  })
+
+  it('starts only one update and verifies the installed version after a fast exit', async () => {
+    let updated = false
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates')
+        return {
+          updates: [
+            {
+              ...available,
+              currentVersion: updated ? '0.11.0' : '0.9.0',
+              updateAvailable: !updated,
+            },
+          ],
+        }
+      if (method === 'providers.update') {
+        updated = true
+        transport.emit('terminal.output', { terminalId: 'fast-update', data: 'Updated\r\n' })
+        transport.emit('terminal.exit', { terminalId: 'fast-update', exitCode: 0 })
+        return { terminalId: 'fast-update' }
+      }
+      throw new Error(method)
+    })
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    await Promise.all([store.start('codex'), store.start('codex')])
+    await vi.waitFor(() => expect(store.snapshot().operations.codex?.phase).toBe('succeeded'))
+    expect(transport.requests.filter((entry) => entry.method === 'providers.update')).toHaveLength(
+      1,
+    )
+    expect(installState(updateKey('codex'))?.log).toBe('Updated\r\n')
+    expect(store.snapshot().updates[0]?.currentVersion).toBe('0.11.0')
+  })
+
+  it('keeps an unchanged version as a failure even when the installer exits zero', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'providers.update' ? { terminalId: 'update' } : { updates: [available] },
+    )
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    await store.start('codex')
+    transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 })
+    await vi.waitFor(() =>
+      expect(store.snapshot().operations.codex).toMatchObject({
+        phase: 'failed',
+        error: expect.stringContaining('could not be confirmed'),
+      }),
+    )
+  })
+
+  it('keeps installer failures available for retry', async () => {
+    const transport = new TestTransport((method) =>
+      method === 'providers.update' ? { terminalId: 'update' } : { updates: [available] },
+    )
+    const store = new ProviderUpdatesStore(transport)
+    await store.start('codex')
+    const first = store.snapshot().operations.codex
+    transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 })
+    const failed = store.snapshot().operations.codex
+    expect(failed?.phase).toBe('failed')
+    expect(failed).not.toBe(first)
+    expect(failed?.run).toBe(first?.run)
+    await store.start('codex')
+    const retry = store.snapshot().operations.codex
+    expect(retry?.phase).toBe('running')
+    expect(retry?.run).not.toBe(first?.run)
+    transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 })
+  })
+
+  it('handles a failed request without losing the last known releases', async () => {
+    let fail = false
+    const transport = new TestTransport(() => {
+      if (fail) throw new Error('offline')
+      return { updates: [available] }
+    })
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    fail = true
+    await store.refresh(true)
+    expect(store.snapshot()).toMatchObject({
+      checking: false,
+      updates: [available],
+      error: expect.any(String),
+    })
+    await store.start('codex')
+    expect(store.snapshot().operations.codex?.phase).toBe('failed')
+  })
+
+  it('checks again on reconnect and releases its timer and state listener on cleanup', async () => {
+    vi.useFakeTimers()
+    const transport = new TestTransport(() => ({ updates: [] }))
+    transport.state = 'connecting'
+    const store = new ProviderUpdatesStore(transport)
+    const stop = store.monitor()
+    transport.emitState('open')
+    await Promise.resolve()
+    await store.refresh()
+    expect(transport.requests).toHaveLength(1)
+    stop()
+    await vi.advanceTimersByTimeAsync(3_600_001)
+    transport.emitState('open')
+    expect(transport.requests).toHaveLength(1)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('plays simulated releases without touching a CLI and restores the real ones', async () => {
+    vi.useFakeTimers()
+    let checks = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') {
+        checks += 1
+        return { updates: [{ ...available, currentVersion: '0.159.0', updateAvailable: false }] }
+      }
+      throw new Error(method)
+    })
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    store.simulate('several')
+    const simulated = store.snapshot().updates
+    expect(
+      simulated.map((entry) => [entry.provider, entry.currentVersion, entry.latestVersion]),
+    ).toEqual([
+      ['codex', '0.159.0', '0.160.0'],
+      ['claude-code', '2.0.14', '2.0.15'],
+      ['grok', '1.0.45', '1.0.46'],
+    ])
+    // A real check while the simulation runs lands behind it.
+    await store.refresh(true)
+    expect(checks).toBe(2)
+    expect(store.snapshot().updates).toBe(simulated)
+
+    await store.start('codex')
+    expect(store.snapshot().operations.codex).toMatchObject({ phase: 'starting', simulated: true })
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations.codex?.phase).toBe('verifying')
+    await vi.advanceTimersByTimeAsync(SIMULATED_VERIFY_MS)
+    expect(store.snapshot().operations.codex?.phase).toBe('succeeded')
+    expect(store.snapshot().updates[0]).toMatchObject({
+      currentVersion: '0.160.0',
+      updateAvailable: false,
+    })
+    expect(transport.requests.some((entry) => entry.method === 'providers.update')).toBe(false)
+
+    store.stopSimulation()
+    expect(store.snapshot()).toMatchObject({ simulation: undefined, operations: {} })
+    expect(store.snapshot().updates).toEqual([
+      { ...available, currentVersion: '0.159.0', updateAvailable: false },
+    ])
+  })
+
+  it('fails a simulated update once so the retry shows recovery', async () => {
+    vi.useFakeTimers()
+    const store = new ProviderUpdatesStore(new TestTransport())
+    store.simulate('failure')
+    await store.start('grok')
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations.grok).toMatchObject({
+      phase: 'failed',
+      error: 'Simulated update failure. Try again.',
+    })
+    await store.start('grok')
+    await vi.advanceTimersByTimeAsync(
+      SIMULATED_START_MS + SIMULATED_INSTALL_MS + SIMULATED_VERIFY_MS,
+    )
+    expect(store.snapshot().operations.grok?.phase).toBe('succeeded')
+  })
+
+  it('stops a simulated run in flight', async () => {
+    vi.useFakeTimers()
+    const store = new ProviderUpdatesStore(new TestTransport())
+    store.simulate('one')
+    expect(store.snapshot().updates.map((entry) => entry.provider)).toEqual(['codex'])
+    await store.start('codex')
+    store.stopSimulation()
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations).toEqual({})
+    expect(store.snapshot().updates).toEqual([])
+  })
+})

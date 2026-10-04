@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
-import { AlertTriangle, FolderPlus } from 'lucide-react'
+import {
+  IconAlertTriangle as AlertTriangle,
+  IconFolderPlus as FolderPlus,
+} from '@tabler/icons-react'
 import { pickSkillFolder } from '../bridge.js'
 import type { Transport } from '../transport.js'
+import { useProviderWatch } from '../provider-watch.js'
+import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 
 type Inventory = ResultOf<'skills.list'>
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
@@ -14,6 +19,7 @@ export function SkillsSettings(props: {
   projectPath: string | undefined
   projectName: string | undefined
 }) {
+  useProviderWatch(props.transport, props.provider, props.projectPath, 'skills')
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
@@ -179,12 +185,13 @@ export function SkillsSettings(props: {
       : !currentInventory
         ? `Checking ${props.providerName} Agent Skills support…`
         : `${props.providerName} · Agent Skills inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
+  // A background refresh keeps the current list on screen; blanking it
+  // to a loading note on every skills.changed push read as flicker.
+  const discovering = Boolean(props.projectPath) && loading && !inventory
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : // A background refresh keeps the current list on screen; blanking it
-      // to a loading note on every skills.changed push read as flicker.
-      loading && !inventory
-      ? 'Discovering skills…'
+    : discovering
+      ? undefined
       : !currentInventory
         ? undefined
         : !currentInventory.capabilities.inventory
@@ -228,6 +235,11 @@ export function SkillsSettings(props: {
             Retry
           </button>
         </p>
+      ) : null}
+      {discovering ? (
+        <SkeletonStatus label="Discovering skills…" className="settings__group">
+          <SkeletonRows rows={3} detail control density="roomy" />
+        </SkeletonStatus>
       ) : null}
       {status ? <p className="skills-settings__empty">{status}</p> : null}
       {currentInventory?.errors.length ? (

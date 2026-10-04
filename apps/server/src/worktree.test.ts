@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -44,6 +44,19 @@ afterEach(() => {
 })
 
 describe('createWorktree', () => {
+  it('starts from a named branch without switching the shared checkout', async () => {
+    git(repo, 'branch', 'chosen')
+    writeFileSync(path.join(repo, 'file.txt'), 'main advanced\n')
+    git(repo, 'commit', '-am', 'advance main')
+    const before = git(repo, 'rev-parse', 'HEAD')
+    const worktree = await createWorktree(repo, 'thread-from-chosen', root, 'chosen')
+    expect(git(worktree.path, 'show', 'HEAD:file.txt')).toBe('original\n')
+    expect(git(repo, 'branch', '--show-current').trim()).toBe('main')
+    expect(git(repo, 'rev-parse', 'HEAD')).toBe(before)
+    await expect(createWorktree(repo, 'thread-invalid-ref', root, '--orphan')).rejects.toThrow(
+      /unknown local branch/,
+    )
+  })
   it('gives the session a checkout of its own on its own branch', async () => {
     const worktree = await createWorktree(repo, 'codex-aaaa-bbbb-cccc', root)
 
@@ -53,6 +66,22 @@ describe('createWorktree', () => {
     // entire point of isolating a session.
     writeFileSync(path.join(worktree.path, 'file.txt'), 'changed by agent\n')
     expect(git(repo, 'status', '--porcelain')).toBe('')
+  })
+
+  it('keeps a nested project folder as the work path inside the checkout', async () => {
+    const nested = path.join(repo, 'apps', 'web')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(nested, 'index.ts'), 'export {}\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'nested')
+    mkdirSync(path.join(repo, 'untracked'))
+
+    const worktree = await createWorktree(nested, 'thread-nested-1111', root)
+    const missing = await createWorktree(path.join(repo, 'untracked'), 'thread-nested-2222', root)
+
+    expect(worktree.workPath).toBe(path.join(worktree.path, 'apps', 'web'))
+    expect(existsSync(path.join(worktree.workPath!, 'index.ts'))).toBe(true)
+    expect(missing.workPath).toBe(missing.path)
   })
 
   it('gives two sessions separate checkouts and separate branches', async () => {
