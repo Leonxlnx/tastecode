@@ -618,7 +618,7 @@ describe('Sidebar chat actions', () => {
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
-  it('confirms bulk archive and sidebar removal before acting', () => {
+  it('confirms bulk archive and sidebar removal before acting', async () => {
     const onArchiveProject = vi.fn()
     const onRemoveProject = vi.fn()
     render(
@@ -667,13 +667,13 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    fireEvent.click(screen.getByRole('button', { name: 'Delete chats' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete chats' }))
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
     expect(
-      screen.getByText(
+      await screen.findByText(
         'This only removes the project from the sidebar. Its folder and chats stay untouched.',
       ),
     ).toBeTruthy()

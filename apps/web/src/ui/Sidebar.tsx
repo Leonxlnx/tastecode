@@ -17,7 +17,6 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { createPortal } from 'react-dom'
 import type {
   Account,
   ProviderId,
@@ -43,7 +42,6 @@ import {
   IconSettings as Settings,
   IconEdit as SquarePen,
   IconUser as UserRound,
-  IconX as X,
 } from '@tabler/icons-react'
 import {
   canDropProjectFolders,
@@ -66,7 +64,6 @@ import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
-import { useDialogFocus } from './dialog-focus.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
@@ -111,6 +108,12 @@ function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
 
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
+)
+
+const SidebarConfirmDialog = lazy(() =>
+  import('./SidebarConfirmDialog.js').then((module) => ({
+    default: module.SidebarConfirmDialog,
+  })),
 )
 
 /**
@@ -1393,25 +1396,27 @@ const ProjectRow = memo(function ProjectRow(props: {
       </div>
 
       {confirming ? (
-        <SidebarConfirmDialog
-          title={confirming === 'archive' ? 'Delete all chats?' : 'Remove project?'}
-          body={
-            confirming === 'archive'
-              ? `This permanently deletes every chat and its restore points in ${displayName(props.project)} after the Undo window. Files on your computer stay untouched.`
-              : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
-          }
-          action={confirming === 'archive' ? 'Delete chats' : 'Remove project'}
-          destructive
-          onConfirm={() => {
-            if (confirming === 'archive') {
-              props.onArchiveProject(props.project.sessions.map((session) => session.id))
-            } else {
-              props.onRemoveProject(props.project.path)
+        <Suspense fallback={null}>
+          <SidebarConfirmDialog
+            title={confirming === 'archive' ? 'Delete all chats?' : 'Remove project?'}
+            body={
+              confirming === 'archive'
+                ? `This permanently deletes every chat and its restore points in ${displayName(props.project)} after the Undo window. Files on your computer stay untouched.`
+                : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
             }
-            setConfirming(undefined)
-          }}
-          onClose={() => setConfirming(undefined)}
-        />
+            action={confirming === 'archive' ? 'Delete chats' : 'Remove project'}
+            destructive
+            onConfirm={() => {
+              if (confirming === 'archive') {
+                props.onArchiveProject(props.project.sessions.map((session) => session.id))
+              } else {
+                props.onRemoveProject(props.project.path)
+              }
+              setConfirming(undefined)
+            }}
+            onClose={() => setConfirming(undefined)}
+          />
+        </Suspense>
       ) : null}
 
       {/* Height comes from grid-template-rows in CSS, so the animation covers
@@ -1823,52 +1828,6 @@ function SessionRow(props: {
         )}
       </Menu>
     </li>
-  )
-}
-
-function SidebarConfirmDialog(props: {
-  title: string
-  body: string
-  action: string
-  destructive: boolean
-  onConfirm: () => void
-  onClose: () => void
-}) {
-  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
-
-  return createPortal(
-    <div
-      className="sheet"
-      role="dialog"
-      aria-modal="true"
-      aria-label={props.title}
-      onKeyDown={dialog.onKeyDown}
-    >
-      <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
-      <div className="sheet__panel sidebar-confirm" ref={dialog.panel} tabIndex={-1}>
-        <header className="sheet__head">
-          <h2 className="sheet__title">{props.title}</h2>
-          <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
-            <X size={13} aria-hidden />
-          </button>
-        </header>
-        <section className="sheet__section">
-          <p>{props.body}</p>
-          <div className="sidebar-confirm__actions">
-            <button className="ghost" onClick={props.onClose} autoFocus>
-              Cancel
-            </button>
-            <button
-              className={`btn${props.destructive ? ' btn--danger' : ''}`}
-              onClick={props.onConfirm}
-            >
-              {props.action}
-            </button>
-          </div>
-        </section>
-      </div>
-    </div>,
-    document.body,
   )
 }
 
