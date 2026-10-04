@@ -170,15 +170,18 @@ export class ProviderUpdatesStore {
   }
 }
 
+/** The one store per connection that the notice and Settings share. */
+export function providerUpdatesStore(transport: Transport): ProviderUpdatesStore {
+  let current = stores.get(transport)
+  if (!current) {
+    current = new ProviderUpdatesStore(transport)
+    stores.set(transport, current)
+  }
+  return current
+}
+
 export function useProviderUpdates(transport: Transport) {
-  const store = useMemo(() => {
-    let current = stores.get(transport)
-    if (!current) {
-      current = new ProviderUpdatesStore(transport)
-      stores.set(transport, current)
-    }
-    return current
-  }, [transport])
+  const store = useMemo(() => providerUpdatesStore(transport), [transport])
   const state = useSyncExternalStore(store.subscribe, store.snapshot)
   return { store, state }
 }
