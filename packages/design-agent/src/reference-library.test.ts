@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
+import { referenceDirectionAttachments } from './reference-directions.js'
+import { readRasterMetadata } from './raster-metadata.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
@@ -56,10 +58,12 @@ describe('reviewed reference library', () => {
     expect(referenceLibraryRoot()).toBe(
       fileURLToPath(new URL('../references/library/', import.meta.url)),
     )
-    expect(references).toHaveLength(172)
+    expect(references).toHaveLength(372)
     expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
-    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
-    expect(selectReviewedReferences(brief, references)).toHaveLength(14)
+    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(344)
+    const websiteDeck = selectReviewedReferences(brief, references)
+    expect(websiteDeck).toHaveLength(14)
+    expect(websiteDeck.some(({ family }) => family === 'dashboard')).toBe(false)
     for (const family of WEBSITE_LAYOUT_FAMILIES) {
       const pool = referenceCandidatesForFamily(family, references)
       expect(
@@ -81,6 +85,39 @@ describe('reviewed reference library', () => {
       JSON.stringify({ libraryPath: custom }),
     )
     expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
+  })
+
+  it('makes every bundled dashboard pair selectable and preserves its two verified raster attachments', () => {
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
+    vi.spyOn(os, 'homedir').mockReturnValue(library())
+    const references = loadReviewedReferences()
+    const dashboards = references.filter(({ family }) => family === 'dashboard')
+    expect(dashboards).toHaveLength(200)
+    expect(new Set(dashboards.map(({ group }) => group)).size).toBe(200)
+    const appBrief = {
+      ...brief,
+      pageType: 'mobile fitness app',
+      originalRequest: 'Build a mobile fitness app',
+    }
+    const selectedGroups = new Set<string>()
+    const images = new Set<string>()
+    for (let index = 0; index < dashboards.length; index++) {
+      const deck = selectReviewedReferences(appBrief, references, (length) =>
+        length === dashboards.length ? index : 0,
+      )
+      expect(deck).toHaveLength(1)
+      expect(deck[0]?.family).toBe('dashboard')
+      selectedGroups.add(deck[0]!.group!)
+      expect(parseReferenceDeck(deck)).toEqual(deck)
+      const attachments = referenceDirectionAttachments(deck)
+      expect(attachments).toHaveLength(2)
+      for (const attachment of attachments) {
+        images.add(attachment)
+        expect(readRasterMetadata(attachment).format).toBe('webp')
+      }
+    }
+    expect(selectedGroups.size).toBe(200)
+    expect(images.size).toBe(400)
   })
 
   it('makes every hero group eligible despite different source sites, styles and revision counts', () => {

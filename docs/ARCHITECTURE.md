@@ -565,11 +565,16 @@ manual.
 ## Dashboard design references (pending)
 
 Pending source work as of 2026-10-04, based on `main` at `6ac40ec1`; not merged or released.
-Operating dashboards use a separate catalog of reviewed generated desktop/mobile pairs.
+The asset import is complete: a separate dashboard catalog and provenance record contain
+200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
+references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
+344 paired references and 28 desktop-only references.
 Sampling chooses a layout group uniformly, then one variant within that group, so retries do
 not give a composition extra votes. One complete app-shell reference preserves navigation,
-content density and responsive hierarchy. Website references and their shipped counts remain
-unchanged. Dashboard asset import and end-to-end acceptance are still pending.
+content density and responsive hierarchy. The compiled default-bundle checks passed for all
+200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
+dashboard WebPs have unique matching hashes and valid viewport metadata; the 402 imported
+files match their import proof. Website selection still yields 14 website-only references.
 
 Briefing distinguishes an operating interface from a marketing page about a dashboard product.
 The former plans `operate_monitor` views with functional filters, sorting, tabs, navigation,
@@ -580,7 +585,15 @@ still require evidence. Website hero entrances and scroll reveals keep their exi
 
 Reference-driven Design requires the session's declared image input capability. Unsupported
 sessions reject before inference or persisted Design state; ordinary coding remains available.
+Direct API sessions currently declare `images: false`, so visual Design is unsupported there.
 The workflow never substitutes an unannounced text-only build for the requested image copying.
+
+The design-agent package passed 232 tests and its build; earlier local lint, typecheck and full
+build passed. Twelve focused orchestration checks passed: six capability-preflight cases and
+six synthetic-vision website/dashboard flows. The full test run has 13 unchanged Windows or
+environment failures, so the four gates are not all green. Final nightly integration and
+interactive native-app acceptance remain pending; synthetic flows and a separate external
+demo do not prove native-app acceptance.
 
 _Rejected:_ composing dashboards from marketing sections, treating generation retries as new
 layout votes, or requiring static screenshots in place of working native charts and controls.
@@ -605,7 +618,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-04 | Planned dashboard references and operational interaction guidance separately from website compositions; asset import and acceptance remain pending, with no release claim.     |
+| 2026-10-04 | Imported 200 dashboard reference pairs; operational guidance and image-capability preflight remain unreleased, with integration and native-app acceptance pending.             |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
