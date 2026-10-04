@@ -7353,6 +7353,7 @@ describe('global shortcuts', () => {
   })
 
   it('toggles the terminal from the composer without changing its draft', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -7373,6 +7374,7 @@ describe('global shortcuts', () => {
   })
 
   it('routes the terminal shortcut to the selected right sidebar terminal', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -7411,6 +7413,7 @@ describe('global shortcuts', () => {
   })
 
   it('opens the bottom terminal before a chat starts', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     await screen.findByRole('button', { name: /^New session,/ })

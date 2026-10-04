@@ -9,23 +9,23 @@ import {
 
 afterEach(() => {
   vi.restoreAllMocks()
-  writeTerminalPlacement('bottom')
+  writeTerminalPlacement('workspace')
   localStorage.clear()
 })
 
 describe('terminal placement preference', () => {
-  it('uses the bottom panel when no preference has been saved', () => {
-    expect(readTerminalPlacement()).toBe('bottom')
+  it('uses the right sidebar when no preference has been saved', () => {
+    expect(readTerminalPlacement()).toBe('workspace')
   })
 
-  it('persists the workspace sidebar choice and notifies subscribers', () => {
+  it('persists the bottom panel choice and notifies subscribers', () => {
     const onChange = vi.fn()
     const unsubscribe = subscribeTerminalPlacement(onChange)
 
-    writeTerminalPlacement('workspace')
+    writeTerminalPlacement('bottom')
 
-    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
-    expect(readTerminalPlacement()).toBe('workspace')
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
+    expect(readTerminalPlacement()).toBe('bottom')
     expect(onChange).toHaveBeenCalledOnce()
     unsubscribe()
   })
@@ -35,8 +35,8 @@ describe('terminal placement preference', () => {
       throw new DOMException('Storage blocked', 'SecurityError')
     })
 
-    writeTerminalPlacement('workspace')
+    writeTerminalPlacement('bottom')
 
-    expect(readTerminalPlacement()).toBe('workspace')
+    expect(readTerminalPlacement()).toBe('bottom')
   })
 })
