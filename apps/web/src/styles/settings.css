@@ -130,187 +130,6 @@
   padding: calc(var(--titlebar-h) + 48px) 48px 64px;
 }
 
-.settings__content--profile {
-  width: min(1080px, 100%);
-  padding-inline: clamp(28px, 4vw, 56px);
-}
-
-/* ---------- profile ---------- */
-
-.profile-page {
-  width: 100%;
-  min-width: 0;
-  animation: settings-panel-in 220ms var(--ease-out);
-}
-
-.profile-page__header,
-.profile-identity__meta {
-  display: flex;
-  align-items: center;
-}
-
-.profile-page__header {
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 0;
-}
-
-.profile-page__header h1 {
-  margin: 0;
-  color: var(--text);
-  font-size: var(--t-2xl);
-  font-weight: 550;
-  letter-spacing: -0.026em;
-  line-height: 1.2;
-}
-
-.profile-identity {
-  display: grid;
-  justify-items: center;
-  padding: 44px 20px 50px;
-  text-align: center;
-}
-
-.profile-identity__avatar {
-  display: grid;
-  width: 88px;
-  height: 88px;
-  place-items: center;
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--surface-3) 88%, var(--text-2)),
-    var(--surface)
-  );
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-circle);
-  box-shadow:
-    inset 0 1px color-mix(in srgb, var(--chrome-highlight) 92%, transparent),
-    0 13px 28px -18px rgb(0 0 0 / 58%);
-  color: var(--text);
-  font-size: var(--t-2xl);
-  font-weight: 590;
-  letter-spacing: -0.05em;
-  overflow: hidden;
-}
-
-.profile-identity__avatar img,
-.profile-identity__avatar svg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.profile-identity h2 {
-  margin: 18px 0 0;
-  color: var(--text);
-  font-size: var(--t-2xl);
-  font-weight: 570;
-  letter-spacing: -0.02em;
-}
-
-.profile-identity__meta {
-  min-height: 1lh;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 7px;
-  margin-top: 8px;
-  color: var(--text-3);
-  font-size: var(--t-md);
-}
-
-.profile-identity__editor {
-  display: grid;
-  width: min(360px, 100%);
-  gap: 10px;
-  margin-top: 22px;
-}
-
-.profile-identity__field {
-  display: grid;
-  width: 100%;
-  gap: 7px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  text-align: left;
-}
-
-.profile-identity__field input {
-  width: 100%;
-  min-height: 30px;
-  padding: 5px 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--t-sm);
-  outline: none;
-}
-
-.profile-identity__field input:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
-}
-
-.profile-identity__portrait {
-  position: relative;
-}
-
-/* The upload lives on the picture itself: a small pencil badge on the corner,
-   cut out from the avatar by a ring in the page background. */
-.profile-identity__edit {
-  position: absolute;
-  right: -2px;
-  bottom: -2px;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  background: var(--surface-2);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-circle);
-  box-shadow:
-    0 0 0 3px var(--bg),
-    0 6px 14px -8px rgb(0 0 0 / 60%);
-  color: var(--text-2);
-  cursor: pointer;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.profile-identity__edit:hover {
-  background: var(--control-hover);
-  color: var(--text);
-}
-
-.profile-identity__edit:focus-within {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
-}
-
-.profile-identity__photo-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 6px;
-}
-
-.profile-identity__photo-note,
-.profile-identity__photo-error {
-  margin: 0;
-  font-size: var(--t-xs);
-}
-
-.profile-identity__photo-note {
-  color: var(--text-3);
-}
-
-.profile-identity__photo-error {
-  color: var(--error);
-}
-
 /* Debug › Avatar generator: one input, the picture at every shipped size,
    then fixed samples so shape and color variety can be judged side by side. */
 .avatar-lab {
@@ -464,27 +283,6 @@
   outline-offset: 2px;
 }
 
-@media (max-width: 660px) {
-  .settings__content--profile {
-    padding-inline: 18px;
-  }
-
-  .profile-identity {
-    padding: 28px 12px 40px;
-  }
-
-  .profile-identity__avatar {
-    width: 76px;
-    height: 76px;
-    font-size: var(--t-xl);
-  }
-
-  .profile-identity h2 {
-    margin-top: 14px;
-    font-size: var(--t-xl);
-  }
-}
-
 .settings__panel {
   width: 100%;
   animation: settings-panel-in 220ms var(--ease-out);
@@ -498,7 +296,6 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .profile-page,
   .settings__panel {
     animation: fade-in var(--dur-fast) var(--ease-out) both !important;
   }
@@ -1749,7 +1546,7 @@
   padding: 8px 10px;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-flyout);
   color: var(--text);
   font-size: var(--t-sm);
@@ -1881,7 +1678,7 @@
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;

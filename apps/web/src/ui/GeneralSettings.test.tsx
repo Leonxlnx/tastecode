@@ -25,7 +25,7 @@ function plan() {
 afterEach(() => {
   cleanup()
   act(() => {
-    writeTerminalPlacement('bottom')
+    writeTerminalPlacement('workspace')
     writeModelPickerLayout('list')
   })
 })
@@ -117,16 +117,17 @@ describe('general settings', () => {
   it('moves the terminal and the model picker in the plan', () => {
     renderGeneral()
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
-    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
     expect(plan().getAttribute('aria-label')).toContain('terminal on the right')
+    fireEvent.click(screen.getByRole('radio', { name: 'Bottom' }))
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
+    expect(plan().getAttribute('aria-label')).toContain('terminal at the bottom')
 
     fireEvent.click(screen.getByRole('radio', { name: 'Rail' }))
     expect(localStorage.getItem(MODEL_PICKER_LAYOUT_KEY)).toBe('rail')
     expect(plan().getAttribute('aria-label')).toContain('model picker as a rail')
 
-    act(() => writeTerminalPlacement('bottom'))
-    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
+    act(() => writeTerminalPlacement('workspace'))
+    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
   })
 
   it('lights and captions the part of the window a line decides', () => {

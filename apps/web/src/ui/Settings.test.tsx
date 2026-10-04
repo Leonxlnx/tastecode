@@ -116,7 +116,7 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
-  writeTerminalPlacement('bottom')
+  writeTerminalPlacement('workspace')
   localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
@@ -133,6 +133,12 @@ describe('settings viewport layout', () => {
     expect(settings?.querySelector(':scope > .settings__main')).toBeTruthy()
   })
 
+  it('opens on General when no section is asked for', () => {
+    renderSettings({ overrides: { initialSection: undefined } })
+
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+  })
+
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
@@ -147,7 +153,7 @@ describe('settings viewport layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('radiogroup', { name: 'Model picker' })).toBeTruthy()
-    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(screen.queryByRole('radiogroup', { name: 'Model picker' })).toBeNull()
@@ -179,13 +185,13 @@ describe('settings viewport layout', () => {
     expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
   })
 
-  it('lets the terminal shortcut target the right sidebar', () => {
+  it('lets the terminal shortcut target the bottom panel', () => {
     renderSettings({ initialSection: 'workflows' })
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Bottom' }))
 
-    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
-    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
+    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
   })
 })
 
@@ -526,16 +532,14 @@ describe('settings loading values', () => {
     const { rerenderSettings } = renderSettings({
       overrides: { initialSection: 'profile', accountLoading: true },
     })
-    expect(
-      screen.getByText('Loading account plan…').closest('.profile-identity__meta'),
-    ).toBeTruthy()
+    expect(screen.getByText('Loading account plan…').closest('.profile__plan')).toBeTruthy()
     rerenderSettings({
       initialSection: 'profile',
       accountLoading: false,
       account: { signedIn: true, plan: 'Pro' },
     })
     expect(screen.queryByText('Loading account plan…')).toBeNull()
-    expect(screen.getByText('Pro')).toBeTruthy()
+    expect(screen.getByText('Pro plan')).toBeTruthy()
   })
 
   it.each([true, false])(
@@ -1336,6 +1340,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1448,6 +1453,7 @@ describe('provider settings', () => {
 
     const settingsFor = (onChanged: () => void) => (
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1591,6 +1597,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}

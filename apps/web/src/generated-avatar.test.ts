@@ -5,10 +5,23 @@ import {
   DEFAULT_AVATAR_STYLE,
   generatedAvatar,
   normalizeAvatarName,
+  readSeal,
+  sealCell,
   type Cell,
 } from './generated-avatar.js'
 
-const NAMES = Array.from({ length: 300 }, (_, index) => `user${index}`)
+const ALPHABET = 'abcdefghijklmnopqrstuvwxyz'
+/** 300 different made-up words, 3 to 11 letters, from a fixed seed. */
+const NAMES = (() => {
+  let seed = 7
+  const next = () => (seed = (seed * 1103515245 + 12345) % 2 ** 31)
+  const words = new Set<string>()
+  while (words.size < 300) {
+    words.add(Array.from({ length: 3 + (next() % 9) }, () => ALPHABET[next() % 26]).join(''))
+  }
+  return [...words]
+})()
+const HASHED = Array.from({ length: 300 }, (_, index) => `#${index}`)
 const HSL = /^hsl\((\d+) (\d+)% (\d+)%\)$/u
 
 function parts(color: string): [number, number, number] {
@@ -45,14 +58,15 @@ describe('generated avatar', () => {
         }
       }
     }
+    // Light only for words ending in a vowel, about one in five of these.
     const grounds = NAMES.map((name) => generatedAvatar(name).dark)
-    expect(grounds.filter(Boolean).length).toBeGreaterThan(100)
-    expect(grounds.filter((dark) => !dark).length).toBeGreaterThan(100)
+    expect(grounds.filter(Boolean).length).toBeGreaterThan(150)
+    expect(grounds.filter((dark) => !dark).length).toBeGreaterThan(30)
   })
 
-  it('folds the mandala under the symmetry the hash picked and never leaves it blank', () => {
+  it('folds the mandala under its symmetry and never leaves it blank', () => {
     const seen = new Set<string>()
-    for (const name of NAMES) {
+    for (const name of [...NAMES, ...HASHED]) {
       const avatar = generatedAvatar(name, 'mandala')
       if (avatar.style !== 'mandala') throw new Error('expected a mandala')
       seen.add(avatar.symmetry)
@@ -95,8 +109,50 @@ describe('generated avatar', () => {
     }
   })
 
-  it('spreads nearby names across distinct pictures in every style', () => {
-    for (const style of AVATAR_STYLES) {
+  it('reads the seal from the word, so it can be steered', () => {
+    const harbor = readSeal('Harbor')!
+    // The first letter picks the colour, A to Z once round the wheel.
+    expect(harbor.colourLetter).toBe('h')
+    expect(harbor.avatar.hue).toBe(Math.round((7 * 360) / 26))
+    expect(readSeal('ada')!.avatar.hue).toBe(0)
+    // A vowel at the end gives a light ground, anything else a dark one.
+    expect(harbor.avatar.dark).toBe(true)
+    expect(readSeal('harbo')!.avatar.dark).toBe(false)
+    // The letter count picks the symmetry.
+    expect(readSeal('abc')!.avatar.symmetry).toBe('quad')
+    expect(readSeal('abcd')!.avatar.symmetry).toBe('mirror')
+    expect(readSeal('abcde')!.avatar.symmetry).toBe('triple')
+    // Each character lays a tile: vowels the second ink, A–M the first, the rest a gap.
+    expect(['a', 'e', 'o', 'u'].map(sealCell)).toEqual(Array(4).fill(CELL.glint))
+    expect(['b', 'm', 'n', 'z', ' ', '7'].map(sealCell)).toEqual([
+      CELL.ink,
+      CELL.ink,
+      CELL.ground,
+      CELL.ground,
+      CELL.ground,
+      CELL.ground,
+    ])
+    // Six letters turn four times: three tiles a ring, laid clockwise from the top and repeated.
+    expect(harbor.avatar.rings[0]!.slice(0, 3)).toEqual([CELL.ink, CELL.glint, CELL.ground])
+    expect(harbor.avatar.rings[1]!.slice(0, 3)).toEqual([CELL.ink, CELL.glint, CELL.ground])
+    expect(harbor.laid).toEqual([
+      CELL.ink,
+      CELL.glint,
+      CELL.ground,
+      CELL.ink,
+      CELL.glint,
+      CELL.ground,
+    ])
+    // Accents and case do not change the reading.
+    expect(generatedAvatar('Élan')).toEqual(generatedAvatar('elan'))
+  })
+
+  it('hashes words without letters, and every word in the other styles', () => {
+    expect(readSeal('123')).toBeUndefined()
+    expect(
+      new Set(HASHED.map((name) => JSON.stringify(generatedAvatar(name)))).size,
+    ).toBeGreaterThan(280)
+    for (const style of AVATAR_STYLES.filter((style) => style !== 'mandala')) {
       const distinct = new Set(NAMES.map((name) => JSON.stringify(generatedAvatar(name, style))))
       expect(distinct.size, style).toBeGreaterThan(280)
     }
