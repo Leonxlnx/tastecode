@@ -1,11 +1,23 @@
 import { createHash, randomBytes } from 'node:crypto'
+import * as fs from 'node:fs'
+import * as fsPromises from 'node:fs/promises'
 import { createServer, type IncomingMessage, type Server } from 'node:http'
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import type { AddressInfo } from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { downloadVerified, type VerifiedDownload } from './update-download.js'
+
+// chmod does not enforce directory permissions on Windows; inject the filesystem errors.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>()
+  return { ...actual, createWriteStream: vi.fn(actual.createWriteStream) }
+})
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof fsPromises>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
 
 const bytes = randomBytes(256 * 1024)
 const sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -192,15 +204,21 @@ describe('resumable update downloads', () => {
   })
 
   it('downloads even when a leftover from an older release cannot be removed yet', async () => {
-    // A read-only folder stands in for a Windows virus scanner's file lock.
     const locked = path.join(directory, 'locked')
     await mkdir(locked)
     await writeFile(path.join(locked, 'older.dmg'), 'older release')
-    await chmod(locked, 0o500)
+    const busy = Object.assign(new Error('The older release is locked'), { code: 'EBUSY' })
+    const { rm: originalRm } = await vi.importActual<typeof fsPromises>('node:fs/promises')
+    const removal = vi.spyOn(fsPromises, 'rm').mockImplementation(async (target, settings) => {
+      if (target === locked) throw busy
+      return originalRm(target, settings)
+    })
     try {
       expect(await readFile(await downloadVerified(options()))).toEqual(bytes)
+      expect(removal).toHaveBeenCalledWith(locked, expect.any(Object))
+      expect(await readFile(path.join(locked, 'older.dmg'), 'utf8')).toBe('older release')
     } finally {
-      await chmod(locked, 0o700)
+      removal.mockRestore()
     }
   })
 
@@ -254,11 +272,27 @@ describe('resumable update downloads', () => {
   })
 
   it('fails cleanly when the download folder cannot be written', async () => {
-    await chmod(directory, 0o500)
+    const actualFs = await vi.importActual<typeof fs>('node:fs')
+    const denied = Object.assign(new Error('Permission denied'), { code: 'EACCES' })
+    const writer = vi.spyOn(fs, 'createWriteStream').mockImplementation((file, settings) => {
+      if (file !== stored()) return actualFs.createWriteStream(file, settings)
+      const streamSettings: fs.WriteStreamOptions | undefined =
+        typeof settings === 'string' ? { encoding: settings } : settings
+      return actualFs.createWriteStream(file, {
+        ...streamSettings,
+        fs: {
+          ...actualFs,
+          ...streamSettings?.fs,
+          open: (_file, _flags, _mode, callback) => callback(denied),
+        },
+      })
+    })
     try {
-      await expect(downloadVerified(options())).rejects.toThrow()
+      await expect(downloadVerified(options())).rejects.toBe(denied)
+      expect(writer).toHaveBeenCalledWith(stored(), expect.any(Object))
+      await expect(stat(stored())).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
-      await chmod(directory, 0o700)
+      writer.mockRestore()
     }
   })
 

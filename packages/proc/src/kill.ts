@@ -78,7 +78,13 @@ async function terminate(child: KillableProcess): Promise<void> {
       windowsHide: true,
       timeout: 1_500,
     })
-    if (!result.error && result.status === 0) return
+    // taskkill can finish before Node observes the child's exit event.
+    if (
+      !result.error &&
+      result.status === 0 &&
+      (await waitUntil(() => child.exitCode != null || child.signalCode != null, 500))
+    )
+      return
   }
   // Unregistered children and test doubles have no group ownership. Never
   // signal a guessed group, which could include the app or another task.
