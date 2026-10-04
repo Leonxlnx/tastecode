@@ -151,6 +151,7 @@ import {
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
+import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
@@ -488,6 +489,7 @@ function SettingsComponent(props: {
                 </button>
               </SettingsRow>
               <AppUpdateSimulationRow />
+              <ProviderUpdateSimulationRow transport={props.transport} />
               <SettingsRow
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
@@ -534,6 +536,43 @@ function AppUpdateSimulationRow() {
         type="button"
         disabled={!running}
         onClick={stopAppUpdateSimulation}
+      >
+        Stop
+      </button>
+    </SettingsRow>
+  )
+}
+
+const PROVIDER_UPDATE_SIMULATIONS = [
+  { scenario: 'one', label: 'One release' },
+  { scenario: 'several', label: 'Three releases' },
+  { scenario: 'failure', label: 'Failing update' },
+] as const satisfies ReadonlyArray<{ scenario: ProviderUpdateSimulation; label: string }>
+
+function ProviderUpdateSimulationRow(props: { transport: Transport }) {
+  const { store, state } = useProviderUpdates(props.transport)
+  return (
+    <SettingsRow
+      title="Simulate provider updates"
+      note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
+      className="settings__row--roomy"
+    >
+      {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
+        <button
+          key={scenario}
+          className="settings__action"
+          type="button"
+          onClick={() => store.simulate(scenario)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="settings__action"
+        type="button"
+        aria-label="Stop provider update simulation"
+        disabled={!state.simulation}
+        onClick={store.stopSimulation}
       >
         Stop
       </button>
