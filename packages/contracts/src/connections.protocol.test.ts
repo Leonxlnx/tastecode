@@ -36,4 +36,19 @@ describe('model connection protocol', () => {
       }),
     ).toThrow()
   })
+
+  it('preserves each saved chat API connection when listing projects', () => {
+    const sessions = ['personal-openai', 'work-openai'].map((connectionId, index) => ({
+      id: `thread-${index}`,
+      title: 'API chat',
+      provider: 'api',
+      connectionId,
+      createdAt: 1,
+      running: false,
+    }))
+    const projects = [{ path: 'D:\\repo', name: 'repo', pinned: false, createdAt: 1, sessions }]
+    expect(methods['projects.list'].result.parse({ projects }).projects[0]?.sessions).toEqual(
+      sessions,
+    )
+  })
 })
