@@ -81,6 +81,15 @@ describe('startup CSS budget', () => {
     expect(inbox).toContain("import '../styles/inbox-sidebar.css'")
   })
 
+  it('keeps the sidebar confirmation behind its project actions', () => {
+    const sidebar = readSource('../ui/Sidebar.tsx')
+    const dialog = readSource('../ui/SidebarConfirmDialog.tsx')
+
+    expect(sidebar).toContain("import('./SidebarConfirmDialog.js')")
+    expect(sidebar).not.toMatch(/from ['"]\.\/SidebarConfirmDialog\.js['"]/)
+    expect(dialog).toContain("import '../styles/sidebar-confirm.css'")
+  })
+
   it('warms account limits at startup without adding them to the main bundle', () => {
     const sidebar = readSource('../ui/Sidebar.tsx')
     const limits = readSource('../ui/AccountLimits.tsx')
