@@ -35,7 +35,10 @@ export function NoticePresence(props: NoticePresenceProps) {
   }, [mounted])
   const canDismiss = Boolean(props.onDismiss)
   useEffect(() => {
-    if (!props.visible || !canDismiss || props.autoDismissPaused || hovered || focused) return
+    if (!props.visible || !canDismiss || props.autoDismissPaused || hovered) return
+    // Removing the focused control (an action that hides itself once pressed)
+    // fires no blur, so the focus flag alone would hold the notice forever.
+    if (focused && root.current?.contains(document.activeElement)) return
     const timeout = globalThis.setTimeout(() => onDismiss.current?.(), 5_000)
     return () => globalThis.clearTimeout(timeout)
   }, [props.visible, canDismiss, props.autoDismissPaused, props.dismissKey, hovered, focused])
