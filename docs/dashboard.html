@@ -290,12 +290,21 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-04 main 6c0d3061 · 0.1.2 source preparation</span>
+        <span class="meta">2026-10-04 main e29c3382 · checkpoint identity correction</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
+          Windows long paths and 8.3 aliases share one Git common-directory identity, preserving
+          linked worktrees' combined checkpoint refs during history cleanup. A real alias regression
+          and all 36 checkpoint/audit tests passed locally; the fix is also covered by
+          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+            >Windows integration verification</a
+          >.
+        </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
             >Windows cleanup verification (#1394)</a
