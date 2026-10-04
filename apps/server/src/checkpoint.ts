@@ -350,7 +350,8 @@ export async function retainCheckpoint(
 export async function checkpointRepository(repoPath: string): Promise<string> {
   const common = await git(repoPath, ['rev-parse', '--git-common-dir'])
   if (common === undefined) throw new Error(`could not locate checkpoint storage for ${repoPath}`)
-  return realpathSync(path.resolve(repoPath, common))
+  // Windows long paths and 8.3 aliases must share one checkpoint-ref namespace.
+  return realpathSync.native(path.resolve(repoPath, common))
 }
 
 /** Startup migration writes only missing refs, in bounded Git transactions. */
