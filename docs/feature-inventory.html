@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 nightly synchronization · main 86d13b61</span>
+        <span class="meta">2026-10-04 nightly sync candidate · main 3e67df35</span>
       </div>
     </div>
 
@@ -1277,7 +1277,12 @@
                 >Checkpoint every turn, reversible rollback with changed-file inspection
                 <span class="d"
                   >Git refs protect saved states; shared-checkout guards wait for active and
-                  stopping agents; nested project restore stays in scope</span
+                  stopping agents; nested project restore stays in scope. Filesystem-native Git
+                  common-directory identity combines Windows long/8.3 aliases during history
+                  cleanup, retaining all linked-worktree checkpoints (<a
+                    href="https://github.com/Leonxlnx/tastecode/pull/1404"
+                    >#1404</a
+                  >)</span
                 ></span
               ></label
             >
@@ -2226,15 +2231,21 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside the main source snapshot named above. Final local verification of this updated
-        synchronization is in progress.
+        alongside main 3e67df35.
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-        has human approval and awaits merge after verification. The Windows cleanup corrections in
-        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> have landed on main;
-        the standalone API connection contract in
-        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> has landed on
-        nightly. Packaged Windows/macOS verification remains pending. Ticks live in your browser's
-        local storage, nothing is sent anywhere.
+        is approved and awaits merge as a nightly integration candidate, not a public release.
+        Windows cleanup <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task
+        authorization <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and
+        checkpoint identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are
+        merged on main; the API connection contract
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">#1395</a> is merged on nightly.
+        <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+          >Windows CI run 37228489532</a
+        >
+        passed all four gates at exact candidate 67c7383c, with 4,395 tests passed, 18 existing
+        skips and zero failures. This documentation-only synchronization preserves every tested
+        non-documentation file. Packaged Windows and macOS verification remains pending. Ticks live
+        in your browser's local storage, nothing is sent anywhere.
       </footer>
     </div>
 
