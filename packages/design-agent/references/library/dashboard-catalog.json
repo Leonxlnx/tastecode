@@ -9,12 +9,7 @@
       "surface": "dashboard",
       "source": "https://github.com/chatwoot/chatwoot",
       "sourceName": "Chatwoot",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "support-inbox"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "support-inbox"],
       "domain": "support-inbox",
       "cue": "Four-pane white customer support workspace: navigation, conversation queue, broad live message thread and narrow customer inspector. Thread includes public replies, yellow private notes and a bottom rich-text composer. Right accordion groups hold contact attributes and conversation actions.",
       "imagePath": "dashboard-images/dash-e001-desktop.webp",
@@ -48,12 +43,7 @@
       "surface": "dashboard",
       "source": "https://github.com/mattermost/focalboard",
       "sourceName": "Focalboard",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "project-board"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "project-board"],
       "domain": "project-board",
       "cue": "Deep blue project/navigation tree beside a white project-status board. Oversized title and description lead to three live Kanban columns plus a compressed hidden-columns rail. Cards carry colored labels and small dates; filter/group/sort controls align above columns.",
       "imagePath": "dashboard-images/dash-e002-desktop.webp",
@@ -87,12 +77,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Leantime/leantime",
       "sourceName": "Leantime",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "personal-planning"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "personal-planning"],
       "domain": "personal-planning",
       "motifs": [
         "faceted teal backdrop",
@@ -132,12 +117,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Leantime/leantime",
       "sourceName": "Leantime",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "timesheet-entry"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "timesheet-entry"],
       "domain": "timesheet-entry",
       "cue": "Compact weekly timesheet editor across the upper workspace over teal background. A horizontal form table joins project, task and billing-type dropdowns to seven daily hour inputs and totals. Date range controls and save button sit within the same rounded sheet.",
       "imagePath": "dashboard-images/dash-e008-desktop.webp",
@@ -171,12 +151,7 @@
       "surface": "dashboard",
       "source": "https://vikunja.io/",
       "sourceName": "Vikunja",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "task-gantt"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "task-gantt"],
       "domain": "task-gantt",
       "cue": "Light project shell with wide navigation and List/Gantt/Table/Kanban tabs. Date-range form sits above a day-resolution Gantt with stacked bright-blue task spans, highlighted current-day column and bottom create-task action. No fabricated analytics card row.",
       "imagePath": "dashboard-images/dash-e010-desktop.webp",
@@ -210,12 +185,7 @@
       "surface": "dashboard",
       "source": "https://vikunja.io/",
       "sourceName": "Vikunja",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "task-detail"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "task-detail"],
       "domain": "task-detail",
       "cue": "Full task detail page within light sidebar shell. Breadcrumb and giant task title above labels, rich-text description and a large attached image. Separate right action rail groups completion/subscription, organization and management actions as full-width buttons.",
       "imagePath": "dashboard-images/dash-e011-desktop.webp",
@@ -249,12 +219,7 @@
       "surface": "dashboard",
       "source": "https://github.com/espocrm/espocrm",
       "sourceName": "EspoCRM",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "crm-leads"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "crm-leads"],
       "domain": "crm-leads",
       "cue": "Light CRM lead directory with broad labeled sidebar divided into CRM and Activities. A spacious title/filter region sits above a flat leads table; selectable rows contain names, pastel status badges, emails and assigned-user initials. This is a lead list, not an analytics dashboard.",
       "imagePath": "dashboard-images/dash-e012-desktop.webp",
@@ -288,12 +253,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Foundry376/Mailspring",
       "sourceName": "Mailspring",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "mail-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "mail-workspace"],
       "domain": "mail-workspace",
       "cue": "Desktop email workspace with folder rail, message list, expanded thread and inline reply composer, plus contact/profile inspector at far right. Dense icon toolbar spans top. Official image has an outer app-window shadow; all major app regions are visible.",
       "imagePath": "dashboard-images/dash-e013-desktop.webp",
@@ -327,12 +287,7 @@
       "surface": "dashboard",
       "source": "https://github.com/ferdium/ferdium-app",
       "sourceName": "Ferdium",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "integration-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "integration-library"],
       "domain": "integration-library",
       "cue": "Full desktop service workspace shown with a large integration-directory dialog open. Purple heading, service search and category tabs sit above a four-column app-logo grid; secondary settings navigation remains visible behind the dialog and the original service is dimmed. This is an observed modal workspace state.",
       "imagePath": "dashboard-images/dash-e014-desktop.webp",
@@ -366,12 +321,7 @@
       "surface": "dashboard",
       "source": "https://github.com/gitbutlerapp/gitbutler",
       "sourceName": "GitButler",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "version-control"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "version-control"],
       "domain": "version-control",
       "cue": "Light source-control workspace with narrow icon rail, tall unassigned-file list and two parallel branch columns on a dotted canvas. Staged-file blocks alternate with vertical commit histories and push/PR actions. A lifted commit row visibly demonstrates drag-and-drop state.",
       "imagePath": "dashboard-images/dash-e015-desktop.webp",
@@ -405,12 +355,7 @@
       "surface": "dashboard",
       "source": "https://docs.firefly-iii.org/explanation/firefly-iii/about/screenshots/",
       "sourceName": "Firefly III",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "account-ledger"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "account-ledger"],
       "domain": "account-ledger",
       "cue": "Pale left account navigation, large full-width balance line plot, three equal pie-chart panels, lower transaction ledger and narrow monthly summary stack.",
       "imagePath": "dashboard-images/dash-e017-desktop.webp",
@@ -444,12 +389,7 @@
       "surface": "dashboard",
       "source": "https://docs.firefly-iii.org/explanation/firefly-iii/about/screenshots/",
       "sourceName": "Firefly III",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "budget-allocation"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "budget-allocation"],
       "domain": "budget-allocation",
       "cue": "Left navigation and blue top bar; wide month navigator, two long allocation progress bars, editable multi-currency category table and two small exception panels beneath.",
       "imagePath": "dashboard-images/dash-e018-desktop.webp",
@@ -483,12 +423,7 @@
       "surface": "dashboard",
       "source": "https://grocy.info/",
       "sourceName": "Grocy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "inventory-entry"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "inventory-entry"],
       "domain": "inventory-entry",
       "cue": "Compact branded header with hamburger; single-column product, quantity, date and storage form with barcode camera control, increment buttons and inline red/green validation.",
       "imagePath": "dashboard-images/dash-e020-desktop.webp",
@@ -522,12 +457,7 @@
       "surface": "dashboard",
       "source": "https://grocy.info/",
       "sourceName": "Grocy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "shopping-checklist"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "shopping-checklist"],
       "domain": "shopping-checklist",
       "cue": "Compact header, large total value and add/filter actions; grouped shopping checklist rows with colored inline action buttons; notes rich-text editor occupies lower half.",
       "imagePath": "dashboard-images/dash-e021-desktop.webp",
@@ -561,12 +491,7 @@
       "surface": "dashboard",
       "source": "https://grocy.info/",
       "sourceName": "Grocy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "equipment-document-viewer"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "equipment-document-viewer"],
       "domain": "equipment-document-viewer",
       "motifs": [
         "Coffee machine selected beside Dishwasher option",
@@ -606,12 +531,7 @@
       "surface": "dashboard",
       "source": "https://actualbudget.org/docs/tour/reports/",
       "sourceName": "Actual Budget",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "budget-report-dashboard"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "budget-report-dashboard"],
       "domain": "budget-report-dashboard",
       "cue": "Dark navy accounts sidebar; four large numerical summary panels, two wide net-worth/cash-flow charts and three smaller comparison graphs beneath.",
       "imagePath": "dashboard-images/dash-e024-desktop.webp",
@@ -645,12 +565,7 @@
       "surface": "dashboard",
       "source": "https://actualbudget.org/docs/tour/reports/",
       "sourceName": "Actual Budget",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "financial-report-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "financial-report-builder"],
       "domain": "financial-report-builder",
       "cue": "Dense left report controls and category checkbox tree, compact top chart-type toolbar, very large stacked monthly bars and right summary/legend column.",
       "imagePath": "dashboard-images/dash-e025-desktop.webp",
@@ -684,12 +599,7 @@
       "surface": "dashboard",
       "source": "https://frappe.io/erpnext",
       "sourceName": "ERPNext",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "accounting-dashboard"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "accounting-dashboard"],
       "domain": "accounting-dashboard",
       "cue": "Narrow icon rail and command-search top bar; single wide accounting chart with income/expense/profit equation above; two equal invoice chart panels below.",
       "imagePath": "dashboard-images/dash-e026-desktop.webp",
@@ -723,12 +633,7 @@
       "surface": "dashboard",
       "source": "https://frappe.io/erpnext",
       "sourceName": "ERPNext",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "point-of-sale"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "point-of-sale"],
       "domain": "point-of-sale",
       "cue": "Narrow global icon rail; three functional columns for searchable product thumbnails, selected-product quantity/pricing editor, and customer/cart summary with large numeric keypad.",
       "imagePath": "dashboard-images/dash-e029-desktop.webp",
@@ -762,12 +667,7 @@
       "surface": "dashboard",
       "source": "https://frappe.io/erpnext",
       "sourceName": "ERPNext",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "purchase-order-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "purchase-order-management"],
       "domain": "purchase-order-management",
       "cue": "Top breadcrumb and create action, left filter/saved-view rail, and wide dense purchase-order table with status pills, billing/receipt progress bars and per-row activity icons.",
       "imagePath": "dashboard-images/dash-e030-desktop.webp",
@@ -801,12 +701,7 @@
       "surface": "dashboard",
       "source": "https://frappe.io/erpnext",
       "sourceName": "ERPNext",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "quality-objectives"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "quality-objectives"],
       "domain": "quality-objectives",
       "cue": "Narrow icon rail, named quality goal and save action; sparse review/schedule form above objectives grid; persistent right assignment, attachments, review and sharing rail.",
       "imagePath": "dashboard-images/dash-e031-desktop.webp",
@@ -840,12 +735,7 @@
       "surface": "dashboard",
       "source": "https://frappe.io/helpdesk",
       "sourceName": "Frappe Helpdesk",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "support-ticket-queue"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "support-ticket-queue"],
       "domain": "support-ticket-queue",
       "cue": "Persistent text navigation with workspace identity; wide ticket table with filter fields, status dots, response/resolution SLA pills and small assignee avatars.",
       "imagePath": "dashboard-images/dash-e032-desktop.webp",
@@ -879,12 +769,7 @@
       "surface": "dashboard",
       "source": "https://snipeitapp.com/demo",
       "sourceName": "Snipe IT",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "asset-inventory-table"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "asset-inventory-table"],
       "domain": "asset-inventory-table",
       "cue": "Dark icon rail and blue global asset toolbar; multirow actions, search and pagination above an inventory table with device photos, serials, status and prominent check-in/out buttons.",
       "imagePath": "dashboard-images/dash-e034-desktop.webp",
@@ -918,12 +803,7 @@
       "surface": "dashboard",
       "source": "https://docs.inventree.org/en/stable/",
       "sourceName": "InvenTree",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "manufacturing-order-detail"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "manufacturing-order-detail"],
       "domain": "manufacturing-order-detail",
       "cue": "Build identity and cancelled badge at top; left section navigation; central board photograph next to key-value identity panel, quantity/output progress panel, ownership and schedule panels.",
       "imagePath": "dashboard-images/dash-e037-desktop.webp",
@@ -957,12 +837,7 @@
       "surface": "dashboard",
       "source": "https://www.home-assistant.io/blog/2025/10/01/release-202510/",
       "sourceName": "Home Assistant",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "home-automation-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "home-automation-editor"],
       "domain": "home-automation-editor",
       "motifs": [
         "Five-action automation with Generate data selected",
@@ -1002,12 +877,7 @@
       "surface": "dashboard",
       "source": "https://www.home-assistant.io/blog/2025/10/01/release-202510/",
       "sourceName": "Home Assistant",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "smart-home-control"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "smart-home-control"],
       "domain": "smart-home-control",
       "cue": "Blue top bar and hamburger; greeting, short favorite-device row, commonly-used horizontal device tiles, and four square home-summary controls for lights, climate, security and media.",
       "imagePath": "dashboard-images/dash-e039-desktop.webp",
@@ -1041,12 +911,7 @@
       "surface": "dashboard",
       "source": "https://akaunting.com/",
       "sourceName": "Akaunting",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "business-cashflow"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "business-cashflow"],
       "domain": "business-cashflow",
       "cue": "Two pale-lavender navigation rails; spacious content begins with paired receivable/payable progress bars, then broad mixed cash-flow chart with right arithmetic summary and lower financial panels.",
       "imagePath": "dashboard-images/dash-e040-desktop.webp",
@@ -1080,12 +945,7 @@
       "surface": "dashboard",
       "source": "https://akaunting.com/",
       "sourceName": "Akaunting",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "invoice-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "invoice-editor"],
       "domain": "invoice-editor",
       "cue": "Double navigation rails and large invoice title; expandable company area, billing identity with four date/number fields, editable line-item grid and right-aligned tax/total calculations below.",
       "imagePath": "dashboard-images/dash-e041-desktop.webp",
@@ -1119,12 +979,7 @@
       "surface": "dashboard",
       "source": "https://akaunting.com/",
       "sourceName": "Akaunting",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "customer-billing-portal"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "customer-billing-portal"],
       "domain": "customer-billing-portal",
       "cue": "Two compact navigation rails; airy three-column customer identity/address, outstanding balance/payment action, and invoice/payment history sections separated by fine vertical rules.",
       "imagePath": "dashboard-images/dash-e042-desktop.webp",
@@ -1158,12 +1013,7 @@
       "surface": "dashboard",
       "source": "https://github.com/finamp-app/finamp",
       "sourceName": "Finamp",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "music-player"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "music-player"],
       "domain": "music-player",
       "motifs": [
         "neonpilot square artwork with twin lime lines",
@@ -1203,12 +1053,7 @@
       "surface": "dashboard",
       "source": "https://github.com/NeoApplications/Neo-Store",
       "sourceName": "Neo Store",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "privacy-audit"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "privacy-audit"],
       "domain": "privacy-audit",
       "cue": "Black app privacy detail screen with compact app identity header, horizontal metadata chips, two segmented risk meters and large outlined permissions container with collapsible sections and broad muted-red action buttons.",
       "imagePath": "dashboard-images/dash-e044-desktop.webp",
@@ -1242,12 +1087,7 @@
       "surface": "dashboard",
       "source": "https://github.com/NeoApplications/Neo-Store",
       "sourceName": "Neo Store",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "app-discovery"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "app-discovery"],
       "domain": "app-discovery",
       "cue": "Black app explorer with two main tabs inside a large outlined panel, horizontally scrollable source chips, explanatory callout and long icon/name/version rows; persistent three-destination bottom navigation.",
       "imagePath": "dashboard-images/dash-e045-desktop.webp",
@@ -1281,12 +1121,7 @@
       "surface": "dashboard",
       "source": "https://github.com/zhanghai/MaterialFiles",
       "sourceName": "Material Files",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "file-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "file-management"],
       "domain": "file-management",
       "cue": "White file browser with large Files title, toolbar actions, breadcrumb path, spacious icon-and-name folder rows, per-row overflow menus and a blue circular add button floating at the lower right.",
       "imagePath": "dashboard-images/dash-e046-desktop.webp",
@@ -1320,12 +1155,7 @@
       "surface": "dashboard",
       "source": "https://github.com/TuskyApp/Tusky",
       "sourceName": "Tusky",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "social-feed"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "social-feed"],
       "domain": "social-feed",
       "cue": "Slate-blue social feed with four icon tabs beneath the account header; narrow avatar rail beside posts, large inline photo, action row and thin separators; compose action floats at the lower right.",
       "imagePath": "dashboard-images/dash-e047-desktop.webp",
@@ -1359,12 +1189,7 @@
       "surface": "dashboard",
       "source": "https://github.com/TuskyApp/Tusky",
       "sourceName": "Tusky",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "community-profile"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "community-profile"],
       "domain": "community-profile",
       "cue": "Slate profile screen with photographic cover, overlapping square avatar, follow and notification actions, biography and metadata links, three account statistics, post tabs and feed content continuing below.",
       "imagePath": "dashboard-images/dash-e048-desktop.webp",
@@ -1398,12 +1223,7 @@
       "surface": "dashboard",
       "source": "https://github.com/krille-chan/fluffychat",
       "sourceName": "FluffyChat",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "messaging-inbox"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "messaging-inbox"],
       "domain": "messaging-inbox",
       "cue": "Pale mobile inbox with an integrated search/profile pill, story avatar row with colored rings, three filter chips, sparse conversation rows with avatars and timestamps, and a floating labeled chat action.",
       "imagePath": "dashboard-images/dash-e049-desktop.webp",
@@ -1437,12 +1257,7 @@
       "surface": "dashboard",
       "source": "https://github.com/krille-chan/fluffychat",
       "sourceName": "FluffyChat",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "messaging-thread"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "messaging-thread"],
       "domain": "messaging-thread",
       "cue": "Full messaging thread with compact group header, alternating purple outgoing and pale incoming bubbles, avatar/sender rail, inline photo attachment, waveform voice note and bottom icon-rich composer.",
       "imagePath": "dashboard-images/dash-e050-desktop.webp",
@@ -1476,12 +1291,7 @@
       "surface": "dashboard",
       "source": "https://github.com/JunkFood02/Seal",
       "sourceName": "Seal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-download"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-download"],
       "domain": "media-download",
       "cue": "Warm near-white download manager screen with large product heading, one prominent video thumbnail/progress card, outlined video URL field and vertically stacked clipboard/download floating actions.",
       "imagePath": "dashboard-images/dash-e051-desktop.webp",
@@ -1515,12 +1325,7 @@
       "surface": "dashboard",
       "source": "https://github.com/JunkFood02/Seal",
       "sourceName": "Seal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-selection"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-selection"],
       "domain": "media-selection",
       "cue": "Warm near-white multi-selection screen with selected-count header and Download action, vertically ordered thumbnail/title/creator rows, left checkboxes and a fixed bottom Select all toolbar.",
       "imagePath": "dashboard-images/dash-e052-desktop.webp",
@@ -1554,12 +1359,7 @@
       "surface": "dashboard",
       "source": "https://github.com/junjunguo/pocketmaps",
       "sourceName": "PocketMaps",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "turn-by-turn-navigation"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "turn-by-turn-navigation"],
       "domain": "turn-by-turn-navigation",
       "motifs": [
         "Sharp left turn from Willow Lane",
@@ -1599,12 +1399,7 @@
       "surface": "dashboard",
       "source": "https://github.com/junjunguo/pocketmaps",
       "sourceName": "PocketMaps",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "activity-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "activity-analytics"],
       "domain": "activity-analytics",
       "cue": "Compact mobile analytics screen with a teal header and dense two-column six-metric region above a full-width dual-axis speed-and-distance line chart. Large duration is emphasized among smaller activity values.",
       "imagePath": "dashboard-images/dash-e054-desktop.webp",
@@ -1638,12 +1433,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Bnyro/TranslateYou",
       "sourceName": "Translate You",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "language-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "language-workspace"],
       "domain": "language-workspace",
       "cue": "Dark translation workbench with toolbar actions, a large paired source/output surface, inline playback action, inset dictionary definition panel near the bottom and two language pills flanking a swap control.",
       "imagePath": "dashboard-images/dash-e055-desktop.webp",
@@ -1677,12 +1467,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Stypox/dicio-android",
       "sourceName": "Dicio",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "conversational-assistant"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "conversational-assistant"],
       "domain": "conversational-assistant",
       "cue": "Light green conversational assistant screen with alternating short yellow-green user query cards and larger answer cards containing weather metrics, a live timer and text results; a microphone action floats over the bottom.",
       "imagePath": "dashboard-images/dash-e056-desktop.webp",
@@ -1716,12 +1501,7 @@
       "surface": "dashboard",
       "source": "https://github.com/FossifyOrg/Voice-Recorder",
       "sourceName": "Fossify Voice Recorder",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "audio-recording"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "audio-recording"],
       "domain": "audio-recording",
       "cue": "Pale recording screen with mint search/settings bar, a tall rounded waveform panel, elapsed-time readout, two prominent circular stop/pause controls and three labeled bottom destinations.",
       "imagePath": "dashboard-images/dash-e057-desktop.webp",
@@ -1755,12 +1535,7 @@
       "surface": "dashboard",
       "source": "https://github.com/FossifyOrg/Clock",
       "sourceName": "Fossify Clock",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "world-clock"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "world-clock"],
       "domain": "world-clock",
       "cue": "Minimal light world-clock screen with oversized current time, centered date and next alarm, a two-column city/time list, lower-right add action and four-icon mint bottom navigation.",
       "imagePath": "dashboard-images/dash-e058-desktop.webp",
@@ -1794,12 +1569,7 @@
       "surface": "dashboard",
       "source": "https://github.com/FossifyOrg/Clock",
       "sourceName": "Fossify Clock",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "focus-timers"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "focus-timers"],
       "domain": "focus-timers",
       "cue": "Minimal light timer preset dashboard with four oversized duration rows, labels underneath and right-aligned play controls. A lower-right add action sits above persistent four-destination mint navigation.",
       "imagePath": "dashboard-images/dash-e059-desktop.webp",
@@ -1833,12 +1603,7 @@
       "surface": "dashboard",
       "source": "https://github.com/StreetComplete/StreetComplete",
       "sourceName": "StreetComplete",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "map-work-queue"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "map-work-queue"],
       "domain": "map-work-queue",
       "cue": "Edge-to-edge pastel street map populated by large colored task pins with category illustrations, small completion points, top score counter, floating layer/menu actions and lower location/scale controls.",
       "imagePath": "dashboard-images/dash-e060-desktop.webp",
@@ -1872,12 +1637,7 @@
       "surface": "dashboard",
       "source": "https://github.com/StreetComplete/StreetComplete",
       "sourceName": "StreetComplete",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "contribution-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "contribution-analytics"],
       "domain": "contribution-analytics",
       "cue": "Blue profile header with four icon tabs and type/country subtabs above a white ranked horizontal-bar chart. Each row uses a circular category illustration, proportional green bar and numeric total; Overall control at bottom.",
       "imagePath": "dashboard-images/dash-e061-desktop.webp",
@@ -1911,12 +1671,7 @@
       "surface": "dashboard",
       "source": "https://github.com/iSoron/uhabits",
       "sourceName": "Loop Habit Tracker",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "habit-tracking"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "habit-tracking"],
       "domain": "habit-tracking",
       "cue": "Dense white completion matrix with gray app/date headers, habit names and tiny circular progress indicators in a left column, five days of checkmarks or measured values to the right, and consistent colored habit groups.",
       "imagePath": "dashboard-images/dash-e062-desktop.webp",
@@ -1950,12 +1705,7 @@
       "surface": "dashboard",
       "source": "https://airflow.apache.org/docs/apache-airflow/stable/ui.html",
       "sourceName": "Apache Airflow",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "execution-logs"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "execution-logs"],
       "domain": "execution-logs",
       "cue": "Dark execution workspace with slim blue icon navigation, breadcrumb header, a narrow node-graph canvas occupying the left third, and a broad right task inspector. The inspector has a status summary, tabs, filter controls and a monospaced error log. Graph minimap and zoom controls remain visible.",
       "imagePath": "dashboard-images/dash-e063-desktop.webp",
@@ -1989,12 +1739,7 @@
       "surface": "dashboard",
       "source": "https://docs.dagster.io/guides/observe/asset-catalog",
       "sourceName": "Dagster",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "data-asset-catalog"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "data-asset-catalog"],
       "domain": "data-asset-catalog",
       "cue": "Light data catalog with a permanent labeled sidebar, broad pale search-and-greeting band, category tabs, a single private collection card followed by a five-column public collection grid. Each collection uses a small symbol and compact status counts rather than miniature charts.",
       "imagePath": "dashboard-images/dash-e064-desktop.webp",
@@ -2028,12 +1773,7 @@
       "surface": "dashboard",
       "source": "https://docs.tooljet.ai/docs/app-builder/overview",
       "sourceName": "ToolJet",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "internal-tool-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "internal-tool-builder"],
       "domain": "internal-tool-builder",
       "cue": "Internal-tool editor with narrow global icon rail, top environment/release toolbar, large central dashboard canvas and a right widget palette. The canvas has three KPI cards above a grouped stock bar chart, alongside a tall column of colored recommended-action cards.",
       "imagePath": "dashboard-images/dash-e067-desktop.webp",
@@ -2067,12 +1807,7 @@
       "surface": "dashboard",
       "source": "https://github.com/redis/RedisInsight",
       "sourceName": "Redis Insight",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "database-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "database-workspace"],
       "domain": "database-workspace",
       "cue": "Dark database key browser with global icon rail, status header, Browse/Workbench/Analyze tabs and one full-width filter row. Main content is an even two-pane split: hierarchical key list on the left and selected-key metadata plus editable text value on the right.",
       "imagePath": "dashboard-images/dash-e069-desktop.webp",
@@ -2106,12 +1841,7 @@
       "surface": "dashboard",
       "source": "https://github.com/redis/RedisInsight",
       "sourceName": "Redis Insight",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "database-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "database-workspace"],
       "domain": "database-workspace",
       "cue": "Dark command workbench with compact connection header and tabs, a wide code editor at the top, tutorial and run controls below, and a stacked execution history taking the lower half. One expanded result contains a three-row data table; collapsed queries remain visible around it.",
       "imagePath": "dashboard-images/dash-e070-desktop.webp",
@@ -2145,12 +1875,7 @@
       "surface": "dashboard",
       "source": "https://www.pgadmin.org/screenshots/",
       "sourceName": "pgAdmin",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "geospatial-query-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "geospatial-query-workspace"],
       "domain": "geospatial-query-workspace",
       "motifs": [
         "SELECT region_outlines ordered by ogc_fid",
@@ -2190,12 +1915,7 @@
       "surface": "dashboard",
       "source": "https://dbeaver.io/screenshots/",
       "sourceName": "DBeaver",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "database-relationship-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "database-relationship-editor"],
       "domain": "database-relationship-editor",
       "cue": "Dense database modeling workspace with main toolbar, stacked database/project navigators on the left, multiple document tabs and an expansive gridded relationship diagram on the right. Schema cards have colored headers and long field lists connected by dashed relationship lines. Zoom and status controls sit at the bottom.",
       "imagePath": "dashboard-images/dash-e074-desktop.webp",
@@ -2229,12 +1949,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "error-inspection"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "error-inspection"],
       "domain": "error-inspection",
       "cue": "Light error-detail workspace with a narrow global icon rail and a second issues navigation column. Header and action bar lead into a compact event histogram, then selected-event metadata and a large expanded code stack trace; a tall right rail contains issue timing, root-cause assistance, linked trackers and activity.",
       "imagePath": "dashboard-images/dash-e075-desktop.webp",
@@ -2268,12 +1983,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "log-explorer"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "log-explorer"],
       "domain": "log-explorer",
       "cue": "Light log explorer with dual left navigation, broad search and tag chips, full-width event histogram, then a timestamp/message log list. One expanded log exposes two aligned columns of key-value attributes while later rows remain compact.",
       "imagePath": "dashboard-images/dash-e076-desktop.webp",
@@ -2307,12 +2017,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "session-replay"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "session-replay"],
       "domain": "session-replay",
       "cue": "Light session-replay detail with dual left navigation and a top session summary. Main workspace is split between a large recorded app viewport on the left and vertically stacked event breadcrumbs on the right; playback buttons and a long scrubber timeline span the bottom. Recorded text is intentionally masked with asterisks.",
       "imagePath": "dashboard-images/dash-e077-desktop.webp",
@@ -2346,12 +2051,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "trace-explorer"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "trace-explorer"],
       "domain": "trace-explorer",
       "cue": "Light trace-query explorer with global icon and text navigation rails, broad search header and filter chips. A third narrow configuration pane contains visualize/group/sort controls; the main pane stacks a violet bar chart over a dense span results table.",
       "imagePath": "dashboard-images/dash-e078-desktop.webp",
@@ -2385,12 +2085,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jaegertracing/jaeger-ui",
       "sourceName": "Jaeger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "trace-search"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "trace-search"],
       "domain": "trace-search",
       "cue": "Light trace-search screen with black horizontal application navigation and teal active tab. A tall left filter form sits beside a wide scatterplot. Six trace result strips beneath the chart combine a duration-scaled tinted header, colored service badges, span/error counts and timestamps.",
       "imagePath": "dashboard-images/dash-e080-desktop.webp",
@@ -2424,12 +2119,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jaegertracing/jaeger-ui",
       "sourceName": "Jaeger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "trace-waterfall"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "trace-waterfall"],
       "domain": "trace-waterfall",
       "cue": "Light trace detail beneath a black top navigation bar. A title/metadata strip and overview minimap precede a large split waterfall: indented service-operation tree on the left, colored horizontal span durations on the right. An expanded error span exposes a full-width tags and logs inspector inline.",
       "imagePath": "dashboard-images/dash-e081-desktop.webp",
@@ -2463,12 +2153,7 @@
       "surface": "dashboard",
       "source": "https://kiali.io/docs/features/",
       "sourceName": "Kiali",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "service-topology"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "service-topology"],
       "domain": "service-topology",
       "cue": "Light service-mesh app with pale navigation sidebar and top account/theme controls. Namespace and display filters frame a large central topology of grouped service nodes and green/blue traffic edges. A display-options checklist is open over the left edge of the canvas; a fixed right summary panel shows totals and a response-status bar.",
       "imagePath": "dashboard-images/dash-e082-desktop.webp",
@@ -2502,12 +2187,7 @@
       "surface": "dashboard",
       "source": "https://kiali.io/docs/features/",
       "sourceName": "Kiali",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "cluster-health"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "cluster-health"],
       "domain": "cluster-health",
       "cue": "Light service-mesh overview with a permanent left sidebar and white rounded workspace. Four resource health cards stretch across the top; below, an application-status donut and legend occupy the left third, while two ranked service tables for errors and latency fill the wider right panel.",
       "imagePath": "dashboard-images/dash-e083-desktop.webp",
@@ -2541,12 +2221,7 @@
       "surface": "dashboard",
       "source": "https://github.com/prometheus/docs",
       "sourceName": "Prometheus",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "query-debugger"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "query-debugger"],
       "domain": "query-debugger",
       "motifs": [
         "Same demo PromQL expression",
@@ -2586,12 +2261,7 @@
       "surface": "dashboard",
       "source": "https://github.com/prometheus/docs",
       "sourceName": "Prometheus",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "service-discovery"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "service-discovery"],
       "domain": "service-discovery",
       "cue": "Light service-discovery screen with a dark horizontal navigation bar and broad scrape-pool/state/label filters. A large grouped list compares discovered labels and resulting target labels in two columns, with pill-shaped monospace labels and one dropped target. Green ellipses around relabeling links are documentation markup, not UI.",
       "imagePath": "dashboard-images/dash-e086-desktop.webp",
@@ -2625,12 +2295,7 @@
       "surface": "dashboard",
       "source": "https://grafana.com/docs/grafana/latest/visualizations/explore/get-started-with-explore/",
       "sourceName": "Grafana",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "split-query-explorer"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "split-query-explorer"],
       "domain": "split-query-explorer",
       "cue": "Dark Explore app with top global search and breadcrumb bars. Two equal independent query workspaces sit side by side: the left has a structured query form, green area graph and results table; the right has a log query editor, sparse volume histogram, and log display controls.",
       "imagePath": "dashboard-images/dash-e087-desktop.webp",
@@ -2664,12 +2329,7 @@
       "surface": "dashboard",
       "source": "https://www.darktable.org/about/screenshots/",
       "sourceName": "Darktable",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "photo-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "photo-library"],
       "domain": "photo-library",
       "cue": "Dense three-column photo management workspace: narrow metadata and filter rail at left, dominant five-column image contact sheet with ratings in the center, selection actions and tagging rail at right, plus a bottom date histogram.",
       "imagePath": "dashboard-images/dash-e089-desktop.webp",
@@ -2703,12 +2363,7 @@
       "surface": "dashboard",
       "source": "https://www.darktable.org/about/screenshots/",
       "sourceName": "Darktable",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "photo-editing"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "photo-editing"],
       "domain": "photo-editing",
       "cue": "Dark photo-editing workspace with a large split before/after fern canvas, stacked snapshot/history/sample controls on the left, histogram and color-zone curve controls on the right, and a horizontal photo filmstrip below.",
       "imagePath": "dashboard-images/dash-e090-desktop.webp",
@@ -2742,12 +2397,7 @@
       "surface": "dashboard",
       "source": "https://www.darktable.org/about/screenshots/",
       "sourceName": "Darktable",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "map-geotagging"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "map-geotagging"],
       "domain": "map-geotagging",
       "cue": "Map-led geotagging workspace with overlapping photo markers across a pale street map, dark collection and metadata rail at left, location and map settings at right, and a large thumbnail filmstrip spanning the bottom.",
       "imagePath": "dashboard-images/dash-e091-desktop.webp",
@@ -2781,12 +2431,7 @@
       "surface": "dashboard",
       "source": "https://www.darktable.org/about/screenshots/",
       "sourceName": "Darktable",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "print-layout"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "print-layout"],
       "domain": "print-layout",
       "cue": "Print-composition workspace with a large centered white paper preview holding a landscape photograph, a sparse dark collection rail, compact print configuration panel with visual margin controls, and a bottom thumbnail filmstrip.",
       "imagePath": "dashboard-images/dash-e092-desktop.webp",
@@ -2820,12 +2465,7 @@
       "surface": "dashboard",
       "source": "https://www.gimp.org/release-notes/gimp-3.0.html",
       "sourceName": "GIMP",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "image-editing"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "image-editing"],
       "domain": "image-editing",
       "cue": "Light raster editor with a large portrait canvas and rulers, left tool icon grid and brush options, right image thumbnails and layer stack, and a floating curves graph dialog in the lower left. The curves dialog is part of the working application.",
       "imagePath": "dashboard-images/dash-e093-desktop.webp",
@@ -2859,12 +2499,7 @@
       "surface": "dashboard",
       "source": "https://krita.org/en/features/",
       "sourceName": "Krita",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "digital-painting"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "digital-painting"],
       "domain": "digital-painting",
       "cue": "Dark painting workspace around a large colorful winter illustration. A slim tool rail and color wheel with brush sizing controls sit left; canvas overview, layers, and brush presets stack vertically on the right; compact document tabs and paint controls sit above.",
       "imagePath": "dashboard-images/dash-e094-desktop.webp",
@@ -2898,12 +2533,7 @@
       "surface": "dashboard",
       "source": "https://www.blender.org/features/sculpting/",
       "sourceName": "Blender",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "3d-sculpting"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "3d-sculpting"],
       "domain": "3d-sculpting",
       "cue": "Dark 3D sculpting workspace with a dominant clay character viewport, a vertical brush tool rail at left, workspace tabs and brush controls above, and an object hierarchy plus brush settings inspector at right.",
       "imagePath": "dashboard-images/dash-e095-desktop.webp",
@@ -2937,12 +2567,7 @@
       "surface": "dashboard",
       "source": "https://www.blender.org/features/animation/",
       "sourceName": "Blender",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "animation-timeline"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "animation-timeline"],
       "domain": "animation-timeline",
       "motifs": [
         "Aster holding staff in red coat and olive scarf",
@@ -2982,12 +2607,7 @@
       "surface": "dashboard",
       "source": "https://manual.audacityteam.org/man/audacity_tour_guide.html",
       "sourceName": "Audacity",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "audio-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "audio-editor"],
       "domain": "audio-editor",
       "cue": "Full dark audio editor with large violet stereo waveform, left track mute/solo and pan/gain controls, transport toolbar above, annotation track beneath, and numeric time/selection controls at bottom.",
       "imagePath": "dashboard-images/dash-e097-desktop.webp",
@@ -3021,12 +2641,7 @@
       "surface": "dashboard",
       "source": "https://obsproject.com/",
       "sourceName": "OBS Studio",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "broadcast-production"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "broadcast-production"],
       "domain": "broadcast-production",
       "cue": "Dark live-production workspace with stacked Scenes and Sources docks at left, dominant composited program canvas, vertical channel mixer under the canvas, transitions dock and streaming controls at lower right.",
       "imagePath": "dashboard-images/dash-e098-desktop.webp",
@@ -3060,12 +2675,7 @@
       "surface": "dashboard",
       "source": "https://kdenlive.org/news/releases/20.08.0/",
       "sourceName": "Kdenlive",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "video-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "video-editor"],
       "domain": "video-editor",
       "cue": "Dense editing workspace with thumbnail project bin at upper left, large source waveform and project monitors across the top, multi-track video/audio timeline across the bottom, and narrow live audio mixer at right.",
       "imagePath": "dashboard-images/dash-e099-desktop.webp",
@@ -3099,12 +2709,7 @@
       "surface": "dashboard",
       "source": "https://kdenlive.org/news/releases/20.08.0/",
       "sourceName": "Kdenlive",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "color-grading"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "color-grading"],
       "domain": "color-grading",
       "cue": "Color-grading workspace with curves and three color wheels in the left column, effects taxonomy beside it, large graded preview at center, source preview and RGB/vectorscope instruments on the right, and compact multi-track timeline below.",
       "imagePath": "dashboard-images/dash-e100-desktop.webp",
@@ -3138,12 +2743,7 @@
       "surface": "dashboard",
       "source": "https://shotcut.org/",
       "sourceName": "Shotcut",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "video-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "video-editor"],
       "domain": "video-editor",
       "cue": "Full editing console with filter parameters at far left, thumbnail media library, central video preview and playback controls, stacked audio/spectrum/waveform scopes at far right, keyframe panel and wide multi-track timeline below.",
       "imagePath": "dashboard-images/dash-e101-desktop.webp",
@@ -3177,12 +2777,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Freeyourgadget/Gadgetbridge",
       "sourceName": "Gadgetbridge",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health"],
       "domain": "health",
       "motifs": [
         "Oct8 date",
@@ -3222,12 +2817,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Freeyourgadget/Gadgetbridge",
       "sourceName": "Gadgetbridge",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health"],
       "domain": "health",
       "cue": "White sleep analysis view with two stacked tab strips, date and time range, a central blue/purple sleep-stage donut, three duration blocks with matching horizontal color rules, and a lower orange time-series chart above date-step controls.",
       "imagePath": "dashboard-images/dash-e103-desktop.webp",
@@ -3261,12 +2851,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Freeyourgadget/Gadgetbridge",
       "sourceName": "Gadgetbridge",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fitness"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fitness"],
       "domain": "fitness",
       "cue": "White activity analytics view with horizontal metric tabs and one nearly full-height plot. Green activity area, blue and purple sleep intervals and orange heart-rate line overlap a shared timeline; legend and six date-navigation buttons sit at the bottom.",
       "imagePath": "dashboard-images/dash-e104-desktop.webp",
@@ -3300,12 +2885,7 @@
       "surface": "dashboard",
       "source": "https://github.com/wger-project/flutter",
       "sourceName": "wger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fitness"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fitness"],
       "domain": "fitness",
       "cue": "Blue toolbar above an achievements carousel, a large pale workout schedule card with three startable exercise-day rows, and a nutrition progress card with five horizontal goal bars. Five icon destinations form bottom navigation.",
       "imagePath": "dashboard-images/dash-e105-desktop.webp",
@@ -3339,12 +2919,7 @@
       "surface": "dashboard",
       "source": "https://github.com/wger-project/flutter",
       "sourceName": "wger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fitness"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fitness"],
       "domain": "fitness",
       "cue": "Workout completion summary with close/menu controls, two large duration and volume tiles, a prominent muscle-distribution donut with legend, and expandable exercise rows. A broad End workout button and slim elapsed-time strip sit at the bottom.",
       "imagePath": "dashboard-images/dash-e106-desktop.webp",
@@ -3378,12 +2953,7 @@
       "surface": "dashboard",
       "source": "https://github.com/wger-project/flutter",
       "sourceName": "wger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "meal-planning"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "meal-planning"],
       "domain": "meal-planning",
       "cue": "Nutrition-plan detail with blue back toolbar, centered plan date, five long macro and energy goal bars, then rounded meal rows containing times, calorie counts and edit controls. Two coral floating actions overlay the lower list.",
       "imagePath": "dashboard-images/dash-e107-desktop.webp",
@@ -3417,12 +2987,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jonasoreland/runnerup",
       "sourceName": "RunnerUp",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fitness"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fitness"],
       "domain": "fitness",
       "cue": "Dark live workout console with four full-width gradient metric bands labeled Total, Interval, Lap and Current under time/distance/pace/heart-rate column headers. A compact interval schedule follows; oversized New lap, Pause and Stop controls anchor the bottom.",
       "imagePath": "dashboard-images/dash-e108-desktop.webp",
@@ -3456,12 +3021,7 @@
       "surface": "dashboard",
       "source": "https://github.com/mendhak/gpslogger",
       "sourceName": "GPSLogger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "maps"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "maps"],
       "domain": "maps",
       "cue": "Dark GPS telemetry screen with a view switcher and recording-status dot, oversized latitude and longitude values, a central Stop logging button, and a dense labeled block of altitude, speed, direction, accuracy, distance and duration readings. A bottom action toolbar remains visible.",
       "imagePath": "dashboard-images/dash-e109-desktop.webp",
@@ -3495,12 +3055,7 @@
       "surface": "dashboard",
       "source": "https://github.com/readest/readest",
       "sourceName": "Readest",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "reading"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "reading"],
       "domain": "reading",
       "cue": "Light mobile ebook library with a broad search-and-import toolbar, a three-column cover grid, title and reading-progress captions, grouped collection tiles made from four miniature covers, and an empty plus tile for adding a collection.",
       "imagePath": "dashboard-images/dash-e110-desktop.webp",
@@ -3534,12 +3089,7 @@
       "surface": "dashboard",
       "source": "https://github.com/koreader/koreader",
       "sourceName": "KOReader",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "reading"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "reading"],
       "domain": "reading",
       "cue": "Monochrome ebook reading screen with an Oxford dictionary overlay anchored over highlighted text. The dialog contains headword, definitions, a scrollbar and a two-row lookup/navigation action grid; reading progress and page counter remain visible beneath.",
       "imagePath": "dashboard-images/dash-e111-desktop.webp",
@@ -3573,12 +3123,7 @@
       "surface": "dashboard",
       "source": "https://github.com/wger-project/flutter",
       "sourceName": "wger",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health"],
       "domain": "health",
       "motifs": [
         "1month selected",
@@ -3618,12 +3163,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jonasoreland/runnerup",
       "sourceName": "RunnerUp",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fitness"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fitness"],
       "domain": "fitness",
       "cue": "Full workout route map beneath a blue date and distance/time/pace summary header and five detail tabs. Red path, colored start/pause/lap/finish markers and inline pace labels dominate the map; scale and compass remain visible.",
       "imagePath": "dashboard-images/dash-e113-desktop.webp",
@@ -3657,12 +3197,7 @@
       "surface": "dashboard",
       "source": "https://github.com/paperless-ngx/paperless-ngx/blob/HEAD/docs/assets/screenshots/dashboard.png",
       "sourceName": "Paperless-ngx",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "document-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "document-management"],
       "domain": "document-management",
       "cue": "Document-management overview with left saved-view navigation, green global search header, wide unpaid-bills table above a five-column document preview grid, and narrow upload/statistics rail on the right.",
       "imagePath": "dashboard-images/dash-e114-desktop.webp",
@@ -3696,12 +3231,7 @@
       "surface": "dashboard",
       "source": "https://github.com/paperless-ngx/paperless-ngx/blob/HEAD/docs/assets/screenshots/editing.png",
       "sourceName": "Paperless-ngx",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "document-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "document-management"],
       "domain": "document-management",
       "cue": "Three-part document editing workspace: permanent navigation on left, editable metadata form with tabs in the middle, and large invoice PDF preview with page/zoom/download toolbar on the right.",
       "imagePath": "dashboard-images/dash-e115-desktop.webp",
@@ -3735,12 +3265,7 @@
       "surface": "dashboard",
       "source": "https://github.com/paperless-ngx/paperless-ngx/blob/HEAD/docs/assets/screenshots/mobile2.png",
       "sourceName": "Paperless-ngx",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "document-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "document-management"],
       "domain": "document-management",
       "cue": "Mobile document browser with brand and hamburger header, full-width search, compact icon toolbars and filters, pagination, then a two-column grid of large receipt and invoice previews with status tags.",
       "imagePath": "dashboard-images/dash-e117-desktop.webp",
@@ -3774,12 +3299,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jellyfin/jellyfin.org/blob/HEAD/static/images/screenshots/home/10.8-home.png",
       "sourceName": "Jellyfin",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-library"],
       "domain": "media-library",
       "cue": "Dark media-library home with slim global toolbar, wide category tiles across the top, landscape continue-watching cards with progress bars in the middle and narrow movie posters in a bottom horizontal shelf.",
       "imagePath": "dashboard-images/dash-e118-desktop.webp",
@@ -3813,12 +3333,7 @@
       "surface": "dashboard",
       "source": "https://github.com/jellyfin/jellyfin.org/blob/HEAD/static/images/screenshots/home/10.8-details.png",
       "sourceName": "Jellyfin",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-library"],
       "domain": "media-library",
       "cue": "Dark movie-detail screen with photographic backdrop, large vertical poster overlapping left, central title and metadata band, upper-right playback actions, descriptive text and an actor portrait shelf below.",
       "imagePath": "dashboard-images/dash-e119-desktop.webp",
@@ -3852,12 +3367,7 @@
       "surface": "dashboard",
       "source": "https://github.com/photoprism/photoprism-docs/blob/HEAD/docs/user-guide/organize/img/places-section-2502.jpg",
       "sourceName": "PhotoPrism",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "photo-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "photo-management"],
       "domain": "photo-management",
       "cue": "Photo geolocation browser with narrow black icon sidebar, floating search field at upper left, satellite world map as the full work area, circular photo-cluster pins and vertically stacked map controls on the right.",
       "imagePath": "dashboard-images/dash-e120-desktop.webp",
@@ -3891,12 +3401,7 @@
       "surface": "dashboard",
       "source": "https://github.com/nextcloud/documentation/blob/HEAD/user_manual/images/webinterface_dashboard.png",
       "sourceName": "Nextcloud",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workspace"],
       "domain": "workspace",
       "cue": "Personal workspace dashboard with blue illustrated background, slim global app bar, centered greeting and four tall translucent columns for favorite files, events, upcoming cards and notes, with a customize button below.",
       "imagePath": "dashboard-images/dash-e122-desktop.webp",
@@ -3930,12 +3435,7 @@
       "surface": "dashboard",
       "source": "https://github.com/immich-app/immich/blob/HEAD/docs/docs/features/img/reverse-geocoding-mobile1.webp",
       "sourceName": "Immich",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "photo-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "photo-management"],
       "domain": "photo-management",
       "cue": "Mobile photo-detail screen with photograph above a rounded dark bottom sheet, date and edit action, descriptive fields, embedded map with circular image pin, geographic coordinates and camera/file metadata.",
       "imagePath": "dashboard-images/dash-e123-desktop.webp",
@@ -3969,12 +3469,7 @@
       "surface": "dashboard",
       "source": "https://github.com/immich-app/immich/blob/HEAD/docs/docs/features/img/web-edit-interface.webp",
       "sourceName": "Immich",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "photo-management"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "photo-management"],
       "domain": "photo-management",
       "cue": "Minimal dark photo-crop editor with a large image and corner crop handles occupying left two-thirds, plus a right inspector with save button, orientation controls and two-column aspect-ratio choices.",
       "imagePath": "dashboard-images/dash-e124-desktop.webp",
@@ -4008,12 +3503,7 @@
       "surface": "dashboard",
       "source": "https://github.com/metabase/metabase",
       "sourceName": "Metabase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "business-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "business-analytics"],
       "domain": "business-analytics",
       "cue": "Light overview with broad top toolbar; asymmetric grid of donut and gauge panels on the left, revenue total and target across the middle, tall US choropleth on the right, and stacked bars, line chart and pivot table along the bottom. Official screenshot has a rounded display frame and outer whitespace.",
       "imagePath": "dashboard-images/dash-o001-desktop.webp",
@@ -4047,12 +3537,7 @@
       "surface": "dashboard",
       "source": "https://github.com/apache/superset",
       "sourceName": "Apache Superset",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "business-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "business-analytics"],
       "domain": "business-analytics",
       "cue": "Light sales dashboard with permanent left filter rail, narrow global top navigation, title and tab rows, two vertically stacked KPI sparkline cards, central stacked bar chart, explanatory right rail, and lower table, grouped bars and donut.",
       "imagePath": "dashboard-images/dash-o002-desktop.webp",
@@ -4086,12 +3571,7 @@
       "surface": "dashboard",
       "source": "https://github.com/n8n-io/n8n",
       "sourceName": "n8n",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workflow-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workflow-builder"],
       "domain": "workflow-builder",
       "cue": "Wide workflow editor with a sparse left navigation rail and dotted central canvas; chat trigger connects horizontally to an agent and conditional split, with success/failure nodes on the right and auxiliary model, memory and tool nodes below. Includes browser chrome.",
       "imagePath": "dashboard-images/dash-o003-desktop.webp",
@@ -4125,12 +3605,7 @@
       "surface": "dashboard",
       "source": "https://github.com/windmill-labs/windmill",
       "sourceName": "Windmill",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "app-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "app-builder"],
       "domain": "app-builder",
       "cue": "Light developer workbench with dark icon rail, file explorer, tall source editor with minimap, and right live form preview. Top toolbar provides path, draft and deploy controls. This is a builder screen rather than an analytics overview.",
       "imagePath": "dashboard-images/dash-o004-desktop.webp",
@@ -4164,12 +3639,7 @@
       "surface": "dashboard",
       "source": "https://github.com/apache/airflow",
       "sourceName": "Apache Airflow",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workflow-monitoring"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workflow-monitoring"],
       "domain": "workflow-monitoring",
       "cue": "Dark navy operational overview with narrow icon-and-label navigation; top status counts and health pills, horizontal pool capacity bar, broad run/task success breakdown bars on the left, and chronological asset events in a narrower right panel.",
       "imagePath": "dashboard-images/dash-o005-desktop.webp",
@@ -4203,12 +3673,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "observability"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "observability"],
       "domain": "observability",
       "cue": "Light frontend performance workspace with icon navigation and second text rail, tabs and filters, two wide stacked line-chart/list panels, three compact metric plots, and a dense transactions table. Purple active accents and screenshot presentation border.",
       "imagePath": "dashboard-images/dash-o006-desktop.webp",
@@ -4242,12 +3707,7 @@
       "surface": "dashboard",
       "source": "https://temporal.io/blog/the-dark-magic-of-workflow-exploration",
       "sourceName": "Temporal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workflow-monitoring"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workflow-monitoring"],
       "domain": "workflow-monitoring",
       "cue": "Dark execution index with black icon rail and navy main surface, environment switcher, total count with six colored state badges, filter control, and broad three-column workflow table with status pills, linked IDs and bottom pagination.",
       "imagePath": "dashboard-images/dash-o007-desktop.webp",
@@ -4281,12 +3741,7 @@
       "surface": "dashboard",
       "source": "https://github.com/plausible/analytics",
       "sourceName": "Plausible Analytics",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "web-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "web-analytics"],
       "domain": "web-analytics",
       "cue": "Light single-page analytics layout without a sidebar: top site/live visitor strip and time filters, six inline KPI columns, dominant full-width purple area chart, and two lower ranked source/page lists with subtle horizontal value bars. Rounded desktop window frame.",
       "imagePath": "dashboard-images/dash-o008-desktop.webp",
@@ -4320,12 +3775,7 @@
       "surface": "dashboard",
       "source": "https://github.com/louislam/uptime-kuma",
       "sourceName": "Uptime Kuma",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "uptime-monitoring"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "uptime-monitoring"],
       "domain": "uptime-monitoring",
       "cue": "Light mint-accent monitor detail with a searchable left monitor list, each row showing percentage and segmented uptime bars; right detail has action buttons, large segmented status strip, five inline health metrics, and a broad response-time area chart.",
       "imagePath": "dashboard-images/dash-o009-desktop.webp",
@@ -4359,12 +3809,7 @@
       "surface": "dashboard",
       "source": "https://github.com/apache/superset",
       "sourceName": "Apache Superset",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "query-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "query-builder"],
       "domain": "query-builder",
       "cue": "Light three-column chart authoring view: searchable dataset and metric list at left, chart type/query configuration form in the middle, and large right scatterplot with legend, cached-results badges and lower results tabs.",
       "imagePath": "dashboard-images/dash-o010-desktop.webp",
@@ -4398,12 +3843,7 @@
       "surface": "dashboard",
       "source": "https://github.com/getsentry/sentry",
       "sourceName": "Sentry",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "trace-explorer"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "trace-explorer"],
       "domain": "trace-explorer",
       "cue": "Light trace detail with double left navigation, breadcrumb and environment summary, web-vital badges, and a split inspector. Main pane pairs an indented span tree with horizontal duration waterfall bars; right pane shows selected span and expandable attributes.",
       "imagePath": "dashboard-images/dash-o011-desktop.webp",
@@ -4437,12 +3877,7 @@
       "surface": "dashboard",
       "source": "https://github.com/windmill-labs/windmill",
       "sourceName": "Windmill",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workflow-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workflow-builder"],
       "domain": "workflow-builder",
       "cue": "Light split workflow editor with dark icon rail, tall connected conditional process graph on the left, and spacious typed input form on the right. Top action toolbar contains diff, test, draft and deploy; form includes run action.",
       "imagePath": "dashboard-images/dash-o012-desktop.webp",
@@ -4476,12 +3911,7 @@
       "surface": "dashboard",
       "source": "https://grafana.com/docs/grafana/latest/visualizations/dashboards/use-dashboards/",
       "sourceName": "Grafana",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "observability"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "observability"],
       "domain": "observability",
       "cue": "Dark compact dashboard with breadcrumb/search header, filter chips and time range toolbar, collapsible section heading and date tabs, then two equal large chart panels: stacked vertical bars and grouped horizontal bars. Narrow utility rail at far right.",
       "imagePath": "dashboard-images/dash-o013-desktop.webp",
@@ -4515,12 +3945,7 @@
       "surface": "dashboard",
       "source": "https://posthog.com/docs/product-analytics/dashboards",
       "sourceName": "PostHog",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "product-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "product-analytics"],
       "domain": "product-analytics",
       "cue": "Warm gray analytics workspace with narrow icon rails on both sides, breadcrumb title and collaborators across top, compact filters, and asymmetric five-panel layout: giant active-viewer KPI, vertical bars, layered purple area chart, horizontal conversion funnel and trend line chart.",
       "imagePath": "dashboard-images/dash-o014-desktop.webp",
@@ -4554,12 +3979,7 @@
       "surface": "dashboard",
       "source": "https://github.com/ghostfolio/ghostfolio",
       "sourceName": "Ghostfolio",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "investing"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "investing"],
       "domain": "investing",
       "cue": "Full mobile wealth screen inside a black phone frame. White background, brand and hamburger at top, dominant turquoise portfolio area chart, giant balance with gains, range pills and three-icon bottom navigation. Original includes device frame; regenerate the application viewport without inventing additional UI.",
       "imagePath": "dashboard-images/dash-o015-desktop.webp",
@@ -4593,12 +4013,7 @@
       "surface": "dashboard",
       "source": "https://actualbudget.org/docs/tour/user-interface/",
       "sourceName": "Actual Budget",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "budgeting"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "budgeting"],
       "domain": "budgeting",
       "cue": "Navy account/navigation sidebar and pale gray workspace. Horizontal month strip above two monthly budget columns; aligned available-funds summary and green remaining amount above category budget/spent/balance rows. Red documentation rectangle highlights the top-right sync tools and is not native UI.",
       "imagePath": "dashboard-images/dash-o016-desktop.webp",
@@ -4632,12 +4047,7 @@
       "surface": "dashboard",
       "source": "https://www.home-assistant.io/dashboards/sidebar/",
       "sourceName": "Home Assistant",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "energy"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "energy"],
       "domain": "energy",
       "motifs": [
         "outlined blue hourly bars",
@@ -4677,12 +4087,7 @@
       "surface": "dashboard",
       "source": "https://github.com/usememos/memos",
       "sourceName": "Memos",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "notes-research"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "notes-research"],
       "domain": "notes-research",
       "motifs": [
         "outlined chronological memo cards",
@@ -4722,12 +4127,7 @@
       "surface": "dashboard",
       "source": "https://github.com/grocy/grocy",
       "sourceName": "Grocy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "inventory"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "inventory"],
       "domain": "inventory",
       "motifs": [
         "eighteen stock records",
@@ -4767,12 +4167,7 @@
       "surface": "dashboard",
       "source": "https://github.com/grocy/grocy",
       "sourceName": "Grocy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "meal-planning"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "meal-planning"],
       "domain": "meal-planning",
       "motifs": [
         "weekly date range and cost",
@@ -4812,12 +4207,7 @@
       "surface": "dashboard",
       "source": "https://github.com/ellite/Wallos",
       "sourceName": "Wallos",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "subscriptions"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "subscriptions"],
       "domain": "subscriptions",
       "motifs": [
         "12subscription records",
@@ -4858,12 +4248,7 @@
       "surface": "dashboard",
       "source": "https://github.com/ellite/Wallos",
       "sourceName": "Wallos",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "billing-calendar"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "billing-calendar"],
       "domain": "billing-calendar",
       "motifs": [
         "correct July2026 month geometry",
@@ -4904,12 +4289,7 @@
       "surface": "dashboard",
       "source": "https://github.com/fleetbase/fleetbase",
       "sourceName": "Fleetbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "fleet-map"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "fleet-map"],
       "domain": "fleet-map",
       "motifs": [
         "three order states",
@@ -4950,12 +4330,7 @@
       "surface": "dashboard",
       "source": "https://github.com/fleetbase/fleetbase",
       "sourceName": "Fleetbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "workflow-builder"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "workflow-builder"],
       "domain": "workflow-builder",
       "motifs": [
         "nine shipment-state nodes",
@@ -4995,12 +4370,7 @@
       "surface": "dashboard",
       "source": "https://github.com/fleetbase/fleetbase",
       "sourceName": "Fleetbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "commerce-catalog"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "commerce-catalog"],
       "domain": "commerce-catalog",
       "cue": "Dark commerce admin with module bar, app navigation and a second category rail. Main four-column product card grid includes publication status, image region, price, description, SKU, variant/add-on pills and edit/delete footer. Source uses placeholder media icons; regeneration should use truthful demo product imagery.",
       "imagePath": "dashboard-images/dash-o025-desktop.webp",
@@ -5034,12 +4404,7 @@
       "surface": "dashboard",
       "source": "https://github.com/fleetbase/fleetbase",
       "sourceName": "Fleetbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "business-finance"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "business-finance"],
       "domain": "business-finance",
       "cue": "Dark finance dashboard with accounting navigation, date range controls, two rows of four compact metrics, two wide trend/cash-flow panels, and lower invoice pipeline, receivable aging and wallet panels. Source has mostly zero/empty demo data, which must not be misdescribed as a live populated report.",
       "imagePath": "dashboard-images/dash-o026-desktop.webp",
@@ -5073,12 +4438,7 @@
       "surface": "dashboard",
       "source": "https://github.com/iSoron/uhabits",
       "sourceName": "Loop Habit Tracker",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity"],
       "domain": "productivity",
       "cue": "Magenta top app bar and habit question lead to a compact overview strip with circular score plus three statistics. A large single-series line chart fills the middle; weekly history bars continue below. Flat full-width stacked chart sections and minimal borders.",
       "imagePath": "dashboard-images/dash-o027-desktop.webp",
@@ -5112,12 +4472,7 @@
       "surface": "dashboard",
       "source": "https://github.com/AntennaPod/StoreMetadata",
       "sourceName": "AntennaPod",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "music"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "music"],
       "domain": "music",
       "cue": "Blue promotional heading outside an Android phone frame. The actual home screen has a horizontal continue-listening cover carousel, episode inbox list with download actions, persistent mini-player, and five-item bottom navigation. Keep app UI geometry and exclude the marketing frame.",
       "imagePath": "dashboard-images/dash-o028-desktop.webp",
@@ -5151,12 +4506,7 @@
       "surface": "dashboard",
       "source": "https://github.com/moneymanagerex/android-money-manager-ex",
       "sourceName": "Money Manager Ex",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance"],
       "domain": "finance",
       "cue": "Green compact header over a dense bank-account ledger. Bold category rows with icons alternate indented account rows, balances align right in two currencies. A small income-versus-expenses horizontal bar summary and floating plus button sit near the bottom.",
       "imagePath": "dashboard-images/dash-o029-desktop.webp",
@@ -5190,12 +4540,7 @@
       "surface": "dashboard",
       "source": "https://github.com/orgzly/orgzly-android",
       "sourceName": "Orgzly",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity"],
       "domain": "productivity",
       "cue": "Slate promotional heading outside phone frame. The actual agenda uses a two-line toolbar, muted date-group headers, and dense flat task rows with notebook and scheduled-time metadata. Date hierarchy and list density are the useful composition.",
       "imagePath": "dashboard-images/dash-o030-desktop.webp",
@@ -5229,12 +4574,7 @@
       "surface": "dashboard",
       "source": "https://github.com/enricocid/Music-Player-GO",
       "sourceName": "Music Player GO",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "music"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "music"],
       "domain": "music",
       "cue": "Minimal white artist directory with generous vertically spaced rows, album/song metadata, purple alphabetical fast-scroll indicator on the right, persistent song mini-player, and purple bottom navigation icons.",
       "imagePath": "dashboard-images/dash-o031-desktop.webp",
@@ -5268,12 +4608,7 @@
       "surface": "dashboard",
       "source": "https://github.com/organicmaps/organicmaps",
       "sourceName": "Organic Maps",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "maps"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "maps"],
       "domain": "maps",
       "cue": "Full-bleed detailed city map fills the upper half behind floating circular layer, compass, zoom, and location controls. A white draggable place-detail sheet occupies the lower half with title, distance, bookmark action, descriptive rows, and three pinned route actions.",
       "imagePath": "dashboard-images/dash-o032-desktop.webp",
@@ -5307,12 +4642,7 @@
       "surface": "dashboard",
       "source": "https://github.com/immich-app/immich",
       "sourceName": "Immich",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media"],
       "domain": "media",
       "cue": "Dark album page with full-width photo cover, large album title, dated grouping, and three-column photo grid. An open dark overflow menu covers the right side. Pink arrow and rectangle are documentation annotations and must not be copied as product UI.",
       "imagePath": "dashboard-images/dash-o033-desktop.webp",
@@ -5346,12 +4676,7 @@
       "surface": "dashboard",
       "source": "https://github.com/simonoppowa/OpenNutriTracker",
       "sourceName": "OpenNutriTracker",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health"],
       "domain": "health",
       "cue": "Warm off-white nutrition dashboard with compact weight and water pills, pale green fasting strip, large rounded white calorie-ring panel, three macro-progress cards, activity list, and a bottom tab bar with elevated green add action.",
       "imagePath": "dashboard-images/dash-o034-desktop.webp",
@@ -5385,12 +4710,7 @@
       "surface": "dashboard",
       "source": "https://github.com/kylecorry31/Trail-Sense",
       "sourceName": "Trail Sense",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "maps"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "maps"],
       "domain": "maps",
       "cue": "Near-black outdoor navigation dashboard dominated by a circular topographic map inside a compass bezel. Bearing and coordinates center above it, altitude and speed form a metric row, orange route runs through the map, and compact status chips plus navigation action sit above a five-icon bottom bar.",
       "imagePath": "dashboard-images/dash-o035-desktop.webp",
@@ -5424,12 +4744,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Swati4star/Images-to-PDF",
       "sourceName": "PDF Converter",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity"],
       "domain": "productivity",
       "cue": "Black Android device frame around a light utility dashboard with orange toolbar. Labelled groups contain grids of two or three white action tiles; large orange pictograms above gray labels provide the structure. Exclude the device hardware when adapting.",
       "imagePath": "dashboard-images/dash-o036-desktop.webp",
@@ -5463,12 +4778,7 @@
       "surface": "dashboard",
       "source": "https://github.com/martykan/forecastie",
       "sourceName": "Forecastie",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "weather"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "weather"],
       "domain": "weather",
       "cue": "Bright blue current-weather block spans roughly the top half with large temperature left, outline condition icon right, dense weather facts, update timestamp, and three time tabs. White full-width forecast rows follow with left-aligned time/weather detail and right-aligned icon/temperature.",
       "imagePath": "dashboard-images/dash-o037-desktop.webp",
@@ -5502,12 +4812,7 @@
       "surface": "dashboard",
       "source": "https://github.com/FossifyOrg/Calendar",
       "sourceName": "Fossify Calendar",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity"],
       "domain": "productivity",
       "cue": "Green promotional backdrop and heading around phone frame. The app screen has a mint search toolbar, serif month label with arrows, seven-column month grid filled with small coloured event bars, floating add button, and coloured category tabs along the bottom.",
       "imagePath": "dashboard-images/dash-o038-desktop.webp",
@@ -5541,12 +4846,7 @@
       "surface": "dashboard",
       "source": "https://github.com/johannesjo/super-productivity",
       "sourceName": "Super Productivity",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity"],
       "domain": "productivity",
       "cue": "Dark photographic mountain-and-night-sky background behind a daily summary. A celebratory title leads to four large icon-and-number metrics, tabs, then dark task-time tables with coloured project separators and export/round-time actions. Confetti visible in the captured state is product celebration motion evidence, not a required perpetual effect.",
       "imagePath": "dashboard-images/dash-o039-desktop.webp",
@@ -5580,13 +4880,7 @@
       "surface": "dashboard",
       "source": "https://github.com/makeplane/plane",
       "sourceName": "Plane",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "composite-source",
-        "project-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "composite-source", "project-analytics"],
       "domain": "project-analytics",
       "cue": "Light project analytics workspace with narrow icon rail, wide project navigation sidebar, horizontal analytics tabs, four spacious text metrics and a large blue radar chart. Official image includes an overlapping detail-analytics panel and faded bottom edge; treat the underlying two-level navigation and metric/chart regions as the reference, not the marketing fade.",
       "imagePath": "dashboard-images/dash-o040-desktop.webp",
@@ -5620,12 +4914,7 @@
       "surface": "dashboard",
       "source": "https://github.com/AppFlowy-IO/AppFlowy",
       "sourceName": "AppFlowy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "task-board"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "task-board"],
       "domain": "task-board",
       "cue": "White task workspace with desktop title/breadcrumb bar, large emoji title, view tabs and slim filter/search controls. Three open kanban columns use pastel status pills, varied-height task cards, small owner avatars, dates, checkboxes, bright topic tags and thin completion bars. No persistent side navigation is visible in this capture.",
       "imagePath": "dashboard-images/dash-o042-desktop.webp",
@@ -5659,12 +4948,7 @@
       "surface": "dashboard",
       "source": "https://github.com/AppFlowy-IO/AppFlowy",
       "sourceName": "AppFlowy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "data-grid"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "data-grid"],
       "domain": "data-grid",
       "cue": "White project database workspace with breadcrumb header, large page title, underlined view tabs and a five-column task table. Priority pills, short cyan progress bars, dates and attachment thumbnails align in roomy rows. Two open schema menus and named collaborative cursors are visible; preserve these as an interaction state rather than permanent dashboard widgets.",
       "imagePath": "dashboard-images/dash-o043-desktop.webp",
@@ -5698,12 +4982,7 @@
       "surface": "dashboard",
       "source": "https://github.com/outline/outline",
       "sourceName": "Outline",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "knowledge-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "knowledge-workspace"],
       "domain": "knowledge-workspace",
       "cue": "Three-column documentation interface: pale blue-gray collections sidebar, narrow in-document contents column, and broad white reading pane. Breadcrumbs, collaborator avatars and Share/Edit/New doc controls run across the top. The document uses large black headings and readable paragraphs. Source has an outer transparent/drop-shadow presentation frame.",
       "imagePath": "dashboard-images/dash-o044-desktop.webp",
@@ -5737,12 +5016,7 @@
       "surface": "dashboard",
       "source": "https://github.com/navidrome/navidrome",
       "sourceName": "Navidrome",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-library"],
       "domain": "media-library",
       "cue": "Dark music library desktop window with saturated blue app bar, charcoal album/navigation sidebar and six-column square album-cover grid. Search/filter/layout tools precede the grid. A translucent queue floats over the lower right, while a full-width playback strip anchors the bottom with cover thumbnail, track metadata, seek line and playback/volume controls.",
       "imagePath": "dashboard-images/dash-o045-desktop.webp",
@@ -5776,12 +5050,7 @@
       "surface": "dashboard",
       "source": "https://github.com/navidrome/navidrome",
       "sourceName": "Navidrome",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "media-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "media-library"],
       "domain": "media-library",
       "cue": "Portrait mobile web music album view with indigo toolbar, cover image beside stacked album metadata, a row of play/shuffle/download actions and a full-width track table. Checkbox, title, duration, favorite and overflow align in each row. A four-item contextual action menu is open near the lower right. This is a real official mobile screenshot; no desktop/mobile pairing is asserted.",
       "imagePath": "dashboard-images/dash-o046-desktop.webp",
@@ -5815,12 +5084,7 @@
       "surface": "dashboard",
       "source": "https://github.com/Budibase/budibase",
       "sourceName": "Budibase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "configuration"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "configuration"],
       "domain": "configuration",
       "cue": "Dark app configuration screen with thin icon-only left rail, breadcrumb title and horizontal Configuration/Knowledge/Deployment/Logs tabs. Model selector and add-tools button sit above wrapped service-tool chips; the lower area is a monospaced instructions editor with line numbers. Source has an external textured presentation margin, which is not app UI.",
       "imagePath": "dashboard-images/dash-o047-desktop.webp",
@@ -5854,12 +5118,7 @@
       "surface": "dashboard",
       "source": "https://github.com/calcom/cal.diy",
       "sourceName": "Cal.com",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "calendar-booking"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "calendar-booking"],
       "domain": "calendar-booking",
       "cue": "Dark booking interface centered inside a wide near-black viewport. A compact left column holds host identity, meeting title and duration/location/timezone choices; an adjacent monthly calendar uses small outlined/filled date cells and previous/next controls. The pointer highlights a selected day. This PNG is the first frame of the official product GIF.",
       "imagePath": "dashboard-images/dash-o048-desktop.webp",
@@ -5893,12 +5152,7 @@
       "surface": "dashboard",
       "source": "https://github.com/toeverything/AFFiNE",
       "sourceName": "AFFiNE",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "knowledge-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "knowledge-workspace"],
       "domain": "knowledge-workspace",
       "cue": "Compact white document workspace with narrow left navigation, top document/share bar, and a single spacious article pane with bold headings and small metadata. Original app window is presented over a colorful desktop background. This PNG is an unmodified first-frame extraction from the official GIF and is only 600 pixels wide; use for composition, not fine typography fidelity.",
       "imagePath": "dashboard-images/dash-o049-desktop.webp",
@@ -5932,12 +5186,7 @@
       "surface": "dashboard",
       "source": "https://github.com/nocodb/nocodb",
       "sourceName": "NocoDB",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "data-grid"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "data-grid"],
       "domain": "data-grid",
       "cue": "Dense spreadsheet application with a project/table sidebar, wide editable data grid and separate right-side views drawer. The grid has thumbnails, colored platform/status chips, linked records, dates, budgets and pagination. Top toolbar exposes field/filter/group/sort actions and search. A large blue marketing headline above the app is external presentation material, not an application header.",
       "imagePath": "dashboard-images/dash-o050-desktop.webp",
@@ -5971,12 +5220,7 @@
       "surface": "dashboard",
       "source": "https://github.com/twentyhq/twenty",
       "sourceName": "Twenty",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "crm-analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "crm-analytics"],
       "domain": "crm-analytics",
       "cue": "Light CRM home cockpit with a slim hierarchical navigation/sidebar and a dense two-column widget area. Four flat KPI tiles form the first row; half-circle target/win gauges sit beside a purple revenue line chart. Lower widgets combine blue pipeline bars, compact opportunity tables and small cycle-length/bonus cards. Fine gray borders and sparse purple/blue accents define hierarchy.",
       "imagePath": "dashboard-images/dash-o051-desktop.webp",
@@ -6010,12 +5254,7 @@
       "surface": "dashboard",
       "source": "https://github.com/twentyhq/twenty",
       "sourceName": "Twenty",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "calendar-planning"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "calendar-planning"],
       "domain": "calendar-planning",
       "cue": "Wide monthly task calendar with top view/filter/sort controls and an assignee filter chip. Seven columns of tall date cells contain restrained white task cards with short titles, pastel status chips and linked assignee/company badges. The shot is the calendar workspace itself without a surrounding app sidebar.",
       "imagePath": "dashboard-images/dash-o052-desktop.webp",
@@ -6049,12 +5288,7 @@
       "surface": "dashboard",
       "source": "https://github.com/penpot/penpot-docs",
       "sourceName": "Penpot",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "design-editor"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "design-editor"],
       "domain": "design-editor",
       "cue": "Light visual editor with layer/page navigation on the left, a large turquoise canvas in the middle and dense property inspector on the right. Floating top canvas tool strip, rulers, selected typography object with purple handles and a bottom color palette demonstrate an active editing state. The surrounding pale blue window frame is presentation background.",
       "imagePath": "dashboard-images/dash-o053-desktop.webp",
@@ -6088,12 +5322,7 @@
       "surface": "dashboard",
       "source": "https://github.com/siyuan-note/siyuan",
       "sourceName": "SiYuan",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "knowledge-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "knowledge-workspace"],
       "domain": "knowledge-workspace",
       "cue": "Light desktop knowledge editor with top document tabs, narrow icon rail, hierarchical document/outline panel and two open reading panes side by side. Soft lavender chrome, white rounded panes, emoji headings, colored links and dense block outlines differentiate the workspace. Both document panes are visible simultaneously; no mobile overlay is present in this image.",
       "imagePath": "dashboard-images/dash-o054-desktop.webp",
@@ -6127,12 +5356,7 @@
       "surface": "dashboard",
       "source": "https://github.com/TriliumNext/Trilium",
       "sourceName": "Trilium",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "knowledge-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "knowledge-workspace"],
       "domain": "knowledge-workspace",
       "cue": "Desktop notes editor with thin icon rail, pale blue hierarchical note tree/search sidebar and one large document pane. Tabbed top chrome and a dense rich-text toolbar sit above a title with icon and timestamps. The document combines text, lists, thin rules and a large three-leaf illustration. Bottom status bar exposes attributes and attachments.",
       "imagePath": "dashboard-images/dash-o055-desktop.webp",
@@ -6166,12 +5390,7 @@
       "surface": "dashboard",
       "source": "https://github.com/laurent22/joplin",
       "sourceName": "Joplin",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "task-list"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "task-list"],
       "domain": "task-list",
       "cue": "Native iOS portrait notebook list with system status bar, vivid blue toolbar, large checkbox task rows and a mix of completed tasks and plain note rows. Expanded floating action stack in the lower right offers new task, new note and new notebook actions with purple/blue circles and a red close button. Real iPhone screenshot from the official repository.",
       "imagePath": "dashboard-images/dash-o056-desktop.webp",
@@ -6205,12 +5424,7 @@
       "surface": "dashboard",
       "source": "https://github.com/laurent22/joplin",
       "sourceName": "Joplin",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "knowledge-workspace"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "knowledge-workspace"],
       "domain": "knowledge-workspace",
       "cue": "Portrait note-reading screen with system status bar and charcoal navigation toolbar. White document canvas shows mathematical formulas and a centered sequence diagram with light purple participant boxes. This is an official phone screenshot of a multimedia note, not a dashboard metrics page; useful for mobile detail/reading patterns.",
       "imagePath": "dashboard-images/dash-o057-desktop.webp",
@@ -6244,13 +5458,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Apple Wallet",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "wallet-card"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "wallet-card"],
       "domain": "finance",
       "motifs": [
         "Preserve the large physical card, gradient and the two-column tiles with a taller payment tile."
@@ -6287,13 +5495,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Badoo",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "social",
-        "profile"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "social", "profile"],
       "domain": "social",
       "motifs": [
         "Keep the portrait completion ring, full-width question, twin tiles and large purple subscription panel."
@@ -6330,13 +5532,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Base",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "portfolio"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "portfolio"],
       "domain": "finance",
       "motifs": [
         "Retain the narrow center column, large empty margins and action row; avoid adding a generic analytics grid."
@@ -6373,17 +5569,9 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "beehiiv",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "marketing",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "marketing", "analytics"],
       "domain": "marketing",
-      "motifs": [
-        "Preserve the asymmetric chart-plus-utility-rail and pink subscriber line."
-      ],
+      "motifs": ["Preserve the asymmetric chart-plus-utility-rail and pink subscriber line."],
       "cue": "Newsletter overview with full sidebar, secondary tabs, three-column metric strip, large subscriber area chart and right resources rail.",
       "imagePath": "dashboard-images/dash-u004-desktop.webp",
       "mobileImagePath": "dashboard-images/dash-u004-mobile.webp",
@@ -6416,17 +5604,9 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Bing",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "social",
-        "profile"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "social", "profile"],
       "domain": "social",
-      "motifs": [
-        "Preserve the pale blue header wash, rewards row and long simple settings list."
-      ],
+      "motifs": ["Preserve the pale blue header wash, rewards row and long simple settings list."],
       "cue": "Account page with avatar/name/email header, three-part reward strip, status banner and oversized icon settings rows.",
       "imagePath": "dashboard-images/dash-u005-desktop.webp",
       "mobileImagePath": "dashboard-images/dash-u005-mobile.webp",
@@ -6459,13 +5639,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Browserbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "developer-tools",
-        "monitoring"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "developer-tools", "monitoring"],
       "domain": "developer-tools",
       "motifs": [
         "Preserve the ruled session table, thin borders and broad documentation link strip."
@@ -6502,13 +5676,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Browserbase",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "developer-tools",
-        "settings"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "developer-tools", "settings"],
       "domain": "developer-tools",
       "motifs": [
         "Keep the double navigation and restrained four-cell usage panel with substantial whitespace."
@@ -6545,13 +5713,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Buddy",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "budget"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "budget"],
       "domain": "finance",
       "motifs": [
         "Preserve the glowing rounded bar ends, colorful open expense ring and floating black add button."
@@ -6588,13 +5750,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Cake Equity",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "ownership"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "ownership"],
       "domain": "finance",
       "motifs": [
         "Keep the donut with small cake illustration, lime/purple slices and distinct narrow-wide-medium column proportions."
@@ -6631,13 +5787,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Canny",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "product-management",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "product-management", "analytics"],
       "domain": "product-management",
       "motifs": [
         "Preserve the minimal icon rail, large numeric counters and uneven chart/source split."
@@ -6674,13 +5824,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Delphi",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "ai-tools",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "ai-tools", "analytics"],
       "domain": "ai-tools",
       "motifs": [
         "Preserve the floating avatar badge, orange line and raised score card within a larger progress panel."
@@ -6717,13 +5861,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "fal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "developer-tools",
-        "overview"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "developer-tools", "overview"],
       "domain": "developer-tools",
       "motifs": [
         "Keep the horizontal navigation, compact onboarding links and colored miniature request bars."
@@ -6760,13 +5898,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Fuse",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "wallet"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "wallet"],
       "domain": "finance",
       "motifs": [
         "Keep the split-tone decimals, generous whitespace and small vivid dimensional product icons."
@@ -6803,13 +5935,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Google Fit",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "activity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "activity"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the mint/blue concentric rings and tiny repeated week rings; retain hierarchy over the lower cards."
@@ -6846,13 +5972,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Google Fit",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "trends"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "trends"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve each card metric on the left and its seven-day microchart on the right, with distinct category colors."
@@ -6889,13 +6009,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Headway",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "learning",
-        "content-library"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "learning", "content-library"],
       "domain": "learning",
       "motifs": [
         "Preserve bright book illustrations, editorial scale, category carousel and floating random-summary action."
@@ -6932,13 +6046,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Higgsfield",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "creative-tools",
-        "usage"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "creative-tools", "usage"],
       "domain": "creative-tools",
       "motifs": [
         "Preserve near-black surfaces, lime actions, nested usage tiles and multicolor spend legend."
@@ -6975,13 +6083,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Klaviyo",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "marketing",
-        "workflow"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "marketing", "workflow"],
       "domain": "marketing",
       "motifs": [
         "Preserve branching connectors, rounded white nodes, compact mini-map and zoom rail; this is a workflow canvas, not an analytics grid."
@@ -7018,13 +6120,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Klaviyo",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "marketing",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "marketing", "analytics"],
       "domain": "marketing",
       "motifs": [
         "Keep the stacked horizontal engagement bar beside the vertical percentage stack and their explicit legends."
@@ -7061,13 +6157,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Klaviyo",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "marketing",
-        "reporting"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "marketing", "reporting"],
       "domain": "marketing",
       "motifs": [
         "Preserve the rate/status table beside the sparse chart and the separate wide campaign detail table."
@@ -7104,13 +6194,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Lifesum",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "nutrition"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "nutrition"],
       "domain": "health-fitness",
       "motifs": [
         "Keep the curved lower edge of the dark masthead, ring hierarchy and illustrated meal icons."
@@ -7147,13 +6231,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Lifesum",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "nutrition"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "nutrition"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the grainy mesh color field, serif numerals, white macro panel and simple smiley day-rating."
@@ -7190,13 +6268,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "MacroFactor",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "nutrition"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "nutrition"],
       "domain": "health-fitness",
       "motifs": [
         "Keep the open gauge arc, horizontal mode switch and sticky food-search strip above bottom navigation."
@@ -7233,13 +6305,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Mintlify",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "developer-tools",
-        "settings"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "developer-tools", "settings"],
       "domain": "developer-tools",
       "motifs": [
         "Preserve the wide label column, inset control panels, green toggle and understated trial banner."
@@ -7276,13 +6342,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Monarch",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "budget"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "budget"],
       "domain": "finance",
       "motifs": [
         "Keep the solid blue navigation and pale page canvas, coral chart and asymmetric widget heights."
@@ -7319,13 +6379,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "MyFitnessPal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "nutrition"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "nutrition"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the date/check-in strip and broad horizontal progress bars instead of substituting a ring."
@@ -7362,13 +6416,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Opal",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "productivity",
-        "focus"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "productivity", "focus"],
       "domain": "productivity",
       "motifs": [
         "Preserve the central iridescent physical gem, black negative space and mint/lime gradient action; gem is a major design element."
@@ -7405,13 +6453,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Peloton",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "schedule"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "schedule"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the horizontal statistic strip, instructor portrait and strong coral class-join button."
@@ -7448,13 +6490,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Plum",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "savings"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "savings"],
       "domain": "finance",
       "motifs": [
         "Preserve the saturated banner, compact shortcut tiles and unified rule card with thin dividers."
@@ -7491,13 +6527,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Quicken",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "budget"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "budget"],
       "domain": "finance",
       "motifs": [
         "Preserve the persistent account tree and wide split spending-plan card rather than a generic sidebar-plus-KPIs arrangement."
@@ -7534,13 +6564,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Revolut",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "finance",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "finance", "analytics"],
       "domain": "finance",
       "motifs": [
         "Preserve the layered sheet top edge, restrained blue bars and separate budget shortcut."
@@ -7577,13 +6601,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Shopify",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "commerce",
-        "geographic"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "commerce", "geographic"],
       "domain": "commerce",
       "motifs": [
         "Preserve the large interactive globe as dominant composition with summary stack beside it, not a normal chart grid."
@@ -7620,13 +6638,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Shopify",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "commerce",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "commerce", "analytics"],
       "domain": "commerce",
       "motifs": [
         "Preserve the wide main chart and narrow right breakdown plus lower donut/line/product-bar trio."
@@ -7663,13 +6675,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Square",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "commerce",
-        "overview"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "commerce", "overview"],
       "domain": "commerce",
       "motifs": [
         "Keep the broad white banking band and huge sparse monochrome sales chart, with compact lime change markers."
@@ -7706,13 +6712,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Square",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "commerce",
-        "reporting"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "commerce", "reporting"],
       "domain": "commerce",
       "motifs": [
         "Preserve the paired gray comparison strips, spacious ruled plot and two lower statistics regions."
@@ -7749,13 +6749,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Sweatpals",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "events",
-        "data-table"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "events", "data-table"],
       "domain": "events",
       "motifs": [
         "Preserve black backdrop, thin rules, image-led rows and purple active-category outline."
@@ -7792,13 +6786,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Sweatpals",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "events",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "events", "analytics"],
       "domain": "events",
       "motifs": [
         "Preserve the event identity strip and uneven ticket-versus-retention panel widths with vivid purple/green charts."
@@ -7835,13 +6823,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Sweatpals",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "events",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "events", "analytics"],
       "domain": "events",
       "motifs": [
         "Preserve the unboxed KPI row, purple plots and lower member area with attendee list."
@@ -7878,13 +6860,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Tesla",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "mobility",
-        "device-control"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "mobility", "device-control"],
       "domain": "mobility",
       "motifs": [
         "Preserve the large three-quarter vehicle render with cable and green charging accents, not a generic dashboard illustration."
@@ -7921,13 +6897,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Uber",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "mobility",
-        "profile"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "mobility", "profile"],
       "domain": "mobility",
       "motifs": [
         "Preserve the overlapping portrait, diamond cover pattern and circular illustrated badges."
@@ -7964,13 +6934,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Withings Health Mate",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "wellness-score"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "wellness-score"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the dotted irregular multicolor halo, soft center wash and large numeric score; do not replace with a simple donut."
@@ -8007,13 +6971,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "AirOps",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "marketing",
-        "analytics"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "marketing", "analytics"],
       "domain": "marketing",
       "motifs": [
         "Preserve the irregular KPI wrap, monospaced numbers and ranking bars beside competitor table."
@@ -8050,13 +7008,7 @@
       "surface": "dashboard",
       "source": "https://mobbin.com/",
       "sourceName": "Apple Fitness",
-      "tags": [
-        "dashboard",
-        "full-screen",
-        "generated",
-        "health-fitness",
-        "activity"
-      ],
+      "tags": ["dashboard", "full-screen", "generated", "health-fitness", "activity"],
       "domain": "health-fitness",
       "motifs": [
         "Preserve the thick red activity ring, saturated small chart accents and translucent floating bottom nav."
