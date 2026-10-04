@@ -7052,6 +7052,35 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it('keeps Debug unlocked across restarts until the shortcut locks it', async () => {
+    shortcutPlatform.macOS = true
+    localStorage.setItem('harness.onboarding.v1', 'done')
+    const debugShortcut = { key: 'Î', code: 'KeyD', metaKey: true, altKey: true, shiftKey: true }
+    const openSettings = async () => {
+      await screen.findByRole('button', { name: 'Account' })
+      fireEvent.keyDown(window, { key: ',', metaKey: true })
+      return screen.findByRole('dialog', { name: 'Settings' })
+    }
+
+    const first = render(<App />)
+    await screen.findByRole('button', { name: 'Account' })
+    fireEvent.keyDown(window, debugShortcut)
+    expect(localStorage.getItem('harness.debugSettings')).toBe('on')
+    first.unmount()
+
+    const second = render(<App />)
+    let settings = await openSettings()
+    expect(within(settings).getByRole('button', { name: 'Debug' })).toBeTruthy()
+    fireEvent.keyDown(window, debugShortcut)
+    expect(within(settings).queryByRole('button', { name: 'Debug' })).toBeNull()
+    expect(localStorage.getItem('harness.debugSettings')).toBeNull()
+    second.unmount()
+
+    render(<App />)
+    settings = await openSettings()
+    expect(within(settings).queryByRole('button', { name: 'Debug' })).toBeNull()
+  })
+
   it.each([true, false])('forces onboarding from Debug (macOS: %s)', async (macOS) => {
     shortcutPlatform.macOS = macOS
     localStorage.setItem('harness.onboarding.v1', 'done')
