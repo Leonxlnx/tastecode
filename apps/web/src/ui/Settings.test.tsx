@@ -162,11 +162,10 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
   })
 
-  it('pairs theme previews with compact appearance controls', () => {
+  it('pairs theme previews with open appearance rows', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getByRole('img', { name: /code.*preview/i })).toBeTruthy()
     expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
       'system',
       'light',
@@ -180,9 +179,39 @@ describe('settings viewport layout', () => {
       within(details)
         .getAllByRole('combobox')
         .map((control) => control.getAttribute('aria-label')),
-    ).toEqual(['Dark mode theme', 'Interface font', 'Sidebar translucency'])
-    expect(within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })).toBeTruthy()
+    ).toEqual(['Interface font', 'Sidebar translucency'])
+    const accent = within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })
+    expect(accent.textContent).toBe('Neutral')
     expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
+    expect(within(details).queryByRole('button', { name: 'Reset colors' })).toBeNull()
+  })
+
+  it('resets one mode to its default colors once they change', () => {
+    const onAppearancePreferenceChange = vi.fn()
+    renderSettings({
+      overrides: {
+        appearancePreferences: {
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'rose', backdrop: '#1B1A17', glass: 0 },
+        },
+        onAppearancePreferenceChange,
+      },
+    })
+
+    const dark = screen.getByRole('region', { name: 'Dark mode' })
+    expect(within(dark).getByRole('button', { name: 'Background: #1B1A17' }).textContent).toBe(
+      '#1B1A17',
+    )
+    expect(
+      within(screen.getByRole('region', { name: 'Light mode' })).queryByRole('button', {
+        name: 'Reset colors',
+      }),
+    ).toBeNull()
+    fireEvent.click(within(dark).getByRole('button', { name: 'Reset colors' }))
+    expect(onAppearancePreferenceChange).toHaveBeenCalledWith('dark', {
+      accent: 'neutral',
+      backdrop: 'default',
+    })
   })
 
   it('lets the terminal shortcut target the bottom panel', () => {

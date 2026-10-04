@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
@@ -16,7 +17,12 @@ import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
 import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
-import { accentColor, backdropColor, backdropColorScheme } from '../theme-colors.js'
+import {
+  accentColor,
+  backdropColor,
+  backdropColorScheme,
+  colorForeground,
+} from '../theme-colors.js'
 import {
   getFastModeOffValue,
   getFastServiceTier,
@@ -1393,14 +1399,17 @@ function AppearanceSettings(props: {
   showMacOSHaptics?: boolean | undefined
 }) {
   return (
-    <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
-      <section className="appearance-theme" aria-labelledby="appearance-theme-heading">
-        <h2 className="settings__group-title" id="appearance-theme-heading">
+    <SettingsPanel title="Appearance" groupClassName="settings__group--plain appearance">
+      <section className="appearance-section" aria-labelledby="appearance-theme-heading">
+        <h2 className="appearance-section__heading" id="appearance-theme-heading">
           Theme
         </h2>
-        <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
+        <ThemePicker
+          value={props.themePreference}
+          preferences={props.appearancePreferences}
+          onChange={props.onThemePreferenceChange}
+        />
       </section>
-      <AppearanceCodePreview />
       {(['light', 'dark'] as const).map((mode) => (
         <AppearanceEditor
           key={mode}
@@ -1410,10 +1419,10 @@ function AppearanceSettings(props: {
         />
       ))}
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
-        <section className="appearance-editor" aria-label="Shared appearance controls">
+        <section className="appearance-section" aria-label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <SettingsRow className="appearance-editor__row" title="Font smoothing">
+            <AppearanceRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1424,11 +1433,27 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </SettingsRow>
+            </AppearanceRow>
           ) : null}
         </section>
       ) : null}
     </SettingsPanel>
+  )
+}
+
+/**
+ * One appearance setting, laid out like a provider in the roster: the name,
+ * a dotted leader that lights while the row is hovered, and the value at the
+ * far edge. Nothing behind it is painted.
+ */
+function AppearanceRow(props: { name: string; note?: string; children: ReactNode }) {
+  return (
+    <div className="appearance-row">
+      <p className="appearance-row__name">{props.name}</p>
+      <span className="appearance-row__leader" aria-hidden />
+      <div className="appearance-row__value">{props.children}</div>
+      {props.note ? <p className="appearance-row__note">{props.note}</p> : null}
+    </div>
   )
 }
 
@@ -1482,21 +1507,24 @@ function AppearanceEditor(props: {
   const light = (backdropColorScheme(props.preference.backdrop) ?? props.mode) === 'light'
   const title = props.mode === 'light' ? 'Light mode' : 'Dark mode'
 
+  const defaultColors =
+    props.preference.accent === 'neutral' && props.preference.backdrop === 'default'
+
   return (
-    <section className="appearance-editor" aria-label={title}>
-      <h2 className="appearance-editor__heading">{title}</h2>
-      <SettingsRow className="appearance-editor__row" title="Theme">
-        <AppSelect
-          className="settings__select appearance-control__select"
-          ariaLabel={`${title} theme`}
-          align="right"
-          value="default"
-          options={[{ value: 'default', label: 'Default' }]}
-          allowReselect
-          onChange={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
-        />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Accent palette">
+    <section className="appearance-section" aria-label={title}>
+      <div className="appearance-section__head">
+        <h2 className="appearance-section__heading">{title}</h2>
+        {defaultColors ? null : (
+          <button
+            className="appearance-section__reset"
+            type="button"
+            onClick={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
+          >
+            Reset colors
+          </button>
+        )}
+      </div>
+      <AppearanceRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -1507,8 +1535,8 @@ function AppearanceEditor(props: {
           }))}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Background">
+      </AppearanceRow>
+      <AppearanceRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -1519,42 +1547,30 @@ function AppearanceEditor(props: {
           }))}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Interface font">
-        <div className="appearance-control">
-          <span className="appearance-control__type" aria-hidden>
-            Aa
-          </span>
-          <AppSelect
-            className="settings__select appearance-control__select"
-            ariaLabel="Interface font"
-            align="right"
-            value={props.preference.font}
-            options={fontOptions}
-            onOpen={requestInstalledFontFamilies}
-            loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
-            search={FONT_SEARCH}
-            onChange={(font) => props.onChange({ font })}
-          />
-        </div>
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Sidebar translucency">
-        <div className="appearance-control">
-          <span
-            className="appearance-control__swatch appearance-choice__swatch"
-            data-glass-preview={selectedGlass.value}
-            aria-hidden
-          />
-          <AppSelect
-            className="settings__select appearance-control__select"
-            ariaLabel="Sidebar translucency"
-            align="right"
-            value={String(selectedGlass.value)}
-            options={GLASS_SELECT_OPTIONS}
-            onChange={(value) => props.onChange({ glass: Number(value) })}
-          />
-        </div>
-      </SettingsRow>
+      </AppearanceRow>
+      <AppearanceRow name="Interface font">
+        <AppSelect
+          className="appearance-select"
+          ariaLabel="Interface font"
+          align="right"
+          value={props.preference.font}
+          options={fontOptions}
+          onOpen={requestInstalledFontFamilies}
+          loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
+          search={FONT_SEARCH}
+          onChange={(font) => props.onChange({ font })}
+        />
+      </AppearanceRow>
+      <AppearanceRow name="Sidebar translucency">
+        <AppSelect
+          className="appearance-select"
+          ariaLabel="Sidebar translucency"
+          align="right"
+          value={String(selectedGlass.value)}
+          options={GLASS_SELECT_OPTIONS}
+          onChange={(value) => props.onChange({ glass: Number(value) })}
+        />
+      </AppearanceRow>
     </section>
   )
 }
@@ -1562,9 +1578,8 @@ function AppearanceEditor(props: {
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <SettingsRow
-      className="appearance-editor__row"
-      title="Trackpad haptics"
+    <AppearanceRow
+      name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
       <button
@@ -1584,105 +1599,13 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </SettingsRow>
-  )
-}
-
-function AppearanceCodePreview() {
-  return (
-    <div
-      className="appearance-code-preview"
-      role="img"
-      aria-label="TasteCode thread.start code preview changing approval from ask to auto-review"
-    >
-      <div className="appearance-code-preview__pane" aria-hidden>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">1</span>
-          <code>
-            <span className="appearance-code-preview__keyword">await</span> transport.request(
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            {'  '}
-            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            {'    '}provider:{' '}
-            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">4</span>
-          <code>{'    '}workspacePath: projectPath,</code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">5</span>
-          <code>
-            {'    '}approval:{' '}
-            <span className="appearance-code-preview__string">&quot;ask&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">6</span>
-          <code>{'  }'},</code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">7</span>
-          <code>);</code>
-        </span>
-      </div>
-      <div className="appearance-code-preview__pane" aria-hidden>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">1</span>
-          <code>
-            <span className="appearance-code-preview__keyword">await</span> transport.request(
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            {'  '}
-            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            {'    '}provider:{' '}
-            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">4</span>
-          <code>{'    '}workspacePath: projectPath,</code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">5</span>
-          <code>
-            {'    '}approval:{' '}
-            <span className="appearance-code-preview__string">&quot;auto-review&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">6</span>
-          <code>{'  }'},</code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">7</span>
-          <code>);</code>
-        </span>
-      </div>
-    </div>
+    </AppearanceRow>
   )
 }
 
 function ThemePicker(props: {
   value: ThemePreference
+  preferences: AppearancePreferences
   onChange: (theme: ThemePreference) => void
 }) {
   return (
@@ -1701,24 +1624,58 @@ function ThemePicker(props: {
               onChange={() => props.onChange(option.value)}
             />
             <span className={`theme-preview theme-preview--${option.value}`} aria-hidden>
-              <span className="theme-preview__header" />
-              <span className="theme-preview__subhead" />
-              <span className="theme-preview__panel">
-                <span className="theme-preview__row">
-                  <span className="theme-preview__row-title" />
-                  <span className="theme-preview__row-copy" />
-                </span>
-                <span className="theme-preview__row">
-                  <span className="theme-preview__row-title" />
-                  <span className="theme-preview__row-copy" />
-                </span>
-              </span>
+              {option.value === 'dark' ? null : (
+                <ThemeWindow mode="light" preference={props.preferences.light} />
+              )}
+              {option.value === 'light' ? null : (
+                <ThemeWindow mode="dark" preference={props.preferences.dark} />
+              )}
             </span>
             <span className="theme-option__label">{option.label}</span>
           </label>
         )
       })}
     </fieldset>
+  )
+}
+
+type ThemeWindowStyle = CSSProperties & {
+  '--window-paper': string
+  '--window-ink': string
+  '--window-accent': string
+}
+
+/**
+ * A TasteCode window in miniature, painted in that mode's own background and
+ * accent: the sidebar, a reply under your message, and the prompt bar with its
+ * send button. System shows the light window and the dark one split down the middle.
+ */
+function ThemeWindow(props: { mode: ThemeColorScheme; preference: AppearancePreference }) {
+  const light = (backdropColorScheme(props.preference.backdrop) ?? props.mode) === 'light'
+  const paper = backdropColor(props.preference.backdrop, light)
+  const style: ThemeWindowStyle = {
+    '--window-paper': paper,
+    '--window-ink': colorForeground(paper) === '#171717' ? '#27272a' : '#ededed',
+    '--window-accent': accentColor(props.preference.accent, light),
+  }
+  return (
+    <span className="theme-window" data-mode={props.mode} style={style}>
+      <span className="theme-window__rail">
+        <i />
+        <i data-active />
+        <i />
+        <i />
+      </span>
+      <span className="theme-window__chat">
+        <i data-you />
+        <i />
+        <i />
+        <i />
+        <span className="theme-window__prompt">
+          <b />
+        </span>
+      </span>
+    </span>
   )
 }
 
