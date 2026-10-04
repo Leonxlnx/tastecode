@@ -1398,14 +1398,10 @@ const ProjectRow = memo(function ProjectRow(props: {
       {confirming ? (
         <Suspense fallback={null}>
           <SidebarConfirmDialog
-            title={confirming === 'archive' ? 'Delete all chats?' : 'Remove project?'}
-            body={
-              confirming === 'archive'
-                ? `This permanently deletes every chat and its restore points in ${displayName(props.project)} after the Undo window. Files on your computer stay untouched.`
-                : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
-            }
-            action={confirming === 'archive' ? 'Delete chats' : 'Remove project'}
-            destructive
+            {...(confirming === 'archive'
+              ? deleteChatsCopy(props.project)
+              : removeProjectCopy(props.project))}
+            path={props.project.path}
             onConfirm={() => {
               if (confirming === 'archive') {
                 props.onArchiveProject(props.project.sessions.map((session) => session.id))
@@ -1829,6 +1825,47 @@ function SessionRow(props: {
       </Menu>
     </li>
   )
+}
+
+type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }
+
+function chatCount(count: number): string {
+  return `${count} chat${count === 1 ? '' : 's'}`
+}
+
+/** Removing only forgets the sidebar entry, so it is not styled as destructive.
+ *  It does stop live turns, which is the one consequence worth naming. */
+function removeProjectCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  const live = project.sessions.filter((session) =>
+    ['starting', 'working', 'queued', 'approval', 'input'].includes(session.status),
+  ).length
+  const kept =
+    chats === 0
+      ? 'The folder stays where it is.'
+      : `The folder and its ${chatCount(chats)} stay where they are. Add the folder again to bring them back.`
+  return {
+    title: `Remove ${displayName(project)} from the sidebar?`,
+    body:
+      live === 0
+        ? kept
+        : `${kept} ${live === 1 ? 'The running chat' : `${live} running chats`} will stop.`,
+    action: 'Remove',
+    destructive: false,
+  }
+}
+
+function deleteChatsCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  return {
+    title:
+      chats === 0
+        ? `Delete all chats in ${displayName(project)}?`
+        : `Delete ${chatCount(chats)} in ${displayName(project)}?`,
+    body: 'Their restore points go with them once the Undo window closes. Files in the folder stay untouched.',
+    action: chats === 0 ? 'Delete chats' : `Delete ${chatCount(chats)}`,
+    destructive: true,
+  }
 }
 
 function SessionStatus(props: { status: Session['status'] }) {

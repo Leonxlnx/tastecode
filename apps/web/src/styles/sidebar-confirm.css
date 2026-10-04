@@ -11,6 +11,7 @@
 }
 
 .sidebar-confirm__title,
+.sidebar-confirm__path,
 .sidebar-confirm__body {
   margin: 0 20px;
 }
@@ -24,8 +25,34 @@
   text-wrap: pretty;
 }
 
+/* A long path gives up its start, never the folder name. */
+.sidebar-confirm__path {
+  display: flex;
+  min-width: 0;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.sidebar-confirm__parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.sidebar-confirm__leaf {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
 .sidebar-confirm__body {
-  margin-top: 8px;
+  margin-top: 12px;
   color: var(--text-2);
   font-size: var(--t-md);
   line-height: 1.5;
