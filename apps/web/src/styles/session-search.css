@@ -2,7 +2,7 @@
 
 .session-search__panel {
   width: min(520px, 100%);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-panel);
 }
 
 .session-search__filters {
@@ -237,7 +237,7 @@
   padding: 1px 4px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-2);
   font-family: var(--font-mono);

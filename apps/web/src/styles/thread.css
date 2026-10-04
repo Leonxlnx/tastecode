@@ -126,7 +126,7 @@
      optically identical across themes. */
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--composer-action-shadow);
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
   cursor: pointer;
@@ -286,7 +286,7 @@
   max-width: 88%;
   margin-left: auto;
   background: var(--surface-2);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   padding: 7px 11px;
   color: var(--response-text);
   font-family: var(--font-ui);
