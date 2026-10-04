@@ -18,6 +18,36 @@ afterEach(() => {
 })
 
 describe('design source scan size limits', () => {
+  it('allows inline native charts only in reference-bound operating dashboards', () => {
+    const root = workspace()
+    writeFileSync(
+      path.join(root, 'Chart.tsx'),
+      '<svg role="img" aria-label="Demo revenue"><path d="M0 20L20 10L40 15" /></svg>',
+    )
+    const dashboard = {
+      architecture: { mode: 'operate_monitor' },
+      sections: [
+        { id: 'workspace', layoutFamily: 'dashboard', referenceDirectionId: 'reviewed-dashboard' },
+      ],
+    } as Parameters<typeof validateDesignSourceQuality>[4]
+    expect(() =>
+      validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, dashboard),
+    ).not.toThrow()
+    expect(() => validateDesignSourceQuality(root, ['Chart.tsx'])).toThrow(
+      'unmanifested inline SVG',
+    )
+    expect(() =>
+      validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, {
+        ...dashboard!,
+        sections: [{ ...dashboard!.sections[0]!, referenceDirectionId: undefined }],
+      }),
+    ).toThrow('unmanifested inline SVG')
+    writeFileSync(path.join(root, 'filler.svg'), '<svg />')
+    expect(() =>
+      validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, dashboard),
+    ).toThrow('unmanifested standalone SVG')
+  })
+
   it('accepts an unchanged uploaded SVG logo after the Assets phase', () => {
     const root = workspace()
     const upload = path.join(workspace(), 'logo.svg')

@@ -38,6 +38,29 @@ const review = {
 }
 
 describe('review and repair phases', () => {
+  it('keeps review and saved-page repair focused on dashboard behavior', () => {
+    // SAFETY: Prompt generation reads these surface fields and serializes the other artifacts.
+    const brief = {
+      pageType: 'dashboard',
+      originalRequest: 'Build an analytics workspace.',
+    } as Parameters<typeof designReviewPrompt>[0]
+    const page = { architecture: { mode: 'operate_monitor' } } as Parameters<
+      typeof designReviewPrompt
+    >[2]
+    const prompts = [
+      designReviewPrompt(brief, {} as Parameters<typeof designReviewPrompt>[1], page, [
+        { path: 'desktop.png', width: 1440, height: 1000 },
+        { path: 'mobile.png', width: 390, height: 844 },
+      ]),
+      designRepairPrompt(review, 1, 2, undefined, undefined, page),
+    ]
+    for (const prompt of prompts) {
+      expect(prompt).toContain('DASHBOARD INTERACTION AND MOTION')
+      expect(prompt).toContain('a still screenshot cannot prove interaction behavior')
+      expect(prompt).not.toContain('Verify an actual hero animation')
+    }
+  })
+
   it('treats the visual anti-slop floor as pass-blocking', () => {
     // SAFETY: This prompt test checks fixed instructions; the function only serializes these artifact values.
     const prompt = designReviewPrompt(

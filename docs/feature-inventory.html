@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 nightly sync candidate · main 3e67df35</span>
+        <span class="meta">2026-10-04 nightly integration · main 3e67df35</span>
       </div>
     </div>
 
@@ -233,8 +233,9 @@
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
-        this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
-        nightly only are built and tested but absent from main's code (see dashboard.html).
+        this browser only. Checklist entries describe implemented features; pending notes are
+        explicitly marked and are not shipped. Sections marked nightly only are built and tested but
+        absent from main's code (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -1057,6 +1058,34 @@
           </li>
         </ul>
       </section>
+
+      <p class="sub">
+        Nightly dashboard support, not released on public beta: 200 reviewed generated
+        desktop/mobile pairs (400 WebPs) are imported with a separate catalog and provenance.
+        Sampling uniformly by layout group and then variant supplies one complete app shell.
+        Dashboard plans use operate_monitor with working filters, sorting, tabs, navigation, drawers
+        and charts, keyboard access, focus restoration and reduced motion. Native chart SVG and
+        visibly labeled demo values avoid website-only blockers; asserted product claims still
+        require evidence. Image capability is checked before inference; direct API sessions
+        currently declare images: false and cannot run visual Design, while ordinary coding remains
+        available. This work in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+        is integrated on nightly after merged
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>. The 172 shipped
+        website references and 316 WebPs above are unchanged; the combined bundle has 372 references
+        (344 paired) and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
+        passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is deeply JSON-equal
+        to the private import after formatting; the other 401 files are byte-identical. Fresh
+        Windows CI at edc92ea9 passed all four gates with 4,445 tests passed, 18 existing skips and
+        zero failures. Historical local gates at 0ccdb67d passed with 4,432 tests and 18 skips,
+        including 232 design-agent tests. Thirty-six focused cases across nine provider IDs cover 18
+        synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The isolated
+        browser/API smoke at a02c6ab3 used a synthetic endpoint: two unsupported Design attempts
+        added no inference requests or persisted Design runs; ordinary follow-ups retained both API
+        identities, models and tool context across an owned restart, with an empty idle queue and no
+        browser exceptions. Live image-capable dashboard generation, packaged Electron, macOS and
+        real-keyring acceptance remain unverified.
+      </p>
 
       <section id="thread">
         <header>
@@ -2233,19 +2262,24 @@
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
         alongside main 3e67df35.
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-        is approved and awaits merge as a nightly integration candidate, not a public release.
-        Windows cleanup <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task
-        authorization <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and
-        checkpoint identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are
-        merged on main; the API connection contract
+        merged into nightly at 17aa22a3; dashboard support is integrated on nightly through
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>, not a public
+        release. Windows cleanup
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task authorization
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and checkpoint identity
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are merged on main; the
+        API connection contract
         <a href="https://github.com/Leonxlnx/tastecode/pull/1395">#1395</a> is merged on nightly.
         <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
           >Windows CI run 37228489532</a
         >
-        passed all four gates at exact candidate 67c7383c, with 4,395 tests passed, 18 existing
-        skips and zero failures. This documentation-only synchronization preserves every tested
-        non-documentation file. Packaged Windows and macOS verification remains pending. Ticks live
-        in your browser's local storage, nothing is sent anywhere.
+        passed all four gates at feature candidate edc92ea9: 4,445 tests passed, 18 existing skips
+        and zero failures. Desktop tests ran with 368 passed and 10 existing skips, included in that
+        total. No deadlines were overridden. Product source, tests, configuration, dependencies and
+        bundled images match that tested candidate; follow-up changes are documentation and recorded
+        screenshots only. Parent 67c7383c separately passed 4,395 tests in the same run. Packaged
+        Windows and macOS verification remains pending. Ticks live in your browser's local storage,
+        nothing is sent anywhere.
       </footer>
     </div>
 

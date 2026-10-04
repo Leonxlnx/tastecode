@@ -1,9 +1,9 @@
 import path from 'node:path'
 import type { AssetManifest } from './assets.js'
-import type { DesignBrief } from './brief.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE, REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
+import { designMotionGuidance, REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
 import { gradientSetForBrand } from './gradients.js'
 import type { PageBlueprint } from './page.js'
 import { record, string, strings } from './parse.js'
@@ -36,6 +36,7 @@ export function designBuildPrompt(
   suppliedReferences: readonly string[] = [],
 ): string {
   const exactFiles = exactBuildFiles(brief)
+  const dashboard = isDashboardBrief(brief) || page.architecture?.mode === 'operate_monitor'
   const gradients = gradientSetForBrand(brand)
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
     id: `user-reference-${index + 1}`,
@@ -56,7 +57,7 @@ Implement each section's recorded motion decision as deliberately as its layout.
 Enforce this visual quality floor:
 - Derive heading scale and placement from the selected reference at each viewport. Match its line count, text block width and relative size. Do not flatten an intentionally large or multi-line reference headline into generic small type.
 - Preserve reference labels, type contrast and case, using the approved typefaces. Load real font assets at supported weights and verify document.fonts.ready, a matching FontFace with status loaded, and document.fonts.check; a declared family falling back to Arial is a failed typography check.
-- Keep the Hero to one headline, at most one concise supporting block, and its actions. Do not add a second description, implementation note, prototype disclaimer, or status message.
+${dashboard ? '- Keep the dashboard shell and operational content from its references. Render charts, tables, forms and navigation as working components with consistent sample data when no backend is supplied; never flatten the dashboard into a screenshot or add a marketing Hero.' : '- Keep the Hero to one headline, at most one concise supporting block, and its actions. Do not add a second description, implementation note, prototype disclaimer, or status message.'}
 - Do not show unfinished authoring placeholders such as lorem ipsum, TODO, or your text here. Preserve legitimate product states and controls such as Not connected, Test data, Local preview, or Awaiting approval when they describe the interface rather than missing implementation. Representative interface records, weather, dates, inventory, and operational values may be created for a finished one-shot experience. Preserve the visible identification required by the content-scope rules for concept work and illustrative catalogs. Record every invented value in a Build summary beginning "Verify before publishing:" so TasteCode can show it after Preview.
 - Reproduce reference spacing, rules, borders, radii and surfaces. Do not add decorative card-edge rails, grids or square panels absent from the reference, and do not remove ones visibly present.
 - Use the reference's grouping: open columns remain open, editorial layouts remain editorial, and cards remain cards. Unify padding, radius, control states and typography where cards actually occur. Do not add boxes to ordinary prose or flatten distinct compositions into equal-column templates.
@@ -77,12 +78,16 @@ ${exactFiles ? `\nThe brief's deliverable boundary is exactly ${list(exactFiles)
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief, page)}
 
-Use this tested native reveal implementation for simple scroll entrances; copy or inline it in the existing script and call installReferenceReveals after mounting. Mark selected leaf groups data-reveal="rise|slide|media". Keep CSS visible by default. In React return its cleanup from the effect. An existing motion library may implement the same lifecycle guarantees. The hero is separate: use a transform-only entrance if it has already painted; never hide it late while waiting for fonts or assets.
+${
+  dashboard
+    ? ''
+    : `Use this tested native reveal implementation for simple scroll entrances; copy or inline it in the existing script and call installReferenceReveals after mounting. Mark selected leaf groups data-reveal="rise|slide|media". Keep CSS visible by default. In React return its cleanup from the effect. An existing motion library may implement the same lifecycle guarantees. The hero is separate: use a transform-only entrance if it has already painted; never hide it late while waiting for fonts or assets.
 <reference-reveal-source>
 ${REFERENCE_REVEAL_SOURCE}
-</reference-reveal-source>
+</reference-reveal-source>`
+}
 
 ${BUILD_PROTOCOL}
 

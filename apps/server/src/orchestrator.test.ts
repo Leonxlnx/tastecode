@@ -3023,31 +3023,46 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('rejects supplied references when the selected session cannot inspect images', async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
-    const reference = path.join(workspace, 'reference.png')
-    writeFileSync(reference, 'reference bytes')
-    const { orchestrator, sessions, store } = harness()
-    try {
-      const thread = await orchestrator.startThread('api', workspace)
-      Object.defineProperty(sessions[0], 'capabilities', {
-        value: { ...CAPABILITIES, images: false },
-      })
-      await expect(
-        orchestrator.sendTurn(thread.id, 'Build from this reference.', [
-          DESIGN_BRIEF_ATTACHMENT,
-          reference,
-        ]),
-      ).rejects.toThrow('cannot inspect the supplied Design reference images')
-      expect(store.designRun(thread.id)).toBeUndefined()
-      expect(sessions[0]?.sent).toEqual([])
-      await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
-      expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
-    } finally {
-      await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
-    }
-  })
+  it.each(
+    ProviderIdSchema.options.flatMap((provider) =>
+      [false, true].map((supplied) => ({ provider, supplied })),
+    ),
+  )(
+    'rejects visual Design before inference when $provider lacks images (supplied: $supplied)',
+    async ({ provider, supplied }) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
+      const reference = path.join(workspace, 'reference.png')
+      writeFileSync(reference, 'reference bytes')
+      const { orchestrator, sessions, store, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        Object.defineProperty(sessions[0], 'capabilities', {
+          value: { ...CAPABILITIES, images: false },
+        })
+        await expect(
+          orchestrator.sendTurn(thread.id, 'Build a finance dashboard.', [
+            DESIGN_BRIEF_ATTACHMENT,
+            ...(supplied ? [reference] : []),
+          ]),
+        ).rejects.toThrow(
+          'Choose a provider/model that supports images, or turn off Design mode to continue ordinary coding',
+        )
+        expect(store.designRun(thread.id)).toBeUndefined()
+        expect(sessions[0]?.sent).toEqual([])
+        expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.text?.startsWith('design:'),
+          ),
+        ).toBe(false)
+        await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
+        expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+      } finally {
+        await orchestrator.disposeAll()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('restores trusted artifacts on resume instead of accepting workspace edits as approval', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-trusted-'))
@@ -3976,9 +3991,14 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it.each(ProviderIdSchema.options)(
-    'builds without questions through the same workflow with %s',
-    async (provider) => {
+  it.each(
+    ProviderIdSchema.options.flatMap((provider) => [
+      { provider, dashboard: false },
+      { provider, dashboard: true },
+    ]),
+  )(
+    'builds without questions through the same workflow with synthetic image-capable $provider (dashboard: $dashboard)',
+    async ({ provider, dashboard }) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
@@ -3989,7 +4009,7 @@ describe('provider-neutral design briefing', () => {
         const thread = await orchestrator.startThread(provider, workspace, {})
         await orchestrator.sendTurn(
           thread.id,
-          'Create a website.',
+          dashboard ? 'Create an operating dashboard.' : 'Create a website.',
           [DESIGN_BRIEF_ATTACHMENT, referencePath],
           {
             model,
@@ -4077,9 +4097,9 @@ describe('provider-neutral design briefing', () => {
               message: 'Brief complete.',
               questions: [],
               brief: {
-                originalRequest: 'Create a website.',
+                originalRequest: dashboard ? 'Create an operating dashboard.' : 'Create a website.',
                 subject: 'Independent studio',
-                pageType: 'Marketing site',
+                pageType: dashboard ? 'Dashboard' : 'Marketing site',
                 scope: 'Single responsive page',
                 primaryGoal: 'Generate enquiries',
                 audience: 'Prospective clients',
@@ -4164,6 +4184,12 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[2]).toContain('Page Blueprint phase')
+        if (dashboard) {
+          expect(sessions[0]?.sent[2]).toContain(
+            'Use architecture.mode operate_monitor and layoutFamily dashboard',
+          )
+          expect(sessions[0]?.sent[2]).not.toContain('normally plan at least eight')
+        }
         expect(sessions[0]?.sent[2]).toContain('user-reference-1')
         expect(sessions[0]?.sentAttachments[2]?.[0]).toBe(referencePath)
         expect(sessions[0]?.sentAttachments[2]).toEqual([referencePath])
@@ -4173,6 +4199,14 @@ describe('provider-neutral design briefing', () => {
             JSON.stringify({
               version: 1,
               page: { title: 'Studio', route: '/', description: 'Studio services' },
+              architecture: {
+                contract: 'Review the current workspace.',
+                mode: dashboard ? 'operate_monitor' : 'persuade_convert',
+                novelty: 'low',
+                grid: 'Reference geometry.',
+                signatureRule: 'Preserve the selected reference.',
+                rhythm: 'Reference density.',
+              },
               navigation: [{ label: 'Work', target: '#work' }],
               navigationDesign: {
                 layoutCase: 'navigation-1',
@@ -4187,13 +4221,15 @@ describe('provider-neutral design briefing', () => {
               sections: [
                 {
                   id: 'hero',
-                  layoutFamily: 'hero',
+                  layoutFamily: dashboard ? 'dashboard' : 'hero',
                   layoutCases: ['hero-text-5', 'hero-visual-2'],
                   referenceDirectionId: 'user-reference-1',
                   purpose: 'Introduce the offer',
                   copy: {
-                    heading: 'Design that earns attention',
-                    body: ['A focused independent studio.'],
+                    heading: dashboard ? 'Balance $12,400' : 'Design that earns attention',
+                    body: dashboard
+                      ? ['Demo data', '26 orders']
+                      : ['A focused independent studio.'],
                     callsToAction: [{ label: 'Start a project', target: '#contact' }],
                   },
                   layout: 'Split editorial hero',
@@ -4217,11 +4253,17 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
         expect(sessions[0]?.sent[4]).toContain('Build phase')
+        if (dashboard) {
+          expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
+          expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
+        }
         expect(sessions[0]?.sentAttachments[4]).toEqual([referencePath])
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
-          'export const Page = () => <main>Studio</main>',
+          dashboard
+            ? 'export const Page = () => <main><h1>Balance</h1><svg role="img" aria-label="Demo revenue"><path d="M0 20L20 10L40 15" /></svg></main>'
+            : 'export const Page = () => <main>Studio</main>',
         )
 
         sessions[0]?.emit(
@@ -4256,6 +4298,7 @@ describe('provider-neutral design briefing', () => {
         )
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('visual Review phase')
+        if (dashboard) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
         sessions[0]?.emit(
@@ -4280,6 +4323,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
         expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
+        if (dashboard) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
         expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)

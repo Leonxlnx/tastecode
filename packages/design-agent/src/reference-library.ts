@@ -3,8 +3,8 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { PAGE_LAYOUT_FAMILIES, WEBSITE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
 import type { ReferenceDirection } from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
@@ -57,12 +57,17 @@ export function referenceLibraryRoot(): string {
 
 export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {
   try {
-    const catalog = record(
-      JSON.parse(readWorkspaceFile(path.join(root, 'catalog.json'), 2_000_000).toString()),
-      'reference catalog',
-    )
-    if (catalog.version !== 1) throw new Error('catalog version must be 1')
-    const listed = array(catalog.references, 'catalog.references')
+    const catalogFiles = ['catalog.json']
+    if (existsSync(path.join(root, 'dashboard-catalog.json')))
+      catalogFiles.push('dashboard-catalog.json')
+    const listed = catalogFiles.flatMap((file) => {
+      const catalog = record(
+        JSON.parse(readWorkspaceFile(path.join(root, file), 8_000_000).toString()),
+        file,
+      )
+      if (catalog.version !== 1) throw new Error(`${file} version must be 1`)
+      return array(catalog.references, `${file}.references`)
+    })
     const listedIds = new Set(listed.map((entry) => record(entry, 'reference').id))
     const entries = [
       ...listed,
@@ -73,6 +78,11 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
       const entry = record(value, 'reference')
       return (
         (entry.reviewStatus === 'reviewed' || entry.reviewStatus === 'candidate') &&
+        (entry.family !== 'dashboard' ||
+          (entry.reviewStatus === 'reviewed' &&
+            entry.assetType === 'generated-reference' &&
+            typeof entry.mobileImagePath === 'string' &&
+            entry.mobileImagePath.trim().length > 0)) &&
         ![entry.imagePath, entry.mobileImagePath].some(
           (file) => typeof file === 'string' && /(?:^|[\\/])threshold-/iu.test(file),
         )
@@ -115,7 +125,7 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
     }))
   } catch (error) {
     throw new Error(
-      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair catalog.json or its files, then restart Design mode.`,
+      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair catalog.json, dashboard-catalog.json or their files, then restart Design mode.`,
     )
   }
 }
@@ -152,13 +162,16 @@ export function selectReviewedReferences(
   const request =
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   if (!references.length) throw new Error('No Design references are available')
+  const dashboard = isDashboardBrief(brief)
+  const families: readonly PageLayoutFamily[] = dashboard ? ['dashboard'] : WEBSITE_LAYOUT_FAMILIES
+  const sectionReferences = references.filter((entry) => !entry.tags?.includes('native-component'))
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  for (const family of PAGE_LAYOUT_FAMILIES) {
+  for (const family of families) {
     // Section titles are free-form and multilingual. Let Page choose the needed
     // compositions from a complete deck instead of discarding families by keywords.
     // Each composition gets the same chance, regardless of source site or style tags.
-    const familyEntries = referenceCandidatesForFamily(family, references).filter(
+    const familyEntries = referenceCandidatesForFamily(family, sectionReferences).filter(
       (entry) => !groups.has(entry.group ?? entry.id),
     )
     if (!familyEntries.length) continue
@@ -190,7 +203,9 @@ export function selectReviewedReferences(
   }
   if (!selected.length)
     throw new Error(
-      'No references match the requested sections. Add matching catalog entries or attach your own reference images.',
+      dashboard
+        ? 'No reviewed dashboard references are available. Add generated desktop/mobile pairs to dashboard-catalog.json.'
+        : 'No references match the requested sections. Add matching catalog entries or attach your own reference images.',
     )
   if (selected.length > 24)
     throw new Error(

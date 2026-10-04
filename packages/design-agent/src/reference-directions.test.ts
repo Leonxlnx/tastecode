@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import type { BrandSystem } from './brand.js'
 import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
 import {
   REFERENCE_DIRECTIONS,
   lockPageReferenceDirections,
@@ -80,7 +80,7 @@ describe('reference directions', () => {
     expect(new Set(REFERENCE_DIRECTIONS.map(({ id }) => id)).size).toBe(132)
     expect(new Set(REFERENCE_DIRECTIONS.map(({ imagePath }) => imagePath)).size).toBe(132)
     expect(new Set(REFERENCE_DIRECTIONS.map(({ family }) => family))).toEqual(
-      new Set(PAGE_LAYOUT_FAMILIES),
+      new Set(WEBSITE_LAYOUT_FAMILIES),
     )
 
     for (const entry of REFERENCE_DIRECTIONS) {
@@ -96,9 +96,9 @@ describe('reference directions', () => {
     const secondDeck = selectReferenceDirectionDeck(brief, brand)
 
     expect(firstDeck).toEqual(secondDeck)
-    expect(firstDeck).toHaveLength(PAGE_LAYOUT_FAMILIES.length)
-    expect(firstDeck.map(({ family }) => family)).toEqual(PAGE_LAYOUT_FAMILIES)
-    expect(new Set(firstDeck.map(({ family }) => family)).size).toBe(PAGE_LAYOUT_FAMILIES.length)
+    expect(firstDeck).toHaveLength(WEBSITE_LAYOUT_FAMILIES.length)
+    expect(firstDeck.map(({ family }) => family)).toEqual(WEBSITE_LAYOUT_FAMILIES)
+    expect(new Set(firstDeck.map(({ family }) => family)).size).toBe(WEBSITE_LAYOUT_FAMILIES.length)
   })
 
   it('does not reshuffle composition references when only brand styling changes', () => {
@@ -120,6 +120,12 @@ describe('reference directions', () => {
 
     expect(selectReferenceDirectionDeck(brief, restyledBrand).map(({ id }) => id)).toEqual(
       selectReferenceDirectionDeck(brief, brand).map(({ id }) => id),
+    )
+  })
+
+  it('does not substitute legacy marketing directions for a dashboard', () => {
+    expect(() => selectReferenceDirectionDeck({ ...brief, pageType: 'dashboard' }, brand)).toThrow(
+      'reviewed dashboard reference library',
     )
   })
 

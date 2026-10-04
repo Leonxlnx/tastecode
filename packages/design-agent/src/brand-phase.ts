@@ -4,7 +4,7 @@ import { parseBrandSystem, type BrandSystem } from './brand.js'
 import { generatePalette, paletteColorRecords } from './palette.js'
 import { record } from './parse.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
+import { designMotionGuidance } from './motion-guidance.js'
 import { typographyGuidance, type TypographyCandidates } from './typography.js'
 
 const BRAND_PROTOCOL = `Return the final brand system as JSON only, without Markdown fences:
@@ -36,13 +36,13 @@ Define an interface language that specifies the spacing rhythm, content widths, 
 
 For paletteRecipe, choose one evidence-based accent seed and one temperature-compatible neutral seed per required theme. Preserve explicit user or verified brand colors by assigning them under locked.light or locked.dark; never silently alter a locked value. The only valid locked role keys are canvas, surface, surfaceAlt, text, textMuted, divider, controlBorder, accent, accentHover, onAccent, accentText, and focusRing. Leave locked empty when no exact color is supplied. Do not invent descriptive role names. Do not map generic emotion labels to fixed hues. Prefer a restrained system such as one chromatic beacon, tinted neutral echo, material-derived anchor, image-host palette, or dark luminous direction when the brief supports it. Make the chosen accent visibly useful: plan it for the primary action, focus and selected states, and one recurring card, media, or section treatment. It must not survive only as a tiny icon or underline, and it must not turn every card into a different color. Avoid category-default navy-and-cyan AI, black-and-gold luxury, beige wellness, equal-saturation accents, automatic complementary colors, and decorative gradients without a concept. Generate light and dark independently; include dark only when the brief or product requires it, never by inverting light. The runtime derives semantic roles and validates opaque sRGB contrast. Treat 60/30/10 only as loose composition guidance: dominant surfaces, supporting structure, and a sparse accent, never as a pixel quota.
 
-Make motionDirection operational using the visible-motion requirements below. Return each motionDirection.principles entry as one string, not an object. Every principle string must name a purpose, trigger, affected relationship, timing range, and easing character. Plan entrances and media reveals as spatial continuity and explanation, alongside direct interaction feedback. Ban transition: all, scale-from-zero entrances, and hover-only information.
+Make motionDirection operational using the motion requirements below. Return each motionDirection.principles entry as one string, not an object. Every principle string must name a purpose, trigger, affected relationship, timing range, and easing character. Match motion to the surface and its actual user actions. Ban transition: all, scale-from-zero entrances, and hover-only information.
 
 Use the selected reference images and existing project brand files. Do not invoke external design or brand skills. Derive signatureDevice from an observable reference composition or existing brand treatment; do not invent a motif to fill this field.
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief)}
 
 ${typographyCandidates ? typographyGuidance(typographyCandidates) : ''}
 

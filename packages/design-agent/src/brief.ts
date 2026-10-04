@@ -24,6 +24,20 @@ export interface DesignBrief {
   unresolved: string[]
 }
 
+export function isDashboardBrief(
+  brief: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
+): boolean {
+  const pageType = (brief.pageType ?? '').toLowerCase().replace(/[_-]/gu, ' ')
+  // The requested surface wins over the product being advertised on it.
+  const marketing = /\b(?:landing(?:pages?)?|marketing|portfolio|websites?|homepages?)\b/u
+  const application =
+    /\b(?:dashboards?|admin|analytics|applications?|apps?|webapps?|product interface)\b/u
+  if (marketing.test(pageType)) return false
+  if (application.test(pageType)) return true
+  const request = (brief.originalRequest ?? '').toLowerCase()
+  return !marketing.test(request) && application.test(request)
+}
+
 const STRING_FIELDS = [
   'originalRequest',
   'subject',

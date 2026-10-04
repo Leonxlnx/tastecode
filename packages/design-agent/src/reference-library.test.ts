@@ -3,8 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
+import { referenceDirectionAttachments } from './reference-directions.js'
+import { readRasterMetadata } from './raster-metadata.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
@@ -56,11 +58,13 @@ describe('reviewed reference library', () => {
     expect(referenceLibraryRoot()).toBe(
       fileURLToPath(new URL('../references/library/', import.meta.url)),
     )
-    expect(references).toHaveLength(172)
+    expect(references).toHaveLength(372)
     expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
-    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
-    expect(selectReviewedReferences(brief, references)).toHaveLength(14)
-    for (const family of PAGE_LAYOUT_FAMILIES) {
+    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(344)
+    const websiteDeck = selectReviewedReferences(brief, references)
+    expect(websiteDeck).toHaveLength(14)
+    expect(websiteDeck.some(({ family }) => family === 'dashboard')).toBe(false)
+    for (const family of WEBSITE_LAYOUT_FAMILIES) {
       const pool = referenceCandidatesForFamily(family, references)
       expect(
         new Set(pool.map((entry) => entry.group ?? entry.id)).size,
@@ -81,6 +85,39 @@ describe('reviewed reference library', () => {
       JSON.stringify({ libraryPath: custom }),
     )
     expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
+  })
+
+  it('makes every bundled dashboard pair selectable and preserves its two verified raster attachments', () => {
+    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
+    vi.spyOn(os, 'homedir').mockReturnValue(library())
+    const references = loadReviewedReferences()
+    const dashboards = references.filter(({ family }) => family === 'dashboard')
+    expect(dashboards).toHaveLength(200)
+    expect(new Set(dashboards.map(({ group }) => group)).size).toBe(200)
+    const appBrief = {
+      ...brief,
+      pageType: 'mobile fitness app',
+      originalRequest: 'Build a mobile fitness app',
+    }
+    const selectedGroups = new Set<string>()
+    const images = new Set<string>()
+    for (let index = 0; index < dashboards.length; index++) {
+      const deck = selectReviewedReferences(appBrief, references, (length) =>
+        length === dashboards.length ? index : 0,
+      )
+      expect(deck).toHaveLength(1)
+      expect(deck[0]?.family).toBe('dashboard')
+      selectedGroups.add(deck[0]!.group!)
+      expect(parseReferenceDeck(deck)).toEqual(deck)
+      const attachments = referenceDirectionAttachments(deck)
+      expect(attachments).toHaveLength(2)
+      for (const attachment of attachments) {
+        images.add(attachment)
+        expect(readRasterMetadata(attachment).format).toBe('webp')
+      }
+    }
+    expect(selectedGroups.size).toBe(200)
+    expect(images.size).toBe(400)
   })
 
   it('makes every hero group eligible despite different source sites, styles and revision counts', () => {
@@ -105,6 +142,125 @@ describe('reviewed reference library', () => {
     )
     expect(new Set(seen).size).toBe(10)
   })
+
+  it('loads paired generated dashboards separately and keeps random group votes and explicit choices', () => {
+    const root = library()
+    save(root, [entry, { ...entry, id: 'tiny-heading', tags: ['native-component'] }])
+    const dashboardEntries = Array.from({ length: 3 }, (_, index) => ({
+      ...entry,
+      id: `dashboard-${index}`,
+      family: 'dashboard',
+      group: `dashboard-${index}`,
+      assetType: 'generated-reference',
+      mobileImagePath: 'hero.webp',
+      pairEvidence: 'Both views preserve the same toolbar and data regions.',
+    }))
+    writeFileSync(
+      path.join(root, 'dashboard-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          ...dashboardEntries,
+          { ...dashboardEntries[0], id: 'dashboard-revision' },
+          { ...dashboardEntries[0], id: 'unreviewed-app', reviewStatus: 'candidate' },
+          { ...dashboardEntries[0], id: 'screenshot-app', assetType: 'screenshot' },
+          { ...dashboardEntries[0], id: 'unpaired-app', mobileImagePath: undefined },
+        ],
+      }),
+    )
+    const references = loadReviewedReferences(root)
+    expect(references).toHaveLength(6)
+    const appBrief = {
+      ...brief,
+      pageType: 'fitness app',
+      originalRequest: 'Build a mobile fitness app',
+    }
+    const groups = Array.from({ length: 3 }, (_, index) => {
+      const deck = selectReviewedReferences(appBrief, references, (length) =>
+        length === 3 ? index : 0,
+      )
+      expect(deck).toHaveLength(1)
+      expect(parseReferenceDeck(deck)).toEqual(deck)
+      expect(deck[0]?.family).toBe('dashboard')
+      return deck[0]?.group
+    })
+    expect(new Set(groups).size).toBe(3)
+    expect(selectReviewedReferences(brief, references, () => 0).map(({ id }) => id)).toEqual([
+      'studio-hero',
+    ])
+    expect(
+      selectReviewedReferences(
+        { ...appBrief, originalRequest: 'Use dashboard-2' },
+        references,
+        () => 0,
+      )[0]?.id,
+    ).toBe('dashboard-2')
+    expect(() =>
+      selectReviewedReferences(
+        appBrief,
+        references.filter(({ family }) => family !== 'dashboard'),
+      ),
+    ).toThrow('No reviewed dashboard references')
+  })
+
+  it('classifies the requested surface rather than dashboard products advertised on websites', () => {
+    expect(isDashboardBrief({ ...brief, pageType: 'Dashboard' })).toBe(true)
+    expect(isDashboardBrief({ ...brief, pageType: 'product_interface' })).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Create an analytics dashboard',
+      }),
+    ).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: 'Landing page',
+        originalRequest: 'Promote our analytics dashboard',
+      }),
+    ).toBe(false)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Build a landing page for a dashboard product',
+      }),
+    ).toBe(false)
+  })
+
+  it.each([
+    ['mobile fitness app', 'Build a mobile fitness app'],
+    ['web analytics app', 'Build a web analytics app'],
+    ['desktop music app', 'Build a desktop music app'],
+    ['Fitness-App', 'Erstelle eine Fitness-App'],
+    ['webapp', 'Build a finance webapp'],
+  ])(
+    'selects dashboard references for a %s, including an unclassified prompt',
+    (pageType, originalRequest) => {
+      expect(isDashboardBrief({ pageType, originalRequest })).toBe(true)
+      expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
+    },
+  )
+
+  it.each([
+    'Build a landing page for a mobile fitness app',
+    'Build a landingpage for a web analytics app',
+    'Build a website for a desktop music app',
+    'Erstelle eine Landingpage für eine Fitness-App',
+    'Build an apparel catalog',
+  ])('keeps website references for %s', (originalRequest) => {
+    expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(false)
+  })
+
+  it.each(['Landingpage', 'App landing page', 'Website for a fitness app'])(
+    'prioritizes the explicit marketing page type %s over app language',
+    (pageType) => {
+      expect(isDashboardBrief({ pageType, originalRequest: 'Build a mobile fitness app' })).toBe(
+        false,
+      )
+    },
+  )
 
   it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {
     const root = library()

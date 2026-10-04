@@ -6,7 +6,7 @@ export interface PageLink {
   target: string
 }
 
-export const PAGE_LAYOUT_FAMILIES = [
+export const WEBSITE_LAYOUT_FAMILIES = [
   'hero',
   'about',
   'feature',
@@ -19,6 +19,8 @@ export const PAGE_LAYOUT_FAMILIES = [
   'contact',
   'footer',
 ] as const
+
+export const PAGE_LAYOUT_FAMILIES = [...WEBSITE_LAYOUT_FAMILIES, 'dashboard'] as const
 
 export type PageLayoutFamily = (typeof PAGE_LAYOUT_FAMILIES)[number]
 

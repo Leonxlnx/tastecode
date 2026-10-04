@@ -64,6 +64,21 @@ const artifacts = [
 ] as const
 
 describe('build phase', () => {
+  it('builds dashboard interactions without injecting marketing reveal code', () => {
+    const prompt = designBuildPrompt(
+      { ...artifacts[0], pageType: 'dashboard', originalRequest: 'Build a finance dashboard.' },
+      artifacts[1],
+      artifacts[2],
+      artifacts[3],
+    )
+    expect(prompt).toContain('DASHBOARD INTERACTION AND MOTION')
+    expect(prompt).toContain('working components with consistent sample data')
+    expect(prompt).not.toContain('<reference-reveal-source>')
+    expect(prompt).not.toContain('installReferenceReveals')
+    expect(prompt).not.toContain('Verify an actual hero animation')
+    expect(designBuildPrompt(...artifacts)).toContain('<reference-reveal-source>')
+  })
+
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
     expect(prompt).toContain('Build must wire the triggers and classes')

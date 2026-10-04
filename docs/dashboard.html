@@ -290,7 +290,7 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-04 nightly sync candidate · main 3e67df35</span>
+        <span class="meta">2026-10-04 nightly integration · main 3e67df35</span>
       </div>
     </div>
 
@@ -306,8 +306,9 @@
         </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-          is approved and awaits merge; this is a nightly integration candidate, not a public
-          release. Windows cleanup
+          merged into nightly at 17aa22a3. Dashboard support is integrated on nightly through
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>; this is not a
+          public release. Windows cleanup
           <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task authorization
           <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and checkpoint
           identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are merged on
@@ -318,10 +319,13 @@
           <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
             >Windows CI run 37228489532</a
           >
-          passed lint, typecheck, tests and build for exact candidate 67c7383c: 4,395 tests passed,
-          18 existing skips, zero failures, including the real Windows alias regression. The final
-          main synchronization changes documentation only; every non-documentation file matches that
-          tested candidate. Packaged Windows and macOS verification remains pending.
+          passed lint, typecheck, the full test command and build for feature candidate edc92ea9:
+          4,445 tests passed, 18 existing skips, zero failures. Desktop tests ran with 368 passed
+          and 10 existing skips, included in that total; the real Windows alias regression passed.
+          No deadlines were overridden. Product source, tests, configuration, dependencies and
+          bundled images match that tested candidate; follow-up changes are documentation and
+          recorded screenshots only. Parent 67c7383c separately passed 4,395 tests in the same run.
+          Packaged Windows and macOS verification remains pending.
         </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
@@ -1177,8 +1181,42 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">1</span></header>
+            <header>In progress <span class="count">2</span></header>
             <ul>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Dashboard design support, nightly
+                  <span class="d"
+                    >integrated on nightly in
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+                    after merged
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>; not
+                    released on public beta. The 200 reviewed generated desktop/mobile dashboard
+                    pairs (400 WebPs) are imported in a separate catalog with provenance. Uniform
+                    group-first selection supplies one complete app shell. Plans use operate_monitor
+                    and functional filters, sorting, tabs, navigation, drawers and charts, including
+                    keyboard access, focus restoration and reduced motion. Native charts and visibly
+                    identified demo values avoid website-only validation blockers. Image capability
+                    is checked before inference; unsupported sessions, including direct API sessions
+                    with images: false, retain ordinary coding. The 172 shipped website references
+                    and 316 WebPs are unchanged; the combined bundle has 372 references, 344 paired,
+                    and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
+                    passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is
+                    deeply JSON-equal to the private import after formatting; the other 401 files
+                    are byte-identical. Fresh Windows CI at edc92ea9 passed all four gates with
+                    4,445 tests passed, 18 existing skips and zero failures. Historical local gates
+                    at 0ccdb67d passed with 4,432 tests and 18 skips. Thirty-six focused cases
+                    across nine provider IDs cover 18 synthetic-vision flows and 18 capability
+                    rejections/ordinary follow-ups. The isolated browser/API smoke at a02c6ab3 used
+                    a synthetic endpoint: two unsupported Design attempts added no inference
+                    requests or persisted Design runs; ordinary follow-ups retained both API
+                    identities, models and tool context across an owned restart, with no browser
+                    exceptions or queued work left. Live image-capable dashboard generation,
+                    packaged Electron, macOS and real-keyring acceptance remain unverified</span
+                  >
+                </span>
+              </li>
               <li>
                 <i class="tick">●</i>
                 <span

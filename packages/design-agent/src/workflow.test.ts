@@ -9,6 +9,20 @@ import {
 } from './workflow.js'
 
 describe('provider-neutral briefing workflow', () => {
+  it('classifies dashboards separately from marketing websites without a questionnaire', () => {
+    for (const prompt of [
+      designBriefingPrompt('Build a health dashboard.'),
+      designBriefingContinuation([], {}),
+    ]) {
+      expect(prompt).toContain('Set pageType to "dashboard" for operating product interfaces')
+      expect(prompt).toContain(
+        'marketing website about a dashboard product is still pageType "landing_page"',
+      )
+      expect(prompt).toContain('do not impose marketing sections or an eight-section minimum')
+      expect(prompt).toContain('Never ask questions')
+    }
+  })
+
   it('writes TasteCode markers while accepting legacy saved turns', () => {
     expect(DESIGN_BRIEF_ATTACHMENT).toBe('tastecode://design-brief-v1')
     expect(isDesignBriefAttachment(DESIGN_BRIEF_ATTACHMENT)).toBe(true)
