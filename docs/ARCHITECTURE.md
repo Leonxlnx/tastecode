@@ -458,7 +458,9 @@ text, so transcripts stay identical. This maintenance command is the only path t
 event rows without removing their task. See [History maintenance](./HISTORY.md).
 
 Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
-retained commits by Git common directory before removing unused refs. Restore and branch
+retained commits by Git common directory before removing unused refs. Its identity is the
+filesystem-native canonical path, so Windows long paths and 8.3 aliases share one retained-commit
+set. Resolution errors propagate and separate repositories remain distinct. Restore and branch
 switch guards instead use the canonical checkout directory: separate worktrees can work
 independently, while tasks sharing a checkout cannot restore files during another turn or
 while its process is still stopping. An isolated start receives its base ref directly.
@@ -580,6 +582,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
