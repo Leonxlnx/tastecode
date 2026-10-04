@@ -106,6 +106,7 @@ import {
 import type { Transport } from '../transport.js'
 import {
   fontFamilyFromPreference,
+  fontFamilyStack,
   fontPreferenceForFamily,
   type AccentPreference,
   type AppearancePreference,
@@ -122,7 +123,7 @@ import {
   subscribeAppHaptics,
   writeAppHaptics,
 } from '../haptics.js'
-import { AppSelect } from './AppSelect.js'
+import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
@@ -1440,25 +1441,37 @@ function AppearanceEditor(props: {
   const requestInstalledFontFamilies = useCallback(() => {
     void listInstalledFontFamilies().then(setInstalledFontFamilies)
   }, [])
+  // Built-in fonts lead, System default first, so the list opens where most
+  // choices are; installed families follow alphabetically. Each option carries
+  // a sample set in its own face.
   const fontOptions = useMemo(() => {
-    const optionsByLabel = new Map<string, { value: FontPreference; label: string }>()
+    const builtIn: AppSelectOption<FontPreference>[] = [
+      FONT_OPTIONS[3],
+      ...FONT_OPTIONS.slice(0, 3),
+    ].map((option) => ({ ...option }))
+    const legacy = legacyFontLabel(props.preference.font)
+    if (legacy) builtIn.push({ value: props.preference.font, label: legacy })
+    const taken = new Set(builtIn.map((option) => fontOptionKey(option.label)))
+    const installed = new Map<string, AppSelectOption<FontPreference>>()
     for (const family of installedFontFamilies ?? []) {
       const value = fontPreferenceForFamily(family)
-      if (!value) continue
-      optionsByLabel.set(fontOptionKey(family), { value, label: family })
+      const key = fontOptionKey(family)
+      if (value && !taken.has(key)) installed.set(key, { value, label: family })
     }
-    for (const option of FONT_OPTIONS) {
-      optionsByLabel.set(fontOptionKey(option.label), option)
-    }
-
     const selectedFamily = fontFamilyFromPreference(props.preference.font)
-    const options = [...optionsByLabel.values()]
-    if (!options.some((option) => option.value === props.preference.font)) {
-      const label = selectedFamily ?? legacyFontLabel(props.preference.font)
-      if (label) optionsByLabel.set(fontOptionKey(label), { value: props.preference.font, label })
+    if (selectedFamily && !installed.has(fontOptionKey(selectedFamily))) {
+      installed.set(fontOptionKey(selectedFamily), {
+        value: props.preference.font,
+        label: selectedFamily,
+      })
     }
-
-    return [...optionsByLabel.values()].sort(compareFontOptions)
+    const grouped = installed.size > 0
+    return [
+      ...builtIn.map((option) => ({ ...option, group: grouped ? 'Built in' : undefined })),
+      ...[...installed.values()]
+        .sort(compareFontOptions)
+        .map((option) => ({ ...option, group: 'Installed' })),
+    ].map((option) => ({ ...option, sampleFont: fontFamilyStack(option.value) }))
   }, [installedFontFamilies, props.preference.font])
   const selectedGlass = GLASS_OPTIONS.reduce((best, candidate) =>
     Math.abs(candidate.value - props.preference.glass) <

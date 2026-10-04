@@ -5264,10 +5264,10 @@ describe('new chats', () => {
     expect(fontSelector.textContent).toContain('System default')
     fireEvent.click(fontSelector)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'System default',
       'Geist',
       'Geist Mono',
       'Inter',
-      'System default',
     ])
     fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
@@ -5317,11 +5317,11 @@ describe('new chats', () => {
       await act(async () => finishScan(records))
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-        'Atkinson Hyperlegible',
+        'System default',
         'Geist',
         'Geist Mono',
         'Inter',
-        'System default',
+        'Atkinson Hyperlegible',
         'Zilla Slab',
       ])
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search fonts' }), {
