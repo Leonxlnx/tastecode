@@ -146,13 +146,11 @@ describe('settings viewport layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
-    expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
-    expect(
-      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
-    ).toContain('Bottom panel')
+    expect(screen.getByRole('radiogroup', { name: 'Model picker' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
+    expect(screen.queryByRole('radiogroup', { name: 'Model picker' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
@@ -184,13 +182,10 @@ describe('settings viewport layout', () => {
   it('lets the terminal shortcut target the right sidebar', () => {
     renderSettings({ initialSection: 'workflows' })
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
 
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
-    expect(
-      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
-    ).toContain('Right sidebar')
+    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
   })
 })
 
@@ -282,12 +277,12 @@ describe('model picker layout setting', () => {
   it('reflects changes from the shared layout preference', () => {
     renderSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
-    const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    const rail = screen.getByRole('radio', { name: 'Rail' })
+    expect(rail.getAttribute('aria-checked')).toBe('false')
 
     act(() => writeModelPickerLayout('rail'))
 
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(rail.getAttribute('aria-checked')).toBe('true')
   })
 })
 

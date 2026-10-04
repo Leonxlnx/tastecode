@@ -1,0 +1,730 @@
+/* General is the window drawn as a plan beside a short legend. Nothing here is
+   a card: the legend is open type, and the plan is the only drawn surface. It
+   carries the state, so the legend can stay four quiet lines. */
+
+.general {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 352px);
+  align-items: start;
+  gap: 56px;
+}
+
+@container settings-content (max-width: 620px) {
+  .general {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .general__figure {
+    order: -1;
+    width: min(100%, 420px);
+  }
+}
+
+/* ---------- legend ---------- */
+
+.general__legend {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.general-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+}
+
+.general-line__name,
+.general-settle__name {
+  margin: 0;
+  color: var(--text-2);
+  transition: color var(--dur-slow) var(--ease-out);
+}
+
+.general-line__name {
+  font-size: var(--t-lg);
+  font-weight: 550;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+}
+
+.general-line[data-lit] .general-line__name,
+.general-settle__inner[data-lit] .general-settle__name {
+  color: var(--text);
+}
+
+.general-choice {
+  display: flex;
+  /* Optically flush: the last word's padding sits past the legend's edge. */
+  margin-right: -8px;
+}
+
+.general-choice__option {
+  padding: 4px 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-md);
+  line-height: 1.3;
+  text-decoration: underline 1px transparent;
+  text-underline-offset: 6px;
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    text-decoration-color var(--dur-fast) var(--ease-out);
+}
+
+.general-choice__option:hover {
+  color: var(--text-2);
+}
+
+.general-choice__option[aria-checked='true'] {
+  color: var(--text);
+  text-decoration-color: var(--text-3);
+  cursor: default;
+}
+
+.general-choice__option:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 0;
+}
+
+/* Settling only shows in the Inbox sidebar, so the scale belongs to that
+   choice and folds away under Classic. */
+.general-settle {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-slow) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+.general-settle[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.general-settle__inner {
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: 8px;
+}
+
+.general-settle__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.general-settle__name,
+.general-settle__value {
+  font-size: var(--t-md);
+  line-height: 1.3;
+}
+
+.general-settle__value {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A measuring scale, not a slider track: hairline run, ticks and a needle. The
+   run is logarithmic and ends at 90 days; past it a dashed tail runs out to
+   "never". */
+.settle-scale {
+  --tail: 64px;
+  --run: calc(100% - var(--tail));
+  position: relative;
+  height: 34px;
+  margin: 10px 0 14px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.settle-scale[data-grabbing] {
+  cursor: grabbing;
+}
+
+.settle-scale:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 4px;
+}
+
+.settle-scale__run,
+.settle-scale__tail {
+  position: absolute;
+  top: 9px;
+  height: 1px;
+}
+
+.settle-scale__run {
+  left: 0;
+  width: var(--run);
+  background: var(--line-strong);
+}
+
+.settle-scale__tail {
+  left: calc(var(--run) + 8px);
+  right: 0;
+  background: linear-gradient(90deg, var(--line-strong) 50%, transparent 0) left / 4px 1px repeat-x;
+}
+
+.settle-scale__tick,
+.settle-scale__label,
+.settle-scale__needle {
+  position: absolute;
+  left: calc(var(--at) * var(--run));
+}
+
+.settle-scale__tick {
+  top: 9px;
+  width: 1px;
+  height: 4px;
+  background: var(--line-strong);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__tick[data-major] {
+  height: 7px;
+  background: var(--text-3);
+}
+
+.settle-scale:hover .settle-scale__tick {
+  background: var(--text-3);
+}
+
+.settle-scale__label {
+  top: 20px;
+  translate: -50% 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__label[data-edge='start'] {
+  translate: -1px 0;
+}
+
+.settle-scale__label[data-current] {
+  color: var(--text);
+}
+
+.settle-scale__tick[data-never],
+.settle-scale__needle[data-never] {
+  left: calc(100% - 1px);
+}
+
+.settle-scale__label[data-never] {
+  left: 100%;
+  translate: -100% 0;
+}
+
+.settle-scale__needle {
+  top: 1px;
+  width: 2px;
+  height: 16px;
+  translate: -0.5px 0;
+  background: var(--text);
+  border-radius: var(--r-xs);
+  transition: left var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__needle::before {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 8px;
+  height: 5px;
+  translate: -50% 0;
+  background: inherit;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  content: '';
+}
+
+.settle-scale[data-grabbing] .settle-scale__needle {
+  transition-duration: 90ms;
+}
+
+/* ---------- plan ---------- */
+
+.general__figure {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  margin: 0;
+}
+
+.general__caption {
+  min-height: calc(var(--t-xs) * 1.5 * 2);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.general__caption[data-shown] {
+  opacity: 1;
+}
+
+/* Every measure inside the plan is a share of the plan itself, so the drawing
+   keeps its proportions at any width. */
+.gplan {
+  --ink: color-mix(in srgb, var(--text-3) 58%, transparent);
+  --ink-strong: var(--text-3);
+  --bar: max(2px, 0.8cqh);
+  --move: var(--dur-rail) var(--ease-rail);
+  --rail: 27cqw;
+  --term-h: 30cqh;
+  --term-w: 32cqw;
+  container: general-plan / size;
+  position: relative;
+  aspect-ratio: 16 / 11;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xl);
+}
+
+.gplan * {
+  box-sizing: border-box;
+}
+
+.gplan__part {
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+.gplan[data-lit] .gplan__part {
+  opacity: 0.32;
+}
+
+.gplan:is([data-lit='sidebar'], [data-lit='settle']) .gplan__rail,
+.gplan[data-lit='terminal'] .gplan__terminal,
+.gplan[data-lit='picker'] .gplan__main {
+  opacity: 1;
+}
+
+.gplan[data-lit='sidebar'] .gplan__rail {
+  --ink: var(--text-3);
+  --ink-strong: var(--text-2);
+}
+
+/* rail */
+
+.gplan__rail {
+  --rail-top: 21cqh;
+  --rail-step: 6.3cqh;
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--rail);
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line);
+}
+
+.gplan__action,
+.gplan__project,
+.gplan__chat,
+.gplan__fold {
+  position: absolute;
+  height: var(--bar);
+  border-radius: var(--r-xs);
+  background: var(--ink);
+}
+
+.gplan__action {
+  top: calc(6cqh + var(--row) * 5cqh);
+  left: 3cqw;
+  width: calc(var(--w) * 21cqw);
+}
+
+.gplan__project,
+.gplan__chat,
+.gplan__fold {
+  --x: 6.4cqw;
+  top: calc(var(--rail-top) + var(--row) * var(--rail-step));
+  left: var(--x);
+  width: calc((24cqw - var(--x)) * var(--w));
+  transition:
+    top var(--move),
+    left var(--move),
+    width var(--move),
+    translate var(--move),
+    opacity var(--dur-slow) var(--ease-out),
+    background-color var(--dur-slow) var(--ease-out);
+}
+
+.gplan__project {
+  background: var(--ink-strong);
+}
+
+/* The folder each project sits in. */
+.gplan__project::before {
+  position: absolute;
+  top: 50%;
+  left: -3.4cqw;
+  width: 2.2cqw;
+  height: 1.9cqh;
+  translate: 0 -50%;
+  border: 1px solid var(--ink-strong);
+  border-radius: var(--r-xs);
+  content: '';
+}
+
+.gplan[data-mode='inbox'] .gplan__project {
+  opacity: 0;
+  translate: -1.5cqw 0;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    translate var(--move);
+}
+
+.gplan[data-mode='inbox'] .gplan__chat {
+  --x: 3cqw;
+}
+
+.gplan__chat[data-settled] {
+  opacity: 0.45;
+}
+
+/* The "Settled" fold: a rule across the rail, then its disclosure. */
+.gplan__fold {
+  --x: 5.6cqw;
+  opacity: 0;
+}
+
+.gplan__fold[data-shown] {
+  opacity: 1;
+}
+
+.gplan__fold::before {
+  position: absolute;
+  top: 50%;
+  left: -2.6cqw;
+  width: 1.3cqw;
+  height: 1.3cqw;
+  translate: 0 -70%;
+  rotate: 45deg;
+  border-right: 1px solid var(--ink-strong);
+  border-bottom: 1px solid var(--ink-strong);
+  content: '';
+}
+
+.gplan__fold::after {
+  position: absolute;
+  top: calc(var(--rail-step) / -2);
+  left: calc(1.5cqw - var(--x));
+  width: 24cqw;
+  height: 1px;
+  background: var(--line);
+  content: '';
+}
+
+.gplan[data-lit='settle'] .gplan__chat:not([data-settled]) {
+  opacity: 0.4;
+}
+
+.gplan[data-lit='settle'] :is(.gplan__chat[data-settled], .gplan__fold[data-shown]) {
+  opacity: 1;
+  background: var(--text-2);
+}
+
+/* chat */
+
+.gplan__main {
+  position: absolute;
+  inset: 0 0 var(--term-h) var(--rail);
+  transition:
+    inset var(--move),
+    opacity var(--dur-slow) var(--ease-out);
+}
+
+.gplan[data-terminal='workspace'] .gplan__main {
+  inset: 0 var(--term-w) 0 var(--rail);
+}
+
+.gplan__thread {
+  position: absolute;
+  top: 10cqh;
+  left: 50%;
+  width: 72%;
+  height: 28cqh;
+  translate: -50% 0;
+}
+
+.gplan__ask {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 46%;
+  height: 5.6cqh;
+  background: var(--surface-2);
+  border-radius: 1.8cqh;
+}
+
+.gplan__line {
+  position: absolute;
+  top: calc(11cqh + var(--row) * 4.3cqh);
+  left: 0;
+  width: calc(var(--w) * 100%);
+  height: var(--bar);
+  background: var(--ink);
+  border-radius: var(--r-xs);
+}
+
+.gplan__composer {
+  position: absolute;
+  bottom: 5cqh;
+  left: 50%;
+  width: 80%;
+  height: 15cqh;
+  translate: -50% 0;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 3.6cqh;
+}
+
+.gplan__placeholder {
+  position: absolute;
+  top: 26%;
+  left: 6%;
+  width: 34%;
+  height: var(--bar);
+  background: var(--ink);
+  border-radius: var(--r-xs);
+}
+
+.gplan__chip,
+.gplan__send {
+  position: absolute;
+  bottom: 16%;
+  height: 4.4cqh;
+  border: 1px solid var(--line-strong);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.gplan__chip {
+  right: calc(4% + 5.6cqh);
+  width: 22%;
+  border-radius: 1.4cqh;
+}
+
+.gplan__send {
+  right: 4%;
+  width: 4.4cqh;
+  border-radius: var(--r-circle);
+}
+
+.gplan[data-lit='picker'] .gplan__chip {
+  border-color: var(--text-3);
+  background: var(--surface-3);
+}
+
+/* The picker is transient in the app, so the plan only opens it while its
+   line is in focus — the same way it opens from the model chip. */
+.gplan__picker {
+  --strip: 0cqw;
+  position: absolute;
+  right: calc(4% + 5.6cqh);
+  bottom: calc(100% + 1.6cqh);
+  width: 30cqw;
+  height: 44cqh;
+  overflow: hidden;
+  background: var(--menu-bg);
+  border: 1px solid var(--line-strong);
+  border-radius: 1.6cqh;
+  box-shadow: var(--shadow-flyout);
+  opacity: 0;
+  scale: 0.94;
+  transform-origin: 85% 100%;
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    scale var(--dur-fast) var(--ease-out);
+}
+
+.gplan[data-picker='rail'] .gplan__picker {
+  --strip: 6.4cqw;
+}
+
+.gplan[data-lit='picker'] .gplan__picker {
+  opacity: 1;
+  scale: 1;
+}
+
+.gplan__picker-strip {
+  position: absolute;
+  inset: 0 auto 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.4cqh;
+  width: var(--strip);
+  padding-top: 3cqh;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  transition: width var(--move);
+}
+
+.gplan[data-picker='list'] .gplan__picker-strip {
+  border-right-color: transparent;
+}
+
+.gplan__picker-mark {
+  flex: none;
+  width: 2.8cqw;
+  aspect-ratio: 1;
+  border: 1px solid var(--line-strong);
+  border-radius: 0.8cqw;
+}
+
+.gplan__picker-mark[data-selected] {
+  background: var(--surface-3);
+  border-color: var(--text-3);
+}
+
+.gplan__picker-row {
+  position: absolute;
+  top: calc(3.6cqh + var(--row) * 4.8cqh);
+  left: calc(var(--strip) + 2.6cqw);
+  width: calc((30cqw - var(--strip) - 5.2cqw) * var(--w));
+  height: var(--bar);
+  background: var(--ink);
+  border-radius: var(--r-xs);
+  transition:
+    left var(--move),
+    width var(--move),
+    background-color var(--dur-fast) var(--ease-out);
+}
+
+.gplan__picker-row[data-head] {
+  background: var(--ink-strong);
+}
+
+/* terminal */
+
+.gplan__terminal {
+  --term-top: 5cqh;
+  position: absolute;
+  inset: calc(100cqh - var(--term-h)) 0 0 var(--rail);
+  overflow: hidden;
+  background: var(--terminal-workspace-bg);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid transparent;
+  transition:
+    inset var(--move),
+    border-color var(--move),
+    opacity var(--dur-slow) var(--ease-out);
+}
+
+.gplan[data-terminal='workspace'] .gplan__terminal {
+  --term-top: 11cqh;
+  inset: 0 0 0 calc(100cqw - var(--term-w));
+  border-top-color: transparent;
+  border-left-color: var(--line);
+}
+
+/* The right sidebar holds tabs; the bottom panel does not. */
+.gplan__tab {
+  position: absolute;
+  top: 3cqh;
+  left: 3cqw;
+  width: 8cqw;
+  height: 4cqh;
+  border-radius: 1.2cqh;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.gplan__tab + .gplan__tab {
+  left: 12cqw;
+  border: 1px solid var(--line);
+}
+
+.gplan__tab[data-selected] {
+  background: var(--surface-2);
+}
+
+.gplan[data-terminal='workspace'] .gplan__tab {
+  opacity: 1;
+  transition-delay: 120ms;
+}
+
+.gplan__prompt,
+.gplan__output {
+  position: absolute;
+  top: calc(var(--term-top) + var(--row) * 4.4cqh);
+  height: var(--bar);
+  border-radius: var(--r-xs);
+  transition: top var(--move);
+}
+
+.gplan__prompt {
+  left: 6.2cqw;
+  width: calc(var(--w) * 22cqw);
+  background: var(--ink-strong);
+}
+
+.gplan__output {
+  left: 3cqw;
+  width: calc(var(--w) * 22cqw);
+  background: var(--ink);
+}
+
+.gplan__prompt::before {
+  position: absolute;
+  top: 50%;
+  left: -3cqw;
+  width: 1.2cqw;
+  height: 1.2cqw;
+  translate: 0 -50%;
+  rotate: -45deg;
+  border-right: 1px solid var(--text-3);
+  border-bottom: 1px solid var(--text-3);
+  content: '';
+}
+
+.gplan__prompt--cursor::after {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 1.3cqw;
+  height: 3cqh;
+  translate: 0 -50%;
+  background: var(--text-3);
+  content: '';
+}
+
+.gplan[data-lit='terminal'] .gplan__prompt--cursor::after {
+  animation: gplan-cursor 1.1s steps(1) infinite;
+}
+
+@keyframes gplan-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gplan,
+  .gplan *,
+  .gplan *::before,
+  .gplan *::after,
+  .general-settle,
+  .settle-scale__needle {
+    transition-duration: 0s !important;
+    animation: none !important;
+  }
+}

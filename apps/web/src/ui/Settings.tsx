@@ -116,23 +116,12 @@ import {
   type ThemeColorScheme,
 } from '../theme.js'
 import {
-  readModelPickerLayout,
-  subscribeModelPickerLayout,
-  writeModelPickerLayout,
-} from '../model-picker-layout.js'
-import {
   performAppHaptic,
   prepareAppHaptics,
   readAppHaptics,
   subscribeAppHaptics,
   writeAppHaptics,
 } from '../haptics.js'
-import {
-  readTerminalPlacement,
-  subscribeTerminalPlacement,
-  writeTerminalPlacement,
-  type TerminalPlacement,
-} from '../terminal-placement.js'
 import { AppSelect } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
@@ -150,6 +139,7 @@ import {
   type Shortcut,
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
+import { GeneralSettings } from './GeneralSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 
@@ -241,11 +231,6 @@ const BACKDROP_OPTIONS = [
   { value: 'midnight', label: 'Midnight' },
   { value: 'plum', label: 'Plum' },
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
-
-const TERMINAL_PLACEMENT_OPTIONS = [
-  { value: 'bottom', label: 'Bottom panel' },
-  { value: 'workspace', label: 'Right sidebar' },
-] as const satisfies ReadonlyArray<{ value: TerminalPlacement; label: string }>
 
 const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
@@ -466,7 +451,7 @@ function SettingsComponent(props: {
           {section === 'models' ? <ModelSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} providers={MCP_PROVIDER_OPTIONS} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
-          {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
+          {section === 'workflows' ? <GeneralSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
@@ -577,82 +562,6 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
         Stop
       </button>
     </SettingsRow>
-  )
-}
-
-function WorkflowSettings(props: {
-  sidebarSettings: SidebarSettings
-  onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
-}) {
-  const inbox = props.sidebarSettings.mode === 'inbox'
-  const autoSettle = props.sidebarSettings.autoSettleDays !== null
-
-  return (
-    <SettingsPanel title="General">
-      <SettingsRow title="Sidebar version">
-        <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
-          <button
-            className={!inbox ? 'is-selected' : ''}
-            type="button"
-            role="radio"
-            aria-checked={!inbox}
-            onClick={() => props.onSidebarSettingsChange({ mode: 'classic' })}
-          >
-            V1 Classic
-          </button>
-          <button
-            className={inbox ? 'is-selected' : ''}
-            type="button"
-            role="radio"
-            aria-checked={inbox}
-            onClick={() => props.onSidebarSettingsChange({ mode: 'inbox' })}
-          >
-            V2 Inbox
-          </button>
-        </div>
-      </SettingsRow>
-      <SettingsRow title="Settle inactive threads">
-        <div className="settings__inline-controls">
-          <input
-            className="settings__number"
-            type="number"
-            aria-label="Auto-settle days"
-            min={1}
-            max={90}
-            disabled={!autoSettle}
-            value={props.sidebarSettings.autoSettleDays ?? 3}
-            onChange={(event) => {
-              const days = event.currentTarget.valueAsNumber
-              if (Number.isInteger(days) && days >= 1 && days <= 90) {
-                props.onSidebarSettingsChange({ autoSettleDays: days })
-              }
-            }}
-          />
-          <button
-            className={`switch${autoSettle ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-label="Automatic settling"
-            aria-checked={autoSettle}
-            onClick={() => props.onSidebarSettingsChange({ autoSettleDays: autoSettle ? null : 3 })}
-          >
-            <span className="switch__thumb" />
-          </button>
-        </div>
-      </SettingsRow>
-      <SettingsRow
-        title="Model picker"
-        note="Show providers in a compact rail instead of a single list."
-      >
-        <ModelPickerLayoutToggle />
-      </SettingsRow>
-      <SettingsRow
-        title="Default terminal"
-        note="Used by the Toggle terminal shortcut and command."
-      >
-        <TerminalPlacementSelect />
-      </SettingsRow>
-    </SettingsPanel>
   )
 }
 
@@ -1665,43 +1574,6 @@ function SidebarHapticsSetting() {
         <span className="switch__thumb" />
       </button>
     </SettingsRow>
-  )
-}
-
-/** Self-contained: Settings and the open picker subscribe to the same layout
- *  preference, including its in-memory fallback when storage is unavailable. */
-function ModelPickerLayoutToggle() {
-  const layout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
-  const railOn = layout === 'rail'
-  return (
-    <button
-      className={`switch${railOn ? ' is-on' : ''}`}
-      type="button"
-      role="switch"
-      aria-label="Provider rail layout"
-      aria-checked={railOn}
-      onClick={() => writeModelPickerLayout(railOn ? 'list' : 'rail')}
-    >
-      <span className="switch__thumb" />
-    </button>
-  )
-}
-
-function TerminalPlacementSelect() {
-  const placement = useSyncExternalStore(
-    subscribeTerminalPlacement,
-    readTerminalPlacement,
-    readTerminalPlacement,
-  )
-  return (
-    <AppSelect
-      className="settings__select"
-      ariaLabel="Default terminal location"
-      align="right"
-      value={placement}
-      options={TERMINAL_PLACEMENT_OPTIONS}
-      onChange={writeTerminalPlacement}
-    />
   )
 }
 

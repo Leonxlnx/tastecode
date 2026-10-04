@@ -4859,12 +4859,10 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => expect(inbox.getAttribute('aria-checked')).toBe('true'))
-    fireEvent.click(screen.getByRole('radio', { name: 'V1 Classic' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
-      target: { value: '7' },
-    })
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Settle idle chats' }), { key: 'PageUp' })
+    fireEvent.click(screen.getByRole('radio', { name: 'Classic' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
@@ -4893,8 +4891,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4932,8 +4930,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4979,8 +4977,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4998,9 +4996,9 @@ describe('new chats', () => {
       expect(inbox.getAttribute('aria-checked')).toBe('true')
     })
 
-    const days = screen.getByRole('spinbutton', { name: 'Auto-settle days' })
-    fireEvent.change(days, { target: { value: '7' } })
-    expect((days as HTMLInputElement).value).toBe('7')
+    const days = screen.getByRole('slider', { name: 'Settle idle chats' })
+    fireEvent.keyDown(days, { key: 'PageUp' })
+    expect(days.getAttribute('aria-valuenow')).toBe('7')
 
     // A second gap read must update the confirmed base without erasing the
     // still-pending local patch layered over it.
@@ -5018,7 +5016,7 @@ describe('new chats', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect((days as HTMLInputElement).value).toBe('7')
+    expect(days.getAttribute('aria-valuenow')).toBe('7')
 
     await act(async () => {
       rejectSecondUpdate?.(new Error('Could not save inactivity setting'))
@@ -5026,7 +5024,7 @@ describe('new chats', () => {
     })
 
     expect(inbox.getAttribute('aria-checked')).toBe('true')
-    expect((days as HTMLInputElement).value).toBe('3')
+    expect(days.getAttribute('aria-valuenow')).toBe('3')
   })
 
   it('switches sidebar versions only from settings', async () => {
@@ -5036,15 +5034,13 @@ describe('new chats', () => {
     expect(screen.queryByRole('button', { name: /Switch to V[12].*sidebar/ })).toBeNull()
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'V2 Inbox' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Inbox' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
         mode: 'inbox',
       })
-      expect(screen.getByRole('radio', { name: 'V2 Inbox' }).getAttribute('aria-checked')).toBe(
-        'true',
-      )
+      expect(screen.getByRole('radio', { name: 'Inbox' }).getAttribute('aria-checked')).toBe('true')
     })
   })
 
@@ -7384,8 +7380,7 @@ describe('global shortcuts', () => {
 
     fireEvent.keyDown(window, { key: ',', metaKey: true })
     fireEvent.click(await screen.findByRole('button', { name: 'General' }))
-    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
 
