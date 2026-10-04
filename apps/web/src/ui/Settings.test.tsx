@@ -6,6 +6,7 @@ import { methods, type Account, type ProviderId, type ResultOf } from '@harness/
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerUpdatesStore } from '../provider-updates.js'
 import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
@@ -256,6 +257,24 @@ describe('app update simulation', () => {
     await act(async () => stopAppUpdateSimulation())
     expect(screen.getByRole('button', { name: 'Check for updates' })).toBeTruthy()
     expect(screen.queryByRole('status', { name: /Checking/ })).toBeNull()
+  })
+})
+
+describe('provider update simulation', () => {
+  it('starts and stops made-up releases from Debug', () => {
+    const transport = new TestTransport(() => ({ updates: [] }))
+    renderSettings({ initialSection: 'debug', showDebug: true, transport })
+    const stop = screen.getByRole('button', { name: 'Stop provider update simulation' })
+    expect(stop.hasAttribute('disabled')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Three releases' }))
+    expect(providerUpdatesStore(transport).snapshot()).toMatchObject({ simulation: 'several' })
+    expect(providerUpdatesStore(transport).snapshot().updates).toHaveLength(3)
+    expect(stop.hasAttribute('disabled')).toBe(false)
+
+    fireEvent.click(stop)
+    expect(providerUpdatesStore(transport).snapshot().simulation).toBeUndefined()
+    expect(stop.hasAttribute('disabled')).toBe(true)
   })
 })
 

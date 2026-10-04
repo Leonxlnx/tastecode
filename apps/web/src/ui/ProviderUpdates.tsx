@@ -76,22 +76,29 @@ export function ProviderUpdateNotice(props: {
   useEffect(() => store.monitor(), [store])
   useEffect(() => {
     for (const operation of Object.values(state.operations)) {
-      if (operation.phase === 'succeeded' && !notified.current.has(operation)) {
+      if (
+        operation.phase === 'succeeded' &&
+        !operation.simulated &&
+        !notified.current.has(operation)
+      ) {
         notified.current.add(operation)
         onUpdated()
       }
     }
   }, [state.operations, onUpdated])
   const reopened = state.noticeRevision !== dismissedRevision
-  const entries = state.updates.filter((entry) => {
-    const operation = state.operations[entry.provider]
-    if (operation && !isDismissed(operation, dismissedOperations[entry.provider], reopened))
-      return true
-    return (
-      entry.updateAvailable &&
-      (reopened || (!operation && dismissed[entry.provider] !== entry.latestVersion))
-    )
-  })
+  // Simulated releases skip the dismissal bookkeeping in both directions.
+  const entries = state.simulation
+    ? state.updates.filter((entry) => entry.updateAvailable || state.operations[entry.provider])
+    : state.updates.filter((entry) => {
+        const operation = state.operations[entry.provider]
+        if (operation && !isDismissed(operation, dismissedOperations[entry.provider], reopened))
+          return true
+        return (
+          entry.updateAvailable &&
+          (reopened || (!operation && dismissed[entry.provider] !== entry.latestVersion))
+        )
+      })
   const busy = entries.some((entry) => isBusy(state.operations[entry.provider]))
   // Releases are rare, so their styles stay out of the startup sheet and the
   // notice waits for them rather than flashing unstyled.
@@ -110,11 +117,16 @@ export function ProviderUpdateNotice(props: {
     }
   }, [wanted, styled])
   const dismiss = () => {
+    // Made-up releases must never be remembered as dismissed real ones.
+    if (state.simulation) {
+      store.stopSimulation()
+      return
+    }
+    setDismissedOperations(state.operations)
+    setDismissedRevision(state.noticeRevision)
     const next = { ...dismissed }
     for (const entry of entries) if (entry.latestVersion) next[entry.provider] = entry.latestVersion
     setDismissed(next)
-    setDismissedOperations(state.operations)
-    setDismissedRevision(state.noticeRevision)
     try {
       localStorage.setItem(DISMISSED_KEY, JSON.stringify(next))
     } catch {

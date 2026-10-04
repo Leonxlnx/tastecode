@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderUpdate } from '@harness/contracts'
 import { TestTransport } from '../test-transport.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerUpdatesStore } from '../provider-updates.js'
 import { ProviderUpdateCheck, ProviderUpdateNotice } from './ProviderUpdates.js'
 
 const terminalLoading = vi.hoisted(() => ({ pending: undefined as Promise<void> | undefined }))
@@ -319,6 +320,26 @@ describe('provider update toast', () => {
     expect(screen.queryByRole('button', { name: 'Update' })).toBeNull()
     view.rerender(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy()
+  })
+
+  it('pops simulated releases past remembered dismissals and forgets them on dismiss', async () => {
+    localStorage.setItem('harness.providerUpdates.dismissed', JSON.stringify({ codex: '0.11.0' }))
+    const transport = new TestTransport(() => ({ updates: [available] }))
+    const onUpdated = vi.fn()
+    const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
+    await act(async () => {})
+    expect(view.container.querySelector('.notice')).toBeNull()
+
+    act(() => providerUpdatesStore(transport).simulate('one'))
+    expect(await screen.findByText('0.9.0 → 0.10.0')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
+    finishNoticeExit(view.container)
+    expect(view.container.querySelector('.notice')).toBeNull()
+    expect(providerUpdatesStore(transport).snapshot().simulation).toBeUndefined()
+    expect(localStorage.getItem('harness.providerUpdates.dismissed')).toBe(
+      JSON.stringify({ codex: '0.11.0' }),
+    )
+    expect(onUpdated).not.toHaveBeenCalled()
   })
 
   it('reports update check errors without a false up-to-date label', async () => {

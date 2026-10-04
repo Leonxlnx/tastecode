@@ -2,7 +2,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderUpdate } from '@harness/contracts'
 import { TestTransport } from './test-transport.js'
-import { ProviderUpdatesStore } from './provider-updates.js'
+import {
+  ProviderUpdatesStore,
+  SIMULATED_INSTALL_MS,
+  SIMULATED_START_MS,
+  SIMULATED_VERIFY_MS,
+} from './provider-updates.js'
 import { installState, resetInstalls, updateKey } from './provider-install.js'
 
 const available: ProviderUpdate = {
@@ -185,5 +190,79 @@ describe('provider updates lifecycle', () => {
     transport.emitState('open')
     expect(transport.requests).toHaveLength(1)
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('plays simulated releases without touching a CLI and restores the real ones', async () => {
+    vi.useFakeTimers()
+    let checks = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'providers.updates') {
+        checks += 1
+        return { updates: [{ ...available, currentVersion: '0.159.0', updateAvailable: false }] }
+      }
+      throw new Error(method)
+    })
+    const store = new ProviderUpdatesStore(transport)
+    await store.refresh()
+    store.simulate('several')
+    const simulated = store.snapshot().updates
+    expect(
+      simulated.map((entry) => [entry.provider, entry.currentVersion, entry.latestVersion]),
+    ).toEqual([
+      ['codex', '0.159.0', '0.160.0'],
+      ['claude-code', '2.0.14', '2.0.15'],
+      ['grok', '1.0.45', '1.0.46'],
+    ])
+    // A real check while the simulation runs lands behind it.
+    await store.refresh(true)
+    expect(checks).toBe(2)
+    expect(store.snapshot().updates).toBe(simulated)
+
+    await store.start('codex')
+    expect(store.snapshot().operations.codex).toMatchObject({ phase: 'starting', simulated: true })
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations.codex?.phase).toBe('verifying')
+    await vi.advanceTimersByTimeAsync(SIMULATED_VERIFY_MS)
+    expect(store.snapshot().operations.codex?.phase).toBe('succeeded')
+    expect(store.snapshot().updates[0]).toMatchObject({
+      currentVersion: '0.160.0',
+      updateAvailable: false,
+    })
+    expect(transport.requests.some((entry) => entry.method === 'providers.update')).toBe(false)
+
+    store.stopSimulation()
+    expect(store.snapshot()).toMatchObject({ simulation: undefined, operations: {} })
+    expect(store.snapshot().updates).toEqual([
+      { ...available, currentVersion: '0.159.0', updateAvailable: false },
+    ])
+  })
+
+  it('fails a simulated update once so the retry shows recovery', async () => {
+    vi.useFakeTimers()
+    const store = new ProviderUpdatesStore(new TestTransport())
+    store.simulate('failure')
+    await store.start('grok')
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations.grok).toMatchObject({
+      phase: 'failed',
+      error: 'Simulated update failure. Try again.',
+    })
+    await store.start('grok')
+    await vi.advanceTimersByTimeAsync(
+      SIMULATED_START_MS + SIMULATED_INSTALL_MS + SIMULATED_VERIFY_MS,
+    )
+    expect(store.snapshot().operations.grok?.phase).toBe('succeeded')
+  })
+
+  it('stops a simulated run in flight', async () => {
+    vi.useFakeTimers()
+    const store = new ProviderUpdatesStore(new TestTransport())
+    store.simulate('one')
+    expect(store.snapshot().updates.map((entry) => entry.provider)).toEqual(['codex'])
+    await store.start('codex')
+    store.stopSimulation()
+    await vi.advanceTimersByTimeAsync(SIMULATED_START_MS + SIMULATED_INSTALL_MS)
+    expect(store.snapshot().operations).toEqual({})
+    expect(store.snapshot().updates).toEqual([])
   })
 })
