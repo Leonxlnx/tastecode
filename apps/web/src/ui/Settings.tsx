@@ -297,12 +297,12 @@ function SettingsComponent(props: {
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
   const [selectedSection, setSection] = useState<SettingsSection>(
-    props.initialSection ?? 'providers',
+    props.initialSection ?? 'workflows',
   )
-  const section = selectedSection === 'debug' && !props.showDebug ? 'providers' : selectedSection
+  const section = selectedSection === 'debug' && !props.showDebug ? 'workflows' : selectedSection
 
   useEffect(() => {
-    setSection(props.initialSection ?? 'providers')
+    setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection])
 
   const panel = useRef<HTMLDivElement>(null)

@@ -133,6 +133,12 @@ describe('settings viewport layout', () => {
     expect(settings?.querySelector(':scope > .settings__main')).toBeTruthy()
   })
 
+  it('opens on General when no section is asked for', () => {
+    renderSettings({ overrides: { initialSection: undefined } })
+
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+  })
+
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
@@ -1336,6 +1342,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1448,6 +1455,7 @@ describe('provider settings', () => {
 
     const settingsFor = (onChanged: () => void) => (
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1591,6 +1599,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
