@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 main 6c0d3061 · local delivery checked</span>
+        <span class="meta">2026-10-04 main e29c3382 · checkpoint identity correction</span>
       </div>
     </div>
 
@@ -1235,7 +1235,12 @@
                 >Checkpoint every turn, reversible rollback with changed-file inspection
                 <span class="d"
                   >Git refs protect saved states; shared-checkout guards wait for active and
-                  stopping agents; nested project restore stays in scope</span
+                  stopping agents; nested project restore stays in scope. Filesystem-native Git
+                  common-directory identity combines Windows long/8.3 aliases during history
+                  cleanup, retaining all linked-worktree checkpoints (<a
+                    href="https://github.com/Leonxlnx/tastecode/pull/1404"
+                    >#1404</a
+                  >)</span
                 ></span
               ></label
             >

@@ -6,6 +6,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -376,6 +377,44 @@ it('resolves checkpoint storage from checkout, nested directory, and saved Git d
   expect(await checkpointRepository(nested)).toBe(common)
   expect(await checkpointRepository(common)).toBe(common)
 })
+
+it.runIf(process.platform === 'win32')(
+  'shares checkpoint storage across Windows long paths, short aliases, and linked worktrees',
+  async (context) => {
+    const alias = execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Command',
+        '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); (New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:TASTECODE_CHECKPOINT_ALIAS).ShortPath',
+      ],
+      {
+        encoding: 'utf8',
+        windowsHide: true,
+        env: { ...process.env, TASTECODE_CHECKPOINT_ALIAS: repo },
+      },
+    ).trim()
+    if (alias.toLowerCase() === repo.toLowerCase()) {
+      context.skip('The temporary volume does not provide Windows short-path aliases')
+    }
+    expect(statSync(alias).ino).toBe(statSync(repo).ino)
+    const nested = path.join(alias, 'nested')
+    mkdirSync(nested)
+    const worktree = path.join(repo, 'linked-worktree')
+    git('worktree', 'add', '--detach', worktree, 'HEAD')
+
+    const common = await checkpointRepository(repo)
+    expect(await checkpointRepository(alias)).toBe(common)
+    expect(await checkpointRepository(nested)).toBe(common)
+    expect(await checkpointRepository(worktree)).toBe(common)
+    expect(await checkpointRepository(path.join(alias, '.git'))).toBe(common)
+
+    const independent = path.join(repo, 'independent')
+    git('init', independent)
+    expect(await checkpointRepository(independent)).not.toBe(common)
+  },
+)
 
 it.each(['checkout', 'git-directory'])(
   'prunes history with a saved %s without dropping unsupported-provider checkpoints',
