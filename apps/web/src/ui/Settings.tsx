@@ -435,9 +435,7 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main">
-        <div
-          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}`}
-        >
+        <div className="settings__content">
           {section === 'profile' ? (
             <ProfileSettings
               account={props.account}
