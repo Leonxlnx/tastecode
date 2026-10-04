@@ -526,16 +526,14 @@ describe('settings loading values', () => {
     const { rerenderSettings } = renderSettings({
       overrides: { initialSection: 'profile', accountLoading: true },
     })
-    expect(
-      screen.getByText('Loading account plan…').closest('.profile-identity__meta'),
-    ).toBeTruthy()
+    expect(screen.getByText('Loading account plan…').closest('.profile__plan')).toBeTruthy()
     rerenderSettings({
       initialSection: 'profile',
       accountLoading: false,
       account: { signedIn: true, plan: 'Pro' },
     })
     expect(screen.queryByText('Loading account plan…')).toBeNull()
-    expect(screen.getByText('Pro')).toBeTruthy()
+    expect(screen.getByText('Pro plan')).toBeTruthy()
   })
 
   it.each([true, false])(
