@@ -1044,6 +1044,8 @@ export const methods = {
               title: z.string(),
               provider: ProviderIdSchema,
               agent: z.string().optional(),
+              /** Server-owned API connection used when restoring this chat. */
+              connectionId: z.string().min(1).optional(),
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
