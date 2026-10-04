@@ -667,7 +667,9 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete chats' }))
+    const deleteButton = await screen.findByRole('button', { name: 'Delete chats' })
+    expect(deleteButton.classList.contains('is-destructive')).toBe(true)
+    fireEvent.click(deleteButton)
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
@@ -677,11 +679,10 @@ describe('Sidebar chat actions', () => {
         'This only removes the project from the sidebar. Its folder and chats stay untouched.',
       ),
     ).toBeTruthy()
+    const removeDialog = screen.getByRole('alertdialog', { name: 'Remove project?' })
+    expect(removeDialog.closest('.sheet')?.parentElement).toBe(document.body)
     const removeButton = screen.getByRole('button', { name: 'Remove project' })
-    expect(screen.getByRole('dialog', { name: 'Remove project?' }).parentElement).toBe(
-      document.body,
-    )
-    expect(removeButton.classList.contains('btn--danger')).toBe(true)
+    expect(removeButton.classList.contains('is-destructive')).toBe(true)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
