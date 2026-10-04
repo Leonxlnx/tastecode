@@ -1620,17 +1620,17 @@ export class Orchestrator {
         }
       }
       if (design) {
-        await loadDesignAgent()
         const referenceAttachments = [
           ...new Set(attachments.filter((attachment) => !isDesignBriefAttachment(attachment))),
         ]
         if (referenceAttachments.length > 64)
           throw new Error('Design mode supports at most 64 supplied references')
-        if (referenceAttachments.length && !this.#get(threadId).session.capabilities.images) {
+        if (!this.#get(threadId).session.capabilities.images) {
           throw new Error(
-            'The selected provider cannot inspect the supplied Design reference images',
+            'Design mode requires image input to inspect the selected references. Choose a provider/model that supports images, or turn off Design mode to continue ordinary coding.',
           )
         }
+        await loadDesignAgent()
         const workspacePath = this.#repoPath(threadId)
         const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
         const designSourceBaseline = designAgent().designSourceQualityBaseline(workspacePath)

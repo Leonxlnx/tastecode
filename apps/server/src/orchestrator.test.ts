@@ -3013,31 +3013,46 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('rejects supplied references when the selected session cannot inspect images', async () => {
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
-    const reference = path.join(workspace, 'reference.png')
-    writeFileSync(reference, 'reference bytes')
-    const { orchestrator, sessions, store } = harness()
-    try {
-      const thread = await orchestrator.startThread('claude-code', workspace)
-      Object.defineProperty(sessions[0], 'capabilities', {
-        value: { ...CAPABILITIES, images: false },
-      })
-      await expect(
-        orchestrator.sendTurn(thread.id, 'Build from this reference.', [
-          DESIGN_BRIEF_ATTACHMENT,
-          reference,
-        ]),
-      ).rejects.toThrow('cannot inspect the supplied Design reference images')
-      expect(store.designRun(thread.id)).toBeUndefined()
-      expect(sessions[0]?.sent).toEqual([])
-      await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
-      expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
-    } finally {
-      await orchestrator.disposeAll()
-      rmSync(workspace, { recursive: true, force: true })
-    }
-  })
+  it.each(
+    ProviderIdSchema.options.flatMap((provider) =>
+      [false, true].map((supplied) => ({ provider, supplied })),
+    ),
+  )(
+    'rejects visual Design before inference when $provider lacks images (supplied: $supplied)',
+    async ({ provider, supplied }) => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
+      const reference = path.join(workspace, 'reference.png')
+      writeFileSync(reference, 'reference bytes')
+      const { orchestrator, sessions, store, received } = harness()
+      try {
+        const thread = await orchestrator.startThread(provider, workspace)
+        Object.defineProperty(sessions[0], 'capabilities', {
+          value: { ...CAPABILITIES, images: false },
+        })
+        await expect(
+          orchestrator.sendTurn(thread.id, 'Build a finance dashboard.', [
+            DESIGN_BRIEF_ATTACHMENT,
+            ...(supplied ? [reference] : []),
+          ]),
+        ).rejects.toThrow(
+          'Choose a provider/model that supports images, or turn off Design mode to continue ordinary coding',
+        )
+        expect(store.designRun(thread.id)).toBeUndefined()
+        expect(sessions[0]?.sent).toEqual([])
+        expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+        expect(
+          received.some(
+            ({ event }) => event.type === 'item.started' && event.item.text?.startsWith('design:'),
+          ),
+        ).toBe(false)
+        await orchestrator.sendTurn(thread.id, 'Continue as a normal task.')
+        expect(sessions[0]?.sent).toEqual(['Continue as a normal task.'])
+      } finally {
+        await orchestrator.disposeAll()
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 
   it('restores trusted artifacts on resume instead of accepting workspace edits as approval', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-trusted-'))
@@ -3972,7 +3987,7 @@ describe('provider-neutral design briefing', () => {
       { provider, dashboard: true },
     ]),
   )(
-    'builds without questions through the same workflow with $provider (dashboard: $dashboard)',
+    'builds without questions through the same workflow with synthetic image-capable $provider (dashboard: $dashboard)',
     async ({ provider, dashboard }) => {
       const model = 'future-provider/model-that-needs-no-design-code'
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))

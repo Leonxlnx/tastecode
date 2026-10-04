@@ -578,6 +578,10 @@ and reduced-motion equivalents. Native inline chart SVG in reference-bound dashb
 visibly identified demo values avoid website-only validation blockers; asserted product claims
 still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
 
+Reference-driven Design requires the session's declared image input capability. Unsupported
+sessions reject before inference or persisted Design state; ordinary coding remains available.
+The workflow never substitutes an unannounced text-only build for the requested image copying.
+
 _Rejected:_ composing dashboards from marketing sections, treating generation retries as new
 layout votes, or requiring static screenshots in place of working native charts and controls.
 
