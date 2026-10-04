@@ -562,6 +562,27 @@ manual.
 
 ---
 
+## Dashboard design references (pending)
+
+Pending source work as of 2026-10-04, based on `main` at `6ac40ec1`; not merged or released.
+Operating dashboards use a separate catalog of reviewed generated desktop/mobile pairs.
+Sampling chooses a layout group uniformly, then one variant within that group, so retries do
+not give a composition extra votes. One complete app-shell reference preserves navigation,
+content density and responsive hierarchy. Website references and their shipped counts remain
+unchanged. Dashboard asset import and end-to-end acceptance are still pending.
+
+Briefing distinguishes an operating interface from a marketing page about a dashboard product.
+The former plans `operate_monitor` views with functional filters, sorting, tabs, navigation,
+drawers and charts. Motion follows those state changes, with keyboard access, focus restoration
+and reduced-motion equivalents. Native inline chart SVG in reference-bound dashboard views and
+visibly identified demo values avoid website-only validation blockers; asserted product claims
+still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
+
+_Rejected:_ composing dashboards from marketing sections, treating generation retries as new
+layout votes, or requiring static screenshots in place of working native charts and controls.
+
+---
+
 ## Layout
 
 ```
@@ -580,6 +601,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-04 | Planned dashboard references and operational interaction guidance separately from website compositions; asset import and acceptance remain pending, with no release claim.     |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |

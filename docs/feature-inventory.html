@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-29 main 492daab3 · local delivery checked</span>
+        <span class="meta">2026-10-04 base main 6ac40ec1 · dashboard support pending</span>
       </div>
     </div>
 
@@ -233,8 +233,9 @@
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
-        this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
-        nightly only are built and tested but absent from main's code (see dashboard.html).
+        this browser only. Checklist entries describe implemented features; pending notes are
+        explicitly marked and are not shipped. Sections marked nightly only are built and tested but
+        absent from main's code (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -1015,6 +1016,16 @@
           </li>
         </ul>
       </section>
+
+      <p class="sub">
+        Pending, unreleased dashboard design support: a separate pool of reviewed generated
+        desktop/mobile pairs, sampled uniformly by layout group and then variant, supplies one
+        complete app shell. Dashboard plans use operate_monitor with working filters, sorting, tabs,
+        navigation, drawers and charts, keyboard access, focus restoration and reduced motion.
+        Native chart SVG and visibly labeled demo values avoid website-only blockers; asserted
+        product claims still require evidence. This work is not merged. Dashboard asset import and
+        end-to-end acceptance remain pending; shipped website library counts above are unchanged.
+      </p>
 
       <section id="thread">
         <header>
@@ -2161,7 +2172,7 @@
       </p>
 
       <footer>
-        Companion to docs/dashboard.html. Everything listed is implemented in this source snapshot.
+        Companion to docs/dashboard.html. Pending notes are separate from the implemented checklist.
         See
         <a href="./verification/pr-quality-2026-09-09.md">verification and release limits</a>. Ticks
         live in your browser's local storage, nothing is sent anywhere.
