@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-29 main 492daab3 · local delivery checked</span>
+        <span class="meta">2026-10-04 main 6c0d3061 · local delivery checked</span>
       </div>
     </div>
 
@@ -1996,7 +1996,9 @@
                 background check failures stay out of the sidebar and retry with backoff, and an
                 overdue check runs after the computer wakes. After the last byte the update shows
                 Preparing instead of a frozen 100 percent while it is verified and handed to the
-                system updater</span
+                system updater. Regression tests inject EBUSY for locked leftovers and EACCES for
+                denied writes, preserving real download and stream-error checks across platforms
+                (#1394)</span
               ></label
             >
           </li>
@@ -2037,9 +2039,10 @@
                   nested guest webviews are disabled, renderer error reports are bounded, and
                   project-file reveals check resolved paths; spawned commands use a private per-user
                   runtime directory on POSIX and exclude current-directory executable lookup on
-                  Windows; media access requires explicit audio-only details from the owning main
-                  renderer and main frame, with malformed, mixed, unknown, camera and subframe
-                  requests denied in both Chromium checks and permission requests</span
+                  Windows; Windows child-process cleanup waits for Node to observe exit after
+                  taskkill succeeds (#1394); media access requires explicit audio-only details from
+                  the owning main renderer and main frame, with malformed, mixed, unknown, camera
+                  and subframe requests denied in both Chromium checks and permission requests</span
                 ></span
               ></label
             >
