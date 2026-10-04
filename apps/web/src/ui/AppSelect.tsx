@@ -5,14 +5,11 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  IconCheck as Check,
-  IconChevronDown as ChevronDown,
-  IconSearch as Search,
-} from '@tabler/icons-react'
+import { IconCheck as Check, IconChevronDown as ChevronDown } from '@tabler/icons-react'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { usePopupPresence } from './use-popup-presence.js'
 
@@ -23,6 +20,10 @@ export type AppSelectOption<Value extends string = string> = {
   value: Value
   label: string
   disabled?: boolean
+  /** A heading the option sits under; consecutive options share one. */
+  group?: string | undefined
+  /** A font-family to set a short sample in beside the label, for font pickers. */
+  sampleFont?: string
 }
 
 type Drop = 'up' | 'down'
@@ -42,6 +43,18 @@ type SelectSearch = {
 
 const SELECT_GAP = 3
 const VIEWPORT_GUTTER = 8
+// A searchable list keeps one height while it filters, so the panel never
+// jumps under the pointer. Rows and group headings are fixed heights for it.
+const SEARCH_ROW_H = 28
+const SEARCH_GROUP_H = 26
+const SEARCH_LIST_MAX_H = 296
+const SEARCH_LOADING_ROWS = 6
+
+type SampleStyle = CSSProperties & { '--app-select-sample': string }
+
+function sampleStyle(font: string | undefined): SampleStyle | undefined {
+  return font ? { '--app-select-sample': font } : undefined
+}
 
 function enabledIndex<Value extends string>(
   options: readonly AppSelectOption<Value>[],
@@ -71,6 +84,33 @@ function normalizeSearch(value: string): string {
 }
 
 /**
+ * The options a query keeps, best matches first: a label that starts with the
+ * query, then one with a word that does, then any other containing it. Groups
+ * keep their order, so headings never repeat.
+ */
+function matchOptions<Value extends string>(
+  options: readonly AppSelectOption<Value>[],
+  query: string,
+): { option: AppSelectOption<Value>; index: number }[] {
+  const entries = options.map((option, index) => ({ option, index }))
+  if (query.length === 0) return entries
+  const groups = new Map<string | undefined, number>()
+  const ranked: { option: AppSelectOption<Value>; index: number; group: number; rank: number }[] =
+    []
+  for (const entry of entries) {
+    const label = normalizeSearch(entry.option.label)
+    const at = label.indexOf(query)
+    if (at < 0) continue
+    if (!groups.has(entry.option.group)) groups.set(entry.option.group, groups.size)
+    const rank = at === 0 ? 0 : /[\s\-_.]/u.test(label[at - 1] ?? '') ? 1 : 2
+    ranked.push({ ...entry, group: groups.get(entry.option.group) ?? 0, rank })
+  }
+  return ranked
+    .sort((a, b) => a.group - b.group || a.rank - b.rank || a.index - b.index)
+    .map(({ option, index }) => ({ option, index }))
+}
+
+/**
  * TasteCode-owned replacement for native selects. The trigger stays in the
  * layout while the listbox is portalled above scroll containers and dialogs.
  */
@@ -93,8 +133,12 @@ export function AppSelect<Value extends string>(props: {
   const [activeValue, setActiveValue] = useState<Value>()
   const [searchQuery, setSearchQuery] = useState('')
   const [position, setPosition] = useState<SelectPosition>()
+  const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const listbox = useRef<HTMLDivElement>(null)
+  // How the active option last changed. A hover must not scroll the list, or
+  // resting the pointer on a half-hidden row would pull it into view.
+  const activeSource = useRef<'open' | 'keyboard' | 'pointer'>('open')
   const present = usePopupPresence(open, listbox)
   const searchInput = useRef<HTMLInputElement>(null)
   const id = useId()
@@ -104,13 +148,7 @@ export function AppSelect<Value extends string>(props: {
   const searchEnabled = props.search !== undefined
   const normalizedQuery = normalizeSearch(searchQuery.trim())
   const visibleOptions = useMemo(
-    () =>
-      (props.loadingMessage ? [] : props.options)
-        .map((option, index) => ({ option, index }))
-        .filter(
-          ({ option }) =>
-            normalizedQuery.length === 0 || normalizeSearch(option.label).includes(normalizedQuery),
-        ),
+    () => (props.loadingMessage ? [] : matchOptions(props.options, normalizedQuery)),
     [normalizedQuery, props.options, props.loadingMessage],
   )
   const visibleEnabledIndexes = useMemo(
@@ -124,7 +162,8 @@ export function AppSelect<Value extends string>(props: {
       ? (visibleEnabledIndexes[0] ?? -1)
       : requestedActiveIndex
 
-  const updateActiveIndex = (index: number) => {
+  const updateActiveIndex = (index: number, source: 'keyboard' | 'pointer' = 'keyboard') => {
+    activeSource.current = source
     setActiveValue(props.options[index]?.value)
   }
 
@@ -146,9 +185,8 @@ export function AppSelect<Value extends string>(props: {
     const firstMatch =
       normalized.length === 0 && selectedIndex >= 0 && !props.options[selectedIndex]?.disabled
         ? selectedIndex
-        : props.options.findIndex(
-            (option) => !option.disabled && normalizeSearch(option.label).includes(normalized),
-          )
+        : (matchOptions(props.options, normalized).find(({ option }) => !option.disabled)?.index ??
+          -1)
     updateActiveIndex(firstMatch)
   }
 
@@ -160,6 +198,7 @@ export function AppSelect<Value extends string>(props: {
         : enabledIndex(props.options, direction === 1 ? 0 : props.options.length - 1, direction)
     setSearchQuery('')
     updateActiveIndex(initial)
+    activeSource.current = 'open'
     setModality(input)
     setOpen(true)
   }
@@ -182,7 +221,7 @@ export function AppSelect<Value extends string>(props: {
     const onPointerDown = (event: MouseEvent) => {
       const target = event.target
       if (!(target instanceof Node)) return
-      if (!trigger.current?.contains(target) && !listbox.current?.contains(target)) {
+      if (!root.current?.contains(target) && !listbox.current?.contains(target)) {
         closeListbox()
       }
     }
@@ -270,13 +309,14 @@ export function AppSelect<Value extends string>(props: {
   }, [open, props.align, props.drop])
 
   useEffect(() => {
-    if (!open || activeIndex < 0) return
+    if (!open || activeIndex < 0 || activeSource.current === 'pointer') return
     const option = listbox.current?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
-    option?.scrollIntoView?.({ block: 'nearest' })
+    // Opening centres the chosen option; the keyboard then scrolls only as far as it must.
+    option?.scrollIntoView?.({ block: activeSource.current === 'open' ? 'center' : 'nearest' })
   }, [activeIndex, open])
 
   useEffect(() => {
-    if (open && searchEnabled) searchInput.current?.focus()
+    if (open && searchEnabled) searchInput.current?.focus({ preventScroll: true })
   }, [open, searchEnabled])
 
   const onTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -358,29 +398,50 @@ export function AppSelect<Value extends string>(props: {
     }
   }
 
-  const optionNodes = visibleOptions.map(({ option, index }) => (
-    <div
-      key={option.value}
-      id={`${id}-option-${index}`}
-      className={`app-select__option${index === activeIndex ? ' is-active' : ''}${option.value === props.value ? ' is-selected' : ''}`}
-      role="option"
-      aria-selected={option.value === props.value}
-      aria-disabled={option.disabled || undefined}
-      data-index={index}
-      onMouseEnter={() => {
-        if (!option.disabled) updateActiveIndex(index)
-      }}
-      onMouseDown={(event) => event.preventDefault()}
-      onClick={() => choose(index)}
-    >
-      <span>{option.label}</span>
-      {option.value === props.value ? <Check size={13} aria-hidden /> : null}
-    </div>
-  ))
+  const optionNodes = visibleOptions.flatMap(({ option, index }, position) => {
+    const node = (
+      <div
+        key={option.value}
+        id={`${id}-option-${index}`}
+        className={`app-select__option${index === activeIndex ? ' is-active' : ''}${option.value === props.value ? ' is-selected' : ''}`}
+        role="option"
+        aria-selected={option.value === props.value}
+        aria-disabled={option.disabled || undefined}
+        data-index={index}
+        data-sample={option.sampleFont ? true : undefined}
+        style={sampleStyle(option.sampleFont)}
+        onMouseMove={() => {
+          if (!option.disabled && index !== activeIndex) updateActiveIndex(index, 'pointer')
+        }}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => choose(index)}
+      >
+        <span>{option.label}</span>
+        {option.value === props.value ? <Check size={13} aria-hidden /> : null}
+      </div>
+    )
+    const group = option.group
+    if (!group || group === visibleOptions[position - 1]?.option.group) return [node]
+    return [
+      <div key={`group:${group}`} className="app-select__group" role="presentation">
+        {group}
+      </div>,
+      node,
+    ]
+  })
+  const groupCount = new Set(props.options.map((option) => option.group).filter(Boolean)).size
+  const searchListHeight = Math.min(
+    SEARCH_LIST_MAX_H,
+    (props.loadingMessage ? SEARCH_LOADING_ROWS : Math.max(props.options.length, 1)) *
+      SEARCH_ROW_H +
+      (props.loadingMessage ? 0 : groupCount * SEARCH_GROUP_H) +
+      8,
+  )
 
   return (
     <div
-      className={`app-select${open ? ' is-open' : ''}${props.className ? ` ${props.className}` : ''}`}
+      ref={root}
+      className={`app-select${open ? ' is-open' : ''}${open && props.search ? ' is-searching' : ''}${props.className ? ` ${props.className}` : ''}`}
     >
       <button
         ref={trigger}
@@ -400,16 +461,38 @@ export function AppSelect<Value extends string>(props: {
         }}
         onKeyDown={onTriggerKeyDown}
       >
-        <span className="app-select__value">{selected?.label ?? props.value}</span>
+        {/* While typing, the hidden value carries the query so the trigger keeps the field's width. */}
+        <span className="app-select__value">
+          {(open && props.search && searchQuery) || (selected?.label ?? props.value)}
+        </span>
         <ChevronDown className="app-select__chevron" size={14} aria-hidden />
       </button>
+      {open && props.search ? (
+        // A searchable picker is typed into where its value stands: the value
+        // gives way to a field, and the list below holds only the options.
+        <input
+          ref={searchInput}
+          className="app-select__query"
+          type="search"
+          aria-label={props.search.label}
+          aria-controls={listboxId}
+          aria-autocomplete="list"
+          aria-activedescendant={activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined}
+          placeholder={selected?.label ?? props.search.placeholder ?? props.search.label}
+          autoComplete="off"
+          spellCheck={false}
+          value={searchQuery}
+          onChange={(event) => updateSearchQuery(event.currentTarget.value)}
+          onKeyDown={onSearchKeyDown}
+        />
+      ) : null}
 
       {present
         ? createPortal(
             <div
               ref={listbox}
               id={props.search ? `${listboxId}-panel` : listboxId}
-              className={`app-select__listbox popup app-select__listbox--${position?.drop ?? props.drop ?? 'down'}${position ? ' is-positioned' : ''}`}
+              className={`app-select__listbox popup app-select__listbox--${position?.drop ?? props.drop ?? 'down'}${props.search ? ' app-select__listbox--search' : ''}${position ? ' is-positioned' : ''}`}
               data-popup-state={open && position ? 'open' : 'closed'}
               data-input-modality={modality}
               aria-hidden={!open || undefined}
@@ -428,46 +511,37 @@ export function AppSelect<Value extends string>(props: {
               }
             >
               {props.search ? (
-                <div className="app-select__search">
-                  <Search size={14} aria-hidden />
-                  <input
-                    ref={searchInput}
-                    type="search"
-                    aria-label={props.search.label}
-                    aria-controls={listboxId}
-                    aria-autocomplete="list"
-                    aria-activedescendant={
-                      activeIndex >= 0 ? `${id}-option-${activeIndex}` : undefined
-                    }
-                    placeholder={props.search.placeholder ?? props.search.label}
-                    value={searchQuery}
-                    onChange={(event) => updateSearchQuery(event.currentTarget.value)}
-                    onKeyDown={onSearchKeyDown}
-                  />
-                </div>
-              ) : null}
-              {props.search ? (
-                <div
-                  id={listboxId}
-                  className="app-select__options"
-                  role="listbox"
-                  aria-label={props.ariaLabel}
-                  aria-busy={Boolean(props.loadingMessage) || undefined}
-                >
-                  {optionNodes}
-                </div>
+                <>
+                  <div
+                    id={listboxId}
+                    className="app-select__options"
+                    role="listbox"
+                    aria-label={props.ariaLabel}
+                    aria-busy={Boolean(props.loadingMessage) || undefined}
+                    style={{ height: searchListHeight }}
+                  >
+                    {optionNodes}
+                    {props.loadingMessage ? (
+                      <SkeletonStatus label={props.loadingMessage}>
+                        <SkeletonRows rows={4} widths={SELECT_SKELETON_WIDTHS} />
+                      </SkeletonStatus>
+                    ) : visibleOptions.length === 0 ? (
+                      <p className="app-select__empty" role="status">
+                        {props.search.emptyMessage ?? 'No matching options'}
+                      </p>
+                    ) : null}
+                  </div>
+                </>
               ) : (
-                optionNodes
+                <>
+                  {optionNodes}
+                  {props.loadingMessage ? (
+                    <SkeletonStatus label={props.loadingMessage}>
+                      <SkeletonRows rows={4} widths={SELECT_SKELETON_WIDTHS} />
+                    </SkeletonStatus>
+                  ) : null}
+                </>
               )}
-              {props.loadingMessage ? (
-                <SkeletonStatus label={props.loadingMessage}>
-                  <SkeletonRows rows={4} widths={SELECT_SKELETON_WIDTHS} />
-                </SkeletonStatus>
-              ) : props.search && visibleOptions.length === 0 ? (
-                <p className="app-select__empty" role="status">
-                  {props.search.emptyMessage ?? 'No matching options'}
-                </p>
-              ) : null}
             </div>,
             document.body,
           )

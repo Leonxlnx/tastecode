@@ -246,4 +246,107 @@ describe('AppSelect', () => {
     expect(screen.queryByRole('listbox', { name: 'Font' })).toBeNull()
     expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'Font' }))
   })
+
+  it('groups options under one heading each and ranks the best matches first', () => {
+    render(
+      <AppSelect
+        ariaLabel="Font"
+        value="system"
+        onChange={() => {}}
+        search={{ label: 'Search fonts' }}
+        options={[
+          { value: 'system', label: 'System default', group: 'Built in' },
+          { value: 'geist', label: 'Geist', group: 'Built in' },
+          { value: 'engraved', label: 'Academy Engraved', group: 'Installed' },
+          { value: 'avestan', label: 'Noto Sans Avestan', group: 'Installed' },
+          { value: 'avenir', label: 'Avenir', group: 'Installed' },
+        ]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('combobox', { name: 'Font' }))
+    const listbox = screen.getByRole('listbox', { name: 'Font' })
+    expect(
+      [...listbox.querySelectorAll('.app-select__group')].map((group) => group.textContent),
+    ).toEqual(['Built in', 'Installed'])
+
+    const search = screen.getByRole('searchbox', { name: 'Search fonts' })
+    fireEvent.change(search, { target: { value: 'av' } })
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Avenir',
+      'Noto Sans Avestan',
+      'Academy Engraved',
+    ])
+    expect(search.getAttribute('aria-activedescendant')).toBe(
+      screen.getByRole('option', { name: 'Avenir' }).id,
+    )
+    expect(
+      [...listbox.querySelectorAll('.app-select__group')].map((group) => group.textContent),
+    ).toEqual(['Installed'])
+  })
+
+  it('is typed into where its value stands, at one list height', () => {
+    const { container } = render(<SearchableSelectHarness />)
+    const trigger = screen.getByRole('combobox', { name: 'Font' })
+    fireEvent.click(trigger)
+    const listbox = screen.getByRole('listbox', { name: 'Font' })
+    const height = listbox.style.height
+    expect(height).toBe('120px')
+
+    const search = screen.getByRole('searchbox', { name: 'Search fonts' }) as HTMLInputElement
+    expect(container.contains(search)).toBe(true)
+    expect(listbox.querySelector('input')).toBeNull()
+    expect(search.placeholder).toBe('Alpha Sans')
+    expect(container.querySelector('.app-select')?.className).toContain('is-searching')
+
+    fireEvent.change(search, { target: { value: 'brush' } })
+    expect(listbox.style.height).toBe(height)
+    // The hidden value carries the query, so the trigger keeps the field's width.
+    expect(trigger.querySelector('.app-select__value')?.textContent).toBe('brush')
+
+    fireEvent.mouseDown(search)
+    expect(screen.getByRole('listbox', { name: 'Font' })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Escape' })
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(trigger.textContent).toBe('Alpha Sans')
+  })
+
+  it('follows the keyboard with scrolling but leaves the list still under the pointer', () => {
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: scrollIntoView,
+    })
+    render(<SearchableSelectHarness />)
+    fireEvent.click(screen.getByRole('combobox', { name: 'Font' }))
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'center' })
+    scrollIntoView.mockClear()
+
+    fireEvent.mouseMove(screen.getByRole('option', { name: 'Delta Mono' }))
+    expect(screen.getByRole('option', { name: 'Delta Mono' }).className).toContain('is-active')
+    expect(scrollIntoView).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(screen.getByRole('searchbox', { name: 'Search fonts' }), {
+      key: 'ArrowUp',
+    })
+    expect(screen.getByRole('option', { name: 'Brush Script' }).className).toContain('is-active')
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
+    Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  })
+
+  it('sets a font sample beside each option that names one', () => {
+    render(
+      <AppSelect
+        ariaLabel="Font"
+        value="geist"
+        onChange={() => {}}
+        search={{ label: 'Search fonts' }}
+        options={[{ value: 'geist', label: 'Geist', sampleFont: 'var(--font-geist)' }]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('combobox', { name: 'Font' }))
+    const option = screen.getByRole('option', { name: 'Geist' })
+    expect(option.hasAttribute('data-sample')).toBe(true)
+    expect(option.style.getPropertyValue('--app-select-sample')).toBe('var(--font-geist)')
+    expect(option.textContent).toBe('Geist')
+  })
 })

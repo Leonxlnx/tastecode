@@ -2929,53 +2929,69 @@
     0 6px 18px -14px rgb(0 0 0 / 35%);
 }
 
-.app-select__search {
-  position: sticky;
+/* A searchable picker is typed into where its value stands: while open, a
+   field takes the value's place in the trigger, and the panel below holds only
+   the options, at one size while it filters. */
+.app-select.is-searching .app-select__value {
+  visibility: hidden;
+}
+
+.app-select__query {
+  position: absolute;
   z-index: 1;
-  top: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin-bottom: 3px;
-  padding: 5px 7px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-popup-item);
-  box-shadow: var(--chrome-inset-shadow);
-  color: var(--text-3);
-}
-
-.app-select__search:focus-within {
-  border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
-  color: var(--text-2);
-}
-
-.app-select__search svg {
-  flex: none;
-}
-
-.app-select__search input {
+  inset: 0;
   width: 100%;
   min-width: 0;
-  padding: 0;
+  padding: 0 28px 0 8px;
   background: none;
   border: 0;
   color: var(--text);
   font: inherit;
+  letter-spacing: inherit;
   outline: 0;
+  appearance: none;
 }
 
-.app-select__search input::placeholder {
+.app-select__query::placeholder {
   color: var(--text-3);
+  opacity: 1;
 }
 
-.app-select__search input::-webkit-search-cancel-button {
-  opacity: 0.65;
+.app-select__query::-webkit-search-cancel-button,
+.app-select__query::-webkit-search-decoration {
+  display: none;
+  appearance: none;
+}
+
+.app-select__listbox--search {
+  width: max(var(--app-select-trigger-w, 0px), 264px);
+  max-width: calc(100vw - 16px);
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
 }
 
 .app-select__options {
   display: grid;
+  align-content: start;
+}
+
+.app-select__listbox--search .app-select__options {
+  flex: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  scroll-padding-block: 4px;
+}
+
+.app-select__group {
+  display: flex;
+  align-items: flex-end;
+  height: 26px;
+  padding: 0 8px 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
 }
 
 .app-select__empty {
@@ -2984,6 +3000,15 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   text-align: center;
+}
+
+.app-select__listbox--search .app-select__options:has(> .app-select__empty) {
+  align-content: center;
+}
+
+.app-select__listbox--search .app-select__empty {
+  padding: 8px;
+  font-size: var(--t-sm);
 }
 
 .app-select__option {
@@ -3014,7 +3039,8 @@
   white-space: nowrap;
 }
 
-.app-select__option:not([aria-disabled='true']):is(.is-active, :hover) {
+/* One highlight: the pointer moves the active option, so hover needs no style of its own. */
+.app-select__option:not([aria-disabled='true']).is-active {
   background: var(--control-hover);
   color: var(--text);
 }
@@ -3031,6 +3057,53 @@
 .app-select__option[aria-disabled='true'] {
   cursor: default;
   opacity: 0.45;
+}
+
+.app-select__listbox--search .app-select__option {
+  align-items: baseline;
+  height: 28px;
+  min-height: 0;
+  padding: 0 8px;
+  line-height: 28px;
+  transition: none;
+}
+
+.app-select__listbox--search .app-select__option > svg {
+  align-self: center;
+}
+
+/* A font option carries a sample of itself, set in that font, before the check. */
+.app-select__option[data-sample]::after {
+  order: 1;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  content: 'Ag';
+  font-family: var(--app-select-sample);
+  font-size: 15px;
+}
+
+.app-select__option[data-sample] > span {
+  flex: 1;
+}
+
+.app-select__option[data-sample] > svg {
+  order: 2;
+}
+
+.app-select__option[data-sample]:not(.is-selected) {
+  padding-right: 31px;
+}
+
+.app-select__option[data-sample].is-active::after {
+  color: var(--text-2);
+}
+
+/* Offscreen rows skip layout and painting, so a long font list opens without
+   loading every face at once. */
+.app-select__listbox--search .app-select__option[data-sample] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
 }
 
 /* ---------- buttons ---------- */
