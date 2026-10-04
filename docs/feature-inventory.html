@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 tested 0ccdb67d · main 6ac40ec1 · dashboard unreleased</span>
+        <span class="meta">2026-10-04 nightly synchronization · main 86d13b61</span>
       </div>
     </div>
 
@@ -1075,14 +1075,14 @@
         website references and 316 WebPs above are unchanged; the combined bundle has 372 references
         (344 paired) and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
         passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is deeply JSON-equal
-        to the private import after formatting; the other 401 files are byte-identical. All four
-        local gates pass at 0ccdb67d: lint, typecheck, build, and 4,432 tests passed, 18 skipped,
-        zero failed, including 232 design-agent tests. Thirty-six focused cases across nine provider
-        IDs cover 18 synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The
-        isolated browser/API smoke passed: two unsupported Design attempts made zero API POSTs or
-        persisted Design runs, ordinary follow-ups retained context and model, the idle queue was
-        empty, and no JavaScript exceptions occurred. Live vision-model, packaged Electron, macOS
-        and real-keyring acceptance remain unverified.
+        to the private import after formatting; the other 401 files are byte-identical. Prior-source
+        verification passed all four local gates at 0ccdb67d: lint, typecheck, build, and 4,432
+        tests passed, 18 skipped, zero failed, including 232 design-agent tests. Thirty-six focused
+        cases across nine provider IDs cover 18 synthetic-vision flows and 18 capability
+        rejections/ordinary follow-ups. The isolated browser/API smoke passed: two unsupported
+        Design attempts made zero API POSTs or persisted Design runs, ordinary follow-ups retained
+        context and model, the idle queue was empty, and no JavaScript exceptions occurred. Live
+        vision-model, packaged Electron, macOS and real-keyring acceptance remain unverified.
       </p>
 
       <section id="thread">
@@ -1785,10 +1785,11 @@
               ><input type="checkbox" /><span
                 >General section: a plan of the window beside a four-line legend
                 <span class="d"
-                  >Sidebar, Terminal and Model picker are two-word choices; the Inbox choice opens a
-                  logarithmic settle scale from 1 to 90 days or never. The plan redraws each choice
-                  as it changes — chats regroup, settle past the fold, the terminal moves, the
-                  picker opens — and lights the part the focused line decides</span
+                  >Sidebar, Terminal and Model picker are two-word choices, and the terminal starts
+                  on the right until moved; the Inbox choice opens a logarithmic settle scale from 1
+                  to 90 days or never. The plan redraws each choice as it changes — chats regroup,
+                  settle past the fold, the terminal moves, the picker opens — and lights the part
+                  the focused line decides</span
                 ></span
               ></label
             >
@@ -1927,7 +1928,7 @@
                 >Ten compact sections with flat selection states
                 <span class="d"
                   >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP,
-                  Skills, Data &amp; privacy, About</span
+                  Skills, Data &amp; privacy, About; Settings opens on General</span
                 ></span
               ></label
             >
@@ -1935,10 +1936,25 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name, a pixel avatar generated from the name
-                (deterministic 8×8 sprite, curated palettes, hash-picked symmetry and ground
-                pattern) and an uploaded PNG, JPEG, or WebP photo that replaces it; Settings › Debug
-                has an avatar generator lab for previewing names at every shipped size</span
+                >Profile: one coin, its two faces the two pictures
+                <span class="d"
+                  >The seal on one face is read letter by letter from the renderer-local name, or
+                  from any word kept with Strike from a word (typed or rolled with the die,
+                  previewed live, kept only on Keep this seal; Back to your name returns to the name
+                  in one click): the first letter picks the colour, a vowel at the end a light
+                  ground, the letter count the symmetry, and each character lays one tile (vowels in
+                  the second colour, A–M in the first, the rest a gap). A small coin-shaped "?"
+                  turns the coin into its own explanation: the slice that repeats carries the
+                  letters that laid each tile, the rest steps back, and four notes tied to the rim
+                  read the colour, ground, symmetry and tile rules for the word; words without
+                  letters are hashed. The seal is minted when the page opens, re-struck from the
+                  centre out once typing pauses, and shown in the sidebar too. The other face holds
+                  a PNG, JPEG or WebP photo up to 1 MB: Turn over for a photo flips the coin and
+                  opens the file picker, dragging a photo onto the page turns it to the empty face,
+                  Turn back returns to the seal and keeps the photo for this session. Brushing the
+                  cursor across the coin nudges it on a damped spring. Settings › Debug has an
+                  avatar generator lab for previewing names at every shipped size</span
+                ></span
               ></label
             >
           </li>
@@ -2051,7 +2067,9 @@
                 background check failures stay out of the sidebar and retry with backoff, and an
                 overdue check runs after the computer wakes. After the last byte the update shows
                 Preparing instead of a frozen 100 percent while it is verified and handed to the
-                system updater</span
+                system updater. Regression tests inject EBUSY for locked leftovers and EACCES for
+                denied writes, preserving real download and stream-error checks across platforms
+                (#1394)</span
               ></label
             >
           </li>
@@ -2092,9 +2110,10 @@
                   nested guest webviews are disabled, renderer error reports are bounded, and
                   project-file reveals check resolved paths; spawned commands use a private per-user
                   runtime directory on POSIX and exclude current-directory executable lookup on
-                  Windows; media access requires explicit audio-only details from the owning main
-                  renderer and main frame, with malformed, mixed, unknown, camera and subframe
-                  requests denied in both Chromium checks and permission requests</span
+                  Windows; Windows child-process cleanup waits for Node to observe exit after
+                  taskkill succeeds (#1394); media access requires explicit audio-only details from
+                  the owning main renderer and main frame, with malformed, mixed, unknown, camera
+                  and subframe requests denied in both Chromium checks and permission requests</span
                 ></span
               ></label
             >
@@ -2234,16 +2253,15 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside the main source snapshot named above.
+        alongside the main source snapshot named above. Final local verification of this updated
+        synchronization is in progress.
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-        passed all four local gates at 30f75360 (4,382 tests passed, zero failed, 18 skipped) and
-        isolated renderer/API restart checks. Its Windows cleanup corrections in
-        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> and standalone API
-        connection contract in
-        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> are integrated into
-        the dashboard source verified above. Pending notes remain separate from the implemented
-        checklist. Human contracts/security review and packaged Windows/macOS verification remain
-        pending. Ticks live in your browser's local storage, nothing is sent anywhere.
+        has human approval and awaits merge after verification. The Windows cleanup corrections in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> have landed on main;
+        the standalone API connection contract in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> has landed on
+        nightly. Packaged Windows/macOS verification remains pending. Ticks live in your browser's
+        local storage, nothing is sent anywhere.
       </footer>
     </div>
 

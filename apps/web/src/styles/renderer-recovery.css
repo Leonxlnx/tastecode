@@ -28,7 +28,7 @@
 .renderer-recovery button {
   padding: 10px 16px;
   border: 1px solid currentColor;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   background: var(--bg);
   color: inherit;
   cursor: pointer;

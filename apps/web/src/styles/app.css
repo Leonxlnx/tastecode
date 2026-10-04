@@ -674,7 +674,7 @@
   overflow-y: auto;
   background: var(--bg-rail);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-dialog);
   box-shadow: var(--shadow-modal);
 }
 
@@ -800,7 +800,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
@@ -1832,7 +1832,7 @@
   place-items: center;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--queue-action);
   cursor: grab;
 }
@@ -1991,7 +1991,7 @@
   padding: 3px 5px;
   background: transparent;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
@@ -2140,7 +2140,7 @@
   padding: 3px 8px 3px 7px;
   max-width: 100%;
   background: var(--surface-2);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font-size: var(--t-sm);
 }
@@ -2202,7 +2202,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: calc(var(--r-card) - 1px);
+  border-radius: calc(var(--r-xl) - 1px);
 }
 
 .attachment-preview img[hidden] {
@@ -2220,7 +2220,7 @@
   overflow: hidden;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-card);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
@@ -2313,7 +2313,7 @@
   flex: none;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
@@ -3061,7 +3061,7 @@
   font: inherit;
   font-size: var(--t-sm);
   padding: 4px 8px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
 }
 
 .ghost:hover {

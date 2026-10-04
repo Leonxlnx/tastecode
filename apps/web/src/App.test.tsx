@@ -609,6 +609,12 @@ function openSettings() {
   fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
 }
 
+async function openProviderSettings() {
+  openSettings()
+  const settings = await screen.findByRole('dialog', { name: 'Settings' })
+  fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
+}
+
 function cachedCodexChoice(): ModelChoice {
   return {
     key: 'codex:gpt-6.1-sol',
@@ -3552,7 +3558,7 @@ describe('new chats', () => {
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
-    openSettings()
+    await openProviderSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await within(screen.getByRole('dialog', { name: 'Settings' })).findByRole('button', {
       name: 'Sign in',
@@ -3609,7 +3615,7 @@ describe('new chats', () => {
       )
 
       render(<App />)
-      openSettings()
+      await openProviderSettings()
       await screen.findByText('Claude Code')
       fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
 
@@ -6436,7 +6442,7 @@ describe('new chats', () => {
       const actions = document.querySelector<HTMLElement>('.rail__actions')!
       fireEvent.click(within(actions).getByRole('button', { name: 'New chat' }))
 
-      openSettings()
+      await openProviderSettings()
       const defaults = await within(
         await screen.findByRole('dialog', { name: 'Settings' }),
       ).findByRole('group', { name: 'Codex defaults' })
@@ -7901,6 +7907,7 @@ describe('global shortcuts', () => {
   })
 
   it('toggles the terminal from the composer without changing its draft', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -7921,6 +7928,7 @@ describe('global shortcuts', () => {
   })
 
   it('routes the terminal shortcut to the selected right sidebar terminal', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -7959,6 +7967,7 @@ describe('global shortcuts', () => {
   })
 
   it('opens the bottom terminal before a chat starts', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     await screen.findByRole('button', { name: /^New session,/ })

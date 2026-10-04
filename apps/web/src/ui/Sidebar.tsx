@@ -58,7 +58,7 @@ import {
   subscribeAppHaptics,
 } from '../haptics.js'
 import { sessionSourcePresentation } from '../provider-presentation.js'
-import type { ProfileIdentityPreferences } from '../profile-preferences.js'
+import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
@@ -904,7 +904,7 @@ function SidebarComponent(props: {
                   {props.profileIdentity?.avatarDataUrl ? (
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
                   ) : (
-                    <GeneratedAvatar name={profileDisplayName} />
+                    <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
                   )}
                 </span>
                 <span className="account__name">{profileDisplayName}</span>

@@ -206,7 +206,7 @@
   left: 0;
   padding: 0 13px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   color: var(--text-2);
   font-size: var(--t-sm);
 }

@@ -159,23 +159,28 @@
   --t-xl: 20px;
   --t-2xl: 26px;
 
-  /* Corner scale: the 34px composer controls are the visual anchor at 10px.
-     Keep roughly the same 5:17 radius-to-height ratio as surfaces grow, then
-     cap large surfaces at 20px. The steps map to micro details, 25-29px rows,
-     30-36px controls, 37-44px controls, 45-60px panels, and 61px+ surfaces. */
+  /* Corner scale, tuned by eye against the prompt bar: its 32px controls sit at
+     10px and the bar itself at 20px. Smaller things keep about the same
+     roundness (a radius near a third of their height); larger surfaces grow
+     more slowly and stop at 20px. The names are roles, not an ordered ramp:
+     xs marks and bars; sm swatches, buttons up to 20px and segments inside an
+     md track; md 22-30px rows and controls; xl 32-40px controls like the
+     prompt bar's own; lg popups, blocks and cards, concentric around md rows
+     with 3px of padding; card and panel large cards and floating panels;
+     dialog and 2xl modal dialogs and the prompt bar. */
   --r-xs: 2px;
-  --r-sm: 3px;
-  --r-md: 5px;
-  --r-lg: 8px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
   --r-xl: 10px;
   --r-2xl: 20px;
-  --r-card: 12px;
+  --r-card: 16px;
   --r-panel: 16px;
   --r-dialog: 20px;
   /* The prompt bar and everything docked to it share one outer corner. 10px
      controls sit ~10px inside it, so 20px keeps the two curves concentric. */
   --r-composer: var(--r-2xl);
-  /* Compact rows and controls use 5px corners; floating panels use 8px. */
+  /* Popup rows use 8px corners; the popup around them uses 12px. */
   --r-popup-item: var(--r-md);
   --r-popup: var(--r-lg);
   --r-pill: 999px;

@@ -21,7 +21,7 @@
   padding: 6px 8px 8px 12px;
   background: var(--menu-bg);
   border-color: var(--menu-line);
-  border-radius: var(--r-xl);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-flyout);
   color: var(--text-2);
 }

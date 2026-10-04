@@ -605,7 +605,7 @@
   width: 20px;
   height: 20px;
   background: color-mix(in srgb, currentColor 12%, transparent);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: inherit;
   opacity: 0.8;
   transition:
