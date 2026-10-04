@@ -116,7 +116,7 @@ afterEach(() => {
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
-  writeTerminalPlacement('bottom')
+  writeTerminalPlacement('workspace')
   localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
@@ -147,7 +147,7 @@ describe('settings viewport layout', () => {
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
     expect(screen.getByRole('radiogroup', { name: 'Model picker' })).toBeTruthy()
-    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     expect(screen.queryByRole('radiogroup', { name: 'Model picker' })).toBeNull()
@@ -179,13 +179,13 @@ describe('settings viewport layout', () => {
     expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
   })
 
-  it('lets the terminal shortcut target the right sidebar', () => {
+  it('lets the terminal shortcut target the bottom panel', () => {
     renderSettings({ initialSection: 'workflows' })
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Bottom' }))
 
-    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
-    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
+    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
   })
 })
 
