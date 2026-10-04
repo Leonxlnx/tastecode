@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { captureCli } from './cli.js'
 import { EventEmitter } from 'node:events'
 import {
@@ -214,22 +214,40 @@ describe('readNdjson', () => {
 })
 
 describe('killTree', () => {
-  it('kills the real process behind the shim, not only the shim', async () => {
-    // The grandchild heartbeats into a temp file; if only the cmd.exe shim
-    // died (the pre-fix Windows behavior), the heartbeat keeps ticking.
-    const beat = path.join(os.tmpdir(), `harness-killtree-${Date.now()}.txt`)
-    const script = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
+  let child: ReturnType<typeof spawnCli> | undefined
+  let workspace: string | undefined
+  let beat: string
+
+  beforeEach(async () => {
+    workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-killtree-'))
+    beat = path.join(workspace, 'heartbeat.txt')
+    const heartbeat = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
       beat,
     )},String(Date.now())),150)`
-    const child = spawnCli('node', ['-e', script])
+    // A real grandchild is required even when spawnCli resolves node.exe directly.
+    const wrapper = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(
+      heartbeat,
+    )}],{stdio:'ignore',windowsHide:true})`
+    child = spawnCli(process.execPath, ['-e', wrapper])
     await waitFor(() => existsSync(beat), 5_000)
+  })
 
-    killTree(child)
-    await sleep(700)
+  afterEach(async () => {
+    try {
+      if (child) await killTree(child)
+    } finally {
+      child = undefined
+      if (workspace) rmSync(workspace, { recursive: true, force: true })
+      workspace = undefined
+    }
+  })
+
+  it('kills the heartbeat grandchild, not only its parent', async () => {
+    await killTree(child!)
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true)
     const afterKill = readFileSync(beat, 'utf8')
     await sleep(700)
     expect(readFileSync(beat, 'utf8')).toBe(afterKill)
-    rmSync(beat, { force: true })
   })
 })
 
