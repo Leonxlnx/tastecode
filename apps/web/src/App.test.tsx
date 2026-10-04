@@ -1419,6 +1419,8 @@ describe('web client', () => {
   )
 
   it('keeps a visibility edit made while live discovery is pending', async () => {
+    // Load Settings first so this test measures discovery ordering.
+    await import('./ui/Settings.js')
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem(
       'harness.modelCatalog.v1',
@@ -1436,8 +1438,8 @@ describe('web client', () => {
 
     render(<App />)
     openSettings()
-    await act(() => vi.dynamicImportSettled())
-    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(await within(settings).findByRole('button', { name: 'Models' }))
     fireEvent.click(
       await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
     )
