@@ -290,12 +290,19 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-30 main dc2b995fb · 0.1.2 source preparation</span>
+        <span class="meta">2026-10-04 main 6c0d3061 · 0.1.2 source preparation</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
+            >Windows cleanup verification (#1394)</a
+          >: child-process cleanup waits for Node to observe exit after taskkill succeeds. Updater
+          tests inject EBUSY and EACCES to verify locked leftovers and denied writes without relying
+          on platform-specific directory permissions.
+        </p>
         <p>
           Chat details open and close with matched transform motion. Scroll position follows the
           settled layout and avoids false jump controls.
