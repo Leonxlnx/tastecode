@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useId, useRef, useState, type CSSProperties } from 'react'
 import type { ProviderId, ProviderUpdate } from '@harness/contracts'
 import {
   IconArrowUp as ArrowUp,
@@ -16,11 +16,13 @@ import { NoticePresence } from './NoticePresence.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { IconMorph } from './IconMorph.js'
 import { SkeletonCode, SkeletonStatus } from './Skeleton.js'
+import { CountReel, VersionReel, VersionTarget } from './VersionReel.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
 )
 const DISMISSED_KEY = 'harness.providerUpdates.dismissed'
+let stylesLoaded = false
 
 function readDismissed(): Record<string, string> {
   try {
@@ -91,6 +93,22 @@ export function ProviderUpdateNotice(props: {
     )
   })
   const busy = entries.some((entry) => isBusy(state.operations[entry.provider]))
+  // Releases are rare, so their styles stay out of the startup sheet and the
+  // notice waits for them rather than flashing unstyled.
+  const [styled, setStyled] = useState(stylesLoaded)
+  const wanted = entries.length > 0
+  useEffect(() => {
+    if (!wanted || styled) return
+    let live = true
+    const done = () => {
+      stylesLoaded = true
+      if (live) setStyled(true)
+    }
+    import('../styles/provider-update-notice.css').then(done, done)
+    return () => {
+      live = false
+    }
+  }, [wanted, styled])
   const dismiss = () => {
     const next = { ...dismissed }
     for (const entry of entries) if (entry.latestVersion) next[entry.provider] = entry.latestVersion
@@ -103,11 +121,14 @@ export function ProviderUpdateNotice(props: {
       /* Keep the session preference when storage is unavailable. */
     }
   }
+  const waiting = entries.filter(
+    (entry) => state.operations[entry.provider]?.phase !== 'succeeded',
+  ).length
   return (
     <NoticePresence
       className="notice notice--provider-update"
       role="status"
-      visible={entries.length > 0 && !props.suppressed}
+      visible={styled && entries.length > 0 && !props.suppressed}
       onDismiss={dismiss}
       autoDismissPaused={busy}
       dismissKey={JSON.stringify(
@@ -118,24 +139,30 @@ export function ProviderUpdateNotice(props: {
         ]),
       )}
     >
-      <div className="provider-toast__header">
-        <span>
-          <ArrowUp size={14} aria-hidden />
-          Provider updates
-        </span>
-        <button
-          className="ghost icon-button"
-          type="button"
-          aria-label="Dismiss provider updates"
-          onClick={dismiss}
-        >
-          <X size={14} aria-hidden />
-        </button>
-      </div>
-      <div className="provider-toast__list">
-        {entries.map((entry) => (
+      <div className="update-slip">
+        <div className="update-slip__head">
+          {waiting ? (
+            <span>
+              <CountReel value={waiting} />
+              <span className="visually-hidden">{waiting}</span>
+              {waiting === 1 ? ' update' : ' updates'}
+            </span>
+          ) : (
+            <span>Up to date</span>
+          )}
+          <button
+            className="ghost icon-button"
+            type="button"
+            aria-label="Dismiss provider updates"
+            onClick={dismiss}
+          >
+            <X size={13} aria-hidden />
+          </button>
+        </div>
+        {entries.map((entry, index) => (
           <ProviderUpdateItem
             key={entry.provider}
+            index={index}
             update={entry}
             operation={state.operations[entry.provider]}
             transport={props.transport}
@@ -148,6 +175,7 @@ export function ProviderUpdateNotice(props: {
 }
 
 function ProviderUpdateItem(props: {
+  index: number
   update: ProviderUpdate
   operation: UpdateOperation | undefined
   transport: Transport
@@ -159,71 +187,99 @@ function ProviderUpdateItem(props: {
   const busy = isBusy(operation)
   const succeeded = operation?.phase === 'succeeded'
   const failed = operation?.phase === 'failed'
+  // The pair the wheels turn between is fixed when the update starts: the
+  // check that confirms it already reports the new version as installed.
+  const [versions, setVersions] = useState({
+    from: update.currentVersion,
+    to: update.latestVersion,
+  })
+  if (
+    !busy &&
+    !succeeded &&
+    (versions.from !== update.currentVersion || versions.to !== update.latestVersion)
+  )
+    setVersions({ from: update.currentVersion, to: update.latestVersion })
+  const from = versions.from ?? versions.to
+  const to = versions.to ?? versions.from
   const key = updateKey(update.provider)
   const hasLog = Boolean(installState(key))
   const status = busy
     ? operation?.phase === 'verifying'
       ? 'Checking the new version…'
-      : 'Updating…'
+      : to
+        ? `Updating to ${to}…`
+        : 'Updating…'
     : succeeded
       ? `Updated to ${update.currentVersion}`
       : failed
         ? 'Update failed'
         : `${update.currentVersion} → ${update.latestVersion}`
   return (
-    <div className="provider-toast__item" aria-label={`${update.displayName} update`}>
-      <div className="provider-toast__row">
-        <span className="provider-toast__mark">
-          <ProviderIcon mark={providerMark(update.provider)} size={18} />
-        </span>
-        <div className="provider-toast__copy">
-          <span className="provider-toast__name">{update.displayName}</span>
-          <span className="provider-toast__status" data-failed={failed || undefined}>
-            <IconMorph active={busy ? 1 : succeeded ? 2 : failed ? 3 : 0}>
-              <ArrowUp size={12} aria-hidden />
-              <Loader className="provider-update-spinner" size={12} aria-hidden />
-              <Check size={12} aria-hidden />
-              <X size={12} aria-hidden />
-            </IconMorph>
-            {status}
-          </span>
-        </div>
-        {!busy && !succeeded ? (
-          update.canUpdate ? (
-            <button className="ghost provider-toast__action" type="button" onClick={props.onStart}>
-              {failed ? 'Retry' : 'Update'}
-            </button>
-          ) : (
-            <a
-              className="ghost provider-toast__action"
-              href={update.updateUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Update guide
-              <ArrowUpRight size={12} aria-hidden />
-            </a>
-          )
+    <div
+      className="update-slip__item"
+      aria-label={`${update.displayName} update`}
+      data-phase={operation?.phase ?? 'available'}
+      style={{ '--row': props.index } as CSSProperties}
+    >
+      <span className="update-slip__name">
+        <ProviderIcon mark={providerMark(update.provider)} size={14} />
+        {update.displayName}
+      </span>
+      <span className="update-slip__versions">
+        {from && to ? (
+          <>
+            <VersionReel
+              from={from}
+              to={to}
+              turn={busy ? 'turning' : succeeded ? 'turned' : 'rest'}
+            />
+            <span className="update-slip__arrow" aria-hidden>
+              →
+            </span>
+            <VersionTarget from={from} to={to} />
+          </>
         ) : null}
-      </div>
-      {operation?.error ? (
-        <p className="provider-toast__error" role="alert">
-          {operation.error}
-        </p>
-      ) : null}
-      {hasLog ? (
-        <button
-          className="ghost provider-toast__details"
-          type="button"
-          aria-expanded={details}
-          aria-controls={detailsId}
-          onClick={() => setDetails(!details)}
-        >
-          {details ? 'Hide details' : 'Details'}
-        </button>
+      </span>
+      <span className="visually-hidden">{status}</span>
+      <span className="update-slip__action">
+        {busy || succeeded ? (
+          <span className="update-slip__state" aria-hidden>
+            {operation?.phase === 'verifying' ? 'Checking' : busy ? 'Updating' : 'Updated'}
+          </span>
+        ) : update.canUpdate ? (
+          <button className="update-slip__button" type="button" onClick={props.onStart}>
+            {failed ? 'Retry' : 'Update'}
+          </button>
+        ) : (
+          <a
+            className="update-slip__link"
+            href={update.updateUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Update guide
+            <ArrowUpRight size={12} aria-hidden />
+          </a>
+        )}
+      </span>
+      {operation?.error || hasLog ? (
+        <span className="update-slip__note">
+          {operation?.error ? <span role="alert">{operation.error}</span> : null}
+          {hasLog ? (
+            <button
+              className="ghost"
+              type="button"
+              aria-expanded={details}
+              aria-controls={detailsId}
+              onClick={() => setDetails(!details)}
+            >
+              {details ? 'Hide details' : 'Details'}
+            </button>
+          ) : null}
+        </span>
       ) : null}
       {details && hasLog ? (
-        <div id={detailsId} className="provider-toast__terminal">
+        <div id={detailsId} className="update-slip__terminal">
           <Suspense
             fallback={
               <SkeletonStatus label="Opening details…" className="install-terminal">

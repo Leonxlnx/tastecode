@@ -52,7 +52,7 @@ describe('provider update toast', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
     const loading = (await screen.findByText('Opening details…')).closest('[role="status"]')!
     expect(loading.getAttribute('aria-busy')).toBe('true')
-    expect(loading.closest('.provider-toast__terminal')).toBeTruthy()
+    expect(loading.closest('.update-slip__terminal')).toBeTruthy()
     expect(loading.classList.contains('install-terminal')).toBe(true)
     expect(loading.querySelectorAll('.skeleton-code__line')).toHaveLength(5)
     expect(loading.querySelector('.skeleton-code__gutter')).toBeNull()
@@ -80,7 +80,7 @@ describe('provider update toast', () => {
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     const notice = within(view.container.querySelector('.notice') ?? view.container)
     fireEvent.click(await notice.findByRole('button', { name: 'Update' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.filter((request) => request.method === 'providers.update'),
     ).toHaveLength(1)
@@ -114,7 +114,7 @@ describe('provider update toast', () => {
     )
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
     expect(view.container.querySelector('.notice')).toBeNull()
@@ -130,7 +130,7 @@ describe('provider update toast', () => {
     )
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
     expect(view.container.querySelector('.notice')).toBeNull()
@@ -164,12 +164,12 @@ describe('provider update toast', () => {
       </>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
-    expect(screen.queryByText('Updating…')).toBeNull()
+    expect(screen.queryByText('Updating to 0.11.0…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Update in progress' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     updated = true
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Updated to 0.11.0')).toBeTruthy()
@@ -198,13 +198,13 @@ describe('provider update toast', () => {
       </>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     view.rerender(
       <>
         <ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />
       </>,
     )
-    expect(screen.getByText('Updating…')).toBeTruthy()
+    expect(screen.getByText('Updating to 0.11.0…')).toBeTruthy()
     updated = true
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Updated to 0.11.0')).toBeTruthy()
@@ -216,7 +216,7 @@ describe('provider update toast', () => {
     )
     render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 }))
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
@@ -225,7 +225,7 @@ describe('provider update toast', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     expect(await screen.findByText('Update output')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.filter((request) => request.method === 'providers.update'),
     ).toHaveLength(2)
@@ -238,7 +238,7 @@ describe('provider update toast', () => {
     )
     render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Update failed')).toBeTruthy()
     expect(onUpdated).not.toHaveBeenCalled()
@@ -272,7 +272,7 @@ describe('provider update toast', () => {
     expect(document.querySelectorAll('.notice--provider-update')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: 'Update' })).toHaveLength(2)
     fireEvent.click(within(grok).getByRole('button', { name: 'Update' }))
-    expect(await within(grok).findByText('Updating…')).toBeTruthy()
+    expect(await within(grok).findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.find((request) => request.method === 'providers.update')?.params,
     ).toMatchObject({ provider: 'grok' })
