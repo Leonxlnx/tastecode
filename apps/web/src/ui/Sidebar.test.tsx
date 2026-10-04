@@ -667,22 +667,29 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    const deleteButton = await screen.findByRole('button', { name: 'Delete chats' })
+    const deleteDialog = await screen.findByRole('alertdialog', {
+      name: 'Delete 2 chats in TasteCode?',
+    })
+    expect(deleteDialog.textContent).toContain('/work/harness')
+    const deleteButton = screen.getByRole('button', { name: 'Delete 2 chats' })
     expect(deleteButton.classList.contains('is-destructive')).toBe(true)
     fireEvent.click(deleteButton)
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
+    const removeDialog = await screen.findByRole('alertdialog', {
+      name: 'Remove TasteCode from the sidebar?',
+    })
+    expect(removeDialog.closest('.sheet')?.parentElement).toBe(document.body)
     expect(
-      await screen.findByText(
-        'This only removes the project from the sidebar. Its folder and chats stay untouched.',
+      screen.getByText(
+        'The folder and its 2 chats stay where they are. Add the folder again to bring them back.',
       ),
     ).toBeTruthy()
-    const removeDialog = screen.getByRole('alertdialog', { name: 'Remove project?' })
-    expect(removeDialog.closest('.sheet')?.parentElement).toBe(document.body)
-    const removeButton = screen.getByRole('button', { name: 'Remove project' })
-    expect(removeButton.classList.contains('is-destructive')).toBe(true)
+    const removeButton = screen.getByRole('button', { name: 'Remove' })
+    // Only the sidebar entry goes, so removal is not dressed as destructive.
+    expect(removeButton.classList.contains('is-destructive')).toBe(false)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
