@@ -209,7 +209,7 @@
   align-self: flex-end;
   height: 34px;
   margin-bottom: 27px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
 }
 
 .thread-skeleton__reply {

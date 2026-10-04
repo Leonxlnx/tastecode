@@ -155,7 +155,7 @@
   padding: 0 10px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   transition: border-color var(--dur-fast) var(--ease-out);
@@ -187,7 +187,7 @@
   padding: 0 9px;
   background: var(--chrome-raised);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-shadow);
   color: var(--text-3);
 }
@@ -476,7 +476,7 @@
   width: 18px;
   height: 18px;
   margin-left: auto;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: inherit;
 }
 
@@ -851,7 +851,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: inherit;
   cursor: pointer;
 }
@@ -1646,7 +1646,7 @@
   overflow: hidden;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1728,7 +1728,7 @@
   padding: 0 9px 0 11px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--composer-action-shadow);
   color: var(--text-2);
   font: inherit;
@@ -2540,7 +2540,7 @@
   overflow: auto;
   background: var(--surface);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-card);
+  border-radius: var(--r-dialog);
   box-shadow:
     var(--shadow-modal),
     inset 0 1px var(--chrome-highlight);

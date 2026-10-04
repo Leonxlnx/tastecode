@@ -479,7 +479,7 @@
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: var(--text-3);
 }
 
@@ -970,7 +970,7 @@
   padding: 0 3px 0 10px;
   background: var(--chrome-recessed);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: var(--text-3);
 }
 
@@ -1195,7 +1195,7 @@
   margin: 4px auto 12px;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }

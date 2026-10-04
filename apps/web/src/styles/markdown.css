@@ -127,7 +127,7 @@
 /* Inline code sits inside a line of prose, so it must not change line height. */
 .md :not(pre) > code {
   background: var(--surface-2);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 1px 5px;

@@ -38,13 +38,13 @@ export const GeneratedAvatar = memo(function GeneratedAvatar(props: {
 
 // Ring bands from the outside in, leaving a hairline between rings and a
 // small angular gap between tiles so they read as set stones, not a pie.
-const RING_BANDS = [
+export const RING_BANDS = [
   [38, 48],
   [26, 35],
   [14, 23],
 ] as const
-const CORE_RADIUS = 10
-const TILE_GAP_DEGREES = 3
+export const CORE_RADIUS = 10
+export const TILE_GAP_DEGREES = 3
 
 function Mandala({ avatar }: { avatar: MandalaAvatar }) {
   const span = 360 / avatar.sectors
@@ -76,7 +76,7 @@ function Mandala({ avatar }: { avatar: MandalaAvatar }) {
 }
 
 /** Angles in degrees, clockwise from twelve o'clock. */
-function annularSector(r0: number, r1: number, a0: number, a1: number): string {
+export function annularSector(r0: number, r1: number, a0: number, a1: number): string {
   const point = (r: number, degrees: number) => {
     const radians = (degrees * Math.PI) / 180
     return `${(CENTER + r * Math.sin(radians)).toFixed(2)} ${(CENTER - r * Math.cos(radians)).toFixed(2)}`

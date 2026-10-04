@@ -756,7 +756,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('workflows')
   const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [pullRequestSetupRefreshRevision, setPullRequestSetupRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -4605,7 +4605,7 @@ export function App() {
     },
     [selectSession],
   )
-  const openSettings = useCallback((section: SettingsSection = 'providers') => {
+  const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(section)
     setSettingsOpen(true)
   }, [])
@@ -4751,7 +4751,7 @@ export function App() {
       },
       settings: () => {
         setPaletteScope(null)
-        openSettings('providers')
+        openSettings()
       },
       keybindings: () => {
         setPaletteScope(null)

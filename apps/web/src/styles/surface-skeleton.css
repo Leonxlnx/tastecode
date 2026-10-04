@@ -440,7 +440,7 @@
   overflow: hidden;
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-panel);
   box-shadow: var(--shadow-modal);
 }
 

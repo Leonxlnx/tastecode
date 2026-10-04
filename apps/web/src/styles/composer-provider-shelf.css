@@ -33,7 +33,7 @@
   min-height: 26px;
   padding: 3px 7px;
   border: 1px solid color-mix(in oklab, var(--error) 20%, transparent);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   background: color-mix(in oklab, var(--error) 7%, transparent);
   color: inherit;
   font: inherit;
@@ -82,7 +82,7 @@
   height: 26px;
   padding: 0;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   background: transparent;
   color: inherit;
   cursor: pointer;
