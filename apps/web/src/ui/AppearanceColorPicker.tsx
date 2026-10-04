@@ -7,9 +7,7 @@ import {
   type CSSProperties,
   type PointerEvent,
 } from 'react'
-import { IconCheck, IconX } from '@tabler/icons-react'
 import {
-  colorForeground,
   hexToHsv,
   hsvToHex,
   normalizeHexColor,
@@ -37,8 +35,8 @@ export function AppearanceColorPicker<Value extends string>(props: {
       const popup = panel.current
       if (!bounds || !popup) return
       const { width, height } = popup.getBoundingClientRect()
-      const below = bounds.bottom + 8
-      const top = below + height <= window.innerHeight - 8 ? below : bounds.top - height - 8
+      const below = bounds.bottom + 6
+      const top = below + height <= window.innerHeight - 8 ? below : bounds.top - height - 6
       popup.style.left = `${Math.max(8, Math.min(bounds.right - width, window.innerWidth - width - 8))}px`
       popup.style.top = `${Math.max(8, Math.min(top, window.innerHeight - height - 8))}px`
     }
@@ -47,7 +45,10 @@ export function AppearanceColorPicker<Value extends string>(props: {
     if (panel.current) observer.observe(panel.current)
     window.addEventListener('resize', place)
     document.addEventListener('scroll', place, true)
-    panel.current?.querySelector<HTMLInputElement>('input')?.focus({ preventScroll: true })
+    const chosen =
+      panel.current?.querySelector<HTMLElement>("[aria-pressed='true']") ??
+      panel.current?.querySelector('button')
+    chosen?.focus({ preventScroll: true })
     return () => {
       observer.disconnect()
       window.removeEventListener('resize', place)
@@ -61,20 +62,16 @@ export function AppearanceColorPicker<Value extends string>(props: {
         ref={trigger}
         type="button"
         className="appearance-color"
-        style={
-          {
-            '--appearance-color': props.color,
-            '--appearance-color-foreground': colorForeground(props.color),
-            '--control-pressed': props.color,
-          } as CSSProperties
-        }
+        style={{ '--appearance-color': props.color } as CSSProperties}
         popoverTarget={id}
         aria-label={`${props.label}: ${props.color}`}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
         <span className="appearance-color__swatch" aria-hidden />
-        <span>{props.color}</span>
+        <span>
+          {props.options.find((option) => option.value === props.value)?.label ?? props.color}
+        </span>
       </button>
       <div
         ref={panel}
@@ -102,15 +99,7 @@ export function AppearanceColorPicker<Value extends string>(props: {
           }
         }}
       >
-        {open ? (
-          <ColorPickerContent
-            {...props}
-            close={() => {
-              panel.current?.hidePopover()
-              trigger.current?.focus()
-            }}
-          />
-        ) : null}
+        {open ? <ColorPickerContent {...props} /> : null}
       </div>
     </>
   )
@@ -122,7 +111,6 @@ function ColorPickerContent<Value extends string>(props: {
   color: HexColor
   options: readonly { value: Value; label: string; color: HexColor }[]
   onChange: (value: Value | HexColor) => void
-  close: () => void
 }) {
   const [hsv, setHsv] = useState(() => hexToHsv(props.color))
   const [draft, setDraft] = useState<string>(props.color)
@@ -175,12 +163,20 @@ function ColorPickerContent<Value extends string>(props: {
 
   return (
     <>
-      <header className="color-picker__header">
-        <span>{props.label}</span>
-        <button type="button" aria-label="Close color picker" onClick={props.close}>
-          <IconX size={14} aria-hidden />
-        </button>
-      </header>
+      <p className="color-picker__label">{props.label}</p>
+      <div className="color-picker__presets" role="group" aria-label={`${props.label} presets`}>
+        {props.options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            aria-label={option.label}
+            aria-pressed={props.value === option.value}
+            title={option.label}
+            style={{ backgroundColor: option.color }}
+            onClick={() => props.onChange(option.value)}
+          />
+        ))}
+      </div>
       <div
         className="color-picker__field"
         style={{ backgroundColor: `hsl(${hsv.h} 100% 50%)` }}
@@ -267,21 +263,6 @@ function ColorPickerContent<Value extends string>(props: {
           Use a hex color, like #5E6AD2.
         </p>
       ) : null}
-      <div className="color-picker__presets" role="group" aria-label={`${props.label} presets`}>
-        {props.options.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            aria-label={option.label}
-            aria-pressed={props.value === option.value}
-            title={option.label}
-            style={{ backgroundColor: option.color, color: colorForeground(option.color) }}
-            onClick={() => props.onChange(option.value)}
-          >
-            {props.value === option.value ? <IconCheck size={13} aria-hidden /> : null}
-          </button>
-        ))}
-      </div>
     </>
   )
 }
