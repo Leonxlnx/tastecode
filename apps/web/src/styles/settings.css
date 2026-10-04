@@ -1749,7 +1749,7 @@
   padding: 8px 10px;
   background: var(--menu-bg);
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-lg);
   box-shadow: var(--shadow-flyout);
   color: var(--text);
   font-size: var(--t-sm);
@@ -1881,7 +1881,7 @@
   place-items: center;
   padding: 0;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   background: none;
   color: var(--text-3);
   cursor: pointer;
