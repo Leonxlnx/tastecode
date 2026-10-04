@@ -39,9 +39,11 @@ saying so. The Rust + GPUI rewrite is preserved only on
 - **Never commit a secret**, including in fixtures and examples.
 - **Never write a `.sh` script.** Node/TypeScript only — we are a Windows + macOS team.
 - **Never assume POSIX paths.** Use `node:path`.
-- **Stay on the current branch unless the user explicitly asks otherwise.** Do not create a
-  branch or worktree, or switch branches, as a routine setup step.
-- **Never open a PR unless the user explicitly asks for one.**
+- **An explicitly assigned task authorizes its necessary branches, worktrees and PRs.**
+  Reuse an appropriate owned branch where possible; create or switch task-scoped branches
+  and worktrees and open or update PRs without separate or repeated approval. Stay within
+  the assigned scope and never repurpose another person's work.
+  Prior authorizations persist across turns and routine tool choices within that scope.
 - **Never include Rust-port or mobile-app branch changes in a PR unless the user
   explicitly names that scope.** Broad requests such as “PR everything,” “ship all local
   changes,” or “everything” do not authorize either branch; exclude them by default.
@@ -49,7 +51,10 @@ saying so. The Rust + GPUI rewrite is preserved only on
   waiting** when the work is confidently finished: all four gates green locally, the flow
   exercised against the running app, and nothing in the PR touches `packages/contracts`,
   security, or another assignee's files. When any of that is in doubt, wait for the human
-  responsible for the work. Approval from the other human is always optional.
+  responsible for the work. Approval from the other human is always optional. Existing
+  user authorization for those merges remains valid; do not ask again. Authorization does
+  not waive verification gates or required review of contracts, security or another
+  assignee's changes.
 - **Never rebase a working branch, and never force-push one.** If its target branch advances
   or GitHub reports conflicts, merge the target into the working branch, resolve every
   conflict explicitly, rerun the affected checks, and push normally. For agents, this
@@ -103,8 +108,9 @@ saying so. The Rust + GPUI rewrite is preserved only on
 
 ## Hosted CI
 
-- GitHub Actions are manual to preserve included minutes. **Never start a hosted CI run
-  unless Leon explicitly asks for it.**
+- GitHub Actions remain manual to preserve included minutes. Within explicitly assigned
+  work, agents may dispatch necessary verification runs without separate or repeated
+  approval. This does not authorize adding automatic or recurring CI triggers.
 - Platform-specific changes still need a local run on the affected OS before release.
 - Keep local binds on `127.0.0.1`.
 - If the agent shell exports `ELECTRON_RUN_AS_NODE`, unset it for `pnpm dev`; otherwise
