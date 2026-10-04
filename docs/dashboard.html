@@ -290,7 +290,7 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-04 nightly sync 30f75360 · main 6ac40ec1</span>
+        <span class="meta">2026-10-04 nightly synchronization · main 86d13b61</span>
       </div>
     </div>
 
@@ -298,20 +298,25 @@
       <section id="scope">
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through 6ac40ec1. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through 86d13b61. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
           chats without saved context cannot resume. Standalone Pi works without a custom harness.
-          All four local gates pass on Windows at 30f75360: lint, typecheck, build, and the complete
-          test run with 4,382 passed, zero failed, and 18 skipped. Isolated renderer/API restart
-          checks also pass.
+          Final local verification of this updated synchronization is in progress.
           <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
-          includes the Windows cleanup corrections in
-          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> and the standalone
-          API connection contract in
-          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a>. Human
-          contracts/security review and packaged Windows/macOS verification remain pending.
+          has human approval and awaits merge after verification. The Windows cleanup corrections in
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> have landed on
+          main; the standalone API connection contract in
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> has landed on
+          nightly. Packaged Windows/macOS verification remains pending.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
+            >Windows cleanup verification (#1394)</a
+          >: child-process cleanup waits for Node to observe exit after taskkill succeeds. Updater
+          tests inject EBUSY and EACCES to verify locked leftovers and denied writes without relying
+          on platform-specific directory permissions.
         </p>
         <p>
           Chat details open and close with matched transform motion. Scroll position follows the
