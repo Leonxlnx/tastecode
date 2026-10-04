@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 nightly synchronization · main 6ac40ec1</span>
+        <span class="meta">2026-10-04 nightly sync 30f75360 · main 6ac40ec1</span>
       </div>
     </div>
 
@@ -2152,7 +2152,8 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Windows and macOS behave the same, CI runs both</span
+                >Windows and macOS supported; affected-platform verification is required before
+                release</span
               ></label
             >
           </li>
@@ -2206,8 +2207,16 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside the main source snapshot named above. Verification of this synchronization is
-        pending. Ticks live in your browser's local storage, nothing is sent anywhere.
+        alongside the main source snapshot named above. All four local gates pass on Windows at
+        30f75360: lint, typecheck, build, and 4,382 tests passed with zero failed and 18 skipped.
+        Isolated renderer/API restart checks pass.
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
+        includes the Windows cleanup corrections in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> and the standalone
+        API connection contract in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a>. Human
+        contracts/security review and packaged Windows/macOS verification remain pending. Ticks live
+        in your browser's local storage, nothing is sent anywhere.
       </footer>
     </div>
 
