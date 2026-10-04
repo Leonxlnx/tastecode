@@ -564,10 +564,14 @@ manual.
 
 ## Dashboard design references (pending)
 
-Pending source work as of 2026-10-04, based on `main` at `6ac40ec1`; not merged or released.
-The dashboard PR targets `codex/nightly-dashboard-base` and depends on
+Pending source work as of 2026-10-04, tested at `0ccdb67d86eeaba313130b0429684faabb74f06d`;
+not merged or released. The public-beta baseline remains `main` at `6ac40ec1`.
+Draft [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393) targets
+`codex/nightly-dashboard-base` and depends on
 [PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392), preserving the full nightly provider
-roster and usage history.
+roster and usage history. The integrated source includes the Windows cleanup corrections in
+[PR #1394](https://github.com/Leonxlnx/tastecode/pull/1394) and standalone API connection contract
+in [PR #1395](https://github.com/Leonxlnx/tastecode/pull/1395).
 The asset import is complete: a separate dashboard catalog and provenance record contain
 200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
 references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
@@ -576,8 +580,10 @@ Sampling chooses a layout group uniformly, then one variant within that group, s
 not give a composition extra votes. One complete app-shell reference preserves navigation,
 content density and responsive hierarchy. The compiled default-bundle checks passed for all
 200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
-dashboard WebPs have unique matching hashes and valid viewport metadata; the 402 imported
-files match their import proof. Website selection still yields 14 website-only references.
+dashboard WebPs have unique matching hashes and valid viewport metadata. The catalog differs
+from the private import only in formatting and is deeply JSON-equal; the other 401 imported
+files are byte-identical. Website selection still yields 14 website-only references, and
+marketing-page classification checks pass.
 
 Briefing distinguishes an operating interface from a marketing page about a dashboard product.
 The former plans `operate_monitor` views with functional filters, sorting, tabs, navigation,
@@ -591,13 +597,19 @@ sessions reject before inference or persisted Design state; ordinary coding rema
 Direct API sessions currently declare `images: false`, so visual Design is unsupported there.
 The workflow never substitutes an unannounced text-only build for the requested image copying.
 
-The design-agent package passed 232 tests and its build; earlier local lint, typecheck and full
-build passed. Twelve focused orchestration checks passed: six capability-preflight cases and
-six synthetic-vision website/dashboard flows. The earlier feature-only full test run had 13
-unchanged Windows or environment failures; the prerequisite run separately had four.
-Final combined gates and
-interactive native-app acceptance remain pending; synthetic flows and a separate external
-demo do not prove native-app acceptance.
+All four local gates passed on Windows at the tested source: lint, typecheck, build and tests
+(4,432 passed, 18 skipped, zero failed; 4,369 Vitest and 63 root tests, including 232 design-agent
+tests). Thirty-six focused cases cover nine provider IDs: 18 synthetic-vision website/dashboard
+flows and 18 capability-rejection/ordinary-follow-up cases.
+
+The isolated browser smoke exercised the real direct-API runtime against a synthetic endpoint
+at the same source, with 14 matching fingerprints. Two unsupported Design attempts made zero
+API POSTs and persisted zero Design runs. Ordinary follow-ups retained context and model across
+four synthetic completed turns (72 synthetic tokens); the idle queue was empty, no JavaScript
+exceptions occurred, and owned processes were stopped afterward. This proves capability
+degradation and ordinary API operation, not live vision generation. Live vision-model,
+packaged Electron, macOS and real-keyring acceptance remain unverified; human contracts/security
+review remains pending. Synthetic flows and a separate external demo do not replace these checks.
 
 _Rejected:_ composing dashboards from marketing sections, treating generation retries as new
 layout votes, or requiring static screenshots in place of working native charts and controls.
@@ -622,7 +634,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-04 | Imported 200 dashboard reference pairs; operational guidance and image-capability preflight remain unreleased, with integration and native-app acceptance pending.             |
+| 2026-10-04 | Imported 200 dashboard pairs; four local gates and API/browser smoke pass at 0ccdb67d. Unreleased; live vision and packaged-app checks remain pending.                         |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
 | 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |

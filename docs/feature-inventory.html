@@ -225,9 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta"
-          >2026-10-04 main 6ac40ec1 · nightly and dashboard integration pending</span
-        >
+        <span class="meta">2026-10-04 tested 0ccdb67d · main 6ac40ec1 · dashboard unreleased</span>
       </div>
     </div>
 
@@ -1070,15 +1068,21 @@
         demo values avoid website-only blockers; asserted product claims still require evidence.
         Image capability is checked before inference; direct API sessions currently declare images:
         false and cannot run visual Design, while ordinary coding remains available. This work is
-        unreleased, with its PR pending against codex/nightly-dashboard-base and dependent on
+        unreleased: draft
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+        targets codex/nightly-dashboard-base and depends on
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>. The 172 shipped
         website references and 316 WebPs above are unchanged; the combined bundle has 372 references
-        and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks passed for
-        all 200 dashboard groups. The design-agent package passed 232 tests and its build; earlier
-        lint, typecheck and full build passed. The earlier feature-only full-suite run had thirteen
-        unchanged Windows/environment failures; the prerequisite run separately had four. Twelve
-        focused orchestration checks passed; final combined gates and interactive native-app
-        acceptance remain pending.
+        (344 paired) and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
+        passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is deeply JSON-equal
+        to the private import after formatting; the other 401 files are byte-identical. All four
+        local gates pass at 0ccdb67d: lint, typecheck, build, and 4,432 tests passed, 18 skipped,
+        zero failed, including 232 design-agent tests. Thirty-six focused cases across nine provider
+        IDs cover 18 synthetic-vision flows and 18 capability rejections/ordinary follow-ups. The
+        isolated browser/API smoke passed: two unsupported Design attempts made zero API POSTs or
+        persisted Design runs, ordinary follow-ups retained context and model, the idle queue was
+        empty, and no JavaScript exceptions occurred. Live vision-model, packaged Electron, macOS
+        and real-keyring acceptance remain unverified.
       </p>
 
       <section id="thread">
@@ -2229,9 +2233,16 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside the main source snapshot named above. Pending notes are separate from the
-        implemented checklist; final combined verification remains pending. Ticks live in your
-        browser's local storage, nothing is sent anywhere.
+        alongside the main source snapshot named above.
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
+        passed all four local gates at 30f75360 (4,382 tests passed, zero failed, 18 skipped) and
+        isolated renderer/API restart checks. Its Windows cleanup corrections in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> and standalone API
+        connection contract in
+        <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> are integrated into
+        the dashboard source verified above. Pending notes remain separate from the implemented
+        checklist. Human contracts/security review and packaged Windows/macOS verification remain
+        pending. Ticks live in your browser's local storage, nothing is sent anywhere.
       </footer>
     </div>
 

@@ -290,9 +290,7 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta"
-          >2026-10-04 main 6ac40ec1 · nightly and dashboard integration pending</span
-        >
+        <span class="meta">2026-10-04 tested 0ccdb67d · main 6ac40ec1 · dashboard unreleased</span>
       </div>
     </div>
 
@@ -305,10 +303,15 @@
           recovers disconnected streams, and grants automatic permissions for one request only. ACP
           prompt rejection settles pending work and approvals. New API chats preserve their model,
           connection, and complete tool context across restart; older API chats without saved
-          context cannot resume. Standalone Pi works without a custom harness. Its local lint,
-          typecheck, build, and isolated renderer/API restart checks passed, with four existing
-          Windows process/permission test failures in that prerequisite run. Combined integration
-          gates, contracts/security review and packaged Windows/macOS verification remain pending.
+          context cannot resume. Standalone Pi works without a custom harness. All four local gates
+          pass on Windows for the prerequisite at 30f75360: lint, typecheck, build, and 4,382 tests
+          passed, zero failed, and 18 skipped. Isolated renderer/API restart checks also pass. Its
+          Windows cleanup corrections in
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">PR #1394</a> and standalone API
+          connection contract in
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">PR #1395</a> are integrated into
+          the dashboard source. Human contracts/security review and packaged Windows/macOS
+          verification remain pending.
         </p>
         <p>
           Chat details open and close with matched transform motion. Scroll position follows the
@@ -1158,7 +1161,10 @@
                 <span
                   >Dashboard design support, unreleased
                   <span class="d"
-                    >unreleased; dashboard PR pending against codex/nightly-dashboard-base: 200
+                    >unreleased; draft
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+                    targets codex/nightly-dashboard-base and depends on
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>: 200
                     reviewed generated desktop/mobile dashboard pairs (400 WebPs) are imported in a
                     separate catalog with provenance. Uniform group-first selection supplies one
                     complete app shell. Plans use operate_monitor and functional filters, sorting,
@@ -1167,13 +1173,18 @@
                     avoid website-only validation blockers. Image capability is checked before
                     inference; unsupported sessions, including direct API sessions with images:
                     false, retain ordinary coding. The 172 shipped website references and 316 WebPs
-                    are unchanged; the combined bundle has 372 references and 716 WebPs.
-                    Default-bundle selection, saved-deck, attachment and hash checks passed for all
-                    200 dashboard groups. The design-agent package passed 232 tests and its build;
-                    earlier lint, typecheck and full build passed. The earlier feature-only
-                    full-suite run had thirteen unchanged Windows/environment failures, separately
-                    from the prerequisite's four. Twelve focused orchestration checks passed; final
-                    combined gates and interactive native-app acceptance remain pending</span
+                    are unchanged; the combined bundle has 372 references, 344 paired, and 716
+                    WebPs. Default-bundle selection, saved-deck, attachment and hash checks passed
+                    for all 200 dashboard groups and 400 distinct WebPs. The catalog is deeply
+                    JSON-equal to the private import after formatting; the other 401 files are
+                    byte-identical. All four local gates pass at 0ccdb67d: lint, typecheck, build,
+                    and 4,432 tests passed, 18 skipped, zero failed. Thirty-six focused cases across
+                    nine provider IDs cover 18 synthetic-vision flows and 18 capability
+                    rejections/ordinary follow-ups. The isolated browser/API smoke passed: two
+                    unsupported Design attempts made zero API POSTs or persisted Design runs;
+                    ordinary follow-ups retained context and model, with no JavaScript exceptions or
+                    queued work left. Live vision-model, packaged Electron, macOS and real-keyring
+                    acceptance remain unverified</span
                   >
                 </span>
               </li>
