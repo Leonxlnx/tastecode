@@ -279,6 +279,117 @@ describe('page phase', () => {
     )
   })
 
+  it('plans a complete operating dashboard and round-trips its saved reference through the page lock', () => {
+    const appBrief = {
+      ...brief,
+      pageType: 'dashboard',
+      originalRequest: 'Build an analytics dashboard',
+    }
+    const deck = [
+      {
+        id: 'analytics-workspace',
+        family: 'dashboard' as const,
+        imagePath: '/library/desktop.webp',
+        mobileImagePath: '/library/mobile.webp',
+        cue: 'Sidebar, filters, chart and activity table.',
+      },
+    ]
+    const prompt = designPagePrompt(appBrief, brand, [], deck)
+    expect(prompt).toContain('Use architecture.mode operate_monitor and layoutFamily dashboard')
+    expect(prompt).toContain('single complete shell')
+    expect(prompt).toContain('representative local data')
+    expect(prompt).not.toContain('normally plan at least eight')
+    expect(prompt).not.toContain('Plan hero and media entrances')
+    expect(prompt).not.toContain('Plan and implement a visible hero entrance')
+    const result = parsePagePhaseOutput(
+      JSON.stringify({
+        ...page,
+        architecture: { ...page.architecture, mode: 'operate_monitor' },
+        sections: [
+          {
+            ...page.sections[0],
+            id: 'workspace',
+            layoutFamily: 'dashboard',
+            referenceDirectionId: 'analytics-workspace',
+            layoutCases: ['analytics-workspace'],
+          },
+        ],
+      }),
+      deck,
+      [],
+      true,
+    )
+    expect(result.architecture.mode).toBe('operate_monitor')
+    expect(result.sections[0]?.referenceDirectionId).toBe('analytics-workspace')
+    const demoPage = {
+      ...result,
+      sections: [
+        {
+          ...result.sections[0],
+          copy: {
+            heading: 'Revenue',
+            body: ['Demo data', 'Revenue $24,000', '26 orders'],
+            callsToAction: [],
+          },
+        },
+      ],
+    }
+    expect(() => parsePagePhaseOutput(JSON.stringify(demoPage), deck, [], true)).not.toThrow()
+    for (const copy of [
+      { heading: 'Balance $12,400', body: ['Demo data'], callsToAction: [] },
+      { heading: 'Demo data', body: ['Balance $12,400'], callsToAction: [] },
+    ]) {
+      expect(() =>
+        parsePagePhaseOutput(
+          JSON.stringify({ ...demoPage, sections: [{ ...demoPage.sections[0], copy }] }),
+          deck,
+          [],
+          true,
+        ),
+      ).not.toThrow()
+    }
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...demoPage,
+          sections: [
+            {
+              ...demoPage.sections[0],
+              copy: { ...demoPage.sections[0]!.copy, body: ['Demo data', 'Reduce costs by 20%'] },
+            },
+          ],
+        }),
+        deck,
+        [],
+        true,
+      ),
+    ).toThrow('copy/objective-claim')
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({
+          ...demoPage,
+          sections: [
+            {
+              ...demoPage.sections[0],
+              copy: { ...demoPage.sections[0]!.copy, body: ['$24,000 revenue'] },
+            },
+          ],
+        }),
+        deck,
+        [],
+        true,
+      ),
+    ).toThrow('copy/objective-claim')
+    expect(() =>
+      parsePagePhaseOutput(
+        JSON.stringify({ ...result, sections: [{ ...result.sections[0], layoutFamily: 'hero' }] }),
+        deck,
+        [],
+        true,
+      ),
+    ).toThrow('must belong to hero')
+  })
+
   it('rejects cases from a different layout family', () => {
     expect(() =>
       parsePagePhaseOutput(

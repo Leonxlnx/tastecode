@@ -1,9 +1,9 @@
-import type { DesignBrief } from './brief.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
+import { designMotionGuidance } from './motion-guidance.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
 import {
@@ -14,7 +14,7 @@ import {
 
 const PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Markdown fences:
 
-{"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layoutCase":"navigation-1","layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","layoutFamily":"hero|about|feature|how_it_works|social_proof|stats|faq|cta|pricing|contact|footer","layoutCases":["hero-text-1","hero-visual-1"],"referenceDirectionId":"direction-001","purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","motion":{"purpose":"none|feedback|state_change|spatial_continuity|explanation|status","trigger":"none|load|scroll_enter|scroll_progress|hover|press|drag|state_change","behavior":"...","durationMs":220,"easing":"cubic-bezier(0.23, 1, 0.32, 1)","reducedMotion":"..."},"componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
+{"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layoutCase":"navigation-1","layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","layoutFamily":"hero|about|feature|how_it_works|social_proof|stats|faq|cta|pricing|contact|footer|dashboard","layoutCases":["hero-text-1","hero-visual-1"],"referenceDirectionId":"direction-001","purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","motion":{"purpose":"none|feedback|state_change|spatial_continuity|explanation|status","trigger":"none|load|scroll_enter|scroll_progress|hover|press|drag|state_change","behavior":"...","durationMs":220,"easing":"cubic-bezier(0.23, 1, 0.32, 1)","reducedMotion":"..."},"componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
 
 export function designPagePrompt(
   brief: DesignBrief,
@@ -22,6 +22,7 @@ export function designPagePrompt(
   suppliedReferences: readonly string[] = [],
   selectedReferences?: readonly ReferenceDirection[],
 ): string {
+  const dashboard = isDashboardBrief(brief)
   const referenceDirectionDeck = selectedReferences ?? selectReferenceDirectionDeck(brief, brand)
   const referenceDriven = selectedReferences !== undefined
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
@@ -31,13 +32,13 @@ export function designPagePrompt(
 
   return `You are running the Page Blueprint phase of TasteCode Design Mode.
 
-Turn the validated brief and brand system into one implementation-ready page plan. Begin with one page contract: who the page helps, what they must decide or accomplish, the business outcome, and the primary conversion. If that requires unrelated tasks joined by "and", keep only the brief's primary page job. Write the actual concise page copy and order sections by information dependencies rather than a remembered landing-page sequence.
+Turn the validated brief and brand system into one implementation-ready page plan. Begin with one page contract: who the page helps, what they must decide or accomplish, the business outcome, and ${dashboard ? 'the primary operating task' : 'the primary conversion'}. If that requires unrelated tasks joined by "and", keep only the brief's primary page job. Write the actual concise page copy and order sections by information dependencies rather than a remembered landing-page sequence.
 
 Use the brand system rather than repeating it. Do not choose new colors or typefaces, source assets or components, install dependencies, or edit website files. assetNeeds and componentNeeds contain stable snake-case IDs, never descriptions. Reserve componentNeeds for actual reusable components requiring acquisition; ordinary headings, anchors, lists, cards, figures and CSS layouts are Build work, so leave componentNeeds empty for these. Describe their implementation in layout instead. Every section must earn its place, answer one explicit user question, and have a unique snake-case ID. List only real proof from the artifacts in evidence; never invent proof to justify a section. Dependencies may reference only earlier section IDs, so the recorded order is already implementable.
 
 Define one base grid, one signature composition rule, and a page rhythm. Choose components by semantic job and content shape, using the least novel component that fully supports the task. Do not assemble component-library demos, cardify prose, or add interaction merely to create activity. For every section specify a compact, medium, and expanded transformation. Compact reduces simultaneity, not content or capability; source order, state, proof adjacency, and action priority must survive.
 
-Give every section one explicit motion decision using the visible-motion requirements below. Plan hero and media entrances as spatial continuity or explanation; purpose none is available for remaining static sections after the required page animations are covered, or when the user explicitly requests no animation. Hover motion is supplemental and must never carry required information.
+Give every section one explicit motion decision using the visible-motion requirements below. ${dashboard ? 'Plan state transitions for the actual controls and views; static reading regions may use purpose none.' : 'Plan hero and media entrances as spatial continuity or explanation; purpose none is available for remaining static sections after the required page animations are covered, or when the user explicitly requests no animation.'} Hover motion is supplemental and must never carry required information.
 
 Use cards for coherent features, people, plans, proof, actions, and media stories, not as empty wrappers around paragraphs. Retain each selected reference's actual card geometry and media treatment, unifying only brand colors and control states. Let card size, media crop, and internal composition respond to the content instead of defaulting to equal three-column boxes. When a selected layout is image-led, record stable assetNeeds for every meaningful image or capture rather than replacing it with a decorative vector. Carry the approved brand accent into primary actions, focus and selected states, and one recurring card, media, or section treatment.
 
@@ -71,11 +72,18 @@ Use optional copy.eyebrow only when the selected reference actually contains a l
 
 Complete this artifact using the project and these instructions; do not invoke external design skills.
 
-${LANDING_PAGE_GUIDANCE}
+${
+  dashboard
+    ? `DASHBOARD PLAN:
+Use architecture.mode operate_monitor and layoutFamily dashboard. Start from the selected complete desktop/mobile app-shell reference, preserving its navigation, toolbar, content grid and information density as one coherent screen. The sections array describes functional views or regions of that screen; it may contain a single complete shell. Reuse the same reference for its actual subregions instead of inventing additional layouts or treating every widget as a separate marketing section. Do not add a marketing hero, pricing, footer, or eight content sections.
+
+Map the user's data and tasks into the reference's chart, list, table, calendar and detail regions. Use representative local data when live records are absent, identify it visibly as Demo data in the relevant view's copy, and render the interface as native working components rather than a screenshot. Plan working navigation, filtering, sorting, selection, tabs and drawers only where the requested workflow calls for them. Specify empty, loading, selected and error states, keyboard behavior, focus restoration, and compact navigation without losing core tasks. Acceptance criteria must exercise real state changes on desktop and mobile, including reduced motion. Do not claim live synchronization or a working backend when only local demo state is implemented.`
+    : LANDING_PAGE_GUIDANCE
+}
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief)}
 
 ${referenceDriven ? PAGE_PROTOCOL.replace('["hero-text-1","hero-visual-1"]', '["selected-reference-id"]').replace('"direction-001"', '"selected-reference-id"').replace('"navigation-1"', '"reference-navigation"') : PAGE_PROTOCOL}
 

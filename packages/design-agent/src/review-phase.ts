@@ -4,7 +4,7 @@ import type { AssetManifest } from './assets.js'
 import type { DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
+import { designMotionGuidance } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
@@ -116,7 +116,7 @@ Do not edit files, redesign from preference, or praise the work. Report only vis
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief, page)}
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}
@@ -309,7 +309,7 @@ Fix only the validated visual findings below. Inspect the existing implementatio
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief, page)}
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}

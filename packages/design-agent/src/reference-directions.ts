@@ -1,7 +1,7 @@
 import { fileURLToPath } from 'node:url'
 import type { BrandSystem } from './brand.js'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES, type PageBlueprint, type PageLayoutFamily } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { WEBSITE_LAYOUT_FAMILIES, type PageBlueprint, type PageLayoutFamily } from './page.js'
 
 export interface ReferenceDirection {
   id: string
@@ -773,6 +773,8 @@ export function selectReferenceDirectionDeck(
   brief: DesignBrief,
   _brand: BrandSystem,
 ): ReferenceDirection[] {
+  if (isDashboardBrief(brief))
+    throw new Error('Dashboard designs require the reviewed dashboard reference library')
   const seed = JSON.stringify({
     subject: brief.subject,
     pageType: brief.pageType,
@@ -784,7 +786,7 @@ export function selectReferenceDirectionDeck(
     requiredContent: brief.requiredContent,
   })
 
-  return PAGE_LAYOUT_FAMILIES.map((family) => {
+  return WEBSITE_LAYOUT_FAMILIES.map((family) => {
     const candidates = REFERENCE_DIRECTIONS.filter((entry) => entry.family === family)
     const selected = candidates[hashSeed(`${seed}\u001f${family}`) % candidates.length]
     if (!selected) throw new Error(`No reference direction found for ${family}`)

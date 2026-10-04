@@ -29,14 +29,23 @@ export function validateDesignSourceQuality(
   // Reference-bound geometry is judged against the actual images in visual Review.
   const referenceBound =
     !!page?.sections.length && page.sections.every((section) => section.referenceDirectionId)
-  const violations = designSourceViolations(workspacePath, assets, referenceBound).filter(
-    (violation) => {
-      const remaining = previous.get(violation) ?? 0
-      if (!remaining) return true
-      previous.set(violation, remaining - 1)
-      return false
-    },
-  )
+  // Native chart/icon SVG belongs to the implemented dashboard, not the acquired asset set.
+  // Visual Review checks its purpose and geometry against the locked screen references.
+  const nativeDashboard =
+    referenceBound &&
+    page?.architecture?.mode === 'operate_monitor' &&
+    page.sections.every((section) => section.layoutFamily === 'dashboard')
+  const violations = designSourceViolations(
+    workspacePath,
+    assets,
+    referenceBound,
+    nativeDashboard,
+  ).filter((violation) => {
+    const remaining = previous.get(violation) ?? 0
+    if (!remaining) return true
+    previous.set(violation, remaining - 1)
+    return false
+  })
   if (violations.length) {
     throw new DesignSourceQualityError(
       `design source quality failed; remove newly introduced card rails or unmanifested SVG substitutes: ${violations.join('; ')}`,
@@ -55,6 +64,7 @@ function designSourceViolations(
   workspacePath: string,
   assets?: AssetManifest,
   referenceBound = false,
+  nativeDashboard = false,
 ): string[] {
   const violations: string[] = []
   const cardRails: string[] = []
@@ -117,7 +127,7 @@ function designSourceViolations(
       }
     }
     scanMarkupCardRails(source, normalized, cardRails)
-    if (!approvedSvgFiles.has(normalized)) {
+    if (!nativeDashboard && !approvedSvgFiles.has(normalized)) {
       for (const fragment of svgFragments(source)) {
         violations.push(
           `${normalized}: unmanifested inline SVG substitute ${sourceFingerprint(fragment)}`,

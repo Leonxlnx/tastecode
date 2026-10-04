@@ -3,8 +3,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
@@ -60,7 +60,7 @@ describe('reviewed reference library', () => {
     expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
     expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
     expect(selectReviewedReferences(brief, references)).toHaveLength(14)
-    for (const family of PAGE_LAYOUT_FAMILIES) {
+    for (const family of WEBSITE_LAYOUT_FAMILIES) {
       const pool = referenceCandidatesForFamily(family, references)
       expect(
         new Set(pool.map((entry) => entry.group ?? entry.id)).size,
@@ -104,6 +104,88 @@ describe('reviewed reference library', () => {
           .group,
     )
     expect(new Set(seen).size).toBe(10)
+  })
+
+  it('loads paired generated dashboards separately and keeps random group votes and explicit choices', () => {
+    const root = library()
+    save(root, [entry, { ...entry, id: 'tiny-heading', tags: ['native-component'] }])
+    const dashboardEntries = Array.from({ length: 3 }, (_, index) => ({
+      ...entry,
+      id: `dashboard-${index}`,
+      family: 'dashboard',
+      group: `dashboard-${index}`,
+      assetType: 'generated-reference',
+      mobileImagePath: 'hero.webp',
+      pairEvidence: 'Both views preserve the same toolbar and data regions.',
+    }))
+    writeFileSync(
+      path.join(root, 'dashboard-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          ...dashboardEntries,
+          { ...dashboardEntries[0], id: 'dashboard-revision' },
+          { ...dashboardEntries[0], id: 'unreviewed-app', reviewStatus: 'candidate' },
+          { ...dashboardEntries[0], id: 'screenshot-app', assetType: 'screenshot' },
+          { ...dashboardEntries[0], id: 'unpaired-app', mobileImagePath: undefined },
+        ],
+      }),
+    )
+    const references = loadReviewedReferences(root)
+    expect(references).toHaveLength(6)
+    const appBrief = { ...brief, pageType: 'dashboard', originalRequest: 'Build a finance app' }
+    const groups = Array.from({ length: 3 }, (_, index) => {
+      const deck = selectReviewedReferences(appBrief, references, (length) =>
+        length === 3 ? index : 0,
+      )
+      expect(deck).toHaveLength(1)
+      expect(parseReferenceDeck(deck)).toEqual(deck)
+      expect(deck[0]?.family).toBe('dashboard')
+      return deck[0]?.group
+    })
+    expect(new Set(groups).size).toBe(3)
+    expect(selectReviewedReferences(brief, references, () => 0).map(({ id }) => id)).toEqual([
+      'studio-hero',
+    ])
+    expect(
+      selectReviewedReferences(
+        { ...appBrief, originalRequest: 'Use dashboard-2' },
+        references,
+        () => 0,
+      )[0]?.id,
+    ).toBe('dashboard-2')
+    expect(() =>
+      selectReviewedReferences(
+        appBrief,
+        references.filter(({ family }) => family !== 'dashboard'),
+      ),
+    ).toThrow('No reviewed dashboard references')
+  })
+
+  it('classifies the requested surface rather than dashboard products advertised on websites', () => {
+    expect(isDashboardBrief({ ...brief, pageType: 'Dashboard' })).toBe(true)
+    expect(isDashboardBrief({ ...brief, pageType: 'product_interface' })).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Create an analytics dashboard',
+      }),
+    ).toBe(true)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: 'Landing page',
+        originalRequest: 'Promote our analytics dashboard',
+      }),
+    ).toBe(false)
+    expect(
+      isDashboardBrief({
+        ...brief,
+        pageType: '',
+        originalRequest: 'Build a landing page for a dashboard product',
+      }),
+    ).toBe(false)
   })
 
   it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {

@@ -1,6 +1,33 @@
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
-import { REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
+import {
+  DESIGN_MOTION_GUIDANCE,
+  designMotionGuidance,
+  REFERENCE_REVEAL_SOURCE,
+} from './motion-guidance.js'
+import type { PageBlueprint } from './page.js'
+
+it('selects operational motion from the brief or saved page architecture', () => {
+  const dashboard = designMotionGuidance({
+    pageType: 'dashboard',
+    originalRequest: 'Build a finance workspace.',
+  })
+  expect(dashboard).toContain('filters, sorting, tabs, navigation, drawers and chart controls')
+  expect(dashboard).toContain('keyboard operation')
+  expect(dashboard).toContain('prefers-reduced-motion')
+  expect(dashboard).not.toContain('Plan and implement a visible hero entrance')
+  // SAFETY: Only architecture.mode is read from this saved-page fixture.
+  expect(
+    designMotionGuidance(undefined, { architecture: { mode: 'operate_monitor' } } as PageBlueprint),
+  ).toBe(dashboard)
+  expect(
+    designMotionGuidance({
+      pageType: 'landing_page',
+      originalRequest: 'A landing page for our analytics dashboard.',
+    }),
+  ).toBe(DESIGN_MOTION_GUIDANCE)
+  expect(designMotionGuidance()).toBe(DESIGN_MOTION_GUIDANCE)
+})
 
 describe('reference reveal lifecycle', () => {
   it('never hides painted content, replays, or leaves hidden content after cleanup/reduced motion', () => {
