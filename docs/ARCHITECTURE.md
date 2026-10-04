@@ -564,10 +564,10 @@ manual.
 
 ---
 
-## Dashboard design references (nightly integration)
+## Dashboard design references (nightly)
 
-Nightly dashboard support is implemented in
-[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), targeting `nightly` after
+Nightly dashboard support is integrated through
+[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
 [PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
 The integrated source includes main through `3e67df35`, retaining the complete nightly provider
 roster and usage history. Windows cleanup
