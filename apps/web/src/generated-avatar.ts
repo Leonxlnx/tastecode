@@ -4,7 +4,10 @@
  * the rail, on the profile page, and with every provider — but drawn for a
  * circle, not a square: every style is built from the center out, so nothing
  * gets clipped by the crop. Colors are muted and analogous (one hue family per
- * name, low chroma) so the picture sits quietly next to the app's chrome.
+ * name, low chroma) so the picture sits quietly next to the app's chrome. The
+ * default mandala is read letter by letter (`readSeal`), so a word can be
+ * chosen for the picture it gives; the other styles, and words without
+ * letters, are hashed.
  */
 export const AVATAR_STYLES = ['mandala', 'orb', 'marble'] as const
 export type AvatarStyle = (typeof AVATAR_STYLES)[number]
@@ -59,11 +62,15 @@ export function generatedAvatar(
   style: AvatarStyle = DEFAULT_AVATAR_STYLE,
 ): GeneratedAvatar {
   const key = normalizeAvatarName(name)
+  if (style === 'mandala') {
+    const read = readSeal(name)
+    if (read) return read.avatar
+  }
   // Independent hashes so color never correlates with form.
   const shape = hash32(key, 0x9747b28c)
   const spark = hash32(key, 0x68e31da4)
   const paint = hash32(key, 0x2545f491)
-  const tones = avatarTones(paint)
+  const tones = avatarTones(paint % 360, ((paint >>> 9) & 1) === 1)
   switch (style) {
     case 'mandala':
       return mandala(shape, spark, tones)
@@ -74,9 +81,87 @@ export function generatedAvatar(
   }
 }
 
-function avatarTones(paint: number): AvatarTones {
-  const hue = paint % 360
-  const dark = ((paint >>> 9) & 1) === 1
+/**
+ * The mandala is read from the word, not hashed, so it can be steered:
+ * - the first letter picks the colour, A to Z once round the colour wheel;
+ * - a last letter that is a vowel gives a light ground, any other a dark one;
+ * - the number of letters picks the symmetry: 3, 6, 9… four slices,
+ *   4, 7, 10… mirrored, 5, 8, 11… three slices;
+ * - each character lays one tile, outer ring first, clockwise from the top:
+ *   vowels in the second colour, other letters A–M in the first, N–Z and
+ *   anything that is not a letter leave a gap. Short words repeat.
+ * - the centre fills in when the inner ring is mostly empty.
+ */
+export type SealReading = {
+  avatar: MandalaAvatar
+  /** The characters the tiles are laid from, accents dropped and case folded. */
+  characters: readonly string[]
+  letters: number
+  colourLetter: string
+  groundLetter: string
+  /** What each character lays, in order. */
+  laid: readonly Cell[]
+}
+
+const ALPHABET = 'abcdefghijklmnopqrstuvwxyz'
+const VOWELS = 'aeiou'
+const SYMMETRY_BY_LENGTH = ['quad', 'mirror', 'triple'] as const
+
+/** The cell one character lays. */
+export function sealCell(character: string): Cell {
+  if (VOWELS.includes(character)) return CELL.glint
+  const index = ALPHABET.indexOf(character)
+  return index >= 0 && index < 13 ? CELL.ink : CELL.ground
+}
+
+/** Reads a word as a seal, or `undefined` when it has no letters to read. */
+export function readSeal(name: string): SealReading | undefined {
+  const characters = [...normalizeAvatarName(name).normalize('NFD').replace(/\p{M}/gu, '')]
+  const letters = characters.filter((character) => ALPHABET.includes(character))
+  const colourLetter = letters[0]
+  const groundLetter = letters.at(-1)
+  if (!colourLetter || !groundLetter) return undefined
+  const hue = Math.round((ALPHABET.indexOf(colourLetter) * 360) / ALPHABET.length)
+  const tones = avatarTones(hue, !VOWELS.includes(groundLetter))
+  const symmetry = SYMMETRY_BY_LENGTH[letters.length % 3]!
+  const fold = symmetry === 'mirror' ? 2 : symmetry === 'triple' ? 3 : 4
+  const unique = MANDALA_SECTORS / fold
+  const laid = characters.map(sealCell)
+  let next = 0
+  const rings = Array.from({ length: MANDALA_RINGS }, () => {
+    const slice = Array.from({ length: unique }, () => laid[next++ % laid.length]!)
+    return Array.from({ length: MANDALA_SECTORS }, (_, sector): Cell =>
+      symmetry === 'mirror'
+        ? slice[Math.min(sector, MANDALA_SECTORS - 1 - sector)]!
+        : slice[sector % unique]!,
+    )
+  })
+  return {
+    avatar: finishMandala(rings, symmetry, tones),
+    characters,
+    letters: letters.length,
+    colourLetter,
+    groundLetter,
+    laid,
+  }
+}
+
+/** The core and the never-blank rule every mandala shares. */
+function finishMandala(
+  rings: Cell[][],
+  symmetry: MandalaAvatar['symmetry'],
+  tones: AvatarTones,
+): MandalaAvatar {
+  // The eye of the coin: a solid core when the inner ring is sparse, ground otherwise.
+  const innerPainted = rings.at(-1)!.filter((cell) => cell !== CELL.ground).length
+  const core: Cell = innerPainted < MANDALA_SECTORS / 2 ? CELL.ink : CELL.ground
+  if (!rings.flat().some((cell) => cell !== CELL.ground)) {
+    rings[1] = Array.from({ length: MANDALA_SECTORS }, (): Cell => CELL.ink)
+  }
+  return { ...tones, style: 'mandala', symmetry, sectors: MANDALA_SECTORS, rings, core }
+}
+
+function avatarTones(hue: number, dark: boolean): AvatarTones {
   return {
     hue,
     dark,
@@ -88,10 +173,11 @@ function avatarTones(paint: number): AvatarTones {
 }
 
 /**
- * Sector 0 starts at twelve o'clock and runs clockwise, so `mirror` folds
- * left onto right like a face; `triple` and `quad` repeat every 120° / 90°.
- * `shape` decides which tiles are painted, `spark` which of those use the
- * second ink; at most 18 bits of each are read.
+ * The hashed mandala, for a word with no letters to read. Sector 0 starts at
+ * twelve o'clock and runs clockwise, so `mirror` folds left onto right like a
+ * face; `triple` and `quad` repeat every 120° / 90°. `shape` decides which
+ * tiles are painted, `spark` which of those use the second ink; at most 18
+ * bits of each are read.
  */
 function mandala(shape: number, spark: number, tones: AvatarTones): MandalaAvatar {
   const symmetry = MANDALA_SYMMETRIES[shape % MANDALA_SYMMETRIES.length]!
@@ -109,13 +195,7 @@ function mandala(shape: number, spark: number, tones: AvatarTones): MandalaAvata
         : CELL.ink
     })
   })
-  // The eye of the coin: a solid core when the inner ring is sparse, ground otherwise.
-  const innerPainted = rings.at(-1)!.filter((cell) => cell !== CELL.ground).length
-  const core: Cell = innerPainted < MANDALA_SECTORS / 2 ? CELL.ink : CELL.ground
-  if (!rings.flat().some((cell) => cell !== CELL.ground)) {
-    rings[1] = Array.from({ length: MANDALA_SECTORS }, (): Cell => CELL.ink)
-  }
-  return { ...tones, style: 'mandala', symmetry, sectors: MANDALA_SECTORS, rings, core }
+  return finishMandala(rings, symmetry, tones)
 }
 
 function orb(shape: number, tones: AvatarTones): OrbAvatar {
