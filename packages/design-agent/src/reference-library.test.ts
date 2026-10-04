@@ -133,7 +133,11 @@ describe('reviewed reference library', () => {
     )
     const references = loadReviewedReferences(root)
     expect(references).toHaveLength(6)
-    const appBrief = { ...brief, pageType: 'dashboard', originalRequest: 'Build a finance app' }
+    const appBrief = {
+      ...brief,
+      pageType: 'fitness app',
+      originalRequest: 'Build a mobile fitness app',
+    }
     const groups = Array.from({ length: 3 }, (_, index) => {
       const deck = selectReviewedReferences(appBrief, references, (length) =>
         length === 3 ? index : 0,
@@ -187,6 +191,39 @@ describe('reviewed reference library', () => {
       }),
     ).toBe(false)
   })
+
+  it.each([
+    ['mobile fitness app', 'Build a mobile fitness app'],
+    ['web analytics app', 'Build a web analytics app'],
+    ['desktop music app', 'Build a desktop music app'],
+    ['Fitness-App', 'Erstelle eine Fitness-App'],
+    ['webapp', 'Build a finance webapp'],
+  ])(
+    'selects dashboard references for a %s, including an unclassified prompt',
+    (pageType, originalRequest) => {
+      expect(isDashboardBrief({ pageType, originalRequest })).toBe(true)
+      expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
+    },
+  )
+
+  it.each([
+    'Build a landing page for a mobile fitness app',
+    'Build a landingpage for a web analytics app',
+    'Build a website for a desktop music app',
+    'Erstelle eine Landingpage für eine Fitness-App',
+    'Build an apparel catalog',
+  ])('keeps website references for %s', (originalRequest) => {
+    expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(false)
+  })
+
+  it.each(['Landingpage', 'App landing page', 'Website for a fitness app'])(
+    'prioritizes the explicit marketing page type %s over app language',
+    (pageType) => {
+      expect(isDashboardBrief({ pageType, originalRequest: 'Build a mobile fitness app' })).toBe(
+        false,
+      )
+    },
+  )
 
   it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {
     const root = library()
