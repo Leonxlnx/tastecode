@@ -1755,10 +1755,13 @@
                 <span class="d"
                   >New profiles use the native system font: San Francisco on macOS, Segoe UI on
                   Windows, and the desktop system font on Linux. Saved font choices are preserved.
-                  System default, bundled font families, and every installed font family appear in
-                  one deduplicated alphabetical list with name search. The complete list is cached
-                  across app restarts, refreshes after 24 hours, and replaces the first-load message
-                  only when ready</span
+                  The picker opens on a Built in group (System default first, then the bundled
+                  families) above every installed family in alphabetical order, each row with an Ag
+                  sample set in its own face. There is no search bar: opening the picker turns the
+                  row's value into a field, typing filters in place with names that start with the
+                  query ranked first, and the list keeps its size while it filters. The complete
+                  list is cached across app restarts, refreshes after 24 hours, and replaces the
+                  first-load message only when ready</span
                 ></span
               ></label
             >
