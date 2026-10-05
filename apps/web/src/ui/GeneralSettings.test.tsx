@@ -18,8 +18,8 @@ function renderGeneral(settings: SidebarSettings = { mode: 'inbox', autoSettleDa
   }
 }
 
-function plan() {
-  return screen.getByRole('img', { name: /^Window plan/ })
+function inboxPicture() {
+  return screen.getByRole('radio', { name: 'Inbox' }).querySelector<HTMLElement>('.gwin')!
 }
 
 afterEach(() => {
@@ -31,7 +31,7 @@ afterEach(() => {
 })
 
 describe('general settings', () => {
-  it('chooses the sidebar with its two words and with arrow keys', () => {
+  it('chooses the sidebar with its two pictures and with arrow keys', () => {
     const { change } = renderGeneral()
     const classic = screen.getByRole('radio', { name: 'Classic' })
     const inbox = screen.getByRole('radio', { name: 'Inbox' })
@@ -50,12 +50,14 @@ describe('general settings', () => {
   it('folds the settle scale away under the Classic sidebar', () => {
     const { rerender } = renderGeneral({ mode: 'classic', autoSettleDays: 3 })
     expect(screen.queryByRole('slider', { name: 'Settle idle chats' })).toBeNull()
-    expect(plan().getAttribute('aria-label')).toContain('Classic sidebar')
 
     rerender({ mode: 'inbox', autoSettleDays: 3 })
     const scale = screen.getByRole('slider', { name: 'Settle idle chats' })
     expect(scale.getAttribute('aria-valuetext')).toBe('3 days')
-    expect(plan().getAttribute('aria-label')).toContain('chats settle after 3 days')
+    // Four of the pictured chats are younger than three days; the fold sits under them.
+    expect(
+      inboxPicture().querySelector<HTMLElement>('.gwin__fold')?.style.getPropertyValue('--row'),
+    ).toBe('4')
   })
 
   it('steps the settle scale by day, by labelled stop and out to never', () => {
@@ -91,7 +93,9 @@ describe('general settings', () => {
     expect(scale.getAttribute('aria-valuetext')).toBe('1 day')
     fireEvent.pointerMove(scale, { pointerId: 1, clientX: 100 })
     expect(scale.getAttribute('aria-valuetext')).toBe('9 days')
-    expect(plan().getAttribute('aria-label')).toContain('chats settle after 9 days')
+    expect(
+      inboxPicture().querySelector<HTMLElement>('.gwin__fold')?.style.getPropertyValue('--row'),
+    ).toBe('6')
     fireEvent.pointerMove(scale, { pointerId: 1, clientX: 250 })
     expect(scale.getAttribute('aria-valuetext')).toBe('Never')
     expect(change).not.toHaveBeenCalled()
@@ -114,36 +118,39 @@ describe('general settings', () => {
     expect(change).not.toHaveBeenCalled()
   })
 
-  it('moves the terminal and the model picker in the plan', () => {
+  it('moves the terminal and the model picker by their pictures', () => {
     renderGeneral()
 
-    expect(plan().getAttribute('aria-label')).toContain('terminal on the right')
+    const right = screen.getByRole('radio', { name: 'Right' })
+    expect(right.getAttribute('aria-checked')).toBe('true')
+    expect(right.querySelector('.gwin')?.getAttribute('data-terminal')).toBe('workspace')
     fireEvent.click(screen.getByRole('radio', { name: 'Bottom' }))
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
-    expect(plan().getAttribute('aria-label')).toContain('terminal at the bottom')
+    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(screen.getByRole('radio', { name: 'Rail' }))
     expect(localStorage.getItem(MODEL_PICKER_LAYOUT_KEY)).toBe('rail')
-    expect(plan().getAttribute('aria-label')).toContain('model picker as a rail')
+    expect(screen.getByRole('radio', { name: 'Rail' }).querySelector('.gwin__strip')).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'List' }).querySelector('.gwin__strip')).toBeNull()
 
     act(() => writeTerminalPlacement('workspace'))
     expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
   })
 
-  it('lights and captions the part of the window a line decides', () => {
+  it('says what each setting decides', () => {
     renderGeneral()
-    expect(plan().getAttribute('data-lit')).toBeNull()
-
-    act(() => screen.getByRole('radio', { name: 'Bottom' }).focus())
-    expect(plan().getAttribute('data-lit')).toBe('terminal')
-    expect(screen.getByText('Where the Toggle terminal shortcut opens a terminal.')).toBeTruthy()
-
-    act(() => screen.getByRole('slider', { name: 'Settle idle chats' }).focus())
-    expect(plan().getAttribute('data-lit')).toBe('settle')
     expect(
-      screen.getByText(
-        'Chats untouched for 3 days fold into Settled. New activity brings them back.',
-      ),
+      screen.getByRole('radiogroup', {
+        name: 'Terminal',
+        description: 'Where the Toggle terminal shortcut opens a terminal.',
+      }),
+    ).toBeTruthy()
+    expect(
+      screen.getByRole('radiogroup', {
+        name: 'Sidebar',
+        description:
+          'Classic files chats under their projects. Inbox lines them up by last activity.',
+      }),
     ).toBeTruthy()
   })
 })
