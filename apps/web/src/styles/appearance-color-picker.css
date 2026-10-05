@@ -13,12 +13,6 @@
   font: inherit;
 }
 
-.appearance-color:hover > span:last-child,
-.appearance-color[aria-expanded='true'] > span:last-child {
-  text-decoration: underline 1px var(--text-3);
-  text-underline-offset: 5px;
-}
-
 /* A square chip of the colour, edged so near-white and near-black still show. */
 .appearance-color__swatch {
   width: 10px;

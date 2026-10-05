@@ -657,13 +657,6 @@
   line-height: inherit;
 }
 
-.settings .appearance-select .app-select__trigger:hover,
-.settings .appearance-select.is-open .app-select__trigger {
-  color: var(--text);
-  text-decoration: underline 1px var(--text-3);
-  text-underline-offset: 5px;
-}
-
 .settings .appearance-select .app-select__trigger:focus-visible {
   outline: 2px solid var(--text-2);
   outline-offset: 2px;
