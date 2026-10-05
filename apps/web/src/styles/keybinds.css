@@ -1,57 +1,93 @@
+/* Keybinds read like a shortcut card, in the roster's grammar: each action is
+   one line, wired to its shortcut by a dotted leader, with the key in a column
+   of its own so every shortcut lines up under the one above. The leader is the
+   state, as the roster's wire is: it lights while the row is pointed at, runs
+   towards the keys while they are being recorded, turns red when they are
+   refused, and draws itself in when they land. */
+@property --keybind-wire {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
 .keybind-settings__header {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   justify-content: space-between;
   gap: 24px;
-  margin-bottom: 20px;
 }
 
 .keybind-settings__header .settings__title {
-  margin-bottom: 7px;
+  margin-bottom: 6px;
 }
 
-.keybind-settings__header p {
-  max-width: 560px;
-  margin: 0;
+.keybind-settings__restore,
+.keybind-settings__search-clear {
+  position: relative;
+  z-index: 1;
+  padding: 0;
+  background: none;
+  border: 0;
   color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.keybind-settings__restore,
+.keybind-settings__search-clear {
   font-size: var(--t-sm);
-  line-height: 1.5;
 }
 
-.keybind-settings__reset {
-  flex: none;
+.keybind-settings__restore:hover,
+.keybind-settings__search-clear:hover {
+  color: var(--text);
 }
 
+.keybind-settings__restore:focus-visible,
+.keybind-settings__search-clear:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+.keybind-settings__intro {
+  margin: 0 0 30px;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  letter-spacing: -0.006em;
+  line-height: 1.45;
+}
+
+/* Search is a line of type led by its glyph: no box, no rule. */
 .keybind-settings__search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  margin-bottom: 20px;
-  padding: 0 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  gap: 10px;
   color: var(--text-3);
-  transition:
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  cursor: text;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .keybind-settings__search:focus-within {
-  border-color: var(--line-strong);
   color: var(--text-2);
 }
 
+.keybind-settings__search-icon {
+  flex: none;
+}
+
 .keybind-settings__search input {
-  width: 100%;
+  flex: 1;
   min-width: 0;
   padding: 0;
   background: none;
   border: 0;
   color: var(--text);
   font: inherit;
-  font-size: var(--t-sm);
+  font-size: var(--t-lg);
+  letter-spacing: -0.012em;
   outline: 0;
 }
 
@@ -60,182 +96,328 @@
 }
 
 .keybind-settings__search input::-webkit-search-cancel-button {
-  opacity: 0.55;
+  display: none;
 }
 
-.keybind-settings__section + .keybind-settings__section {
-  margin-top: 24px;
+.keybind-group {
+  margin-top: 30px;
 }
 
-.keybind-settings .settings__group-title {
-  margin-bottom: 8px;
+.keybind-group__heading {
+  margin: 0 0 4px;
+  color: var(--text-3);
   font-size: var(--t-sm);
   font-weight: 500;
-}
-
-.keybind-settings__group {
-  overflow: visible;
-  border-color: var(--line);
+  letter-spacing: -0.003em;
 }
 
 .keybind-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 48px;
-  padding: 6px 12px;
-  transition: background var(--dur-fast) var(--ease-out);
-}
+  --keybind-wire: color-mix(in srgb, var(--text-3) 55%, transparent);
 
-.keybind-row:first-child {
-  border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0;
-}
-
-.keybind-row:last-child {
-  border-radius: 0 0 calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px);
-}
-
-.keybind-row:only-child {
-  border-radius: calc(var(--r-lg) - 1px);
-}
-
-.keybind-row:hover,
-.keybind-row:focus-within {
-  background: var(--surface);
-}
-
-.keybind-row + .keybind-row {
-  border-top: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
-}
-
-.keybind-row .settings__row-title {
-  font-size: var(--t-sm);
-  font-weight: 400;
-  line-height: 1.4;
-}
-
-.keybind-row .settings__row-note {
-  margin-top: 2px;
-  line-height: 1.4;
-}
-
-.keybind-row__controls {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 5px;
-}
-
-.keybind-row__clear {
+  position: relative;
   display: grid;
-  width: 26px;
-  height: 26px;
-  place-items: center;
-  padding: 0;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--text-3);
-  cursor: pointer;
-  opacity: 0;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out),
-    opacity var(--dur-fast) var(--ease-out);
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
+  align-items: baseline;
+  padding-block: 10px;
+  font-size: var(--t-lg);
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  transition: --keybind-wire var(--dur-fast) var(--ease-out);
 }
 
-.keybind-row:hover .keybind-row__clear,
-.keybind-row:focus-within .keybind-row__clear {
-  opacity: 1;
+.keybind-row:not([data-bound]) {
+  --keybind-wire: color-mix(in srgb, var(--text-3) 28%, transparent);
 }
 
-.keybind-row__clear:is(:hover, :focus-visible) {
-  background: var(--control-hover);
-  border-color: var(--chrome-border);
+.keybind-row:is(:hover, :focus-within, [data-recording]) {
+  --keybind-wire: var(--text-2);
+}
+
+.keybind-row[data-fault] {
+  --keybind-wire: var(--error);
+}
+
+/* Names are set like the roster's providers: a full weight, not a whisper. */
+.keybind-row__name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.keybind-row__leader {
+  height: 5px;
+  margin-inline: 14px;
+  background: radial-gradient(circle, var(--keybind-wire) 0.9px, transparent 1.35px) left center /
+    8px 100% repeat-x;
+}
+
+/* Recording: the leader runs towards the keys, as work in flight runs along
+   the roster's wire. */
+.keybind-row[data-recording]:not([data-fault]) .keybind-row__leader {
+  background: linear-gradient(90deg, var(--keybind-wire) 50%, transparent 50%) left center / 8px 1px
+    repeat-x;
+  animation: keybind-wire-flow 520ms linear infinite;
+}
+
+.keybind-row[data-landed] .keybind-row__leader {
+  animation: keybind-wire-draw 560ms var(--ease-out) both;
+}
+
+@keyframes keybind-wire-flow {
+  to {
+    background-position-x: 8px;
+  }
+}
+
+@keyframes keybind-wire-draw {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+.keybind-row:is(:hover, :focus-within, [data-recording]) .keybind-row__name {
   color: var(--text);
 }
 
+/* The recorder is the whole row: its hit area stretches over the line. */
 .keybind-recorder {
+  grid-column: 3;
+  justify-self: end;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.keybind-recorder::after {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-sm);
+  content: '';
+}
+
+/* Keyboard focus rings the shortcut, not the row: the row is no card. */
+.keybind-row:not([data-recording]) .keybind-recorder:focus-visible {
+  border-radius: var(--r-xs);
+  outline: 2px solid var(--text-2);
+  outline-offset: 3px;
+}
+
+.keybind-row[data-recording] .keybind-recorder:focus-visible {
+  outline: 0;
+}
+
+.keybind-row[data-recording] .keybind-recorder {
+  cursor: default;
+}
+
+.keybind-recorder__empty {
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.keybind-row:is(:hover, :focus-within) .keybind-recorder__empty {
+  color: var(--text-2);
+}
+
+.keybind-shortcut {
   display: inline-flex;
-  min-width: 96px;
+  align-items: baseline;
+  justify-content: flex-end;
+  color: inherit;
+  font-family: var(--font-ui);
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.keybind-shortcut__modifier {
+  margin-right: 0.14em;
+}
+
+.keybind-shortcut__key {
+  min-width: 1em;
+  margin-left: 0.06em;
+  text-align: left;
+}
+
+/* A refused chord stays in place, in the error's ink. */
+.keybind-row[data-fault] .keybind-shortcut {
+  color: var(--error);
+}
+
+/* Ctrl+Alt+Shift+ reads as one word, as Windows writes it. */
+.keybind-shortcut--words .keybind-shortcut__modifier {
+  margin-right: 0;
+}
+
+/* Recording: the modifiers wait faintly in place and take ink while held. */
+.keybind-shortcut--live .keybind-shortcut__modifier {
+  color: color-mix(in srgb, var(--text-3) 55%, transparent);
+  transition: color 90ms var(--ease-out);
+}
+
+.keybind-shortcut--live .keybind-shortcut__modifier[data-held] {
+  color: var(--text);
+}
+
+.keybind-shortcut__caret {
+  position: relative;
+  align-self: stretch;
+}
+
+.keybind-shortcut__caret::before {
+  position: absolute;
+  top: 0.12em;
+  bottom: 0.06em;
+  left: 0.06em;
+  width: 1.5px;
+  background: var(--text);
+  content: '';
+  animation: keybind-caret 1.06s steps(1) infinite;
+}
+
+@keyframes keybind-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* A new shortcut drops into its place, modifiers first, then the key. */
+.keybind-shortcut[data-landed] > * {
+  animation: keybind-land 240ms var(--ease-out) both;
+}
+
+.keybind-shortcut[data-landed] > .keybind-shortcut__key {
+  animation-delay: 50ms;
+}
+
+.keybind-shortcut[data-landed]:not(:has(> *)) {
+  animation: keybind-land 240ms var(--ease-out) both;
+}
+
+@keyframes keybind-land {
+  from {
+    opacity: 0;
+    transform: translateY(-0.35em);
+  }
+}
+
+/* The row opens under itself while recording: what the action does, what to
+   press, and what else can be done with it. */
+.keybind-row__detail {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--dur-slow) var(--ease-out);
+}
+
+.keybind-row[data-recording] .keybind-row__detail {
+  grid-template-rows: 1fr;
+}
+
+/* Clipped only top and bottom, for the fold: the last quiet action hangs past
+   the right edge to sit optically flush, and its hover fill must not be cut. */
+.keybind-row__detail-inner {
+  min-height: 0;
+  overflow-x: visible;
+  overflow-y: clip;
+  font-size: var(--t-md);
+  letter-spacing: -0.006em;
+  line-height: 1.45;
+}
+
+.keybind-row__note {
+  margin: 5px 0 0;
+  color: var(--text-2);
+}
+
+.keybind-row__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 20px;
+  row-gap: 8px;
+  margin-top: 2px;
+  padding-bottom: 4px;
+}
+
+.keybind-row__hint,
+.keybind-row__message {
+  margin: 0;
+  color: var(--text-3);
+}
+
+.keybind-row__message {
+  color: var(--error);
+}
+
+.keybind-row__actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* The roster's buttons: what the row asks for is outlined, the rest is quiet. */
+.keybind-row__action {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
   min-height: 28px;
   align-items: center;
   justify-content: center;
-  padding: 3px 8px;
+  padding: 4px 10px;
   background: transparent;
-  border: 1px solid var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;
   font-size: var(--t-sm);
+  line-height: 1.25;
   white-space: nowrap;
   transition:
     background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
     color var(--dur-fast) var(--ease-out);
 }
 
-.keybind-recorder:is(:hover, :focus-visible) {
+.keybind-row__action:hover {
   background: var(--control-hover);
+  color: var(--text);
+}
+
+.keybind-row__action.is-primary {
+  min-width: 70px;
   border-color: var(--line-strong);
   color: var(--text);
+  font-weight: 500;
 }
 
-.keybind-recorder[data-recording='true'] {
-  background: var(--menu-hover);
-  border-color: var(--text-2);
-  color: var(--text);
+.keybind-row__action:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
 }
 
-.keybind-recorder kbd,
-.command-palette__shortcut {
-  color: var(--text-2);
-  font-family: var(--font-ui);
-  font-size: var(--t-sm);
-  font-weight: 400;
-  letter-spacing: normal;
-  font-variant-numeric: tabular-nums;
-}
-
-.keybind-shortcut {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  line-height: 1;
-}
-
-.keybind-shortcut__icon {
-  flex: none;
-  width: 13px;
-  height: 13px;
-  stroke-width: 1.8;
-}
-
-.keybind-shortcut__icon.is-delete {
-  transform: scaleX(-1);
-}
-
-.keybind-shortcut__key {
-  min-width: 0.65em;
-  text-align: center;
-}
-
-.keybind-row__message {
-  margin: 3px 0 0;
-  color: var(--error);
-  font-size: var(--t-xs);
-  line-height: 1.35;
+/* A lone quiet action sits optically flush with the row's right edge. */
+.keybind-row__action:last-child:not(.is-primary) {
+  margin-right: -10px;
 }
 
 .keybind-settings__empty {
-  margin: 44px 0;
+  margin: 30px 0 0;
   color: var(--text-3);
-  font-size: var(--t-sm);
-  text-align: center;
+  font-size: var(--t-md);
 }
 
 .command-palette__shortcut {
@@ -246,50 +428,30 @@
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   color: var(--text-3);
-}
-
-@media (max-width: 700px) {
-  .keybind-settings__header {
-    gap: 14px;
-  }
-
-  .keybind-row {
-    gap: 14px;
-  }
-}
-
-@media (max-width: 520px) {
-  .keybind-settings__header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .keybind-settings__reset {
-    align-self: flex-start;
-  }
-
-  .keybind-row {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 9px;
-    padding-block: 12px;
-  }
-
-  .keybind-row__controls {
-    align-self: stretch;
-    justify-content: flex-end;
-  }
-
-  .keybind-row__clear {
-    opacity: 1;
-  }
+  font-family: var(--font-ui);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+  letter-spacing: normal;
 }
 
 @media (prefers-reduced-motion: reduce) {
   .keybind-row,
-  .keybind-row__clear,
-  .keybind-recorder,
-  .keybind-settings__search {
+  .keybind-row__name,
+  .keybind-recorder__empty,
+  .keybind-row__detail,
+  .keybind-settings__search,
+  .keybind-settings__restore,
+  .keybind-settings__search-clear,
+  .keybind-row__action,
+  .keybind-shortcut--live .keybind-shortcut__modifier {
     transition: none;
+  }
+
+  .keybind-row .keybind-row__leader,
+  .keybind-shortcut[data-landed],
+  .keybind-shortcut[data-landed] > *,
+  .keybind-shortcut__caret::before {
+    animation: none;
   }
 }
