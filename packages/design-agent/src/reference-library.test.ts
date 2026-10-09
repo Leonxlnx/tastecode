@@ -295,6 +295,40 @@ describe('reviewed reference library', () => {
     expect(references[1]?.cue).toContain('not a verified responsive match')
   })
 
+  it('derives valid generated ids from arbitrary library folder names', () => {
+    const root = library()
+    const long = 'x'.repeat(120)
+    for (const name of ['Acme Studio', 'acme.com', '__lab__', long]) {
+      mkdirSync(path.join(root, name, 'generated'), { recursive: true })
+      writeFileSync(path.join(root, name, 'README.md'), 'Source: https://example.com/acme\n')
+      copyFileSync(
+        path.join(root, 'hero.webp'),
+        path.join(root, name, 'generated', '01-hero-desktop.webp'),
+      )
+    }
+    save(root, [entry])
+    const references = loadReviewedReferences(root)
+    expect(references.map(({ id }) => id).sort()).toEqual(
+      [
+        'acme-com-01-hero',
+        'acme-studio-01-hero',
+        'lab-01-hero',
+        `${long}-01-hero`.slice(0, 96),
+        'studio-hero',
+      ].sort(),
+    )
+    expect(references.find(({ id }) => id === 'acme-studio-01-hero')?.imagePath).toBe(
+      path.join(root, 'Acme Studio', 'generated', '01-hero-desktop.webp'),
+    )
+    mkdirSync(path.join(root, 'acme_studio', 'generated'), { recursive: true })
+    writeFileSync(path.join(root, 'acme_studio', 'README.md'), 'Source: https://example.com/a\n')
+    copyFileSync(
+      path.join(root, 'hero.webp'),
+      path.join(root, 'acme_studio', 'generated', '01-hero-desktop.webp'),
+    )
+    expect(() => loadReviewedReferences(root)).toThrow('duplicate reference IDs')
+  })
+
   it('samples repeated content families without replacement', () => {
     const root = library()
     save(
