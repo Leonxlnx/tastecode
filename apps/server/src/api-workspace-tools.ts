@@ -156,7 +156,7 @@ async function executeWorkspaceTool(
               path.isAbsolute(relative)
             )
               return false
-            assertPublicWorkspaceFile(target)
+            assertPublicWorkspaceFile(target, workspace)
             return true
           } catch {
             return false
@@ -169,7 +169,7 @@ async function executeWorkspaceTool(
     case 'read_file': {
       const input = WorkspacePathInputSchema.parse(call.input)
       const file = existingWorkspacePath(workspace, input.path, false)
-      assertPublicWorkspaceFile(file)
+      assertPublicWorkspaceFile(file, workspace)
       if (statSync(file).size > MAX_READ_BYTES) throw new Error('file exceeds the read limit')
       const content = readFileSync(file, 'utf8')
       return {
@@ -183,7 +183,7 @@ async function executeWorkspaceTool(
     case 'write_file': {
       const input = WriteFileInputSchema.parse(call.input)
       const destination = writableWorkspacePath(workspace, input.path)
-      assertPublicWorkspaceFile(destination)
+      assertPublicWorkspaceFile(destination, workspace)
       const content = input.content
       if (Buffer.byteLength(content) > MAX_WRITE_BYTES)
         throw new Error('file exceeds the write limit')
