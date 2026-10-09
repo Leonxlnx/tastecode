@@ -201,6 +201,23 @@ describe('reviewed reference library', () => {
     expect(pick('Use hero-band.')).toBe('hero-band')
     expect(pick('Hero: STUDIO-HERO, please')).toBe('studio-hero')
   })
+  it('matches an explicitly named source URL regardless of scheme, host case and trailing slash', () => {
+    const root = library()
+    save(root, [
+      entry,
+      { ...entry, id: 'second-hero', group: 'second-hero', source: 'https://example.com/second/' },
+    ])
+    const references = loadReviewedReferences(root)
+    const pick = (originalRequest: string, chooseIndex: (length: number) => number) =>
+      selectReviewedReferences({ ...brief, originalRequest }, references, chooseIndex)[0]?.id
+    const first = () => 0
+    const last = (length: number) => length - 1
+    expect(pick('Model the hero on https://example.com/second', first)).toBe('second-hero')
+    expect(pick('Model the hero on http://EXAMPLE.com/second/.', first)).toBe('second-hero')
+    expect(pick('Model the hero on https://example.com/studio/', last)).toBe('studio-hero')
+    expect(pick('Model the hero on https://example.com/studio-two', last)).toBe('second-hero')
+    expect(pick('Model the hero on https://example.com/studio/team', last)).toBe('second-hero')
+  })
   it('randomly chooses suitable groups while honoring an explicitly requested reference', () => {
     const root = library()
     save(root, [entry, { ...entry, id: 'second-hero', group: 'second-hero' }])
