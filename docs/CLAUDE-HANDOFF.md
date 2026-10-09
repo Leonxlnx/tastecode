@@ -10,6 +10,7 @@ Prepared at Leon's explicit request on **2026-10-09 (Europe/Berlin)**. This is a
 - All dashboard/reference task changes described below are already pushed and merged. Do not recreate them from the old checkout or blindly push every local branch.
 - **Latest public desktop release checked today: `v0.1.1`.** The `v0.1.2` draft is not ready merely because it contains two installers. Its description calls it an unsigned packaging proof; its macOS digest differs from the earlier reported signed build. See section 10 and the release inventory.
 - **Latest checked `main`: `f9e5549a`**. **Latest checked `nightly`: `1db6e765`** before this documentation PR. They diverge after `3e67df35`: 13 main-only commits and 49 nightly-only commits. New main settings work must eventually be merged into nightly without deleting the extra provider code.
+- The fresh inventory contains **22 pre-existing open PRs, 21 open issues and 201 remote branches**, plus **87 registered local worktrees and 123 local branches**. Eighteen PRs conflict; seven issues have no assignee. This handoff adds its own documentation PR #1408 and branch after that snapshot.
 - The 200 dashboard pairs are present on nightly and in the private plugin. The native app does **not** contain the private plugin's entire website library.
 - Do not describe synthetic tests as real model generation, source builds as installers, or sample visual review as exhaustive independent review.
 
@@ -19,6 +20,15 @@ Prepared at Leon's explicit request on **2026-10-09 (Europe/Berlin)**. This is a
 - [Reference-library and plugin inventory](handoff/2026-10-09/assets-and-plugin.md).
 - Machine-only workspace inventory: `E:/TasteCode-reference-library/production/2026-10-09-handoff/local-workspaces.md`. This stays local because it enumerates unrelated working directories and unpublished work.
 - The same local handoff directory holds machine-readable audit results. Do not upload raw sessions, app databases, credential settings or arbitrary untracked files with it.
+
+### Suggested reading order
+
+1. Sections 1–4 for current state, authority, locations and branch scope.
+2. Sections 5–9 for implementation, workflow, images/plugin and test evidence.
+3. Sections 10–13 for releases, reported bugs, next actions and operating commands.
+4. The GitHub appendix for every contributor PR/issue and the complete remote-branch list; the asset appendix for production scripts, all 54 source hosts and inactive-image reasons.
+
+The primary checkout is **382 commits behind current remote main**. Other dirty source worktrees include `D:/personalharness-design-agent-v2` and `D:/tc-v05`; the local inventory describes their changes without treating them as reviewed or ready to publish. Local ancestry can look unmerged after a rebase merge: the checkpoint, policy and Windows-fix checkouts were compared by full tree and already match their merged counterparts. There is no missing production push from those completed tasks.
 
 ## 2. People, preferences and authority
 
@@ -115,7 +125,7 @@ Some roadmap text is old planning language (for example "M4 next" and proposed l
 This is a persisted multi-phase workflow, not one unlimited model turn. The user still submits only one initial request; internal phases and bounded correction turns account for extra provider calls. Keep those internal turns distinguishable from genuine user messages in history.
 
 1. **Preflight and brief.** Check declared image input capability before inference. Classify the requested surface and extract goal, content, brand, constraints and assumptions. `workflow.ts` instructs autonomous completion with no questions. Compatibility parsing for old question records still exists; do not infer that new runs should ask them.
-2. **Select references.** Use eligible reviewed references for the required layout families. Selection uses `node:crypto` randomness, chooses groups before revisions, avoids duplicate groups where possible and freezes the deck for the run. Explicit references and existing branding take precedence. Desktop/mobile paths and hashes persist so later phases inspect the same images.
+2. **Select references.** Use eligible native references for the required layout families. The native website loader currently admits reviewed entries **and legacy candidates**; dashboard entries require reviewed generated pairs with mobile counterparts. The standalone plugin has a stricter reviewed-pair pool. Selection uses `node:crypto` randomness, chooses groups before revisions, avoids duplicate groups where possible and freezes the deck for the run. Explicit references and existing branding take precedence. Desktop/mobile paths and hashes persist so later phases inspect the same images.
 3. **Brand.** Inspect selected references and existing brand inputs; derive typography, palette and reusable tokens. Contrast repair should fix recoverable combinations without erasing the requested identity.
 4. **Page blueprint.** Map required content and interactions onto selected compositions. A product dashboard gets its complete shell, navigation and data views; a landing page about a dashboard remains a marketing page. The user-facing scope wins over product keywords.
 5. **Assets.** Generate images when supported or acquire suitable assets. Preserve supplied media and record acquisition/provenance. Do not require screenshots of nonexistent software: when appropriate, revise those needs into real native components. Unobtainable actual client work is not permission to fabricate verified portfolio evidence.
@@ -144,6 +154,8 @@ The small exported phase list in `run.ts` is not the whole orchestration impleme
 | Native nightly app                  | 172 website reference records / 316 WebPs + 200 dashboard records / 400 WebPs = 372 records / 716 WebPs, 344 paired records |
 
 The native app's smaller website bundle is intentional historical scope, not evidence that the full private plugin has been copied into the app. The remaining native website import is a separate decision and validation task.
+
+The native legacy website catalog has 144 complete pairs and 28 desktop-only records; only 10 entries are marked reviewed and 162 remain candidates. The dashboard import deliberately preserved that older catalog. Do not call all native references fully reviewed, or promise 1,500 approved website pairs: the current standalone website pool has 1,129. Historical source discovery covered 54 unique supplied hosts; 53 have approved pairs and MaestroClass remained unavailable. See [the full source inventory](handoff/2026-10-09/website-sources.json).
 
 ### Dashboard quality work completed
 
