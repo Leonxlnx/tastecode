@@ -1,9 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
+import { retainCheckpoint } from './checkpoint.js'
 import { Store } from './store.js'
 import { runHistoryCli } from './history-cli.js'
 
@@ -32,6 +34,58 @@ function setup() {
   store.closeThread('old')
   store.closeThread('isolated')
   return { store, root }
+}
+/** One closed and one active task, each with a checkpoint protected by a Git ref. */
+async function checkpointed() {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'harness-history-refs-'))
+  roots.push(root)
+  const repo = path.join(root, 'repo')
+  mkdirSync(repo)
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: repo,
+      encoding: 'utf8',
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  git('init', '-b', 'main')
+  git('config', 'user.email', 'test@example.com')
+  git('config', 'user.name', 'Test')
+  const store = new Store(path.join(root, 'tastecode.db'))
+  store.addProject(repo)
+  const commits: Record<string, string> = {}
+  const checkpoint = async (threadId: string) => {
+    git('commit', '--allow-empty', '-m', threadId)
+    commits[threadId] = git('rev-parse', 'HEAD')
+    store.addCheckpoint({ threadId, seq: 1, commit: commits[threadId], label: threadId })
+    await retainCheckpoint(repo, store.checkpointNamespace, commits[threadId])
+  }
+  for (const id of ['old', 'active']) {
+    store.addThread({ id, projectPath: repo, provider: 'codex', title: id, createdAt: 1 })
+    await checkpoint(id)
+  }
+  store.closeThread('old')
+  const refs = () =>
+    git('for-each-ref', '--format=%(refname:short)', 'refs/harness/checkpoints/')
+      .split('\n')
+      .filter(Boolean)
+      .map((ref) => ref.slice(ref.lastIndexOf('/') + 1))
+      .sort()
+  const prune = (output?: (line: string) => void) =>
+    runHistoryCli(
+      ['prune', '--before', '2099-01-01', '--archive', path.join(root, 'pruned.ndjson'), '--apply'],
+      { HARNESS_DATA_DIR: root },
+      output,
+    )
+  const thread = (id: string) => {
+    const reopened = new Store(path.join(root, 'tastecode.db'))
+    try {
+      return reopened.thread(id)
+    } finally {
+      reopened.close()
+    }
+  }
+  return { root, repo, store, commits, checkpoint, refs, prune, thread }
 }
 describe('history maintenance', () => {
   it('exports real rows, previews cleanup, then removes only closed tasks without a checkout', async () => {
@@ -135,5 +189,36 @@ describe('history maintenance', () => {
     expect(reopened.thread('old')).toBeDefined()
     reopened.close()
     expect(existsSync(path.join(root, 'tastecode.db'))).toBe(true)
+  })
+  it('prunes past a recorded checkpoint directory that is no longer a Git repository', async () => {
+    const { root, store, commits, refs, prune, thread } = await checkpointed()
+    const stale = path.join(root, 'stale')
+    mkdirSync(stale)
+    store.recordCheckpointRepository(stale)
+    store.close()
+    const output: string[] = []
+    await prune((line) => output.push(line))
+    expect(output.join('\n')).toContain('Removed 1 closed tasks')
+    expect(thread('old')).toBeUndefined()
+    expect(refs()).toEqual([commits.active])
+  })
+  it('keeps every checkpoint ref when a retained task checkout cannot be located', async () => {
+    const { root, repo, store, commits, checkpoint, refs, prune, thread } = await checkpointed()
+    const broken = path.join(root, 'broken-checkout')
+    mkdirSync(broken)
+    store.addThread({
+      id: 'kept',
+      projectPath: repo,
+      provider: 'codex',
+      title: 'kept',
+      createdAt: 1,
+      worktreePath: broken,
+      worktreeBranch: 'saved',
+    })
+    await checkpoint('kept')
+    store.close()
+    await expect(prune()).rejects.toThrow(/checkpoint refs could not be removed/)
+    expect(thread('old')).toBeUndefined()
+    expect(refs()).toEqual([commits.old, commits.active, commits.kept].sort())
   })
 })
