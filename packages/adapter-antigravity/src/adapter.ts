@@ -230,7 +230,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
     })
 
-    let sawResult = false
+    let terminal = false
     let messageStarted = false
     let messageText = ''
     const messageId = `${turnId}-message`
@@ -238,6 +238,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     readNdjson(
       child.stdout,
       (value) => {
+        if (terminal) return
         const frame = AgyFrameSchema.parse(value)
         if (frame.event === 'init' && frame.conversation_id) {
           this.#conversationId = frame.conversation_id
@@ -266,7 +267,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
           return
         }
         if (frame.event === 'result' && frame.result) {
-          sawResult = true
+          terminal = true
           const usage = frame.result.usage
           const text = frame.result.response ?? messageText
           if (messageStarted || text.trim()) {
@@ -316,7 +317,7 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
       {
         onError: (error) => {
-          this.emit('event', { type: 'thread.error', threadId, message: error.message })
+          finishProcess(error.message)
           void killTree(child)
         },
       },
@@ -325,26 +326,25 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.emit('log', chunk.trimEnd()))
 
-    child.on('close', (code) => {
+    // A spawn failure reports 'error' and then 'close', and a stream failure
+    // kills the child, so every exit path funnels through one terminal guard.
+    const finishProcess = (errorMessage: string) => {
       if (this.#child === child) this.#child = undefined
+      if (terminal) return
+      terminal = true
       if (this.#intentionalKills.has(child)) return
-      // An exit without a result frame would otherwise look like a hang.
-      if (sawResult) return
-      this.emit('event', {
-        type: 'thread.error',
-        threadId,
-        message: `agy exited with code ${code ?? 'unknown'} before reporting a result`,
-      })
+      this.emit('event', { type: 'thread.error', threadId, message: errorMessage })
       this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+    }
+
+    // An exit without a result frame would otherwise look like a hang.
+    child.on('close', (code) =>
+      finishProcess(`agy exited with code ${code ?? 'unknown'} before reporting a result`),
+    )
 
     // A spawn failure emits 'error' on the child; without a listener that
     // throws out of the event loop and takes the whole server down.
-    child.on('error', (error) => {
-      if (this.#child === child) this.#child = undefined
-      this.emit('event', { type: 'thread.error', threadId, message: String(error) })
-      this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
-    })
+    child.on('error', (error) => finishProcess(String(error)))
 
     child.stdin.end()
     return turnId
