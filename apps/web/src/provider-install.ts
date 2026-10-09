@@ -208,14 +208,22 @@ export async function beginGitHubSetup(
  */
 export function firstAuthUrl(log: string): string | undefined {
   const printable = log.replace(ANSI, '')
-  const match = /(https?:\/\/[^\s'"<>)]+)[\s'"<>)]/.exec(printable)
-  if (!match?.[1]) return undefined
-  const url = new URL(match[1])
-  const userCode = url.searchParams.get('user_code')
-  const codePattern = url.hostname === 'accounts.x.ai' ? /^[A-Z0-9]{4}-[A-Z0-9]{4}/ : undefined
-  const exactCode = codePattern?.exec(userCode ?? '')?.[0]
-  if (userCode && exactCode && userCode !== exactCode) url.searchParams.set('user_code', exactCode)
-  return url.toString()
+  for (const match of printable.matchAll(/(https?:\/\/[^\s'"<>)\]]+)[\s'"<>)\]]/g)) {
+    let url: URL
+    try {
+      url = new URL(match[1]!)
+    } catch {
+      // A template placeholder or an out-of-range port is not a link to open.
+      continue
+    }
+    const userCode = url.searchParams.get('user_code')
+    const codePattern = url.hostname === 'accounts.x.ai' ? /^[A-Z0-9]{4}-[A-Z0-9]{4}/ : undefined
+    const exactCode = codePattern?.exec(userCode ?? '')?.[0]
+    if (userCode && exactCode && userCode !== exactCode)
+      url.searchParams.set('user_code', exactCode)
+    return url.toString()
+  }
+  return undefined
 }
 
 export function signedInEmail(log: string): string | undefined {
