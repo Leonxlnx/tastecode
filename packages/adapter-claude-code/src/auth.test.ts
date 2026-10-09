@@ -1,6 +1,20 @@
-import { runCli } from '@harness/proc'
-import { describe, expect, it, vi } from 'vitest'
-import { claudeAccount, claudePlanLabel, parseClaudeAccount } from './auth.js'
+import { ChildProcess } from 'node:child_process'
+import { PassThrough } from 'node:stream'
+import { killTree, runCli, spawnCli } from '@harness/proc'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { claudeAccount, claudePlanLabel, parseClaudeAccount, startClaudeLogin } from './auth.js'
+
+vi.mock('@harness/proc', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@harness/proc')>()),
+  spawnCli: vi.fn(),
+  killTree: vi.fn(async () => undefined),
+}))
+
+class FakeChild extends ChildProcess {
+  override stdin = new PassThrough()
+  override stdout = new PassThrough()
+  override stderr = new PassThrough()
+}
 
 describe('Claude Code authentication', () => {
   it.each([
@@ -80,5 +94,40 @@ describe('Claude Code authentication', () => {
     })
     expect(run).toHaveBeenCalledOnce()
     expect(run).toHaveBeenCalledWith('claude', ['auth', 'status'])
+  })
+})
+
+describe('Claude Code sign-in', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.mocked(spawnCli).mockReset()
+    vi.mocked(killTree).mockClear()
+  })
+
+  it('drains the CLI output so a chatty sign-in cannot block on a full pipe', () => {
+    const child = new FakeChild()
+    vi.mocked(spawnCli).mockReturnValue(child as ReturnType<typeof spawnCli>)
+    startClaudeLogin(() => undefined)
+    expect(child.stdout.readableFlowing).toBe(true)
+    expect(child.stderr.readableFlowing).toBe(true)
+  })
+
+  it('stops and fails an abandoned sign-in after its deadline', async () => {
+    vi.useFakeTimers()
+    const child = new FakeChild()
+    vi.mocked(spawnCli).mockReturnValue(child as ReturnType<typeof spawnCli>)
+    const onComplete = vi.fn()
+    const { loginId } = startClaudeLogin(onComplete)
+
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+
+    expect(killTree).toHaveBeenCalledWith(child)
+    expect(onComplete).toHaveBeenCalledExactlyOnceWith({
+      loginId,
+      success: false,
+      error: 'Claude Code sign-in timed out.',
+    })
+    child.emit('exit', 0)
+    expect(onComplete).toHaveBeenCalledOnce()
   })
 })

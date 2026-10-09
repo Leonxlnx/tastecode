@@ -95,12 +95,28 @@ export function startClaudeLogin(
 ): ClaudeLogin {
   const loginId = crypto.randomUUID()
   const child = spawnCli('claude', ['auth', 'login'])
+  // Nothing reads these pipes; an undrained pipe blocks the CLI once it has
+  // written a buffer's worth (sign-in URLs, verbose retries) and the sign-in
+  // would hang forever.
+  child.stdout.resume()
+  child.stderr.resume()
   let settled = false
   const finish = (success: boolean, error: string | null) => {
     if (settled) return
     settled = true
-    onComplete({ loginId, success, error })
+    clearTimeout(deadline)
+    void killTree(child).then(
+      () => onComplete({ loginId, success, error }),
+      () => onComplete({ loginId, success: false, error: 'Claude Code sign-in could not stop.' }),
+    )
   }
+  const deadline = setTimeout(
+    () => {
+      finish(false, 'Claude Code sign-in timed out.')
+    },
+    10 * 60 * 1000,
+  )
+  deadline.unref?.()
   child.on('error', () => finish(false, 'Claude Code could not start its sign-in flow.'))
   child.on('exit', (code) => finish(code === 0, code === 0 ? null : 'Claude Code sign-in failed.'))
   return { loginId, cancel: () => killTree(child) }
