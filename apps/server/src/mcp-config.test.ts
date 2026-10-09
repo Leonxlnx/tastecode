@@ -118,6 +118,28 @@ describe('project MCP config', () => {
     expect(Object.getPrototypeOf(reloaded.list('codex', project)[1])).toBe(Object.prototype)
   })
 
+  it('keeps an unsupported block under a "__proto__" project key off Object.prototype', () => {
+    const { project, location, store } = setup()
+    mkdirSync(path.dirname(location))
+    const blocks = '{"future-provider":{"docs":{"id":"docs"}},"later-provider":{}}'
+    writeFileSync(location, `{"version":1,"projects":{"__proto__":${blocks}}}`)
+    try {
+      store.add('codex', project, { id: 'fresh', enabled: false })
+      expect(Object.hasOwn(Object.prototype, 'future-provider')).toBe(false)
+      expect(Object.hasOwn(Object.prototype, 'later-provider')).toBe(false)
+      const saved = JSON.parse(readFileSync(location, 'utf8')) as {
+        projects: Record<string, unknown>
+      }
+      expect(Object.getOwnPropertyDescriptor(saved.projects, '__proto__')?.value).toEqual(
+        JSON.parse(blocks),
+      )
+    } finally {
+      // A frozen prototype rejects the delete; never let cleanup hide the assertion.
+      for (const key of ['future-provider', 'later-provider'])
+        Reflect.deleteProperty(Object.prototype, key)
+    }
+  })
+
   it('reloads hand edits after the short read cache expires', () => {
     const { project, location } = setup()
     let now = 1_000
