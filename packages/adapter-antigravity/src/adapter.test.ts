@@ -31,6 +31,15 @@ class FakeChild extends ChildProcess {
     null,
     null,
   ]
+
+  override kill(): boolean {
+    setImmediate(() => {
+      this.stdout.end()
+      this.stderr.end()
+      this.emit('close', null)
+    })
+    return true
+  }
 }
 
 type SpawnRecord = { command?: string; args?: string[] }
@@ -112,6 +121,62 @@ describe('Antigravity turn invocation', () => {
         expect.objectContaining({ type: 'turn.completed', status: 'failed' }),
       ]),
     )
+  })
+
+  it('completes a stopped turn as interrupted and closes its open message', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    child.stdout.write(`${CAPTURED_FRAMES[2]}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    await adapter.interrupt()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'interrupted' },
+    ])
+    expect(events.find((event) => event.type === 'item.completed')).toMatchObject({
+      item: { id: `${turnId}-message`, status: 'failed', text: 'MOND' },
+    })
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+  })
+
+  it('reports a spawn failure once even though close follows the error', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    child.emit('error', new Error('spawn agy ENOENT'))
+    child.emit('close', -2)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
+  })
+
+  it('fails an oversized frame once rather than again on exit', async () => {
+    const child = new FakeChild()
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    child.stdout.write('x'.repeat(16 * 1024 * 1024 + 1))
+    await new Promise((resolve) => setImmediate(resolve))
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'thread.error')).toHaveLength(1)
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'failed' },
+    ])
   })
 
   it('prepends session instructions to the first prompt only', async () => {
