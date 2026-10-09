@@ -195,6 +195,19 @@ describe('firstAuthUrl', () => {
       firstAuthUrl('https://accounts.x.ai/oauth2/device?user_code=XCG6-Q2QCConfirm this code\r\n'),
     ).toBe('https://accounts.x.ai/oauth2/device?user_code=XCG6-Q2QC')
   })
+
+  it('skips a link that does not parse instead of throwing', () => {
+    expect(firstAuthUrl('Listening on http://localhost:${PORT} ')).toBeUndefined()
+    expect(firstAuthUrl('bad https://host:99999/x then https://x.test/device ')).toBe(
+      'https://x.test/device',
+    )
+  })
+
+  it('stops a link at a closing bracket', () => {
+    expect(firstAuthUrl('Open [https://a.test/device](https://a.test/device)\n')).toBe(
+      'https://a.test/device',
+    )
+  })
 })
 
 describe('signedInEmail', () => {
