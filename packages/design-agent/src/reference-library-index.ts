@@ -93,7 +93,12 @@ export function generatedReferenceCandidates(root: string) {
         )
       )
         continue
-      const id = `${site.name}-${section}`.toLowerCase()
+      // Folder names are free-form; an id that is already valid stays unchanged.
+      const id = `${site.name}-${section}`
+        .toLowerCase()
+        .replace(/[^a-z0-9]*[^a-z0-9-][^a-z0-9]*/gu, '-')
+        .replace(/^-+/u, '')
+        .slice(0, 96)
       candidates.push({
         id,
         group: id,
