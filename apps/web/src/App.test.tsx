@@ -1173,6 +1173,55 @@ describe('web client', () => {
     expect(rpcCount('thread.restore')).toBe(0)
   })
 
+  it('drops the previous chat restore points when switching to a running chat', async () => {
+    serverProjects[0]!.sessions.push({ id: 'running-thread', title: 'Running chat' })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.checkpoints' &&
+        methods[method].params.parse(params).threadId === 'running-thread'
+      )
+        return Promise.resolve({ checkpoints: [] })
+      if (
+        method === 'thread.history' &&
+        methods[method].params.parse(params).threadId === 'running-thread'
+      )
+        return Promise.resolve({ events: [], running: true })
+      return request(method, params)
+    })
+    const openPalette = async () => {
+      fireEvent.keyDown(window, { key: 'k', metaKey: true })
+      await screen.findByRole('dialog', { name: 'Command palette' })
+    }
+    const closePalette = async () => {
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Search commands' }), {
+        key: 'Escape',
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull(),
+      )
+    }
+    await openNewSession()
+    fireEvent.click(screen.getByRole('button', { name: /^Running chat,/ }))
+    startTurn('running-thread', 'turn-running')
+    await screen.findByText('Working')
+
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^New session,/ }).classList).toContain(
+        'is-active',
+      ),
+    )
+    await openPalette()
+    expect(await screen.findByRole('option', { name: /Restore points/ })).toBeTruthy()
+    await closePalette()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Running chat,/ }))
+    await screen.findByText('Working')
+    await openPalette()
+    expect(screen.queryByRole('option', { name: /Restore points/ })).toBeNull()
+  })
+
   it('clears the removed project chat and rejects its pending start completion', async () => {
     serverProjects.push({
       path: '/work/other',
