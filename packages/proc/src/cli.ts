@@ -83,7 +83,12 @@ function resolveWindowsExecutable(
   const extensions = path.win32.extname(command)
     ? ['']
     : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
-  const directories = /[\\/]/.test(command) ? [cwd] : [cwd, ...(envValue('PATH') ?? '').split(';')]
+  // A bare command is searched on PATH only, never in cwd: cwd is usually the
+  // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
+  // Empty PATH entries are skipped because they would resolve to cwd as well.
+  const directories = /[\\/]/.test(command)
+    ? [cwd]
+    : (envValue('PATH') ?? '').split(';').filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
       const candidate = path.win32.resolve(
