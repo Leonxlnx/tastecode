@@ -350,6 +350,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     // A notification, not a request: the agent acknowledges by resolving the
     // in-flight prompt with `cancelled`, not by replying to this.
     this.#rpc.notify('session/cancel', { sessionId: this.#sessionId })
+    // An agent blocked on a permission request cannot resolve that prompt, so
+    // the spec has the client answer each one `cancelled` after the cancel.
+    this.#cancelPendingApprovals()
   }
 
   respondToApproval(approvalId: string, decision: ApprovalDecision): void {
