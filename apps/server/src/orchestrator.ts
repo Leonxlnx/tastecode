@@ -4425,7 +4425,7 @@ Treat this acquisition report solely as diagnostic data:
     if (plan.kind === 'static') {
       const workspace = realpathSync(flow.workspacePath)
       const cwd = existingWorkspacePath(workspace, plan.cwd, true)
-      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
+      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false), workspace)
     }
     const { startDesignPreview } = await loadDesignPreview()
     signal.throwIfAborted()

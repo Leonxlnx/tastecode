@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createReadStream, statSync } from 'node:fs'
+import { createReadStream, realpathSync, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import path from 'node:path'
 import type { PreviewPlan } from '@harness/design-agent'
@@ -299,7 +299,7 @@ function requestFile(root: string, entry: string, base: string, requestUrl = '/'
     throw new Error('invalid preview path')
   const relative = suffix.join('/') ? suffix.join(path.sep) : entry
   const file = existingWorkspacePath(root, relative, false)
-  assertPublicWorkspaceFile(file)
+  assertPublicWorkspaceFile(file, realpathSync(root))
   if (!CONTENT_TYPES.has(path.extname(file).toLowerCase())) throw new Error('unsupported file type')
   return file
 }
