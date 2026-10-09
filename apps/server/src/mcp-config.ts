@@ -101,7 +101,7 @@ function parseConfig(raw: string): ParsedConfig {
     for (const [providerName, serversValue] of Object.entries(providersValue)) {
       const provider = ProviderIdSchema.safeParse(providerName)
       if (!provider.success) {
-        const kept = unsupported[projectPath] ?? {}
+        const kept = Object.hasOwn(unsupported, projectPath) ? unsupported[projectPath]! : {}
         setOwn(kept, providerName, serversValue)
         setOwn(unsupported, projectPath, kept)
         continue
