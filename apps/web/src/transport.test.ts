@@ -711,6 +711,73 @@ describe('Transport', () => {
     expect(gap).toHaveBeenCalledWith(2, 3)
   })
 
+  it('keeps delivering pushes and buffered replies when a listener throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const throwing = vi.fn(() => {
+      throw new Error('listener failed')
+    })
+    const listener = vi.fn()
+    transport.on('thread.event', throwing)
+    transport.on('thread.event', listener)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+    const checkpoints = transport.request('thread.checkpoints', { threadId: 'thread-1' })
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('first'),
+      }),
+    })
+    socket.onmessage?.({ data: JSON.stringify({ id: frame.id, result: { checkpoints: [] } }) })
+
+    await expect(checkpoints).resolves.toEqual({ checkpoints: [] })
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ event: expect.objectContaining({ turnId: 'first' }) }),
+    )
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 2,
+        data: completedThreadEvent('second'),
+      }),
+    })
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ event: expect.objectContaining({ turnId: 'second' }) }),
+    )
+    expect(throwing).toHaveBeenCalledTimes(2)
+    expect(error).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a sequence gap to every owner when one of them throws', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const gap = vi.fn()
+    transport.onSequenceGap(() => {
+      throw new Error('resync failed')
+    })
+    transport.onSequenceGap(gap)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'server.welcome', sequence: 1, data: {} }),
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 3, data: {} }),
+    })
+
+    expect(gap).toHaveBeenCalledWith(2, 3)
+    expect(error).toHaveBeenCalledOnce()
+  })
+
   it('ignores pushes from a socket replaced by a failed health check', async () => {
     const transport = new Transport('ws://test')
     const listener = vi.fn()
