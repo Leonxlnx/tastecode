@@ -55,6 +55,7 @@ import {
   type NativeMenuShortcuts,
 } from './menu-contract.js'
 import { NativeMenuDispatch } from './native-menu-dispatch.js'
+import { isRendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
 import { ownedServerEnvironment } from './owned-server-env.js'
@@ -1281,11 +1282,7 @@ function isOwnRenderer(webContents: WebContents): boolean {
   // Only the file the app itself loaded is our renderer — a bare scheme check
   // would trust any file: page that ever reaches this session.
   try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'file:') return false
-    parsed.hash = ''
-    parsed.search = ''
-    return fileURLToPath(parsed) === rendererIndexPath()
+    return isRendererFileUrl(url, rendererIndexPath())
   } catch {
     return false
   }
