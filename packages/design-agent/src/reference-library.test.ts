@@ -186,6 +186,21 @@ describe('reviewed reference library', () => {
       )[0]?.id,
     ).toBe('shop-hero')
   })
+  it('matches an explicitly named reference id only as a whole token', () => {
+    const root = library()
+    const ids = ['studio-hero', 'studio-hero-process', 'hero-band', 'x-hero-band']
+    save(
+      root,
+      ids.map((id) => ({ ...entry, id, group: id })),
+    )
+    const references = loadReviewedReferences(root)
+    const pick = (originalRequest: string) =>
+      selectReviewedReferences({ ...brief, originalRequest }, references, () => 0)[0]?.id
+    expect(pick('Use studio-hero-process for the opening')).toBe('studio-hero-process')
+    expect(pick('Use x-hero-band for the opening')).toBe('x-hero-band')
+    expect(pick('Use hero-band.')).toBe('hero-band')
+    expect(pick('Hero: STUDIO-HERO, please')).toBe('studio-hero')
+  })
   it('randomly chooses suitable groups while honoring an explicitly requested reference', () => {
     const root = library()
     save(root, [entry, { ...entry, id: 'second-hero', group: 'second-hero' }])

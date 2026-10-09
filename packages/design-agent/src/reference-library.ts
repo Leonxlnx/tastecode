@@ -144,6 +144,18 @@ export function referenceCandidatesForFamily(
   return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
 }
 
+/** Ids share prefixes (`x-about`, `x-about-process`), so a mention must be a whole id. */
+function containsId(text: string, id: string): boolean {
+  const idCharacter = /[a-z0-9-]/u
+  for (let index = text.indexOf(id); index >= 0; index = text.indexOf(id, index + 1))
+    if (
+      !idCharacter.test(text[index - 1] ?? '') &&
+      !idCharacter.test(text[index + id.length] ?? '')
+    )
+      return true
+  return false
+}
+
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
@@ -162,7 +174,7 @@ export function selectReviewedReferences(
       (entry) => !groups.has(entry.group ?? entry.id),
     )
     if (!familyEntries.length) continue
-    const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
+    const explicit = familyEntries.filter((entry) => containsId(request, entry.id.toLowerCase()))
     const explicitSource = familyEntries.filter(
       (entry) => entry.source && request.includes(entry.source.toLowerCase()),
     )
