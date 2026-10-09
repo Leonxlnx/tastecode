@@ -1275,6 +1275,10 @@ export function App() {
   )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
+  // What the sidebar shows. Navigation picks from this list so it never
+  // selects, and thereby silently cancels, a chat queued for deletion.
+  const visibleProjectsRef = useRef(archiveProjects)
+  visibleProjectsRef.current = archiveProjects
   const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
     inFlight: undefined,
     pendingPath: undefined,
@@ -4254,10 +4258,9 @@ export function App() {
         )
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
-        const currentProjects = projectsRef.current
-        const current = findSession(currentProjects, activeId)
+        const current = findSession(projectsRef.current, activeId)
         const hidden = new Set(targets)
-        const next = currentProjects
+        const next = visibleProjectsRef.current
           .flatMap((project) => project.sessions)
           .filter((session) => !hidden.has(session.id) && session.lifecycle.state === 'active')
           .sort((a, b) => b.createdAt - a.createdAt)[0]
@@ -4575,7 +4578,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = projectsRef.current.flatMap((project) => project.sessions)
+      const sessions = visibleProjectsRef.current.flatMap((project) => project.sessions)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -4883,7 +4886,7 @@ export function App() {
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const currentProjects = projectsRef.current
+        const currentProjects = visibleProjectsRef.current
         const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
         const session = project?.sessions
           .slice()
@@ -4953,7 +4956,7 @@ export function App() {
   const paletteChatSearch = useMemo(
     () =>
       createPaletteChatSearch(
-        () => projectsRef.current,
+        () => visibleProjectsRef.current,
         displayName,
         (threadId) => void selectSession(threadId),
         PALETTE_CHAT_SEARCH_CACHE,
