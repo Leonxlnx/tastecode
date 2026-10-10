@@ -38,10 +38,11 @@ const ProjectPathContext = createContext<string | undefined>(undefined)
 function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
   const [revealFailed, setRevealFailed] = useState(false)
-  const filePath = href ? localFileReferencePath(href) : undefined
-  if (filePath) {
+  const fileLink = href ? localFileLink(href) : undefined
+  if (fileLink) {
     if (projectPath) {
-      const reference = projectFileReference(filePath, projectPath)
+      // projectFileReference decodes the path itself, so it gets the still-encoded href.
+      const reference = projectFileReference(fileLink.href, projectPath)
       if (reference?.kind === 'safe' && canRevealProjectFile) {
         return (
           <button
@@ -79,7 +80,7 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
     }
     return (
       <span className="md-file-link" title={href}>
-        <FileTypeIcon path={filePath} />
+        <FileTypeIcon path={fileLink.path} />
         {children}
       </span>
     )
@@ -98,25 +99,35 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
   )
 }
 
-function localFileReferencePath(href: string): string | undefined {
-  let decoded = href
-  try {
-    decoded = decodeURIComponent(href)
-  } catch {
-    // Keep the original href when an agent emits a malformed escape sequence.
-  }
+const PRESERVED_FILE_PREFIX = '/__harness/project-file/'
+
+type LocalFileLink = { href: string; path: string }
+
+function localFileLink(href: string): LocalFileLink | undefined {
+  const preserved = href.startsWith(PRESERVED_FILE_PREFIX)
+  const original = preserved ? decodeHref(href.slice(PRESERVED_FILE_PREFIX.length)) : href
+  // A literal ? or # ends the path; an encoded %23 is part of a file name, so cut before decoding.
+  const target = original.replace(/[?#].*$/, '')
+  const path = decodeHref(target)
 
   const localPath =
-    decoded.startsWith('/__harness/project-file/') ||
-    decoded.startsWith('/') ||
-    decoded.startsWith('\\\\') ||
-    /^file:\/\//i.test(decoded) ||
-    /^[a-z]:[\\/]/i.test(decoded)
+    path.startsWith('/') ||
+    path.startsWith('\\\\') ||
+    /^file:\/\//i.test(path) ||
+    /^[a-z]:[\\/]/i.test(path)
   if (!localPath) return undefined
 
-  const withoutAnchor = decoded.replace(/[?#].*$/, '')
-  if (withoutAnchor.startsWith('/__harness/project-file/')) return withoutAnchor
-  return isFileReference(withoutAnchor) ? withoutAnchor : undefined
+  // Preserved links were file: URLs or drive paths, so they stay file links without a known extension.
+  return preserved || isFileReference(path) ? { href: target, path } : undefined
+}
+
+function decodeHref(href: string): string {
+  try {
+    return decodeURIComponent(href)
+  } catch {
+    // Keep the original href when an agent emits a malformed escape sequence.
+    return href
+  }
 }
 
 const STREAMDOWN_COMPONENTS = {
