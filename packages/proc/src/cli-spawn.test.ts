@@ -63,6 +63,17 @@ describe('Windows CLI dispatch', () => {
     expect(spawnOwned).toHaveBeenCalledWith('C:\\work\\bin\\agent.EXE', [], expect.anything())
   })
 
+  it('keeps cmd.exe from searching the working directory for an unresolved command', () => {
+    spawnCli('missing-tool', [], options)
+    expect(spawnOwned).toHaveBeenCalledWith(
+      'cmd.exe',
+      expect.anything(),
+      expect.objectContaining({
+        env: { ...options.env, NoDefaultCurrentDirectoryInExePath: '1' },
+      }),
+    )
+  })
+
   it('escapes a forwarding shim command and both argument parses', () => {
     vi.mocked(statSync).mockImplementation((filename) => {
       if (filename !== 'C:\\tools\\agent.CMD') throw new Error('not found')

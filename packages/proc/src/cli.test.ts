@@ -103,6 +103,24 @@ describe('cmd argument quoting', () => {
     },
   )
   it.skipIf(process.platform !== 'win32')(
+    'does not run a shim from the working directory for a command missing from PATH',
+    async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-cwd-'))
+      try {
+        writeFileSync(
+          path.join(workspace, 'harness-missing-tool.cmd'),
+          '@echo off\r\necho shadowed\r\n',
+        )
+        const result = await captureCli(spawnCli('harness-missing-tool', [], { cwd: workspace }))
+        expect(result.stdout).not.toContain('shadowed')
+        expect(result.code).not.toBe(0)
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.skipIf(process.platform !== 'win32')(
     'runs the PATH command, not a same-named shim in the working directory',
     async () => {
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-cwd-'))

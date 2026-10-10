@@ -30,7 +30,8 @@ export function spawnCli(
 
   if (process.platform === 'win32') {
     if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
-    const executable = resolveWindowsExecutable(command, spawnOptions.env, options.cwd) ?? command
+    const resolved = resolveWindowsExecutable(command, spawnOptions.env, options.cwd)
+    const executable = resolved ?? command
     if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
     const batch = /\.(?:cmd|bat)$/i.test(executable)
     const shellCommand = [
@@ -39,6 +40,12 @@ export function spawnCli(
     ].join(' ')
     return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
       ...spawnOptions,
+      // cmd.exe searches cwd for a name it could not find on PATH either.
+      ...(resolved
+        ? {}
+        : {
+            env: { ...(spawnOptions.env ?? process.env), NoDefaultCurrentDirectoryInExePath: '1' },
+          }),
       windowsVerbatimArguments: true,
     })
   }
