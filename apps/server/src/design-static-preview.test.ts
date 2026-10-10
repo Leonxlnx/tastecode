@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -116,5 +116,24 @@ describe('static Design media preview', () => {
     const unsupported = await fetch(new URL('private.txt', url))
     expect(unsupported.status).toBe(404)
     await unsupported.text()
+  })
+
+  it('keeps serving only the folder it started on after that folder is swapped for a link', async () => {
+    const { root, url } = await preview()
+    const parent = mkdtempSync(path.join(tmpdir(), 'taste-static-swap-'))
+    roots.push(parent)
+    const outside = path.join(parent, '.aws', 'sso')
+    mkdirSync(path.join(outside, 'cache'), { recursive: true })
+    writeFileSync(path.join(outside, 'cache', 'token.json'), '{"accessToken":"synthetic"}')
+    writeFileSync(path.join(outside, 'cache', 'clip.mp4'), 'outside')
+    renameSync(root, `${root}-moved`)
+    roots.push(`${root}-moved`)
+    symlinkSync(outside, root, 'junction')
+
+    for (const file of ['cache/token.json', 'cache/clip.mp4']) {
+      const response = await fetch(new URL(file, url))
+      expect(response.status).toBe(404)
+      await response.text()
+    }
   })
 })
