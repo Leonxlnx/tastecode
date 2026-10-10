@@ -1,5 +1,6 @@
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
+import { get, type IncomingMessage } from 'node:http'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -116,5 +117,29 @@ describe('static Design media preview', () => {
     const unsupported = await fetch(new URL('private.txt', url))
     expect(unsupported.status).toBe(404)
     await unsupported.text()
+  })
+
+  it('stops while a client holds a media response open', async () => {
+    const { root, url } = await preview()
+    // Large enough that the socket buffers fill and the response keeps streaming.
+    writeFileSync(path.join(root, 'hero.mp4'), Buffer.alloc(32 * 1024 * 1024))
+    const response = await new Promise<IncomingMessage>((resolve, reject) =>
+      get(new URL('hero.mp4', url), resolve).once('error', reject),
+    )
+    // Chromium stops reading a buffered video and keeps the connection open.
+    await new Promise((resolve) => response.once('data', resolve))
+    response.pause()
+    response.on('error', () => undefined)
+    const running = previews.pop()!
+    let timer: NodeJS.Timeout | undefined
+    const outcome = await Promise.race([
+      running.stop().then(() => 'stopped'),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve('still waiting'), 2_000)
+      }),
+    ])
+    clearTimeout(timer)
+    response.destroy()
+    expect(outcome).toBe('stopped')
   })
 })

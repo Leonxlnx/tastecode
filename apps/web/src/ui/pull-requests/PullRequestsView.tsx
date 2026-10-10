@@ -177,7 +177,11 @@ export function PullRequestsView(props: {
       return {
         ...current,
         items: current.items
-          .map((item) => (pullRequestKey(item) === key ? listItemFromDetail(next) : item))
+          .map((item) =>
+            pullRequestKey(item) === key
+              ? listItemFromDetail(next, syncedRelationship(item.relationship, next.relationship))
+              : item,
+          )
           .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
       }
     })
@@ -607,7 +611,20 @@ function ListMessage(props: {
   )
 }
 
-function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
+// Detail only knows who authored the PR. The list's searches also know whether
+// the viewer reviewed it, so a "both" PR keeps its place on the Reviewing tab.
+// An authored PR that only the reviewed search returned is "both" too.
+function syncedRelationship(
+  listed: PullRequestListItem['relationship'],
+  detail: PullRequestListItem['relationship'],
+): PullRequestListItem['relationship'] {
+  return listed === 'reviewing' && detail === 'authored' ? 'both' : listed
+}
+
+function listItemFromDetail(
+  detail: PullRequestDetail,
+  relationship: PullRequestListItem['relationship'],
+): PullRequestListItem {
   return {
     id: detail.id,
     repository: detail.repository,
@@ -633,7 +650,7 @@ function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
           mergeStateStatus: detail.mergeStateStatus,
         }
       : {}),
-    relationship: detail.relationship,
+    relationship,
     ...(detail.localProjectPath
       ? {
           localProjectPath: detail.localProjectPath,
