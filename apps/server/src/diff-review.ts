@@ -263,6 +263,9 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
   let insideContent = false
   let binary = false
   let missingMode = false
+  // Lines the current hunk's header still counts.
+  let oldLeft = 0
+  let newLeft = 0
   const lines = patch.split('\n')
   const relative = lines
     .flatMap((line, index) => {
@@ -270,13 +273,33 @@ export async function reverseUnifiedDiff(repoPath: string, patch: string): Promi
         insideContent = false
         binary = false
         missingMode = true
+        oldLeft = newLeft = 0
         return relativePatchPath(line, roots)
       }
       // Older imported Codex turns joined files with a blank line, which
       // `--recount` would read as one more context line of the previous hunk.
-      // A binary patch needs its blank line.
-      if (line === '' && !binary && lines[index + 1]?.startsWith('diff --git ')) return []
-      if (line.startsWith('@@ ')) insideContent = true
+      // A blank line the hunk still counts is an empty context line, and a
+      // binary patch needs its blank line.
+      if (
+        line === '' &&
+        !binary &&
+        oldLeft <= 0 &&
+        newLeft <= 0 &&
+        lines[index + 1]?.startsWith('diff --git ')
+      )
+        return []
+      const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line)
+      if (hunk) {
+        insideContent = true
+        oldLeft = Number(hunk[1] ?? 1)
+        newLeft = Number(hunk[2] ?? 1)
+      } else if (insideContent && !binary) {
+        if (line === '' || line.startsWith(' ')) {
+          oldLeft -= 1
+          newLeft -= 1
+        } else if (line.startsWith('-')) oldLeft -= 1
+        else if (line.startsWith('+')) newLeft -= 1
+      }
       if (line === 'GIT binary patch') insideContent = binary = true
       if (insideContent) return line
       if (line.startsWith('new file mode ') || line.startsWith('deleted file mode '))
