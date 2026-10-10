@@ -130,18 +130,23 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
   ${PAGE_SCROLLER_SOURCE}
 
   // checkVisibility ignores overflow clips, so intersect with clipping ancestors.
-  // A page scroller stands in for the document: what it hides is reached by scrolling.
+  // A page scroller stands in for the document: what it hides is reached by
+  // scrolling, so neither it nor the app-shell wrappers around it clip vertically.
   const visibleRect = (element, rect) => {
     let left = rect.left
     let top = rect.top
     let right = rect.right
     let bottom = rect.bottom
     if (getComputedStyle(element).position === 'fixed') return { left, top, right, bottom }
+    let insidePageScroller = false
     for (let current = composedParent(element); current; current = composedParent(current)) {
       if (current === document.documentElement || current === document.body) continue
       const style = getComputedStyle(current)
       const clipsX = style.overflowX !== 'visible'
-      const clipsY = style.overflowY !== 'visible' && pageScrollerOverflow(current) === 0
+      if (!insidePageScroller && style.overflowY !== 'visible') {
+        insidePageScroller = pageScrollerOverflow(current) > 0
+      }
+      const clipsY = style.overflowY !== 'visible' && !insidePageScroller
       if (clipsX || clipsY) {
         const bounds = current.getBoundingClientRect()
         if (clipsX) {

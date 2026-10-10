@@ -296,6 +296,29 @@ describe('preview DOM audit', () => {
     ])
   })
 
+  it('does not clip a page scroller at the app-shell wrapper around it', () => {
+    // #root { height: 100vh; overflow: hidden; display: flex } > main { flex: 1; overflow-y: auto }
+    const { audit } = runAudit([
+      {
+        id: 'root',
+        style: { overflowX: 'hidden', overflowY: 'hidden' },
+        rect: { width: 390, height: 844 },
+        children: [
+          {
+            tag: 'main',
+            style: { overflowY: 'auto' },
+            rect: { width: 390, height: 780, top: 64 },
+            contentHeight: 3000,
+            children: [small('deep-link', { rect: { width: 10, height: 10, top: 2000 } })],
+          },
+        ],
+      },
+    ])
+    expect(audit.interactiveTargetViolations).toEqual([
+      { selector: '#deep-link', label: '', width: 10, height: 10 },
+    ])
+  })
+
   it('still clips controls that a smaller scroll box hides', () => {
     const { audit } = runAudit([
       {
