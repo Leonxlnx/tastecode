@@ -139,6 +139,42 @@ export function sidebarRail(projects: Project[]): {
   }
 }
 
+/**
+ * The saved order after a chat is dropped in the rail. The rail lifts working
+ * and unread chats and moves pinned ones to their own section, so the drop is
+ * resolved against what it shows: the chat lands exactly where it was dropped
+ * among chats of its own rank, and otherwise as close to the drop target as
+ * that allows. Every other chat keeps its saved place, so a chat that was only
+ * lifted returns to it once it is read or done.
+ */
+export function moveRailSession(
+  sessions: Session[],
+  sourceId: string,
+  targetId: string,
+  position: 'before' | 'after',
+): Session[] {
+  const source = sessions.find((session) => session.id === sourceId)
+  if (!source || sourceId === targetId) return sessions
+  const saved = sessions.filter((session) => session !== source)
+  const shown = prioritizeSessions(
+    saved.filter((session) => !session.pinned),
+    (session) => session,
+  )
+  const targetIndex = shown.findIndex((session) => session.id === targetId)
+  if (targetIndex < 0) return sessions
+
+  const dropIndex = targetIndex + (position === 'after' ? 1 : 0)
+  const rank = railRank(source)
+  const above = shown.findLast((session, index) => index < dropIndex && railRank(session) === rank)
+  const below = shown.find((session, index) => index >= dropIndex && railRank(session) === rank)
+  const target = saved.indexOf(shown[targetIndex]!)
+  const index = Math.min(
+    Math.max(position === 'after' ? target + 1 : target, above ? saved.indexOf(above) + 1 : 0),
+    below ? saved.indexOf(below) : saved.length,
+  )
+  return [...saved.slice(0, index), source, ...saved.slice(index)]
+}
+
 const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
 
 function projectSidebarProjection(source: Project): ProjectSidebarProjection {
