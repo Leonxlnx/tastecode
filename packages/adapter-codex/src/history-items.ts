@@ -1,6 +1,7 @@
 import type { Item } from '@harness/contracts'
 import { binaryPlaceholder, jsonWithoutBinary } from './binary-content.js'
 import { object } from './history-values.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 type Value = Record<string, unknown>
 type Base = Pick<Item, 'id' | 'turnId' | 'createdAt' | 'status'>
@@ -139,15 +140,8 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
           change.type ?? object(change.kind).type ?? change.kind ?? 'update',
         ).toLowerCase()
         let body = text(change.unified_diff ?? change.diff ?? change.content)
-        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string') {
-          const lines = change.content.split('\n')
-          if (lines.at(-1) === '') lines.pop()
-          body = !lines.length
-            ? ''
-            : kind === 'add'
-              ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`
-              : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}\n`
-        }
+        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string')
+          body = wholeFileHunk(kind, change.content)
         // Without its mode line Git reads `/dev/null` as a path, and Undo would
         // move a created file to `dev/null` instead of deleting it.
         const mode =
