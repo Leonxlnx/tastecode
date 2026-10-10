@@ -2990,11 +2990,13 @@ export function App() {
       const titlePrompt = text.trim() || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
-      // for the paragraph someone just typed.
-      const draftKey = activeId?.startsWith('pending:')
-        ? NEW_CHAT_DRAFT_KEY
-        : composerDraftKey(activeId)
-      const restoreDraft = () => restoreRejectedDraft(draftKey, { text, attachments })
+      // for the paragraph someone just typed. A chat that is still starting
+      // keeps its own draft: startup moves it to the real chat, or to New chat
+      // if it fails. Only a send that waited on that failed startup goes there.
+      const restoreDraft = () =>
+        restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
+      const restoreDraftAfterFailedStart = () =>
+        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelQueuedArchive(activeId)) {
         restoreDraft()
@@ -3141,7 +3143,7 @@ export function App() {
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3164,7 +3166,7 @@ export function App() {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
