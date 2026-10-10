@@ -4,6 +4,7 @@ import {
   PREVIEW_PAGE_HEIGHT_SCRIPT,
   PREVIEW_SETTLE_SCRIPT,
   previewCaptureHeight,
+  previewPageHeights,
 } from './preview-settle.js'
 
 afterEach(() => vi.useRealTimers())
@@ -58,11 +59,74 @@ describe('preview capture settling', () => {
   it('bounds whole-page captures to a safe bitmap height', () => {
     expect(
       vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
-        document: { body: { scrollHeight: 20_000 }, documentElement: { scrollHeight: 20_000 } },
+        document: {
+          body: { scrollHeight: 20_000, getElementsByTagName: () => [] },
+          documentElement: { scrollHeight: 20_000 },
+        },
         innerHeight: 844,
         Math,
       }),
-    ).toEqual({ body: 20_000, documentElement: 20_000 })
+    ).toEqual({ body: 20_000, documentElement: 20_000, scrollContainer: 0 })
+  })
+
+  function scrollBox(box: {
+    top?: number
+    width: number
+    height: number
+    contentHeight: number
+    overflowY?: string
+  }) {
+    return {
+      clientWidth: box.width,
+      clientHeight: box.height,
+      scrollHeight: box.contentHeight,
+      overflowY: box.overflowY ?? 'auto',
+      getBoundingClientRect: () => ({ top: box.top ?? 0 }),
+    }
+  }
+
+  function measure(elements: unknown[], viewport = { width: 1440, height: 1000 }) {
+    return vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
+      document: {
+        body: { scrollHeight: viewport.height, getElementsByTagName: () => elements },
+        documentElement: { scrollHeight: viewport.height },
+      },
+      getComputedStyle: (element: { overflowY: string }) => ({ overflowY: element.overflowY }),
+      innerWidth: viewport.width,
+      innerHeight: viewport.height,
+      scrollY: 0,
+    }) as unknown
+  }
+
+  it('reports what a full-screen scroll container hides below its first screen', () => {
+    // html, body { height: 100% } main { height: 100%; overflow-y: auto } with three sections.
+    const value = measure([scrollBox({ width: 1440, height: 1000, contentHeight: 3000 })])
+    expect(value).toEqual({ documentElement: 1000, body: 1000, scrollContainer: 2000 })
+    // The bitmap still holds one screen, so the capture now reads as cut short.
+    expect(previewPageHeights(value, 1000)).toEqual({ documentHeight: 3000, capturedHeight: 1000 })
+  })
+
+  it('takes the largest page scroller and ignores scroll boxes that are page content', () => {
+    const value = measure([
+      // A code block, a box clipped without scrolling, and a panel that starts below the first screen.
+      scrollBox({ width: 600, height: 200, contentHeight: 900 }),
+      scrollBox({ width: 1440, height: 1000, contentHeight: 9000, overflowY: 'hidden' }),
+      scrollBox({ top: 1200, width: 1440, height: 800, contentHeight: 6000 }),
+      // A sidebar layout: the content pane scrolls beside a fixed navigation column.
+      scrollBox({ width: 1180, height: 1000, contentHeight: 4200 }),
+      scrollBox({ width: 260, height: 1000, contentHeight: 1600 }),
+      // One pixel of rounding is not hidden content.
+      scrollBox({ width: 1440, height: 1000, contentHeight: 1001 }),
+    ])
+    expect(value).toMatchObject({ scrollContainer: 3200 })
+  })
+
+  it('rejects an invalid scroll container measurement', () => {
+    for (const scrollContainer of [-1, 1.5, NaN, '200', Number.MAX_SAFE_INTEGER]) {
+      expect(() =>
+        previewPageHeights({ body: 1000, documentElement: 1000, scrollContainer }, 1000),
+      ).toThrow('Invalid preview page height')
+    }
   })
 
   it('finishes with suspended frames, fonts, and images and releases every wait', async () => {
@@ -190,7 +254,10 @@ describe('preview capture settling', () => {
 
   it('ignores hostile page Math and bounds valid raw measurements', () => {
     const value = vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
-      document: { body: { scrollHeight: 800 }, documentElement: { scrollHeight: 800 } },
+      document: {
+        body: { scrollHeight: 800, getElementsByTagName: () => [] },
+        documentElement: { scrollHeight: 800 },
+      },
       Math: new Proxy(
         {},
         {
