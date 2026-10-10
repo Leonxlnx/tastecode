@@ -32,6 +32,7 @@ import {
   IconTrash as Trash2,
   IconX as X,
 } from '@tabler/icons-react'
+import { writeClipboardText } from '../bridge.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import { AppSelect } from './AppSelect.js'
@@ -1716,7 +1717,7 @@ function threadSummary(project: ProjectMetadata, session: Session, now: number):
 
 async function copyText(value: string): Promise<void> {
   try {
-    await navigator.clipboard?.writeText(value)
+    await writeClipboardText(value)
   } catch {
     // Clipboard permission errors leave the menu action as a no-op.
   }
