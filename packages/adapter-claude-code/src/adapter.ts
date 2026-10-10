@@ -456,6 +456,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       await query.interrupt()
     } catch (error) {
+      // The turn keeps running, so a later error result is real and must still surface.
+      if (this.#query === query) this.#interruptRequested = false
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
     }
   }
