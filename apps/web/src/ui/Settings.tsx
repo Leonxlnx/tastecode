@@ -1914,12 +1914,18 @@ function AboutSettings(props: { transport: Transport }) {
             state: 'ready' as const,
             detail: result.remote ? `Up to date · ${short(result.remote.sha)}` : 'Up to date',
           }
-        : result.remote
+        : result.upToDate === false && result.remote
           ? {
               state: 'setup-needed' as const,
               detail: `Newer: ${short(result.remote.sha)} — pull and restart`,
             }
-          : { state: 'unavailable' as const, detail: 'No verdict' }
+          : {
+              state: 'unavailable' as const,
+              // Without the local commit, a newer remote is only a guess.
+              detail: result.remote
+                ? `Local commit unknown · latest ${short(result.remote.sha)}`
+                : 'No verdict',
+            }
   const nativeStatus =
     nativeUpdate?.status === 'current'
       ? { state: 'ready' as const, detail: 'Up to date' }
