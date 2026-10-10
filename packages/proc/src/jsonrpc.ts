@@ -308,6 +308,8 @@ export class StdioJsonRpc {
     // that is valid JSON but the wrong shape throws a TypeError — and this
     // runs inside a stdout listener, where an escaping throw would take down
     // the whole server, every session, over one agent's bad frame.
+    // The peer waits on every request id, so each one gets exactly one reply.
+    let responded = false
     try {
       if (id !== undefined && method !== undefined) {
         // A request from the agent — approvals and file access arrive this way.
@@ -315,6 +317,8 @@ export class StdioJsonRpc {
           method,
           message.params,
           (result) => {
+            if (responded) return
+            responded = true
             this.#write({ jsonrpc: '2.0', id, result })
           },
           id,
@@ -327,6 +331,12 @@ export class StdioJsonRpc {
       }
     } catch (error) {
       this.#onStderr(`handler failed for ${method ?? 'response'}: ${String(error)}`)
+      // Without a reply the peer blocks on this id and the turn never ends.
+      if (id !== undefined && method !== undefined && !responded) {
+        responded = true
+        const text = error instanceof Error ? error.message : String(error)
+        this.#write({ jsonrpc: '2.0', id, error: { code: -32603, message: text } })
+      }
     }
   }
 

@@ -43,6 +43,37 @@ describe('Windows CLI dispatch', () => {
     expect(vi.mocked(spawnOwned).mock.calls[0]?.[2]).not.toHaveProperty('windowsVerbatimArguments')
   })
 
+  it('never resolves a bare command from the working directory', () => {
+    vi.mocked(statSync).mockImplementation((filename) => {
+      if (filename !== 'C:\\work\\git.CMD' && filename !== 'C:\\tools\\git.EXE') {
+        throw new Error('not found')
+      }
+      return { isFile: () => true } as ReturnType<typeof statSync>
+    })
+    spawnCli('git', ['status'], { ...options, env: { ...options.env, Path: ';"";C:\\tools' } })
+    expect(spawnOwned).toHaveBeenCalledWith('C:\\tools\\git.EXE', ['status'], expect.anything())
+  })
+
+  it('still resolves a command with a path separator against the working directory', () => {
+    vi.mocked(statSync).mockImplementation((filename) => {
+      if (filename !== 'C:\\work\\bin\\agent.EXE') throw new Error('not found')
+      return { isFile: () => true } as ReturnType<typeof statSync>
+    })
+    spawnCli('bin\\agent', [], options)
+    expect(spawnOwned).toHaveBeenCalledWith('C:\\work\\bin\\agent.EXE', [], expect.anything())
+  })
+
+  it('keeps cmd.exe from searching the working directory for an unresolved command', () => {
+    spawnCli('missing-tool', [], options)
+    expect(spawnOwned).toHaveBeenCalledWith(
+      'cmd.exe',
+      expect.anything(),
+      expect.objectContaining({
+        env: { ...options.env, NoDefaultCurrentDirectoryInExePath: '1' },
+      }),
+    )
+  })
+
   it('escapes a forwarding shim command and both argument parses', () => {
     vi.mocked(statSync).mockImplementation((filename) => {
       if (filename !== 'C:\\tools\\agent.CMD') throw new Error('not found')

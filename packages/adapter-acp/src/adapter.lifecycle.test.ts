@@ -35,6 +35,8 @@ class FakeAcpRpc implements AcpRpc {
   failTransport: ((error: Error) => void) | undefined
   loadSession = false
   methods: string[] = []
+  /** Client-to-agent notifications and permission answers, in wire order. */
+  wire: string[] = []
 
   onStderr(): void {}
   onNotification(): void {}
@@ -82,7 +84,9 @@ class FakeAcpRpc implements AcpRpc {
     return Promise.resolve(parse({}))
   }
 
-  notify(): void {}
+  notify(method: string): void {
+    this.wire.push(method)
+  }
   dispose(): void {}
 
   requestPermission(kind: ToolKind): Promise<JsonRpcValue> {
@@ -98,7 +102,10 @@ class FakeAcpRpc implements AcpRpc {
             { optionId: 'deny', kind: 'reject_once', name: 'Deny' },
           ],
         },
-        resolve,
+        (result) => {
+          this.wire.push('session/request_permission answer')
+          resolve(result)
+        },
       )
     })
   }
@@ -215,6 +222,28 @@ describe('ACP approval lifecycle', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'turn.completed', turnId, status: 'completed' }),
     )
+  })
+
+  it('answers a pending approval with cancelled after Stop sends session/cancel', async () => {
+    const { adapter, events, turnId } = await startedAdapter('ask')
+    const answered = activeRpc().requestPermission('execute')
+
+    await adapter.interrupt()
+
+    // ACP: the client cancels first, then answers every pending permission
+    // request with `cancelled` so the agent can resolve its prompt.
+    await expect(answered).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    expect(activeRpc().wire).toEqual(['session/cancel', 'session/request_permission answer'])
+    expect(events).toContainEqual({ type: 'approval.resolved', id: 'tc-1' })
+
+    // A late click on the stale card must not reach the agent.
+    adapter.respondToApproval('tc-1', 'approve')
+    expect(activeRpc().wire).toHaveLength(2)
+
+    activeRpc().resolvePrompt({ stopReason: 'cancelled' })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(events.filter((event) => event.type === 'approval.resolved')).toHaveLength(1)
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
   })
 
   it('auto mode only waves through reads — mutations stay questions', async () => {
