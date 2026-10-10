@@ -470,7 +470,7 @@ const MCP_TOOL_ACTION = {
 export function mapMcpToolApprovalResponse(
   decision: ApprovalDecision,
   rememberForSession: boolean,
-): { action: McpServerElicitationAction; content: null; _meta: { persist: 'session' } | null } {
+) {
   return {
     action: MCP_TOOL_ACTION[decision],
     content: null,
