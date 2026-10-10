@@ -870,11 +870,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
-        this.emit('event', {
-          type: 'thread.error',
-          threadId: this.#threadId,
-          message: this.#redactor.redact(message.errors.join('\n')),
-        })
+        const errors = this.#redactor.redact(message.errors.join('\n'))
+        // A stopped turn ends as an error result carrying "[ede_diagnostic]" lines; that is
+        // the expected outcome of Stop, not something to show as an error.
+        if (this.#interruptRequested) this.#log(`Claude stopped turn: ${errors}`)
+        else this.emit('event', { type: 'thread.error', threadId: this.#threadId, message: errors })
       }
       const status = this.#interruptRequested
         ? 'interrupted'

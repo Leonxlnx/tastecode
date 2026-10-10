@@ -1089,6 +1089,27 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('ends a stopped tool call as interrupted without a diagnostic error', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    await adapter.interrupt()
+    fake.queries[0]!.emitMessage({
+      ...(resultMessage(true) as object),
+      terminal_reason: 'aborted_tools',
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'interrupted',
+    })
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+    adapter.dispose()
+  })
+
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
