@@ -862,14 +862,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'result') {
+      const turnId = this.#activeTurnId
+      if (!turnId) return
+      this.#resumeOnRestart = true
       // Usage tokens are per turn, but the cost is the query's running total: report only
       // this turn's share so the store can sum turns. A drop means the SDK started over.
       const total = message.total_cost_usd
       const costUsd = total < this.#queryCostUsd ? total : total - this.#queryCostUsd
       this.#queryCostUsd = total
-      const turnId = this.#activeTurnId
-      if (!turnId) return
-      this.#resumeOnRestart = true
       const usage = toUsage(message.usage, costUsd)
       if (usage) {
         this.emit('event', {
