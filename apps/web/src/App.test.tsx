@@ -7415,6 +7415,7 @@ describe('global shortcuts', () => {
   })
 
   it('refuses a number key in the keybind recorder and keeps it opening recent chats', async () => {
+    serverProjects[0]!.sessions.push({ id: 'recent-thread', title: 'Recent chat', createdAt: 5 })
     await openNewSession()
     fireEvent.keyDown(window, { key: ',', metaKey: true })
     fireEvent.click(await screen.findByRole('button', { name: 'Keybinds' }))
@@ -7429,7 +7430,12 @@ describe('global shortcuts', () => {
     expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
 
     fireEvent.keyDown(window, { key: '1', metaKey: true })
-    await act(async () => Promise.resolve())
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-thread' }),
+      ),
+    )
     expect(composerProps().newSession).toBe(false)
   })
 
