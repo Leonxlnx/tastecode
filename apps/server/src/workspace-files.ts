@@ -41,7 +41,7 @@ export async function listWorkspaceDirectory(
 
   const protocolDirectory = toProtocolPath(path.relative(workspace, directory))
   const children = await readdir(directory, { withFileTypes: true })
-  const entries = await workspaceEntries(protocolDirectory, directory, children)
+  const entries = await workspaceEntries(workspace, protocolDirectory, directory, children)
 
   return { path: protocolDirectory, entries }
 }
@@ -70,7 +70,9 @@ export async function searchWorkspaceFiles(
         if (!child.isSymbolicLink() && (child.isDirectory() || child.isFile())) {
           const relativeChild = path.join(protocolDirectory, child.name)
           if (toProtocolPath(relativeChild).toLowerCase().includes(needle)) {
-            entries.push(...(await workspaceEntries(protocolDirectory, directory, [child])))
+            entries.push(
+              ...(await workspaceEntries(workspace, protocolDirectory, directory, [child])),
+            )
           }
           if (child.isDirectory()) {
             if (depth < MAX_SEARCH_DEPTH) {
@@ -97,6 +99,7 @@ export async function searchWorkspaceFiles(
 
 /** Queue every stat for maximum file-system throughput without one promise per child. */
 function workspaceEntries(
+  workspace: string,
   protocolDirectory: string,
   directory: string,
   children: Dirent[],
@@ -105,7 +108,11 @@ function workspaceEntries(
     const entries: Array<WorkspaceFileEntry | undefined> = []
     entries.length = children.length
     const absoluteDirectory = directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`
-    const directoryRestricted = protocolDirectory.split('/').some(isSecretWorkspaceName)
+    // Reading refuses every file of a workspace opened directly on a credential
+    // folder such as ~/.aws, so the tree must show them locked rather than openable.
+    const directoryRestricted =
+      isSecretWorkspaceName(path.basename(workspace)) ||
+      protocolDirectory.split('/').some(isSecretWorkspaceName)
     let entryCount = 0
     let pending = 0
     let queued = true
