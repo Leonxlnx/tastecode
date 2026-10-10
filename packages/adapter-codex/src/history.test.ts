@@ -670,6 +670,30 @@ describe('native Codex history', () => {
     })
   })
 
+  it('leaves an empty created file out of the imported turn diff', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/__init__.py': { type: 'add', content: '' },
+          '/project/a.txt': { type: 'update', unified_diff: '@@ -1 +1 @@\n-a\n+A\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).find((entry) => entry.path === '/project/__init__.py')).toMatchObject({
+      text: 'add /project/__init__.py',
+      linesAdded: 0,
+    })
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
+    )
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
