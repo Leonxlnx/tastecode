@@ -3020,6 +3020,25 @@ export class Orchestrator {
     ])
   }
 
+  /**
+   * Ends a chat's agent process without archiving the chat, so the next
+   * message resumes it. Removing a project uses this: the project can be added
+   * back, and its chats must still accept messages then.
+   */
+  async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      await this.closeSideThread(threadId)
+      return
+    }
+    const sideThreadId = this.#sideThreads.get(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
+    await Promise.all([
+      sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
+      runtimeDisposed,
+    ])
+  }
+
   async closeSideThread(threadId: string): Promise<void> {
     const stored = this.#store.thread(threadId)
     // A retry after a failed stop finds the row gone but the agent still owned.
