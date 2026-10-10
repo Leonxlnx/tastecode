@@ -83,3 +83,19 @@ export function verifiedRemainingPids(listeners, byPid, owned) {
   }
   return pids
 }
+
+/** Map each listening TCP port in `netstat -ano -p tcp` output to its owning PIDs. */
+export function netstatListeners(stdout) {
+  const listeners = new Map()
+  for (const line of stdout.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/)
+    if (fields.length < 5 || fields[0].toUpperCase() !== 'TCP') continue
+    if (fields[3].toUpperCase() !== 'LISTENING') continue
+    const port = Number.parseInt(fields[1].match(/:(\d+)$/)?.[1] ?? '', 10)
+    const pid = Number.parseInt(fields[4], 10)
+    const pids = listeners.get(port) ?? new Set()
+    pids.add(pid)
+    listeners.set(port, pids)
+  }
+  return listeners
+}
