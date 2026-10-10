@@ -173,7 +173,7 @@ export async function readWorkspaceTextFile(
 ): Promise<WorkspaceFileContents> {
   const workspace = await realpath(workspacePath)
   const file = await containedRealPath(workspace, relativeFile)
-  assertPublicWorkspaceFile(file)
+  assertPublicWorkspaceFile(file, workspace)
   const metadata = await stat(file)
   if (!metadata.isFile()) throw new Error('path must be a file')
 

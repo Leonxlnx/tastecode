@@ -35,9 +35,10 @@ export function existingWorkspacePath(
 ): string {
   const target = contained(workspace, relativePath)
   const real = realpathSync(target)
-  assertContained(realpathSync(workspace), real)
-  assertPublicWorkspaceFile(target)
-  assertPublicWorkspaceFile(real)
+  const realWorkspace = realpathSync(workspace)
+  assertContained(realWorkspace, real)
+  assertPublicWorkspaceFile(target, workspace)
+  assertPublicWorkspaceFile(real, realWorkspace)
   const stats = statSync(real)
   if (directory ? !stats.isDirectory() : !stats.isFile()) {
     throw new Error(directory ? 'path must be a directory' : 'path must be a file')
@@ -48,11 +49,11 @@ export function existingWorkspacePath(
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
   const realWorkspace = realpathSync(workspace)
-  assertPublicWorkspaceFile(target)
+  assertPublicWorkspaceFile(target, workspace)
   if (existsSync(target)) {
     const real = realpathSync(target)
     assertContained(realWorkspace, real)
-    assertPublicWorkspaceFile(real)
+    assertPublicWorkspaceFile(real, realWorkspace)
     return real
   }
   let ancestor = path.dirname(target)
@@ -66,12 +67,24 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
   }
   const real = path.resolve(realpathSync(ancestor), path.relative(ancestor, target))
   assertContained(realWorkspace, real)
-  assertPublicWorkspaceFile(real)
+  assertPublicWorkspaceFile(real, realWorkspace)
   return real
 }
 
-export function assertPublicWorkspaceFile(file: string): void {
-  if (file.split(path.sep).some(isSecretWorkspaceName)) {
+/**
+ * Only the workspace's own name and the part below it are checked: a project
+ * that merely lives under a folder such as `gcloud` or `.docker` is not itself a
+ * credential, but a workspace opened directly on `~/.aws` or `~/.kube` still is.
+ */
+export function assertPublicWorkspaceFile(file: string, workspace?: string): void {
+  const relative = workspace === undefined ? undefined : path.relative(workspace, file)
+  const inside =
+    relative !== undefined &&
+    !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  const checked = inside
+    ? [path.basename(workspace!), ...relative.split(path.sep)]
+    : file.split(path.sep)
+  if (checked.some(isSecretWorkspaceName)) {
     throw new Error('credential files are not available')
   }
 }

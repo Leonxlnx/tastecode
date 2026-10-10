@@ -248,6 +248,22 @@ export type PermissionsRequestApprovalParams = z.infer<
   typeof PermissionsRequestApprovalParamsSchema
 >
 
+/** The approval Codex 0.162 sends through `mcpServer/elicitation/request` before an MCP tool call. */
+export const McpToolApprovalParamsSchema = z.object({
+  threadId: z.string(),
+  turnId: z.string().nullish(),
+  mode: z.literal('form'),
+  message: z.string(),
+  _meta: z.object({
+    codex_approval_kind: z.literal('mcp_tool_call'),
+    persist: z.union([z.string(), z.array(z.string())]).optional(),
+    tool_description: z.string().nullish(),
+    tool_params: JsonRpcValueSchema.optional(),
+  }),
+})
+
+export type McpToolApprovalParams = z.infer<typeof McpToolApprovalParamsSchema>
+
 export const ApprovalParamsSchema = z.object({
   itemId: z.string().optional(),
   approvalId: nullableString.optional(),

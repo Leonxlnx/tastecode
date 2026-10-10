@@ -303,8 +303,10 @@
                 user
                 <span class="d"
                   >permission-profile requests show the requested access and answer with Codex's
-                  grant-and-scope wire shape; Stop uses the original thread and turn IDs; automatic
-                  review runs without status or result cards in the chat</span
+                  grant-and-scope wire shape; MCP tool approvals show the tool and its arguments and
+                  answer Codex's elicitation action, remembering the tool when Codex offers it for
+                  the session; Stop uses the original thread and turn IDs; automatic review runs
+                  without status or result cards in the chat</span
                 ></span
               ></label
             >
@@ -1670,7 +1672,9 @@
                   Ctrl+1–9 on Windows/Linux open the nine newest sessions in the first sidebar
                   project. Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key
                   labels and portable recorded Option keys. Direct workspace tool shortcuts work
-                  before and after the panel opens and respect modal keyboard ownership</span
+                  before and after the panel opens and respect modal keyboard ownership. The
+                  recorder refuses those, the number keys, find, turn navigation and the debug
+                  chord</span
                 ></span
               ></label
             >
@@ -1691,7 +1695,7 @@
                 inspect, per-project scope
                 <span class="d"
                   >a provider selector manages separate Codex, Claude Code, and Grok project
-                  definitions; Codex can hot-reload compatible changes, Grok receives selected
+                  definitions; open Codex chats resume with saved changes, Grok receives selected
                   servers through ACP, and Claude receives enabled definitions on start and resume
                   with credentials kept out of process arguments; controls follow the available
                   capabilities, and Claude rejects unsupported inherited-server hiding before
@@ -1711,7 +1715,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers reloadable into a running session</span
+                >Saved MCP changes reach open chats
+                <span class="d"
+                  >an idle chat resumes with them, a working chat once its current and queued
+                  messages finish; a Temporary chat says it keeps the servers it started with</span
+                ></span
               ></label
             >
           </li>
@@ -1990,6 +1998,19 @@
                     >production evidence</a
                   ></span
                 ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Crash recovery: a render exception replaces the window with a recovery card
+                offering Reload window, allowlisted Copy diagnostics and, on desktop, Ask an agent
+                to fix it, which opens Claude Code, Codex or Grok in the default terminal in its
+                bypass-permissions mode inside a fresh temp folder holding a scrubbed crash report
+                and a one-line prompt to explain and fix the crash; a failing full-window surface
+                shows the same card with Try again and Back to app.
+                <a href="./evidence/recovery-agent-picker-dark-20261010.jpg">evidence</a></span
               ></label
             >
           </li>

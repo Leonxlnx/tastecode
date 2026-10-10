@@ -41,7 +41,15 @@ export function CheckoutDiscardDialog(props: {
             <button className="ghost" onClick={props.onClose} disabled={props.busy}>
               Keep session
             </button>
-            <button className="btn btn--danger" onClick={props.onDiscard} disabled={props.busy}>
+            <button
+              className="btn btn--danger"
+              // A batch delete opens the next confirmation in this same spot, so
+              // the second click of a double-click must not discard that chat too.
+              onClick={(event) => {
+                if (event.detail <= 1) props.onDiscard()
+              }}
+              disabled={props.busy}
+            >
               {props.busy ? 'Discarding…' : 'Discard changes and delete'}
             </button>
           </div>

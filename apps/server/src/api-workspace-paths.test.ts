@@ -84,6 +84,39 @@ describe('direct API workspace path policy', () => {
     )
   })
 
+  it.each(['gcloud', '.docker', 'release.key'])(
+    'allows a workspace that lives under a folder named %s',
+    (parent) => {
+      const root = workspaceDirectory(path.join(tmpdir(), 'harness-api-parent-'))
+      const workspace = path.join(root, parent, 'site')
+      mkdirSync(workspace, { recursive: true })
+      writeFileSync(path.join(workspace, 'index.html'), '<p>hi</p>')
+      writeFileSync(path.join(workspace, '.env'), 'synthetic canary')
+      const real = realpathSync(workspace)
+      expect(existingWorkspacePath(workspace, 'index.html', false)).toBe(
+        path.join(real, 'index.html'),
+      )
+      expect(existingWorkspacePath(workspace, '.', true)).toBe(real)
+      expect(writableWorkspacePath(workspace, 'src/new.txt')).toBe(
+        path.join(real, 'src', 'new.txt'),
+      )
+      expect(() => existingWorkspacePath(workspace, '.env', false)).toThrow(/credential/)
+      expect(() => writableWorkspacePath(workspace, '.git/config')).toThrow(/credential/)
+    },
+  )
+
+  it.each(['.aws', '.kube', 'gcloud'])(
+    'still rejects a workspace opened directly on %s',
+    (name) => {
+      const root = workspaceDirectory(path.join(tmpdir(), 'harness-api-secret-root-'))
+      const workspace = path.join(root, name)
+      mkdirSync(workspace, { recursive: true })
+      writeFileSync(path.join(workspace, 'config'), 'synthetic canary')
+      expect(() => existingWorkspacePath(workspace, 'config', false)).toThrow(/credential/)
+      expect(() => writableWorkspacePath(workspace, 'new.txt')).toThrow(/credential/)
+    },
+  )
+
   it('recognizes common credential files', () => {
     expect(isSecretWorkspaceName('.env.local')).toBe(true)
     expect(isSecretWorkspaceName('client.pem')).toBe(true)

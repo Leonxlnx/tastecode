@@ -269,15 +269,55 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
 export async function reverseUnifiedDiff(repoPath: string, patch: string): Promise<void> {
   const roots = new Set([gitPath(path.resolve(repoPath)), gitPath(await realpath(repoPath))])
   let insideContent = false
-  const relative = patch
-    .split('\n')
-    .map((line) => {
+  let binary = false
+  let missingMode = false
+  // Lines the current hunk's header still counts.
+  let oldLeft = 0
+  let newLeft = 0
+  const lines = patch.split('\n')
+  const relative = lines
+    .flatMap((line, index) => {
       if (line.startsWith('diff --git ')) {
         insideContent = false
+        binary = false
+        missingMode = true
+        oldLeft = newLeft = 0
         return relativePatchPath(line, roots)
       }
-      if (line.startsWith('@@ ') || line === 'GIT binary patch') insideContent = true
+      // Older imported Codex turns joined files with a blank line, which
+      // `--recount` would read as one more context line of the previous hunk.
+      // A blank line the hunk still counts is an empty context line, and a
+      // binary patch needs its blank line.
+      if (
+        line === '' &&
+        !binary &&
+        oldLeft <= 0 &&
+        newLeft <= 0 &&
+        lines[index + 1]?.startsWith('diff --git ')
+      )
+        return []
+      const hunk = /^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@/.exec(line)
+      if (hunk) {
+        insideContent = true
+        oldLeft = Number(hunk[1] ?? 1)
+        newLeft = Number(hunk[2] ?? 1)
+      } else if (insideContent && !binary) {
+        if (line === '' || line.startsWith(' ')) {
+          oldLeft -= 1
+          newLeft -= 1
+        } else if (line.startsWith('-')) oldLeft -= 1
+        else if (line.startsWith('+')) newLeft -= 1
+      }
+      if (line === 'GIT binary patch') insideContent = binary = true
       if (insideContent) return line
+      if (line.startsWith('new file mode ') || line.startsWith('deleted file mode '))
+        missingMode = false
+      // Older imported Codex turns also left out a created or deleted file's
+      // mode line, so Git read `/dev/null` as a path and moved the file there.
+      if (missingMode && (line === '--- /dev/null' || line === '+++ /dev/null')) {
+        missingMode = false
+        return [line.startsWith('-') ? 'new file mode 100644' : 'deleted file mode 100644', line]
+      }
       if (
         line.startsWith('--- ') ||
         line.startsWith('+++ ') ||
