@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
 import { z } from 'zod'
 import { jsonWithoutBinary } from './binary-content.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
 const UserMessageSchema = z.object({
@@ -390,8 +391,14 @@ function unifiedDiff(change: {
 }): string {
   const kind = change.kind?.type ?? 'update'
   const target = change.kind?.move_path ?? change.path
-  const body = (change.diff ?? '').replace(/\n$/, '')
-  if (body.startsWith('diff --git')) return body
+  const raw = change.diff ?? ''
+  // Codex sends a created or deleted file's whole content, so a patch file's
+  // content must not be read as the diff.
+  const whole =
+    (kind === 'add' && !raw.startsWith('@@ -0,0 +')) ||
+    (kind === 'delete' && !/^@@ -1(?:,\d+)? \+0,0 @@/.test(raw))
+  if (!whole && raw.startsWith('diff --git')) return raw.replace(/\n$/, '')
+  const body = (whole ? wholeFileHunk(kind, raw) : raw).replace(/\n$/, '')
   const header = [
     `diff --git a/${change.path} b/${target}`,
     `--- ${kind === 'add' ? '/dev/null' : `a/${change.path}`}`,
@@ -400,7 +407,7 @@ function unifiedDiff(change: {
   return body ? `${header.join('\n')}\n${body}` : header.join('\n')
 }
 
-function countDiffLines(diff: string, marker: '+' | '-'): number {
+export function countDiffLines(diff: string, marker: '+' | '-'): number {
   let count = 0
   let inHunk = false
   for (const line of diff.split('\n')) {

@@ -48,7 +48,7 @@ describe('workspace diffs', () => {
   it('uses dev-null and previous paths for file status changes', () => {
     expect(
       workspaceDiffFilePatch({ ...modifiedFile, status: 'added', path: 'src/new.ts' }).startsWith(
-        'diff --git a/src/new.ts b/src/new.ts\n--- /dev/null\n+++ b/src/new.ts\n',
+        'diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n',
       ),
     ).toBe(true)
     expect(
@@ -97,5 +97,15 @@ describe('workspace diffs', () => {
     expect(result.fallbacks).toEqual([])
     expect(result.items.map((item) => item.fileDiff.type)).toEqual(['new', 'rename-pure'])
     expect(result.items[1]?.fileDiff.prevName).toBe('src/old.ts')
+  })
+
+  it('marks added and deleted files with content as new and deleted', () => {
+    const result = workspaceDiffCollection('tree-3', [
+      { ...modifiedFile, status: 'added', path: 'src/new.ts' },
+      { ...modifiedFile, status: 'deleted', path: 'src/old.ts' },
+    ])
+
+    expect(result.fallbacks).toEqual([])
+    expect(result.items.map((item) => item.fileDiff.type)).toEqual(['new', 'deleted'])
   })
 })

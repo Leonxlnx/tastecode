@@ -126,6 +126,7 @@ describe('takeSnapshot', () => {
     const fresh = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-unborn-'))
     try {
       execFileSync('git', ['init', '-b', 'main', fresh], { windowsHide: true })
+      execFileSync('git', ['-C', fresh, 'config', 'core.autocrlf', 'false'], { windowsHide: true })
       expect((await takeSnapshot(fresh)).clean).toBe(true)
       writeFileSync(path.join(fresh, 'first.txt'), 'before the agent\n')
       const snapshot = await takeSnapshot(fresh)
@@ -367,6 +368,72 @@ describe('restoreSnapshot', () => {
     await restoreSnapshot(repo, before.commit)
 
     expect(existsSync(path.join(repo, 'nested', 'thing.txt'))).toBe(false)
+  })
+})
+
+describe('nested repositories', () => {
+  // Agents scaffold apps and run `git init` or `git clone` in subfolders. The
+  // outer repository only sees such a folder as a gitlink, so it can neither
+  // snapshot its files nor bring them back, and must not break because of it.
+  const nestedGit = (...args: string[]) =>
+    execFileSync('git', args, { cwd: path.join(repo, 'app'), windowsHide: true }).toString()
+
+  const initNested = (commit: boolean) => {
+    mkdirSync(path.join(repo, 'app'))
+    nestedGit('init', '-q', '-b', 'main')
+    nestedGit('config', 'user.email', 'test@example.com')
+    nestedGit('config', 'user.name', 'Test')
+    write(path.join('app', 'index.js'), 'x\n')
+    if (commit) {
+      nestedGit('add', '.')
+      nestedGit('commit', '-q', '-m', 'scaffold')
+    }
+  }
+
+  it('snapshots the rest of the tree when a nested repository has no commit yet', async () => {
+    initNested(false)
+    write('tracked.txt', 'agent edit\n')
+    write('new.txt', 'new\n')
+
+    const snapshot = await takeSnapshot(repo)
+
+    expect(git('show', `${snapshot.commit}:tracked.txt`)).toBe('agent edit\n')
+    expect(git('show', `${snapshot.commit}:new.txt`)).toBe('new\n')
+    expect(git('ls-tree', '--name-only', snapshot.commit)).not.toContain('app')
+  })
+
+  it('restores around a committed nested repository the agent created and leaves it intact', async () => {
+    const checkpoint = await takeSnapshot(repo)
+    initNested(true)
+    write('tracked.txt', 'agent edit\n')
+
+    await restoreSnapshot(repo, checkpoint.commit)
+
+    expect(read('tracked.txt')).toBe('original\n')
+    expect(read(path.join('app', 'index.js'))).toBe('x\n')
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+  })
+
+  it('restores past a nested repository committed as a gitlink without deleting it', async () => {
+    const checkpoint = await takeSnapshot(repo)
+    initNested(true)
+    git('add', 'app')
+    git('commit', '-q', '-m', 'add app')
+    write('tracked.txt', 'agent edit\n')
+
+    await restoreSnapshot(repo, checkpoint.commit)
+
+    expect(read('tracked.txt')).toBe('original\n')
+    expect(read(path.join('app', 'index.js'))).toBe('x\n')
+    expect(nestedGit('log', '--format=%s')).toBe('scaffold\n')
+  })
+
+  it('lists changes beside an uncommitted nested repository', async () => {
+    const checkpoint = await takeSnapshot(repo)
+    initNested(false)
+    write('tracked.txt', 'agent edit\n')
+
+    expect(await changedSince(repo, checkpoint.commit)).toEqual(['tracked.txt'])
   })
 })
 

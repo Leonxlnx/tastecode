@@ -322,5 +322,10 @@ function boundPort(server: Server): number {
 }
 
 function close(server: Server): Promise<void> {
-  return new Promise((resolve) => server.close(() => resolve()))
+  return new Promise((resolve) => {
+    server.close(() => resolve())
+    // close() waits for every open response. A browser that stops reading a
+    // buffered video keeps its response open, so end those connections too.
+    server.closeAllConnections()
+  })
 }

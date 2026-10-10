@@ -640,6 +640,132 @@ describe('native Codex history', () => {
     })
   })
 
+  it('joins the file patches of an imported turn without a blank line between them', async () => {
+    const edit = (id: string, file: string, from: string, to: string) =>
+      rich({
+        type: 'FileChange',
+        id,
+        changes: {
+          [file]: { type: 'update', unified_diff: `@@ -1,2 +1,2 @@\n ${from}\n-old\n+${to}\n` },
+        },
+      })
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      edit('edit-a', '/project/a.txt', 'a', 'A'),
+      edit('edit-b', '/project/b.txt', 'b', 'B'),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const file = (name: string, to: string) => [
+      `diff --git a//project/${name} b//project/${name}`,
+      `--- a//project/${name}`,
+      `+++ b//project/${name}`,
+      '@@ -1,2 +1,2 @@',
+      ` ${name[0]}`,
+      '-old',
+      `+${to}`,
+    ]
+    expect(events.find((entry) => entry.type === 'diff.updated')).toMatchObject({
+      diff: [...file('a.txt', 'A'), ...file('b.txt', 'B'), ''].join('\n'),
+    })
+  })
+
+  it('keeps an empty created file as a patch with only its header', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/__init__.py': { type: 'add', content: '' },
+          '/project/a.txt': { type: 'update', unified_diff: '@@ -1 +1 @@\n-a\n+A\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).find((entry) => entry.path === '/project/__init__.py')).toMatchObject({
+      text: 'add /project/__init__.py',
+      linesAdded: 0,
+    })
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      'diff --git a//project/__init__.py b//project/__init__.py\nnew file mode 100644\n' +
+        'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
+    )
+  })
+
+  it('marks imported file creations and deletions so Git does not read /dev/null as a path', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/new.txt': { type: 'add', content: 'fresh\n' },
+          '/project/old.txt': { type: 'delete', content: 'gone\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      [
+        'diff --git a//project/new.txt b//project/new.txt',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b//project/new.txt',
+        '@@ -0,0 +1,1 @@',
+        '+fresh',
+        'diff --git a//project/old.txt b//project/old.txt',
+        'deleted file mode 100644',
+        '--- a//project/old.txt',
+        '+++ /dev/null',
+        '@@ -1,1 +0,0 @@',
+        '-gone',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('marks an imported file content without a final newline', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: { '/project/new.txt': { type: 'add', content: 'one\ntwo' } },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).find((entry) => entry.type === 'file_change')).toMatchObject({
+      linesAdded: 2,
+      text: '@@ -0,0 +1,2 @@\n+one\n+two\n\\ No newline at end of file\n',
+    })
+  })
+
+  it('counts imported lines that start with ++ or --', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/old.sql': { type: 'delete', content: '-- setup\nselect 1;\n' },
+          '/project/new.c': { type: 'add', content: '++count;\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).filter((entry) => entry.type === 'file_change')).toMatchObject([
+      { path: '/project/old.sql', linesAdded: 0, linesRemoved: 2 },
+      { path: '/project/new.c', linesAdded: 1, linesRemoved: 0 },
+    ])
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),

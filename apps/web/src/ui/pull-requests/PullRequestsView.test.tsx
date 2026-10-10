@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import type { PullRequestListResult } from '@harness/contracts'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type {
+  PullRequestDetail,
+  PullRequestListItem,
+  PullRequestListResult,
+} from '@harness/contracts'
 import { resetInstalls } from '../../provider-install.js'
 import { TestTransport } from '../../test-transport.js'
 import { PullRequestsView } from './PullRequestsView.js'
@@ -291,6 +295,72 @@ describe('PullRequestsView', () => {
     expect(listPane().queryByRole('alert')).toBeNull()
   })
 
+  it('keeps a pull request the viewer authored and reviewed on Reviewing after its detail refreshes', async () => {
+    const both: PullRequestListItem = {
+      ...result.items[0]!,
+      title: 'My PR I also replied on',
+      updatedAt: '2026-08-09T14:00:00Z',
+      relationship: 'both',
+    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return { ...result, items: [both, result.items[1]!] }
+      // The server derives a detail's relationship from authorship alone.
+      if (method === 'pullRequests.detail') return detailOf({ ...both, relationship: 'authored' })
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const detailRequests = () =>
+      transport.requests.filter((entry) => entry.method === 'pullRequests.detail').length
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(await listPane().findByText('My PR I also replied on')).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Reviewing 2' }))
+    await waitFor(() => expect(detailRequests()).toBe(1))
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() => expect(detailRequests()).toBeGreaterThan(1))
+
+    expect(screen.getByRole('tab', { name: /^Reviewing/ }).textContent).toBe('Reviewing2')
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'My PR I also replied on',
+    )
+    expect(detailRequests()).toBe(2)
+  })
+
+  it('adds an authored pull request that only the reviewed search returned to Authored', async () => {
+    const reviewedOnly: PullRequestListItem = {
+      ...result.items[0]!,
+      title: 'My older PR I replied on',
+      relationship: 'reviewing',
+    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return { ...result, items: [reviewedOnly] }
+      if (method === 'pullRequests.detail')
+        return detailOf({ ...reviewedOnly, relationship: 'authored' })
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(await listPane().findByText('My older PR I replied on')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored0')
+    await waitFor(() =>
+      expect(transport.requests.some((entry) => entry.method === 'pullRequests.detail')).toBe(true),
+    )
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored1'),
+    )
+    expect(screen.getByRole('tab', { name: /^Reviewing/ }).textContent).toBe('Reviewing1')
+  })
+
   it.each([
     {
       account: { available: false, authenticated: false, error: 'GitHub CLI is not installed' },
@@ -343,3 +413,27 @@ describe('PullRequestsView', () => {
     })
   })
 })
+
+function detailOf(item: PullRequestListItem): PullRequestDetail {
+  return {
+    ...item,
+    body: '',
+    createdAt: item.updatedAt,
+    headRefOid: 'head-oid',
+    baseRefOid: 'base-oid',
+    changedFiles: 1,
+    mergeable: 'MERGEABLE',
+    maintainerCanModify: true,
+    reviewers: [],
+    requestedReviewers: [],
+    assignees: [],
+    labels: [],
+    checks: [],
+    comments: [],
+    reviews: [],
+    reviewThreads: [],
+    reviewThreadsTruncated: false,
+    permissions: { canPush: true, canAdmin: false },
+    mergeMethods: { merge: true, rebase: true, squash: true, deleteBranchOnMerge: false },
+  }
+}

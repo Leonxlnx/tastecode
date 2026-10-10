@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { lstat, mkdtemp, rm } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -115,11 +115,25 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
         child.stdin?.end(input)
       })
     }
-    await run('git', ['add', '-A', '--', `:(literal)${scope}`], {
-      cwd: repoPath,
-      env,
-      windowsHide: true,
-      timeout: 60_000,
+    // A folder with its own `.git` (an agent ran `git init` or `git clone` in
+    // it) is another repository. `add -A` would fail outright when it has no
+    // commit yet, and otherwise record only a gitlink that cannot bring its
+    // files back, so untracked nested repositories stay out of the snapshot.
+    const pathspecs = [
+      `:(literal)${scope}`,
+      ...(await nestedRepositories(repoPath, scope)).map((dir) => `:(exclude,literal)${dir}`),
+    ]
+    // Through stdin: one pathspec per nested repository could outgrow the
+    // Windows command line.
+    await new Promise<void>((resolve, reject) => {
+      const child = execFile(
+        'git',
+        ['add', '-A', '--pathspec-from-file=-', '--pathspec-file-nul'],
+        { cwd: repoPath, env, windowsHide: true, timeout: 60_000 },
+        (error) => (error ? reject(error) : resolve()),
+      )
+      child.stdin?.on('error', reject)
+      child.stdin?.end(pathspecs.join('\0') + '\0')
     })
     const { stdout: tree } = await run('git', ['write-tree'], {
       cwd: repoPath,
@@ -165,6 +179,22 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
   } finally {
     await rm(indexDir, { recursive: true, force: true }).catch(() => undefined)
   }
+}
+
+/**
+ * Untracked folders inside `scope` that are Git repositories of their own.
+ * `ls-files` does not descend into them and lists each with a trailing slash.
+ */
+async function nestedRepositories(repoPath: string, scope: string): Promise<string[]> {
+  const { stdout } = await run(
+    'git',
+    ['ls-files', '--others', '--exclude-standard', '-z', '--', `:(literal)${scope}`],
+    { cwd: repoPath, windowsHide: true, timeout: 60_000, maxBuffer: 256 * 1024 * 1024 },
+  )
+  return stdout
+    .split('\0')
+    .filter((entry) => entry.endsWith('/'))
+    .map((entry) => entry.slice(0, -1))
 }
 
 const SNAPSHOT_IDENTITY = {
@@ -272,7 +302,12 @@ async function restoreTree(
   added: string,
 ): Promise<void> {
   for (const file of added.split('\0').filter(Boolean)) {
-    await rm(path.join(repoPath, file), { force: true })
+    const target = path.join(repoPath, file)
+    // A directory here is a nested repository recorded as a gitlink. The
+    // snapshot holds only its commit id, not its files or history, so removing
+    // it could never be undone.
+    if ((await lstat(target).catch(() => undefined))?.isDirectory()) continue
+    await rm(target, { force: true })
   }
   // `restore --worktree` rather than `checkout`: checkout writes the index as
   // well, so a rollback would stage everything it touched and hand the user a

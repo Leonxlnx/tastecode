@@ -148,6 +148,43 @@ describe('PullRequestService', () => {
               state: 'APPROVED',
               submittedAt: '2026-08-09T11:00:00Z',
             },
+            // Replying to a review thread submits a comment-only review. It
+            // must not hide the approval GitHub still counts.
+            {
+              id: 'PRR_2',
+              author: { login: 'reviewer' },
+              body: '',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T11:30:00Z',
+            },
+            {
+              id: 'PRR_3',
+              author: { login: 'second-reviewer' },
+              body: 'Needs a test',
+              state: 'CHANGES_REQUESTED',
+              submittedAt: '2026-08-09T09:00:00Z',
+            },
+            {
+              id: 'PRR_4',
+              author: { login: 'second-reviewer' },
+              body: 'Thanks',
+              state: 'APPROVED',
+              submittedAt: '2026-08-09T12:00:00Z',
+            },
+            {
+              id: 'PRR_5',
+              author: { login: 'commenter' },
+              body: 'First note',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T09:00:00Z',
+            },
+            {
+              id: 'PRR_6',
+              author: { login: 'commenter' },
+              body: 'Second note',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T10:00:00Z',
+            },
           ],
         })
       }
@@ -222,6 +259,16 @@ describe('PullRequestService', () => {
         expect.objectContaining({
           actor: expect.objectContaining({ login: 'reviewer' }),
           state: 'APPROVED',
+          submittedAt: '2026-08-09T11:00:00Z',
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ login: 'second-reviewer' }),
+          state: 'APPROVED',
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ login: 'commenter' }),
+          state: 'COMMENTED',
+          submittedAt: '2026-08-09T10:00:00Z',
         }),
         expect.objectContaining({
           actor: expect.objectContaining({ login: 'pending-reviewer' }),
@@ -680,6 +727,73 @@ describe('PullRequestService', () => {
     await rejected
     await service.files('Blueemi/harness', 7, { ...comparison, headRefOid: head }, 2)
     expect(filesCalls).toBe(4)
+  })
+
+  it('keeps cached and in-flight file pages when fresh detail observes the same comparison', async () => {
+    let finishPage!: () => void
+    let filesCalls = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          ...comparison,
+        })
+      if (args[1]?.includes('/files?')) {
+        filesCalls += 1
+        if (filesCalls === 2)
+          return new Promise<string>((resolve) => {
+            finishPage = () => resolve('[]')
+          })
+        return '[]'
+      }
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    await service.detail('Blueemi/harness', 7, [])
+    await service.files('Blueemi/harness', 7, comparison)
+    const page2 = service.files('Blueemi/harness', 7, comparison, 2)
+    await vi.waitFor(() => expect(filesCalls).toBe(2))
+    expect((await service.detail('Blueemi/harness', 7, [], true)).headRefOid).toBe(
+      comparison.headRefOid,
+    )
+    finishPage()
+    await expect(page2).resolves.toMatchObject({ page: 2 })
+    await service.files('Blueemi/harness', 7, comparison)
+    expect(filesCalls).toBe(2)
+  })
+
+  it('never reports a check with a conclusion as still in progress', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          ...comparison,
+          statusCheckRollup: [
+            {
+              __typename: 'CheckRun',
+              name: 'yaml',
+              status: 'COMPLETED',
+              conclusion: 'STARTUP_FAILURE',
+            },
+            { __typename: 'CheckRun', name: 'future', status: 'COMPLETED', conclusion: 'NEW_KIND' },
+            { __typename: 'CheckRun', name: 'running', status: 'IN_PROGRESS', conclusion: null },
+          ],
+        })
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    const detail = await service.detail('Blueemi/harness', 7, [])
+    expect(detail.checks.map((check) => [check.name, check.state])).toEqual([
+      ['yaml', 'failure'],
+      ['future', 'neutral'],
+      ['running', 'pending'],
+    ])
   })
 
   it('starts a fresh detail read after a change instead of joining or caching an older one', async () => {

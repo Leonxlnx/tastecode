@@ -9,36 +9,29 @@ export function createThreadSearchIndex(items: readonly Item[]): ThreadSearchInd
   return { searchable: items.map(searchableItemText) }
 }
 
-/** Retain normalized history when one immutable structural tail update arrives. */
+/**
+ * Retain normalized history across structural updates. Rows are immutable, so
+ * an identity check finds every row the reducer replaced, wherever it sits: a
+ * parallel tool call completing above newer calls, or a streamed row
+ * materialized below a new tail. Only replaced rows are normalized again.
+ */
 export function createThreadSearchIndexer(): (items: readonly Item[]) => ThreadSearchIndex {
-  let previousItems: readonly Item[] | undefined
-  let index: ThreadSearchIndex = { searchable: [] }
+  let previousItems: readonly Item[] = []
+  const index: ThreadSearchIndex = { searchable: [] }
+  const searchable = index.searchable as string[]
 
   return (items) => {
     if (items === previousItems) return index
 
-    if (
-      previousItems &&
-      items.length === previousItems.length + 1 &&
-      (previousItems.length === 0 || previousItems.at(-1) === items[previousItems.length - 1])
-    ) {
-      ;(index.searchable as string[]).push(searchableItemText(items.at(-1)!))
-    } else if (
-      previousItems &&
-      previousItems.length === items.length + 1 &&
-      (items.length === 0 || items.at(-1) === previousItems[items.length - 1])
-    ) {
-      ;(index.searchable as string[]).pop()
-    } else if (
-      previousItems &&
-      items.length === previousItems.length &&
-      items.length > 0 &&
-      (items.length === 1 || previousItems.at(-2) === items.at(-2))
-    ) {
-      ;(index.searchable as string[])[items.length - 1] = searchableItemText(items.at(-1)!)
-    } else {
-      index = createThreadSearchIndex(items)
+    const shared = Math.min(items.length, previousItems.length)
+    for (let itemIndex = 0; itemIndex < shared; itemIndex += 1) {
+      const item = items[itemIndex]!
+      if (item !== previousItems[itemIndex]) searchable[itemIndex] = searchableItemText(item)
     }
+    for (let itemIndex = shared; itemIndex < items.length; itemIndex += 1) {
+      searchable.push(searchableItemText(items[itemIndex]!))
+    }
+    searchable.length = items.length
 
     previousItems = items
     return index

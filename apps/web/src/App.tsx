@@ -33,6 +33,7 @@ import {
 } from './bridge.js'
 import {
   createDefaultKeybindings,
+  DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
@@ -82,8 +83,10 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
@@ -805,9 +808,16 @@ export function App() {
     (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
     [setThreadDesignMode],
   )
-  const [checkoutDelete, setCheckoutDelete] = useState<
-    { id: string; title: string; branch: string } | undefined
-  >()
+  // A multi-chat delete can stop on several isolated checkouts; each one is
+  // confirmed in turn while the rest of the batch goes ahead.
+  const [checkoutDeletes, setCheckoutDeletes] = useState<
+    Array<{ id: string; title: string; branch: string }>
+  >([])
+  const checkoutDelete = checkoutDeletes[0]
+  const dropCheckoutDelete = useCallback(
+    (id: string) => setCheckoutDeletes((current) => current.filter((entry) => entry.id !== id)),
+    [],
+  )
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
@@ -1209,6 +1219,10 @@ export function App() {
   )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
+  // What the sidebar shows. Navigation picks from this list so it never
+  // selects, and thereby silently cancels, a chat queued for deletion.
+  const visibleProjectsRef = useRef(archiveProjects)
+  visibleProjectsRef.current = archiveProjects
   const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
     inFlight: undefined,
     pendingPath: undefined,
@@ -2377,11 +2391,14 @@ export function App() {
     }
   }, [transport, activeId, settleQueuedSubmissions, beginQueueRead, finishQueueRead])
 
+  // Restore points belong to one chat. A running chat skips the read below,
+  // so the previous chat's list must not survive the switch.
   useEffect(() => {
-    if (!activeId || thread.running) {
-      if (!activeId) setCheckpoints([])
-      return
-    }
+    setCheckpoints([])
+  }, [activeId])
+
+  useEffect(() => {
+    if (!activeId || thread.running) return
     void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
   }, [activeId, thread.running, refreshCheckpoints])
 
@@ -2981,11 +2998,13 @@ export function App() {
       const titlePrompt = text.trim() || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
-      // for the paragraph someone just typed.
-      const draftKey = activeId?.startsWith('pending:')
-        ? NEW_CHAT_DRAFT_KEY
-        : composerDraftKey(activeId)
-      const restoreDraft = () => restoreRejectedDraft(draftKey, { text, attachments })
+      // for the paragraph someone just typed. A chat that is still starting
+      // keeps its own draft: startup moves it to the real chat, or to New chat
+      // if it fails. Only a send that waited on that failed startup goes there.
+      const restoreDraft = () =>
+        restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
+      const restoreDraftAfterFailedStart = () =>
+        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelQueuedArchive(activeId)) {
         restoreDraft()
@@ -3132,7 +3151,7 @@ export function App() {
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3155,7 +3174,7 @@ export function App() {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3872,21 +3891,24 @@ export function App() {
   }, [selectSession, undoQueuedArchives])
 
   const archiveSession = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
       const found = findSession(projectsRef.current, id)
-      if (!found) return false
+      if (!found) return 'skipped'
       const check = {}
       pendingDeletionChecks.current.set(id, check)
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
-        if (pendingDeletionChecks.current.get(id) !== check) return false
+        if (pendingDeletionChecks.current.get(id) !== check) return 'skipped'
         if (work.isolated && work.uncommitted) {
-          setCheckoutDelete({
+          const confirmation = {
             id,
             title: found.session.title,
             branch: found.session.worktreeBranch ?? 'isolated checkout',
-          })
-          return false
+          }
+          setCheckoutDeletes((current) =>
+            current.some((entry) => entry.id === id) ? current : [...current, confirmation],
+          )
+          return 'confirming'
         }
         queueArchive(id, async () => {
           if (work.isolated) {
@@ -3895,11 +3917,11 @@ export function App() {
           }
           await deleteSession(id)
         })
-        return true
+        return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
-        return false
+        return 'failed'
       } finally {
         if (pendingDeletionChecks.current.get(id) === check)
           pendingDeletionChecks.current.delete(id)
@@ -3918,14 +3940,14 @@ export function App() {
         await transport.request('thread.discardWorktree', { threadId: id, force: true })
         await deleteSession(id)
       })
-      setCheckoutDelete(undefined)
+      dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
       await refreshProjects().catch(() => undefined)
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, refreshProjects, queueArchive])
+  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -3993,10 +4015,9 @@ export function App() {
         )
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
-        const currentProjects = projectsRef.current
-        const current = findSession(currentProjects, activeId)
+        const current = findSession(projectsRef.current, activeId)
         const hidden = new Set(targets)
-        const next = currentProjects
+        const next = visibleProjectsRef.current
           .flatMap((project) => project.sessions)
           .filter((session) => !hidden.has(session.id) && session.lifecycle.state === 'active')
           .sort((a, b) => b.createdAt - a.createdAt)[0]
@@ -4240,6 +4261,8 @@ export function App() {
         if (!pending.threadId) return
         id = pending.threadId
       }
+      // A provisional chat whose start failed has no thread to rename.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:title`,
         () => transport.request('thread.rename', { threadId: id, title }),
@@ -4268,7 +4291,7 @@ export function App() {
     (sessionIds: string[]) => {
       void (async () => {
         for (const id of sessionIds) {
-          if (!(await archiveSession(id))) break
+          if ((await archiveSession(id)) === 'failed') break
         }
       })()
     },
@@ -4280,15 +4303,8 @@ export function App() {
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
-          if (sourceIndex < 0) return project
-
-          const sessions = [...project.sessions]
-          const [moved] = sessions.splice(sourceIndex, 1)
-          const targetIndex = sessions.findIndex((session) => session.id === targetId)
-          if (!moved || targetIndex < 0) return project
-          sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
-          return { ...project, sessions }
+          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
     },
@@ -4314,7 +4330,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = projectsRef.current.flatMap((project) => project.sessions)
+      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -4570,7 +4586,7 @@ export function App() {
       const route = shortcutRoute(action, {
         settingsOpen,
         onboardingPreview,
-        modalOpen: modalOwnsKeyboard,
+        modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
       else if (route === 'showKeybinds') setSettingsSection('keybinds')
@@ -4595,10 +4611,7 @@ export function App() {
       const debugModifier = macOS
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        debugModifier &&
-        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
-      ) {
+      if (debugModifier && matchesShortcut(event, DEBUG_SETTINGS_SHORTCUT)) {
         event.preventDefault()
         setDebugSettingsVisible((visible) => !visible)
         return
@@ -4617,27 +4630,29 @@ export function App() {
         }
         return
       }
-      if (modalOwnsKeyboard) return
+      if (modalOwnsKeyboard || sessionSearch.current?.isOpen()) return
 
-      // Number keys open the newest sessions in the first sidebar project.
-      const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
-      if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const currentProjects = projectsRef.current
-        const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
-        const session = project?.sessions
-          .slice()
-          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
-        event.preventDefault()
-        if (session) void selectSession(session.id)
-        return
-      }
-
+      // Keybinds come first, so one saved on a number key before the
+      // recorder refused them still runs, as its menu accelerator does.
       const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
         matchesShortcut(event, keybindings[candidate.id]),
       )
       if (definition) {
         event.preventDefault()
         runRoutedShortcut(definition.id)
+        return
+      }
+
+      // Number keys open the newest sessions in the first sidebar project.
+      const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const currentProjects = visibleProjectsRef.current
+        const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
+        const session = project?.sessions
+          .slice()
+          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
+        event.preventDefault()
+        if (session) void selectSession(session.id)
         return
       }
 
@@ -4692,7 +4707,7 @@ export function App() {
   const paletteChatSearch = useMemo(
     () =>
       createPaletteChatSearch(
-        () => projectsRef.current,
+        () => visibleProjectsRef.current,
         displayName,
         (threadId) => void selectSession(threadId),
         PALETTE_CHAT_SEARCH_CACHE,
@@ -5375,11 +5390,12 @@ export function App() {
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
+            key={checkoutDelete.id}
             title={checkoutDelete.title}
             branch={checkoutDelete.branch}
             busy={checkoutDeleteBusy}
             onDiscard={() => void discardAndArchive()}
-            onClose={() => setCheckoutDelete(undefined)}
+            onClose={() => dropCheckoutDelete(checkoutDelete.id)}
           />
         </Suspense>
       ) : null}
