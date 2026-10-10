@@ -640,6 +640,36 @@ describe('native Codex history', () => {
     })
   })
 
+  it('joins the file patches of an imported turn without a blank line between them', async () => {
+    const edit = (id: string, file: string, from: string, to: string) =>
+      rich({
+        type: 'FileChange',
+        id,
+        changes: {
+          [file]: { type: 'update', unified_diff: `@@ -1,2 +1,2 @@\n ${from}\n-old\n+${to}\n` },
+        },
+      })
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      edit('edit-a', '/project/a.txt', 'a', 'A'),
+      edit('edit-b', '/project/b.txt', 'b', 'B'),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const file = (name: string, to: string) => [
+      `diff --git a//project/${name} b//project/${name}`,
+      `--- a//project/${name}`,
+      `+++ b//project/${name}`,
+      '@@ -1,2 +1,2 @@',
+      ` ${name[0]}`,
+      '-old',
+      `+${to}`,
+    ]
+    expect(events.find((entry) => entry.type === 'diff.updated')).toMatchObject({
+      diff: [...file('a.txt', 'A'), ...file('b.txt', 'B'), ''].join('\n'),
+    })
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),

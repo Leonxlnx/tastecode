@@ -135,8 +135,14 @@ export function parseCodexHistory(
       events.push({ type: 'item.completed', item })
       if (diff) diffs.push(diff)
     }
+    // Each patch must end its last hunk itself: `git apply --recount` reads a
+    // blank separator line as one more context line, and Undo then fails.
     if (diffs.length)
-      events.push({ type: 'diff.updated', turnId: saved.id, diff: diffs.join('\n') })
+      events.push({
+        type: 'diff.updated',
+        turnId: saved.id,
+        diff: diffs.map((diff) => (diff.endsWith('\n') ? diff : `${diff}\n`)).join(''),
+      })
     events.push({
       type: 'turn.completed',
       turnId: saved.id,
