@@ -303,8 +303,10 @@
                 user
                 <span class="d"
                   >permission-profile requests show the requested access and answer with Codex's
-                  grant-and-scope wire shape; Stop uses the original thread and turn IDs; automatic
-                  review runs without status or result cards in the chat</span
+                  grant-and-scope wire shape; MCP tool approvals show the tool and its arguments and
+                  answer Codex's elicitation action, remembering the tool when Codex offers it for
+                  the session; Stop uses the original thread and turn IDs; automatic review runs
+                  without status or result cards in the chat</span
                 ></span
               ></label
             >
@@ -1695,7 +1697,7 @@
                 inspect, per-project scope
                 <span class="d"
                   >a provider selector manages separate Codex, Claude Code, and Grok project
-                  definitions; Codex can hot-reload compatible changes, Grok receives selected
+                  definitions; open Codex chats resume with saved changes, Grok receives selected
                   servers through ACP, and Claude receives enabled definitions on start and resume
                   with credentials kept out of process arguments; controls follow the available
                   capabilities, and Claude rejects unsupported inherited-server hiding before
@@ -1715,7 +1717,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers reloadable into a running session</span
+                >Saved MCP changes reach open chats
+                <span class="d"
+                  >an idle chat resumes with them, a working chat once its current and queued
+                  messages finish; a Temporary chat says it keeps the servers it started with</span
+                ></span
               ></label
             >
           </li>

@@ -5752,6 +5752,130 @@ describe('MCP inventory', () => {
     }
   })
 
+  describe('without a live reload', () => {
+    const docs: McpServerConfig = {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'stdio', command: 'docs-server' },
+    }
+    // Codex keeps a loaded thread's MCP layers, so its session offers no reload.
+    const withoutReload = (session: FakeSession) =>
+      Object.assign(session, { reloadMcpServers: undefined })
+
+    it('resumes an idle chat with the changed servers', async () => {
+      const { orchestrator, sessions, store, resumedOptions } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+        orchestrator.addMcpServer('codex', '/repo', docs)
+
+        await orchestrator.reloadMcpServers('codex', '/repo')
+
+        expect(sessions[0]!.disposed).toBe(true)
+        expect(orchestrator.isRunning(thread.id)).toBe(false)
+        await orchestrator.submitTurn(thread.id, 'use the docs server')
+        expect(resumedOptions[0]).toMatchObject({ mcpServers: [docs] })
+        expect(sessions[1]!.sent).toEqual(['use the docs server'])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('replaces a working chat, including one on its first turn, after the turn ends', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        expect(sessions[0]!.disposed).toBe(false)
+        expect(orchestrator.isTurnRunning(thread.id)).toBe(true)
+
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+        expect(sessions[0]!.disposed).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('does not release a runtime that replaced the stale one', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const thread = await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        sessions[0]!.emitDisconnected()
+        await orchestrator.submitTurn(thread.id, 'continue')
+
+        sessions[1]!.emit({ type: 'turn.completed', turnId: 'turn-2', status: 'completed' })
+        expect(sessions[1]!.disposed).toBe(false)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('accepts the next save once no chat is running', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        expect(sessions[0]!.disposed).toBe(true)
+
+        await expect(orchestrator.reloadMcpServers('codex', '/repo')).resolves.toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('signs in through a chat that already has the saved servers', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const working = await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit(turnStarted(working.id, 'turn-1'))
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        await orchestrator.startThread('codex', '/repo')
+
+        await orchestrator.startMcpOAuth('codex', '/repo', 'docs')
+
+        expect(sessions[0]!.mcpOAuthStarts).toEqual([])
+        expect(sessions[1]!.mcpOAuthStarts).toEqual([expect.objectContaining({ serverId: 'docs' })])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
+    it('says that a Temporary chat keeps its servers', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const parent = await orchestrator.startThread('codex', '/repo')
+        store.append(parent.id, userMessage('parent-prompt', 'Open a side chat.', 'parent-turn'))
+        await orchestrator.startSideThread(parent.id)
+        sessions.forEach(withoutReload)
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+
+        await expect(orchestrator.reloadMcpServers('codex', '/repo')).rejects.toThrow(
+          'Temporary chats keep the MCP servers they started with',
+        )
+        expect(sessions[0]!.disposed).toBe(true)
+        expect(sessions[1]!.disposed).toBe(false)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+  })
+
   it('forwards live session MCP changes and ignores closed or deleted sessions', async () => {
     const { orchestrator, sessions, store, mcpChanges } = harness()
     try {
