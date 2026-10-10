@@ -318,6 +318,21 @@ describe('structured diff review', () => {
     expect(existsSync(path.join(repo, 'new-name.txt'))).toBe(false)
   })
 
+  it('keeps a text file whose lines mention binary patch markers as text', async () => {
+    const notes = (edit: string) =>
+      `When git says "Binary files a and b differ"\nGIT binary patch\n${edit}\n`
+    writeFileSync(path.join(repo, 'notes.md'), notes('before'))
+    git('add', '.')
+    git('commit', '-m', 'notes')
+    writeFileSync(path.join(repo, 'notes.md'), notes('after'))
+
+    const diff = await readWorkspaceDiff(repo)
+
+    expect(diff.files).toHaveLength(1)
+    expect(diff.files[0]).toMatchObject({ path: 'notes.md', binary: false })
+    expect(diff.files[0]?.hunks).toHaveLength(1)
+  })
+
   it('reverses an absolute provider patch without touching unrelated work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
     const relative = git('diff', '--binary', '--no-color', '--', 'file.txt')
