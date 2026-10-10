@@ -623,11 +623,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
     // This is the only place a permissioned call is described. Its completion
     // update carries neither kind nor title, so record them now or the finished
-    // command shows up as an anonymous "tool".
+    // command shows up as an anonymous "tool". A proposed edit is kept too, and
+    // reaches the turn diff only if the call completes.
     if (call.toolCallId) {
       this.#streamer?.note(call.toolCallId, {
         ...(call.kind ? { kind: call.kind } : {}),
         ...(call.title ? { title: call.title } : {}),
+        ...(call.content ? { content: call.content } : {}),
       })
     }
 
