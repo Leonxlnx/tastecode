@@ -244,7 +244,9 @@ function ProviderMcpSettings(props: {
             projectPath: props.projectPath,
           })
           if (!isCurrentContext()) return false
-          setNotice(`${success} Open chats pick up the change from their next message.`)
+          setNotice(
+            `${success} Open chats pick up the change once they finish their current and queued messages.`,
+          )
         } catch (cause) {
           if (!isCurrentContext()) return false
           setNotice(`${success} ${message(cause)}`)
