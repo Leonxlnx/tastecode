@@ -1,3 +1,5 @@
+import { PAGE_SCROLLER_SOURCE } from './preview-page-scroller.js'
+
 export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
   const MAX_ELEMENTS = 20000
   const interactiveSelector = [
@@ -125,7 +127,10 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
     )
   }
 
+  ${PAGE_SCROLLER_SOURCE}
+
   // checkVisibility ignores overflow clips, so intersect with clipping ancestors.
+  // A page scroller stands in for the document: what it hides is reached by scrolling.
   const visibleRect = (element, rect) => {
     let left = rect.left
     let top = rect.top
@@ -136,7 +141,7 @@ export const PREVIEW_DOM_AUDIT_SCRIPT = `(() => {
       if (current === document.documentElement || current === document.body) continue
       const style = getComputedStyle(current)
       const clipsX = style.overflowX !== 'visible'
-      const clipsY = style.overflowY !== 'visible'
+      const clipsY = style.overflowY !== 'visible' && pageScrollerOverflow(current) === 0
       if (clipsX || clipsY) {
         const bounds = current.getBoundingClientRect()
         if (clipsX) {
