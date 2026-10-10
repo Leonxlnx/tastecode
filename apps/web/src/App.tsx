@@ -4623,6 +4623,17 @@ export function App() {
       }
       if (modalOwnsKeyboard) return
 
+      // Keybinds come first, so one saved on a number key before the
+      // recorder refused them still runs, as its menu accelerator does.
+      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
+        matchesShortcut(event, keybindings[candidate.id]),
+      )
+      if (definition) {
+        event.preventDefault()
+        runRoutedShortcut(definition.id)
+        return
+      }
+
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
@@ -4633,15 +4644,6 @@ export function App() {
           .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
         event.preventDefault()
         if (session) void selectSession(session.id)
-        return
-      }
-
-      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
-        matchesShortcut(event, keybindings[candidate.id]),
-      )
-      if (definition) {
-        event.preventDefault()
-        runRoutedShortcut(definition.id)
         return
       }
 
