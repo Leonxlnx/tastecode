@@ -46,7 +46,12 @@ import {
   revealPath,
   writeClipboardText,
 } from '../bridge.js'
-import { isEditableTarget, matchesShortcut } from '../shortcuts.js'
+import {
+  isEditableTarget,
+  matchesShortcut,
+  NEXT_TURN_SHORTCUT,
+  PREVIOUS_TURN_SHORTCUT,
+} from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
@@ -344,8 +349,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return
       if (
-        !matchesShortcut(event, { key: 'arrowup', alt: true }) &&
-        !matchesShortcut(event, { key: 'arrowdown', alt: true })
+        !matchesShortcut(event, PREVIOUS_TURN_SHORTCUT) &&
+        !matchesShortcut(event, NEXT_TURN_SHORTCUT)
       )
         return
       // The first VISIBLE row, not rows[0] — that one is up to `overscan`

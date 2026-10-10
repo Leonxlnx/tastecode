@@ -71,11 +71,11 @@ describe('keybind settings', () => {
 
     fireEvent.click(recorder)
     expect(recorder.getAttribute('aria-pressed')).toBe('true')
-    fireEvent.keyDown(recorder, { key: 'G', metaKey: true, shiftKey: true })
-    expect(recorder.querySelector('kbd')?.title).toBe('⌘⇧G')
+    fireEvent.keyDown(recorder, { key: 'Y', metaKey: true, shiftKey: true })
+    expect(recorder.querySelector('kbd')?.title).toBe('⌘⇧Y')
     expect(recorder.querySelector('[data-shortcut-icon="command"]')).toBeTruthy()
     expect(recorder.querySelector('[data-shortcut-icon="shift"]')).toBeTruthy()
-    expect(recorder.querySelector('.keybind-shortcut__key')?.textContent).toBe('G')
+    expect(recorder.querySelector('.keybind-shortcut__key')?.textContent).toBe('Y')
 
     expect(screen.queryByRole('button', { name: 'Clear Command palette keybind' })).toBeNull()
     fireEvent.click(recorder)
@@ -147,6 +147,60 @@ describe('keybind settings', () => {
     expect(onReset).toHaveBeenCalledOnce()
     expect(recorder.querySelector('kbd')?.title).toBe('⌘K')
     expect(screen.queryByRole('button', { name: 'Restore defaults' })).toBeNull()
+  })
+
+  it.each([
+    ['a recent chat number', { key: '1', metaKey: true }, '⌘1', 'Open recent chat'],
+    ['a workspace tool', { key: 't', metaKey: true }, '⌘T', 'Open Browser'],
+    ['find in chat', { key: 'f', metaKey: true }, '⌘F', 'Find in chat'],
+    ['turn navigation', { key: 'ArrowUp', altKey: true }, '⌥↑', 'Previous turn'],
+    [
+      'the debug chord',
+      { key: 'Î', code: 'KeyD', metaKey: true, altKey: true, shiftKey: true },
+      '⌘⌥⇧D',
+      'Debug settings',
+    ],
+  ])('refuses %s that the app keeps for itself', (_name, keys, title, owner) => {
+    const onChange = vi.fn()
+    render(
+      <KeybindSettings
+        keybindings={createDefaultKeybindings()}
+        macOS
+        onChange={onChange}
+        onReset={() => {}}
+      />,
+    )
+    const row = screen.getByText('New chat').closest<HTMLElement>('.keybind-row')!
+    const recorder = within(row).getByRole('button', { name: 'Change New chat keybind' })
+
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, keys)
+
+    expect(within(row).getByRole('alert').textContent).toBe(`Already used by ${owner}.`)
+    expect(recorder.getAttribute('aria-pressed')).toBe('true')
+    expect(recorder.querySelector('kbd')?.title).toBe(title)
+    expect(within(row).queryByRole('button', { name: 'Move it here' })).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('keeps a saved keybind on a reserved chord when it is pressed again', () => {
+    const onChange = vi.fn()
+    render(
+      <KeybindSettings
+        keybindings={{ ...createDefaultKeybindings(), newChat: { key: '1', primary: true } }}
+        macOS
+        onChange={onChange}
+        onReset={() => {}}
+      />,
+    )
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onChange).toHaveBeenCalledWith('newChat', { key: '1', primary: true })
+    expect(recorder.getAttribute('aria-pressed')).toBe('false')
   })
 
   it('moves a taken shortcut to the action being recorded', () => {
