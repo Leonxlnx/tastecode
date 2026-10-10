@@ -58,6 +58,42 @@ let submissionSequence = 0
 // the first view that handles it, so reopening the tab does not resend it.
 const deliveredPromptRequests = new WeakSet<SideChatPromptRequest>()
 
+// Both workspace panels can show Temporary chat, and the server keeps one side
+// thread per main chat, so two views of one main chat share it. A view holds it
+// from the moment it asks the server for it, and only the last view to let go
+// closes the thread.
+type SideChatHold = { views: number; threadId?: string | undefined }
+const sideChatHolds = new WeakMap<Transport, Map<string, SideChatHold>>()
+
+function holdSideChat(transport: Transport, parentThreadId: string): void {
+  let holds = sideChatHolds.get(transport)
+  if (!holds) {
+    holds = new Map()
+    sideChatHolds.set(transport, holds)
+  }
+  const hold = holds.get(parentThreadId) ?? { views: 0 }
+  hold.views += 1
+  holds.set(parentThreadId, hold)
+}
+
+/** Records a started side thread, and says whether any view still holds it. */
+function recordSideChat(transport: Transport, parentThreadId: string, threadId: string): boolean {
+  const hold = sideChatHolds.get(transport)?.get(parentThreadId)
+  if (hold) hold.threadId = threadId
+  return hold !== undefined
+}
+
+/** Lets one view go, and returns the side thread to close once no view holds it. */
+function releaseSideChat(transport: Transport, parentThreadId: string): string | undefined {
+  const holds = sideChatHolds.get(transport)
+  const hold = holds?.get(parentThreadId)
+  if (!holds || !hold) return undefined
+  hold.views -= 1
+  if (hold.views > 0) return undefined
+  holds.delete(parentThreadId)
+  return hold.threadId
+}
+
 export function WorkspaceSideChat(props: {
   active: boolean
   projectName?: string | undefined
@@ -86,6 +122,7 @@ export function WorkspaceSideChat(props: {
   frameStoreRef.current ??= new ThreadFrameStore(emptyThread)
   const sideThreadIdRef = useRef(sideThreadId)
   const sideParentRef = useRef<string | undefined>(undefined)
+  const heldParentRef = useRef<string | undefined>(undefined)
   const startPromiseRef = useRef<Promise<string> | undefined>(undefined)
   const generationRef = useRef(0)
   const lastSeqRef = useRef(0)
@@ -117,12 +154,6 @@ export function WorkspaceSideChat(props: {
   useEffect(() => {
     generationRef.current += 1
     const generation = generationRef.current
-    const previousId = sideThreadIdRef.current
-    if (previousId) {
-      void props.transport
-        .request('sideChat.close', { threadId: previousId })
-        .catch(() => undefined)
-    }
     sideThreadIdRef.current = undefined
     sideParentRef.current = props.parentThreadId
     startPromiseRef.current = undefined
@@ -141,10 +172,12 @@ export function WorkspaceSideChat(props: {
 
     return () => {
       if (generationRef.current === generation) generationRef.current += 1
-      const id = sideThreadIdRef.current
-      if (id && sideParentRef.current === props.parentThreadId) {
-        sideThreadIdRef.current = undefined
-        void props.transport.request('sideChat.close', { threadId: id }).catch(() => undefined)
+      sideThreadIdRef.current = undefined
+      const heldParent = heldParentRef.current
+      heldParentRef.current = undefined
+      const threadId = heldParent ? releaseSideChat(props.transport, heldParent) : undefined
+      if (threadId) {
+        void props.transport.request('sideChat.close', { threadId }).catch(() => undefined)
       }
     }
   }, [props.parentThreadId, props.transport, replaceThread])
@@ -249,11 +282,18 @@ export function WorkspaceSideChat(props: {
     const generation = generationRef.current
     setStarting(true)
     setError(undefined)
+    if (!heldParentRef.current) {
+      heldParentRef.current = parentThreadId
+      holdSideChat(props.transport, parentThreadId)
+    }
     const pending = props.transport
       .request('sideChat.start', { parentThreadId, ...props.startOptions })
       .then(async ({ threadId }) => {
+        const held = recordSideChat(props.transport, parentThreadId, threadId)
         if (generationRef.current !== generation || sideParentRef.current !== parentThreadId) {
-          void props.transport.request('sideChat.close', { threadId }).catch(() => undefined)
+          if (!held) {
+            void props.transport.request('sideChat.close', { threadId }).catch(() => undefined)
+          }
           throw new Error('Side chat was closed before it finished starting.')
         }
         sideThreadIdRef.current = threadId
