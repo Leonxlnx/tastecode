@@ -2377,11 +2377,14 @@ export function App() {
     }
   }, [transport, activeId, settleQueuedSubmissions, beginQueueRead, finishQueueRead])
 
+  // Restore points belong to one chat. A running chat skips the read below,
+  // so the previous chat's list must not survive the switch.
   useEffect(() => {
-    if (!activeId || thread.running) {
-      if (!activeId) setCheckpoints([])
-      return
-    }
+    setCheckpoints([])
+  }, [activeId])
+
+  useEffect(() => {
+    if (!activeId || thread.running) return
     void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
   }, [activeId, thread.running, refreshCheckpoints])
 
