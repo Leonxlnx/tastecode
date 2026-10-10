@@ -11,7 +11,7 @@ import {
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
-import type { NativeMenuAction } from './bridge.js'
+import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
@@ -80,7 +80,8 @@ const highlighterHighlight = vi.hoisted(() => vi.fn(() => ({ tokens: [] })))
 const desktopShell = vi.hoisted(() => ({ enabled: false }))
 const shortcutPlatform = vi.hoisted(() => ({ macOS: true }))
 const nativeMenu = vi.hoisted(() => ({
-  listener: undefined as ((action: NativeMenuAction) => void) | undefined,
+  listener: undefined as
+    ((action: NativeMenuAction, source?: NativeMenuActionSource) => void) | undefined,
   syncShortcuts: vi.fn(),
 }))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
@@ -287,7 +288,9 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
   pickFolder,
   syncNativeMenuShortcuts: nativeMenu.syncShortcuts,
-  onNativeMenuAction: (listener: (action: NativeMenuAction) => void) => {
+  onNativeMenuAction: (
+    listener: (action: NativeMenuAction, source?: NativeMenuActionSource) => void,
+  ) => {
     nativeMenu.listener = listener
     return () => {
       if (nativeMenu.listener === listener) nativeMenu.listener = undefined
@@ -8550,6 +8553,32 @@ describe('live sessions', () => {
       expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
     )
     expect(document.activeElement).toBe(composer)
+  })
+
+  it('keeps app shortcuts from acting behind chat search', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    composer.focus()
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    const stageHeader = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    const sessionBefore = stageHeader().sessionId
+
+    fireEvent.keyDown(search, { key: '1', metaKey: true })
+    fireEvent.keyDown(search, { key: 'ArrowDown', metaKey: true, altKey: true })
+    expect(stageHeader().sessionId).toBe(sessionBefore)
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'k', metaKey: true })
+    act(() => nativeMenu.listener?.('commandPalette', 'accelerator'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(screen.queryByRole('textbox', { name: 'Search commands' })).toBeNull()
+    expect(document.activeElement).toBe(search)
   })
 
   it('returns focus to inbox search after the command palette opener unmounts', async () => {

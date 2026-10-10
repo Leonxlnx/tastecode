@@ -4586,7 +4586,7 @@ export function App() {
       const route = shortcutRoute(action, {
         settingsOpen,
         onboardingPreview,
-        modalOpen: modalOwnsKeyboard,
+        modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
       else if (route === 'showKeybinds') setSettingsSection('keybinds')
@@ -4633,7 +4633,7 @@ export function App() {
         }
         return
       }
-      if (modalOwnsKeyboard) return
+      if (modalOwnsKeyboard || sessionSearch.current?.isOpen()) return
 
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
