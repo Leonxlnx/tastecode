@@ -18,7 +18,6 @@ describe('ACP reversible patches', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'acp-patch-'))
     try {
       execFileSync('git', ['init', '--quiet', directory])
-      execFileSync('git', ['-C', directory, 'config', 'core.autocrlf', 'false'])
       const name = 'file with spaces.txt'
       const file = path.join(directory, name)
       writeFileSync(file, after!)
