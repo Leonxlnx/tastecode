@@ -463,7 +463,7 @@ export class PullRequestService {
         if (this.#detailInFlight.get(key) !== pending) {
           throw new Error('Pull request changed while loading. Refresh and try again.')
         }
-        this.#invalidateFiles(key)
+        this.#invalidateFiles(key, value)
         // A detail missing its conversations retries them on the next open.
         if (value.reviewThreadsUnavailable) return value
         const now = this.#now()
@@ -1304,10 +1304,15 @@ export class PullRequestService {
     }
   }
 
-  #invalidateFiles(target: string): void {
+  // Files keys carry both OIDs, so pages of the comparison still in force stay valid.
+  #invalidateFiles(
+    target: string,
+    current?: Pick<PullRequestFilesResult, 'headRefOid' | 'baseRefOid'>,
+  ): void {
+    const kept = current && `${target}:${current.headRefOid}:${current.baseRefOid}:`
     for (const cache of [this.#filesCache, this.#filesInFlight]) {
       for (const key of cache.keys()) {
-        if (key.startsWith(`${target}:`)) cache.delete(key)
+        if (key.startsWith(`${target}:`) && !(kept && key.startsWith(kept))) cache.delete(key)
       }
     }
   }
