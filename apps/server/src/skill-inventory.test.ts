@@ -72,6 +72,37 @@ describe('local skill inventory', () => {
     ])
   })
 
+  it('keeps hyphenated frontmatter keys out of the description', async () => {
+    const project = temporary('project')
+    const homeSkills = path.join(temporary('home'), '.agents', 'skills')
+    writeSkill(
+      path.join(homeSkills, 'pdf'),
+      '---\nname: pdf\ndescription: Fill PDF forms\nallowed-tools:\n  - Bash\n  - Read\n---\nBody\n',
+    )
+
+    const inventory = await listLocalSkills(project, { userSkillsDir: homeSkills })
+    expect(inventory.skills).toEqual([
+      expect.objectContaining({ name: 'pdf', description: 'Fill PDF forms' }),
+    ])
+  })
+
+  it.each(['>-', '>', '|', '|+', '>2'])(
+    'folds a %s block scalar description without its indicator',
+    async (indicator) => {
+      const project = temporary('project')
+      const homeSkills = path.join(temporary('home'), '.agents', 'skills')
+      writeSkill(
+        path.join(homeSkills, 'pdf'),
+        `---\nname: pdf\ndescription: ${indicator}\n  Fill PDF forms\n  and merge them\n---\n`,
+      )
+
+      const inventory = await listLocalSkills(project, { userSkillsDir: homeSkills })
+      expect(inventory.skills).toEqual([
+        expect.objectContaining({ description: 'Fill PDF forms and merge them' }),
+      ])
+    },
+  )
+
   it('skips missing skill roots without reporting an error', async () => {
     const project = temporary('project')
     await expect(
