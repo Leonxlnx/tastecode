@@ -163,21 +163,16 @@ function projectSidebarProjection(source: Project): ProjectSidebarProjection {
 }
 
 function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const active: T[] = []
-  const unread: T[] = []
-  const rest: T[] = []
-  for (const value of sessions) {
-    const session = getSession(value)
-    if (isActiveStatus(session.status)) {
-      active.push(value)
-    } else if (session.unread) {
-      unread.push(value)
-    } else {
-      rest.push(value)
-    }
-  }
-  const ordered = [...active, ...unread, ...rest]
+  const groups: [T[], T[], T[]] = [[], [], []]
+  for (const value of sessions) groups[railRank(getSession(value))].push(value)
+  const ordered = [...groups[0], ...groups[1], ...groups[2]]
   return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
+}
+
+/** The rail's grouping: working chats first, then unread ones, then the rest. */
+function railRank(session: Session): 0 | 1 | 2 {
+  if (isActiveStatus(session.status)) return 0
+  return session.unread ? 1 : 2
 }
 
 function isActiveStatus(status: Session['status']): boolean {
