@@ -1,7 +1,11 @@
 import { stat as callbackStat, type Dirent } from 'node:fs'
 import { open, opendir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
+import {
+  assertPublicWorkspaceFile,
+  isCredentialWorkspace,
+  isSecretWorkspaceName,
+} from './api-workspace-paths.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
@@ -108,11 +112,10 @@ function workspaceEntries(
     const entries: Array<WorkspaceFileEntry | undefined> = []
     entries.length = children.length
     const absoluteDirectory = directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`
-    // Reading refuses every file of a workspace opened directly on a credential
+    // Reading refuses every file of a workspace opened on or inside a credential
     // folder such as ~/.aws, so the tree must show them locked rather than openable.
     const directoryRestricted =
-      isSecretWorkspaceName(path.basename(workspace)) ||
-      protocolDirectory.split('/').some(isSecretWorkspaceName)
+      isCredentialWorkspace(workspace) || protocolDirectory.split('/').some(isSecretWorkspaceName)
     let entryCount = 0
     let pending = 0
     let queued = true

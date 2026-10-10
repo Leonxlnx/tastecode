@@ -140,6 +140,19 @@ describe('workspace files', () => {
     ])
   })
 
+  it('locks every entry of a workspace opened inside a credential folder', async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-files-'))
+    temporary.push(parent)
+    const root = path.join(parent, '.aws', 'sso', 'cache')
+    await mkdir(root, { recursive: true })
+    await writeFile(path.join(root, 'token.json'), '{}\n')
+
+    expect((await listWorkspaceDirectory(root)).entries).toMatchObject([
+      { path: 'token.json', restricted: true },
+    ])
+    await expect(readWorkspaceTextFile(root, 'token.json')).rejects.toThrow(/credential/)
+  })
+
   it('finds unopened descendants by case-insensitive name and relative path', async () => {
     const root = await fixture()
     await mkdir(path.join(root, 'src', 'components'))
