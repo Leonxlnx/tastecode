@@ -1110,6 +1110,55 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('keeps subagent messages out of the main transcript, plan and model label', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { model: 'opus' })
+    await adapter.sendTurn(thread.id, 'Delegate')
+    const query = fake.queries[0]!
+    query.emitMessage({
+      type: 'assistant',
+      parent_tool_use_id: 'task-1',
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+      message: {
+        id: 'sub-msg',
+        role: 'assistant',
+        model: 'claude-sonnet-5',
+        type: 'message',
+        content: [
+          { type: 'text', text: 'Subagent internal notes' },
+          {
+            type: 'tool_use',
+            id: 'sub-todo',
+            name: 'TodoWrite',
+            input: { todos: [{ content: 'sub step', status: 'pending' }] },
+          },
+        ],
+      },
+    } as unknown as SDKMessage)
+    query.emitMessage({
+      type: 'user',
+      parent_tool_use_id: 'task-1',
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'sub-todo', content: 'Todos updated' }],
+      },
+    } as unknown as SDKMessage)
+    query.emitMessage(resultMessage(false))
+    await tick()
+    expect(events.filter((event) => event.type.startsWith('item.'))).toEqual([])
+    expect(events.filter((event) => event.type === 'plan.updated')).toEqual([])
+    expect(events.find((event) => event.type === 'usage.updated')).toMatchObject({
+      usage: { model: 'opus' },
+    })
+    adapter.dispose()
+  })
+
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {

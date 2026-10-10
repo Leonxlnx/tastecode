@@ -818,6 +818,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.emit('log', 'ignored Claude assistant replay outside an active turn')
         return
       }
+      // Subagent (Task) snapshots belong to the sidechain. Saved history leaves them out, so
+      // the live transcript must too, and they must not touch the main plan or model label.
+      if (message.parent_tool_use_id) return
       if (message.error) this.#log(`Claude assistant error: ${message.error}`)
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
@@ -845,7 +848,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'user') {
-      if (!this.#activeTurnId) return
+      if (!this.#activeTurnId || message.parent_tool_use_id) return
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
