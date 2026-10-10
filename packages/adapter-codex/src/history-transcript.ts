@@ -1,6 +1,7 @@
 import type { DomainEvent, ProviderHistorySession, Turn } from '@harness/contracts'
 import { object, timestamp } from './history-values.js'
 import { historyItem, responseItem, type HistoryItem } from './history-items.js'
+import { turnDiff } from './turn-diff.js'
 
 type RecordValue = Record<string, unknown>
 type Entry = {
@@ -135,8 +136,8 @@ export function parseCodexHistory(
       events.push({ type: 'item.completed', item })
       if (diff) diffs.push(diff)
     }
-    if (diffs.length)
-      events.push({ type: 'diff.updated', turnId: saved.id, diff: diffs.join('\n') })
+    const patch = turnDiff(diffs)
+    if (patch) events.push({ type: 'diff.updated', turnId: saved.id, diff: patch })
     events.push({
       type: 'turn.completed',
       turnId: saved.id,

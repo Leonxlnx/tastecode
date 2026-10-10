@@ -11,7 +11,7 @@ import {
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
-import type { NativeMenuAction } from './bridge.js'
+import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
@@ -80,7 +80,8 @@ const highlighterHighlight = vi.hoisted(() => vi.fn(() => ({ tokens: [] })))
 const desktopShell = vi.hoisted(() => ({ enabled: false }))
 const shortcutPlatform = vi.hoisted(() => ({ macOS: true }))
 const nativeMenu = vi.hoisted(() => ({
-  listener: undefined as ((action: NativeMenuAction) => void) | undefined,
+  listener: undefined as
+    ((action: NativeMenuAction, source?: NativeMenuActionSource) => void) | undefined,
   syncShortcuts: vi.fn(),
 }))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
@@ -287,7 +288,9 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
   pickFolder,
   syncNativeMenuShortcuts: nativeMenu.syncShortcuts,
-  onNativeMenuAction: (listener: (action: NativeMenuAction) => void) => {
+  onNativeMenuAction: (
+    listener: (action: NativeMenuAction, source?: NativeMenuActionSource) => void,
+  ) => {
     nativeMenu.listener = listener
     return () => {
       if (nativeMenu.listener === listener) nativeMenu.listener = undefined
@@ -954,6 +957,33 @@ describe('web client', () => {
       expect(composerProps().draftRequest?.attachments).toEqual(['/work/later.png'])
     },
   )
+
+  it('keeps a rejected side prompt in the chat that is still starting', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    submitTurn('/side what is this?')
+    await screen.findByText('Start the main chat before opening a side chat.')
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    expect(composer().value).toBe('/side what is this?')
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    expect(composer().value).toBe('/side what is this?')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(composer().value).toBe('')
+    fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+    expect(composer().value).toBe('/side what is this?')
+  })
 
   it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
     const request = transport.request.getMockImplementation()!
@@ -4730,6 +4760,88 @@ describe('new chats', () => {
     })
   })
 
+  it('does not send a rename for a provisional chat that never started', async () => {
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+      typeof import('./ui/StageHeader.js').StageHeader
+    >
+
+    act(() => header.onRenameSession('pending:failed-start', 'Never started'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(rpcCount('thread.rename')).toBe(0)
+  })
+
+  it('keeps deleting the other chats when several need a checkout confirmation', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    const isolated = (id: string, title: string) => ({
+      id,
+      title,
+      provider: 'codex' as const,
+      createdAt: 0,
+      running: false,
+      worktreeBranch: `harness/${id}`,
+    })
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          isolated('first-dirty', 'First dirty'),
+          { id: 'clean', title: 'Clean chat', provider: 'codex', createdAt: 0, running: false },
+          isolated('second-dirty', 'Second dirty'),
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.unsavedWork') return request(method, params)
+      const dirty = methods[method].params.parse(params).threadId !== 'clean'
+      return Promise.resolve({ isolated: dirty, uncommitted: dirty })
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: 'Delete Clean chat' })
+
+    act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
+
+    expect(await screen.findByText(/Deleting “First dirty” now/)).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'clean' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
+    expect(await screen.findByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }), {
+      detail: 2,
+    })
+    expect(screen.getByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Discard isolated checkout' }), {
+      key: 'Escape',
+    })
+
+    expect(screen.queryByRole('dialog', { name: 'Discard isolated checkout' })).toBeNull()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.discardWorktree', {
+        threadId: 'first-dirty',
+        force: true,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'first-dirty' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'second-dirty',
+    })
+  })
+
   it('persists chat pinning from the sidebar menu', async () => {
     serverProjects = [
       {
@@ -6814,6 +6926,95 @@ describe('sidebar chat ordering', () => {
     })
   })
 
+  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'thread-b', title: 'B chat' },
+        { id: 'thread-c', title: 'C chat' },
+        { id: 'thread-a', title: 'A chat', status: 'ready', unread: true },
+      ]),
+    ]
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^C chat,/ })
+    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
+    dropChatRow('C chat', 'A chat', 'after')
+
+    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    await waitFor(() => {
+      const order = SessionOrderSchema.parse(
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
+      )
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+    })
+  })
+
+  it('moves to the previous and next chat in the order the rail shows', async () => {
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'one-a', title: 'One A' },
+        { id: 'one-pinned', title: 'One pinned', pinned: true },
+        { id: 'one-b', title: 'One B' },
+        { id: 'one-unread', title: 'One unread', status: 'ready', unread: true },
+      ]),
+      { ...serverProject('/work/two', 'Two', [{ id: 'two-a', title: 'Two A' }]), pinned: true },
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^One pinned,/ })
+    act(() => sidebarProps().onSelectSession('one-a'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
+    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-pinned')
+    await step('ArrowDown', 'two-a')
+    await step('ArrowUp', 'one-pinned')
+    await step('ArrowUp', 'one-b')
+  })
+
+  it('moves to the previous and next chat in the order the inbox shows', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    const active = { state: 'active', keepActive: false } as const
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'oldest', title: 'Oldest chat', createdAt: 1, lifecycle: active },
+        {
+          id: 'settled',
+          title: 'Settled chat',
+          createdAt: 5,
+          lifecycle: { state: 'settled', settledAt: 6, reason: 'manual' },
+        },
+        { id: 'newest', title: 'Newest chat', createdAt: 4, lifecycle: active },
+      ]),
+      serverProject('/work/two', 'Two', [
+        { id: 'older', title: 'Older chat', createdAt: 2, lifecycle: active },
+        { id: 'newer', title: 'Newer chat', createdAt: 3, lifecycle: active },
+      ]),
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Newest chat, One,/ })
+    act(() => sidebarProps().onSelectSession('newest'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('newest'))
+    // Active chats newest first, then settled ones.
+    await step('ArrowDown', 'newer')
+    await step('ArrowDown', 'older')
+    await step('ArrowDown', 'oldest')
+    await step('ArrowDown', 'settled')
+    await step('ArrowUp', 'oldest')
+  })
+
   it('keeps chats imported later from another provider in date order', async () => {
     // Every project's order used to be saved automatically, freezing the order
     // in which provider histories happened to arrive.
@@ -7400,6 +7601,43 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(window, { key: 'g', metaKey: true })
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     expect(composerProps().newSession).toBe(true)
+  })
+
+  it('runs a keybind saved on a number key instead of opening a recent chat', async () => {
+    localStorage.setItem(
+      'harness.keybindings.v1',
+      JSON.stringify({ version: 1, bindings: { newChat: { key: '1', primary: true } } }),
+    )
+    await openNewSession()
+    expect(composerProps().newSession).toBe(false)
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() => expect(composerProps().newSession).toBe(true))
+  })
+
+  it('refuses a number key in the keybind recorder and keeps it opening recent chats', async () => {
+    serverProjects[0]!.sessions.push({ id: 'recent-thread', title: 'Recent chat', createdAt: 5 })
+    await openNewSession()
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.getByRole('alert').textContent).toBe('Already used by Open recent chat.')
+    expect(localStorage.getItem('harness.keybindings.v1')).toBeNull()
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-thread' }),
+      ),
+    )
+    expect(composerProps().newSession).toBe(false)
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {
@@ -8489,6 +8727,31 @@ describe('live sessions', () => {
     expect(document.activeElement).toBe(composer)
   })
 
+  it('keeps app shortcuts from acting behind chat search', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    composer.focus()
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    const stageHeader = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    const sessionBefore = stageHeader().sessionId
+
+    fireEvent.keyDown(search, { key: '1', metaKey: true })
+    expect(stageHeader().sessionId).toBe(sessionBefore)
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'k', metaKey: true })
+    act(() => nativeMenu.listener?.('commandPalette', 'accelerator'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(screen.queryByRole('textbox', { name: 'Search commands' })).toBeNull()
+    expect(document.activeElement).toBe(search)
+  })
+
   it('returns focus to inbox search after the command palette opener unmounts', async () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
@@ -8770,6 +9033,20 @@ function emitQueue(
 
 function sessionTitles(): string[] {
   return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+}
+
+function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
+  const row = (title: string) =>
+    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const source = row(sourceTitle)
+  const target = row(targetTitle)
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
+  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+  const clientY = position === 'before' ? 65 : 85
+
+  fireEvent.dragStart(source, { dataTransfer })
+  fireEvent.dragOver(target, { clientY, dataTransfer })
+  fireEvent.drop(target, { clientY, dataTransfer })
 }
 
 describe('reopening a session', () => {

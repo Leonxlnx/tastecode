@@ -34,19 +34,23 @@ import {
 } from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
+import {
+  classifyInboxEntries,
+  newestFirst,
+  projectMetadata,
+  settledAt,
+  wakeAt,
+  type InboxEntry as Entry,
+  type InboxEntryGroups,
+  type ProjectMetadata,
+} from '../inbox-order.js'
 import { AppSelect } from './AppSelect.js'
+import { isConfirmEnter } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { InboxCardsSkeleton } from './SurfaceSkeletons.js'
 
-type ProjectMetadata = Pick<Project, 'path' | 'name'>
-type Entry = { project: ProjectMetadata; session: Session }
-
-function projectMetadata(project: ProjectMetadata): ProjectMetadata {
-  return { path: project.path, ...(project.name === undefined ? {} : { name: project.name }) }
-}
-type InboxEntryGroups = { active: Entry[]; snoozed: Entry[]; settled: Entry[]; ordered: Entry[] }
 const PAGE_SIZE = 25
 const INITIAL_ACTIVE_LIMIT = 12
 const INITIAL_SETTLED_LIMIT = 10
@@ -1204,7 +1208,7 @@ function Rename(props: { value: string; onCommit: (value: string) => void; onCan
       onChange={(event) => setValue(event.currentTarget.value)}
       onBlur={commit}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') commit()
+        if (isConfirmEnter(event)) commit()
         if (event.key === 'Escape') props.onCancel()
       }}
     />
@@ -1253,36 +1257,6 @@ function navigateRows(
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
   event.preventDefault()
   navigate(event.key === 'ArrowDown' ? 1 : -1)
-}
-
-function newestFirst(a: Entry, b: Entry): number {
-  return b.session.createdAt - a.session.createdAt
-}
-
-export function classifyInboxEntries(
-  projects: Project[],
-  scope: string,
-  normalizedQuery: string,
-): InboxEntryGroups {
-  const active: Entry[] = []
-  const snoozed: Entry[] = []
-  const settled: Entry[] = []
-
-  for (const project of projects) {
-    if (scope && project.path !== scope) continue
-    for (const session of project.sessions) {
-      if (normalizedQuery && !session.title.toLocaleLowerCase().includes(normalizedQuery)) continue
-      const entry = { project: projectMetadata(project), session }
-      if (session.lifecycle.state === 'active') active.push(entry)
-      else if (session.lifecycle.state === 'snoozed') snoozed.push(entry)
-      else settled.push(entry)
-    }
-  }
-
-  active.sort(newestFirst)
-  snoozed.sort((left, right) => wakeAt(left.session) - wakeAt(right.session))
-  settled.sort((left, right) => settledAt(right.session) - settledAt(left.session))
-  return { active, snoozed, settled, ordered: [...active, ...snoozed, ...settled] }
 }
 
 export function retainInboxSelection(
@@ -1574,14 +1548,6 @@ function withSelected(entries: Entry[], selected: Entry | undefined): Entry[] {
   return selected && !entries.some((entry) => entry.session.id === selected.session.id)
     ? [...entries, selected]
     : entries
-}
-
-function wakeAt(session: Session): number {
-  return session.lifecycle.state === 'snoozed' ? session.lifecycle.wakeAt : 0
-}
-
-function settledAt(session: Session): number {
-  return session.lifecycle.state === 'settled' ? session.lifecycle.settledAt : 0
 }
 
 function snoozePresets(now: number): Array<{ label: string; at: number }> {

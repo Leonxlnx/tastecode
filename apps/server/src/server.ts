@@ -676,8 +676,10 @@ export function startServer(
           )
         }
         // The sidebar entry can disappear while its history remains available
-        // when the project is added again. Running processes still need an owner.
-        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
+        // when the project is added again. Running processes still need an
+        // owner, so stop them — but do not archive the chats, or none of them
+        // could be continued after the project is added back.
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.stopThread(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}

@@ -8,6 +8,7 @@ import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import {
   descendantProcesses,
   devStopTargets,
+  netstatListeners,
   sameProcess,
   verifiedRemainingPids,
 } from './dev-process-ownership.js'
@@ -81,12 +82,8 @@ async function devPortListeners() {
 
   if (isWin) {
     const { stdout } = await execFileAsync('netstat.exe', ['-ano', '-p', 'tcp'])
-    for (const line of stdout.split(/\r?\n/)) {
-      const fields = line.trim().split(/\s+/)
-      if (fields.length < 5 || fields[0].toUpperCase() !== 'TCP') continue
-      if (fields[3].toUpperCase() !== 'LISTENING') continue
-      const port = Number.parseInt(fields[1].match(/:(\d+)$/)?.[1] ?? '', 10)
-      add(port, Number.parseInt(fields[4], 10))
+    for (const [port, pids] of netstatListeners(stdout)) {
+      for (const pid of pids) add(port, pid)
     }
     return listeners
   }

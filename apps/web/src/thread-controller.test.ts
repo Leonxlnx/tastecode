@@ -201,6 +201,16 @@ describe('ThreadController lifecycle owner', () => {
     expect(controller.hasPending('thread')).toBe(false)
   })
 
+  it('recovers into a draft with no text without a leading blank line', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.editDraft('thread', { text: '', attachments: ['/work/kept.png'] })
+    controller.recoverDraft('thread', { text: 'recover me', attachments: ['/work/sent.png'] })
+    expect(controller.draft('thread')).toMatchObject({
+      text: 'recover me',
+      attachments: ['/work/kept.png', '/work/sent.png'],
+    })
+  })
+
   it('retains bounded inactive caches and invalidates old recovery epochs', () => {
     const controller = new ThreadController(new TestTransport())
     const protectedId = 'thread-0'

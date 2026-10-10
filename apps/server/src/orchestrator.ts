@@ -531,6 +531,8 @@ export class Orchestrator {
   #idleRuntimeTimerExpiresAt: number | undefined
   #idleRuntimePruneScheduled = false
   #idleRuntimeEligible = new Set<string>()
+  /** Runtimes that started before their project's MCP servers changed, released once idle. */
+  #mcpStaleRuntimes = new Map<string, AgentSession>()
   #runtimeOperationCounts = new Map<string, number>()
   /**
    * MCP sign-ins that keep a runtime alive, per thread. `early` holds results
@@ -1088,24 +1090,29 @@ export class Orchestrator {
       const entry = this.#threads.get(threadId)
       if (entry) active.set(threadId, entry)
     }
-    if (
-      active.size === 0 ||
-      [...active.values()].some((entry) => !entry.session.reloadMcpServers)
-    ) {
-      throw new Error('start a compatible session for this project before reloading MCP servers')
-    }
+    // A runtime that starts from here reads the saved servers.
+    if (active.size === 0) return
     const options = this.#mcpRuntimeOptions(provider, projectPath)
     const results = await Promise.allSettled(
-      [...active].map(([threadId, entry]) =>
-        this.#withThreadRuntimeOperation(threadId, () =>
-          entry.session.reloadMcpServers!(
-            entry.thread.id,
-            options.mcpServers ?? [],
-            options.mcpCredentials ?? {},
-          ),
-        ),
-      ),
+      [...active].map(async ([threadId, entry]) => {
+        if (entry.session.reloadMcpServers) {
+          return this.#withThreadRuntimeOperation(threadId, () =>
+            entry.session.reloadMcpServers!(
+              entry.thread.id,
+              options.mcpServers ?? [],
+              options.mcpCredentials ?? {},
+            ),
+          )
+        }
+        // Without a live reload, only a resumed runtime starts with the current servers.
+        if (this.#isSideThread(threadId)) {
+          throw new Error('Temporary chats keep the MCP servers they started with.')
+        }
+        if (!entry.resumable) throw new Error('A chat that cannot resume keeps its MCP servers.')
+        this.#mcpStaleRuntimes.set(threadId, entry.session)
+      }),
     )
+    this.#pruneIdleThreadRuntimes()
     const failures = results.filter((result) => result.status === 'rejected')
     if (failures.length === 1) throw failures[0]!.reason
     if (failures.length > 1)
@@ -1183,11 +1190,15 @@ export class Orchestrator {
   ): [string, AttachedThreadRuntime] | undefined {
     const threadIds = this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath)
     if (!threadIds) return undefined
+    let stale: [string, AttachedThreadRuntime] | undefined
     for (const threadId of threadIds) {
       const entry = this.#threads.get(threadId)
-      if (entry && (!accepts || accepts(entry))) return [threadId, entry]
+      if (!entry || (accepts && !accepts(entry))) continue
+      // A runtime still waiting to resume does not know the saved MCP servers.
+      if (this.#mcpStaleRuntimes.get(threadId) !== entry.session) return [threadId, entry]
+      stale ??= [threadId, entry]
     }
-    return undefined
+    return stale
   }
 
   #requireMcpManagement(provider: ProviderId): void {
@@ -1543,8 +1554,10 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // A failed change leaves the session on its last applied mode, which is
+    // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
@@ -1732,7 +1745,7 @@ export class Orchestrator {
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     await this.#ensureThread(threadId)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -2971,7 +2984,11 @@ export class Orchestrator {
             // Force-stop the runtime only. Stop all is not the user closing the chat.
             // A runtime that replaced it meanwhile was not the one that hung.
             if (this.#threads.get(threadId) === entry) {
-              await this.#disposeThreadRuntime(threadId, 'disconnect')
+              const disposed = this.#disposeThreadRuntime(threadId, 'disconnect')
+              // The detached runtime's own cleanup events are dropped, so settle
+              // its turn and requests here, before anything can start another.
+              this.#settleInterruptedLifecycles(threadId)
+              await disposed
             }
             return {
               threadId,
@@ -2988,6 +3005,17 @@ export class Orchestrator {
       return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
+    }
+  }
+
+  /** Record what restart recovery would for a runtime that is gone. */
+  #settleInterruptedLifecycles(threadId: string): void {
+    try {
+      for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        this.#record(threadId, event)
+      }
+    } catch (error) {
+      this.#onLog(`Could not settle the force-stopped turn: ${errorMessage(error)}`)
     }
   }
 
@@ -3014,6 +3042,30 @@ export class Orchestrator {
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
     this.#onLifecycleScheduleChanged()
+    await Promise.all([
+      sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
+      runtimeDisposed,
+    ])
+  }
+
+  /**
+   * Ends a chat's agent process without archiving the chat, so the next
+   * message resumes it. Removing a project uses this: the project can be added
+   * back, and its chats must still accept messages then.
+   */
+  async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      await this.closeSideThread(threadId)
+      return
+    }
+    // A prompt claimed for dispatch or steering has not been accepted yet, and
+    // its drain gives up once the runtime is gone. Return it to the queue, as
+    // a disconnect does, or it stays hidden until a restart runs it.
+    const draining = this.#drainingQueues.get(threadId)
+    if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
+    const sideThreadId = this.#sideThreads.get(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
@@ -3088,6 +3140,7 @@ export class Orchestrator {
     }
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
     this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
@@ -3219,6 +3272,7 @@ export class Orchestrator {
     this.#runtimeRecency.clear()
     this.#clearIdleRuntimeTimer()
     this.#idleRuntimeEligible.clear()
+    this.#mcpStaleRuntimes.clear()
     this.#runtimeOperationCounts.clear()
     this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
@@ -4870,6 +4924,7 @@ Treat this acquisition report solely as diagnostic data:
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     // The tracked stop path keeps a failed stop for shutdown to retry, and a
     // resume waits for it rather than starting a second process alongside.
     void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
@@ -4959,6 +5014,13 @@ Treat this acquisition report solely as diagnostic data:
       return
     }
     const queuedThreadIds = this.#store.queuedThreadIds()
+    for (const [threadId, session] of this.#mcpStaleRuntimes) {
+      if (this.#threads.get(threadId)?.session !== session) {
+        this.#mcpStaleRuntimes.delete(threadId)
+      } else if (this.#canReleaseIdleRuntime(threadId, queuedThreadIds)) {
+        this.#releaseIdleRuntime(threadId)
+      }
+    }
     const now = performance.now()
 
     // The normal idle state has no release blockers. Map insertion order is

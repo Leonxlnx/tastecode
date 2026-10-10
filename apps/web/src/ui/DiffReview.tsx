@@ -4,8 +4,25 @@ import { IconCheck as Check, IconRefresh as RefreshCw, IconX as X } from '@table
 import type { Transport } from '../transport.js'
 import { SkeletonCode, SkeletonStatus } from './Skeleton.js'
 
-export function DiffReview({ transport, threadId }: { transport: Transport; threadId: string }) {
+/**
+ * The server's refusal for a chat that edits the project checkout itself
+ * (`#diffRepoPath` in apps/server/src/orchestrator.ts). Accepting or rejecting
+ * hunks there would touch the user's own work, so only the turn's patch is shown.
+ */
+const SHARED_CHECKOUT = 'requires an isolated session'
+
+export function DiffReview({
+  transport,
+  threadId,
+  fallback,
+}: {
+  transport: Transport
+  threadId: string
+  /** Shown instead of the review when the chat has no isolated checkout. */
+  fallback?: ReactNode | undefined
+}) {
   const [diff, setDiff] = useState<SessionDiff>()
+  const [sharedCheckout, setSharedCheckout] = useState(false)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string>()
   const [showSlowLoad, setShowSlowLoad] = useState(false)
@@ -19,9 +36,13 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
       const result = await transport.request('thread.diff', { threadId })
       if (generation.current !== mine) return
       setDiff(result)
+      setSharedCheckout(false)
       setStatus(undefined)
     } catch (cause) {
-      if (generation.current === mine) setStatus(message(cause))
+      if (generation.current !== mine) return
+      const detail = message(cause)
+      if (detail.includes(SHARED_CHECKOUT)) setSharedCheckout(true)
+      else setStatus(detail)
     }
   }, [transport, threadId])
 
@@ -63,6 +84,8 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
     }
   }
 
+  if (sharedCheckout) return fallback ?? null
+
   // No placeholder inside the first grace period: this component remounts at
   // every turn boundary, and flashing "Loading review…" for a fast local
   // fetch reads as flicker, not information.
@@ -79,7 +102,9 @@ export function DiffReview({ transport, threadId }: { transport: Transport; thre
     <div className="diff-review">
       <div className="diff-review__toolbar">
         <span>
-          {diff ? `${diff.files.length} files in current snapshot` : 'Review unavailable'}
+          {diff
+            ? `${diff.files.length} file${diff.files.length === 1 ? '' : 's'} in current snapshot`
+            : 'Review unavailable'}
         </span>
         <button
           className="diff__review"
@@ -209,15 +234,18 @@ function changedWords(before: string, after: string): [ReactNode, ReactNode] {
     oldWords.at(-1 - suffix) === newWords.at(-1 - suffix)
   )
     suffix += 1
-  const render = (words: string[], kind: 'old' | 'new') => (
-    <>
-      {words.slice(0, prefix).join('')}
-      <mark className={`is-${kind}`}>
-        {words.slice(prefix, words.length - suffix || undefined).join('')}
-      </mark>
-      {suffix ? words.slice(-suffix).join('') : ''}
-    </>
-  )
+  const render = (words: string[], kind: 'old' | 'new') => {
+    // The suffix can cover a whole side (`foo()` → `await foo()`), so the
+    // changed run may be empty; it must never fall back to the rest of the line.
+    const changed = words.slice(prefix, words.length - suffix).join('')
+    return (
+      <>
+        {words.slice(0, prefix).join('')}
+        {changed ? <mark className={`is-${kind}`}>{changed}</mark> : null}
+        {suffix ? words.slice(-suffix).join('') : ''}
+      </>
+    )
+  }
   return [render(oldWords, 'old'), render(newWords, 'new')]
 }
 

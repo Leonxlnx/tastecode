@@ -36,6 +36,14 @@ function migrateDatabase(current: string, legacy: string): string {
   }
 }
 
+/**
+ * The XDG spec treats an empty or relative XDG_DATA_HOME as unset. Anything else would
+ * resolve against the working directory and open a fresh database there.
+ */
+function absolute(directory: string | undefined): string | undefined {
+  return directory && path.isAbsolute(directory) ? directory : undefined
+}
+
 /** Shared by the server and explicit history maintenance commands. */
 export function storeLocation(env: NodeJS.ProcessEnv = process.env): string {
   const override = env['HARNESS_DATA_DIR']
@@ -44,10 +52,10 @@ export function storeLocation(env: NodeJS.ProcessEnv = process.env): string {
   const home = os.homedir()
   const base =
     process.platform === 'win32'
-      ? (env['APPDATA'] ?? path.join(home, 'AppData', 'Roaming'))
+      ? (absolute(env['APPDATA']) ?? path.join(home, 'AppData', 'Roaming'))
       : process.platform === 'darwin'
         ? path.join(home, 'Library', 'Application Support')
-        : (env['XDG_DATA_HOME'] ?? path.join(home, '.local', 'share'))
+        : (absolute(env['XDG_DATA_HOME']) ?? path.join(home, '.local', 'share'))
   return migrateDatabase(
     path.join(base, 'TasteCode', 'tastecode.db'),
     path.join(base, 'PersonalHarness', 'harness.db'),

@@ -58,10 +58,12 @@ export function workspaceDiffFilePatch(file: DiffFile): string {
   const previousPath = file.previousPath ?? file.path
   const lines = [`diff --git a/${previousPath} b/${file.path}`]
 
+  // Diffs.com reads added and deleted files only from the mode line, not from /dev/null.
+  if (file.status === 'added') lines.push('new file mode 100644')
+  else if (file.status === 'deleted') lines.push('deleted file mode 100644')
+
   if (file.hunks.length === 0) {
-    if (file.status === 'added') lines.push('new file mode 100644')
-    else if (file.status === 'deleted') lines.push('deleted file mode 100644')
-    else if (file.status === 'renamed') {
+    if (file.status === 'renamed') {
       lines.push('similarity index 100%', `rename from ${previousPath}`, `rename to ${file.path}`)
     }
   } else {

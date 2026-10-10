@@ -10,6 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck as Check, IconChevronDown as ChevronDown } from '@tabler/icons-react'
+import { isConfirmEnter } from '../shortcuts.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { usePopupPresence } from './use-popup-presence.js'
 
@@ -346,7 +347,7 @@ export function AppSelect<Value extends string>(props: {
       return
     }
     const spaceChoosesOption = event.key === ' ' && (!props.search || !open || !searchQuery)
-    if (event.key === 'Enter' || spaceChoosesOption) {
+    if (isConfirmEnter(event) || spaceChoosesOption) {
       event.preventDefault()
       if (open) choose(activeIndex)
       else openListbox()
@@ -381,7 +382,7 @@ export function AppSelect<Value extends string>(props: {
       updateActiveIndex(nextVisibleIndex(activeIndex, direction))
       return
     }
-    if (event.key === 'Enter') {
+    if (isConfirmEnter(event)) {
       event.preventDefault()
       choose(activeIndex)
       return

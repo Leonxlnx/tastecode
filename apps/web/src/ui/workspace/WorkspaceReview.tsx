@@ -25,6 +25,7 @@ import {
   type ReviewTreeNode,
   type ReviewTreeRow,
 } from './review-file-tree.js'
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 import {
   workspaceDiffCollection,
   workspaceDiffItemId,
@@ -115,35 +116,50 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [generatingCommit, setGeneratingCommit] = useState(false)
   const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
+  const draftGeneration = useRef(0)
+  const diffVersion = useRef<string>(undefined)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
-  const refresh = useCallback(async () => {
-    if (!props.projectPath) return
-    const mine = ++generation.current
-    setLoading(true)
-    setError(undefined)
+  const clearCommitDraft = useCallback(() => {
+    draftGeneration.current += 1
     setCommitMessage(undefined)
     setCommitError(undefined)
     setGeneratingCommit(false)
     setCopiedCommit(false)
-    try {
-      const result = await props.transport.request('workspace.diff', {
-        projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
-      })
-      if (generation.current === mine) setDiff(result)
-    } catch (cause) {
-      if (generation.current === mine) {
-        setError(cause instanceof Error ? cause.message : String(cause))
+  }, [])
+
+  const refresh = useCallback(
+    async (keepDraft = false) => {
+      if (!props.projectPath) return
+      const mine = ++generation.current
+      setLoading(true)
+      setError(undefined)
+      if (!keepDraft) clearCommitDraft()
+      try {
+        const result = await props.transport.request('workspace.diff', {
+          projectPath: props.projectPath,
+          ...(props.threadId ? { threadId: props.threadId } : {}),
+        })
+        if (generation.current === mine) {
+          // The version names the changes, so a draft survives a refresh that found the same ones.
+          if (result.version !== diffVersion.current) clearCommitDraft()
+          diffVersion.current = result.version
+          setDiff(result)
+        }
+      } catch (cause) {
+        if (generation.current === mine) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      } finally {
+        if (generation.current === mine) setLoading(false)
       }
-    } finally {
-      if (generation.current === mine) setLoading(false)
-    }
-  }, [props.projectPath, props.threadId, props.transport])
+    },
+    [clearCommitDraft, props.projectPath, props.threadId, props.transport],
+  )
 
   const generateCommitMessage = useCallback(async () => {
     if (!props.projectPath) return
-    const mine = generation.current
+    const mine = draftGeneration.current
     setGeneratingCommit(true)
     setCommitError(undefined)
     setCopiedCommit(false)
@@ -152,13 +168,13 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         projectPath: props.projectPath,
         ...(props.threadId ? { threadId: props.threadId } : {}),
       })
-      if (generation.current === mine) setCommitMessage(result.message)
+      if (draftGeneration.current === mine) setCommitMessage(result.message)
     } catch (cause) {
-      if (generation.current === mine) {
+      if (draftGeneration.current === mine) {
         setCommitError(cause instanceof Error ? cause.message : String(cause))
       }
     } finally {
-      if (generation.current === mine) setGeneratingCommit(false)
+      if (draftGeneration.current === mine) setGeneratingCommit(false)
     }
   }, [props.projectPath, props.threadId, props.transport])
 
@@ -174,15 +190,17 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
 
   useEffect(() => {
     setDiff(undefined)
-    setCommitMessage(undefined)
-    setCommitError(undefined)
-    setGeneratingCommit(false)
-    setCopiedCommit(false)
+    diffVersion.current = undefined
+    clearCommitDraft()
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
+      draftGeneration.current += 1
     }
-  }, [props.projectPath, props.threadId, refresh])
+  }, [clearCommitDraft, props.projectPath, props.threadId, refresh])
+
+  const refreshAfterChange = useCallback(() => void refresh(true), [refresh])
+  useWorkspaceRefresh(props.transport, props.threadId, refreshAfterChange)
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
