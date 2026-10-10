@@ -8,3 +8,12 @@ export function allowsMicrophoneRequest(details: unknown): boolean {
 export function isOwnRendererPermission(permission: string, mediaType?: unknown): boolean {
   return permission === 'local-fonts' || (permission === 'media' && mediaType === 'audio')
 }
+
+/**
+ * Permission requests the app's own main-frame renderer may make. Element
+ * fullscreen (the media viewer) only arrives as a request, so the
+ * synchronous check path keeps answering through isOwnRendererPermission.
+ */
+export function allowsOwnRendererRequest(permission: string): boolean {
+  return permission === 'fullscreen' || isOwnRendererPermission(permission)
+}
