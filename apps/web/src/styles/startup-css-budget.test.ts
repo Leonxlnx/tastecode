@@ -65,8 +65,10 @@ describe('startup CSS budget', () => {
     )
     expect(app).toContain('let resolvedWorkspacePanel: WorkspacePanelComponent')
     expect(app).toContain('resolvedWorkspacePanel = module.WorkspacePanel')
-    expect(app).toContain('const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel')
-    expect(app).toContain('<RenderedWorkspacePanel')
+    expect(app).toContain('rightPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel')
+    expect(app).toContain('bottomPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel')
+    expect(app).toContain('<RightWorkspacePanel')
+    expect(app).toContain('<BottomWorkspacePanel')
     expect(app).not.toMatch(
       /import \{[^}]*WorkspacePanel[^}]*\} from ['"]\.\/ui\/workspace\/WorkspacePanel\.js['"]/s,
     )
