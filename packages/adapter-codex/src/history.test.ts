@@ -746,6 +746,26 @@ describe('native Codex history', () => {
     })
   })
 
+  it('counts imported lines that start with ++ or --', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/old.sql': { type: 'delete', content: '-- setup\nselect 1;\n' },
+          '/project/new.c': { type: 'add', content: '++count;\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).filter((entry) => entry.type === 'file_change')).toMatchObject([
+      { path: '/project/old.sql', linesAdded: 0, linesRemoved: 2 },
+      { path: '/project/new.c', linesAdded: 1, linesRemoved: 0 },
+    ])
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),

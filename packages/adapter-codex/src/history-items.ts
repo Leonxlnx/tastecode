@@ -1,6 +1,7 @@
 import type { Item } from '@harness/contracts'
 import { binaryPlaceholder, jsonWithoutBinary } from './binary-content.js'
 import { object } from './history-values.js'
+import { countDiffLines } from './map-item.js'
 import { wholeFileHunk } from './whole-file-hunk.js'
 
 type Value = Record<string, unknown>
@@ -164,12 +165,8 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
             type: 'file_change',
             path: file,
             text: body || `${kind} ${file}`,
-            linesAdded: body
-              .split('\n')
-              .filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-            linesRemoved: body
-              .split('\n')
-              .filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
+            linesAdded: countDiffLines(body, '+'),
+            linesRemoved: countDiffLines(body, '-'),
           },
           ...(body || mode ? { diff } : {}),
         }

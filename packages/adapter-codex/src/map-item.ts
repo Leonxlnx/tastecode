@@ -407,7 +407,7 @@ function unifiedDiff(change: {
   return body ? `${header.join('\n')}\n${body}` : header.join('\n')
 }
 
-function countDiffLines(diff: string, marker: '+' | '-'): number {
+export function countDiffLines(diff: string, marker: '+' | '-'): number {
   let count = 0
   let inHunk = false
   for (const line of diff.split('\n')) {
