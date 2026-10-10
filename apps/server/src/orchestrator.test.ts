@@ -1403,6 +1403,28 @@ describe('provider-neutral Side chat', () => {
     },
   )
 
+  it('rekeys the Side chat history tombstone to the native session id', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const parent = await orchestrator.startThread('grok', process.cwd())
+    store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+    const side = await orchestrator.startSideThread(parent.id)
+    const tombstone = [
+      expect.objectContaining({
+        provider: 'grok',
+        threadId: side.id,
+        session: expect.objectContaining({ id: 'grok-native-side', internal: true }),
+      }),
+    ]
+
+    // Grok reports the native id it chose at start as soon as the side chat attaches.
+    sessions[1]!.emitProviderSessionId('grok-native-side')
+    expect(store.providerHistories()).toEqual(tombstone)
+
+    await orchestrator.closeSideThread(side.id)
+    expect(store.providerHistories()).toEqual(tombstone)
+    await orchestrator.disposeAll()
+  })
+
   it('reuses the compact replay snapshot for a long parent boundary', async () => {
     const { orchestrator, store } = harness()
     const parent = await orchestrator.startThread('claude-code', process.cwd())

@@ -1592,6 +1592,27 @@ export class Store {
     }
   }
 
+  /**
+   * Saves a provider session as the thread's only history row. A Side chat's
+   * tombstone is keyed by its TasteCode id until the provider reports its own
+   * session id, and `thread_id` is unique, so the new key replaces the old row.
+   */
+  replaceProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(
+          `DELETE FROM provider_history
+           WHERE thread_id = ? AND NOT (provider = ? AND session_id = ?)`,
+        )
+        .run(threadId, provider, session.id)
+      this.saveProviderHistory(provider, threadId, session)
+    })
+  }
+
   /** Only locally recorded events, used to identify provider echoes of our own turns. */
   localHistory(threadId: string): Array<{ seq: number; event: DomainEvent }> {
     return sqliteRows<HistoryRow>(
