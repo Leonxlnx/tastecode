@@ -3085,7 +3085,7 @@ export class Orchestrator {
   }
 
   #saveSideHistoryTombstone(thread: Thread, providerSessionId = thread.id): void {
-    this.#store.saveProviderHistory(thread.provider, thread.id, {
+    this.#store.replaceProviderHistory(thread.provider, thread.id, {
       id: providerSessionId,
       workspacePath: thread.workspacePath,
       title: 'Side chat',
