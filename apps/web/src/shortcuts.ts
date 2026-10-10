@@ -201,6 +201,14 @@ export function shortcutRoute(
   return surface.onboardingPreview || surface.modalOpen ? 'ignore' : 'run'
 }
 
+/** Shows or hides the hidden Debug settings category. */
+export const DEBUG_SETTINGS_SHORTCUT = {
+  key: 'd',
+  primary: true,
+  alt: true,
+  shift: true,
+} as const satisfies Shortcut
+
 export const WORKSPACE_TOOL_SHORTCUTS = [
   { kind: 'review', shortcut: { key: 'g', primary: true, shift: true } },
   { kind: 'browser', shortcut: { key: 't', primary: true } },
