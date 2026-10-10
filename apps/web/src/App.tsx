@@ -4584,7 +4584,7 @@ export function App() {
       const route = shortcutRoute(action, {
         settingsOpen,
         onboardingPreview,
-        modalOpen: modalOwnsKeyboard,
+        modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
       else if (route === 'showKeybinds') setSettingsSection('keybinds')
@@ -4628,7 +4628,7 @@ export function App() {
         }
         return
       }
-      if (modalOwnsKeyboard) return
+      if (modalOwnsKeyboard || sessionSearch.current?.isOpen()) return
 
       // Keybinds come first, so one saved on a number key before the
       // recorder refused them still runs, as its menu accelerator does.
