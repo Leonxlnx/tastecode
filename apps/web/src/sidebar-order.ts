@@ -1,4 +1,8 @@
+import type { Project, Session } from './ui/Sidebar.js'
+
 export type SessionOrder = Record<string, string[]>
+export type PinnedSession = { projectPath: string; session: Session }
+type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
 
 let cachedProjectOrderRaw: string | null | undefined
 let cachedProjectOrder: string[] = []
@@ -109,4 +113,79 @@ function sameIds<T>(
     if (order[index] !== id(values[index]!)) return false
   }
   return true
+}
+
+/**
+ * The classic rail: pinned chats in their own section, then pinned projects
+ * ahead of the rest, each project with working and unread chats lifted above
+ * its other chats.
+ */
+export function sidebarRail(projects: Project[]): {
+  orderedProjects: Project[]
+  pinnedSessions: PinnedSession[]
+} {
+  const pinned: PinnedSession[] = []
+  const pinnedProjects: Project[] = []
+  const unpinnedProjects: Project[] = []
+  for (const source of projects) {
+    const projection = projectSidebarProjection(source)
+    pinned.push(...projection.pinnedSessions)
+    if (source.pinned) pinnedProjects.push(projection.project)
+    else unpinnedProjects.push(projection.project)
+  }
+  return {
+    orderedProjects: [...pinnedProjects, ...unpinnedProjects],
+    pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
+  }
+}
+
+const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
+
+function projectSidebarProjection(source: Project): ProjectSidebarProjection {
+  const cached = projectSidebarProjections.get(source)
+  if (cached) return cached
+
+  const pinnedSessions: PinnedSession[] = []
+  const unpinnedSessions: Session[] = []
+  for (const session of source.sessions) {
+    if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
+    else unpinnedSessions.push(session)
+  }
+  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
+  const sessionsUnchanged =
+    pinnedSessions.length === 0 &&
+    sessions.length === source.sessions.length &&
+    sessions.every((session, index) => session === source.sessions[index])
+  const project = sessionsUnchanged ? source : { ...source, sessions }
+  const projection = { project, pinnedSessions }
+  projectSidebarProjections.set(source, projection)
+  return projection
+}
+
+function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
+  const active: T[] = []
+  const unread: T[] = []
+  const rest: T[] = []
+  for (const value of sessions) {
+    const session = getSession(value)
+    if (isActiveStatus(session.status)) {
+      active.push(value)
+    } else if (session.unread) {
+      unread.push(value)
+    } else {
+      rest.push(value)
+    }
+  }
+  const ordered = [...active, ...unread, ...rest]
+  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
+}
+
+function isActiveStatus(status: Session['status']): boolean {
+  return (
+    status === 'starting' ||
+    status === 'working' ||
+    status === 'queued' ||
+    status === 'approval' ||
+    status === 'input'
+  )
 }
