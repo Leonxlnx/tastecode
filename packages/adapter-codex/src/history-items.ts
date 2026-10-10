@@ -142,8 +142,9 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
         if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string') {
           const lines = change.content.split('\n')
           if (lines.at(-1) === '') lines.pop()
-          body =
-            kind === 'add'
+          body = !lines.length
+            ? ''
+            : kind === 'add'
               ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`
               : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}\n`
         }
