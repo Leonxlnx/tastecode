@@ -144,6 +144,34 @@ export function referenceCandidatesForFamily(
   return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
 }
 
+/** Ids share prefixes (`x-about`, `x-about-process`), so a mention must be a whole id. */
+function containsId(text: string, id: string): boolean {
+  const idCharacter = /[a-z0-9-]/u
+  for (let index = text.indexOf(id); index >= 0; index = text.indexOf(id, index + 1))
+    if (
+      !idCharacter.test(text[index - 1] ?? '') &&
+      !idCharacter.test(text[index + id.length] ?? '')
+    )
+      return true
+  return false
+}
+
+/** A source counts with or without its scheme and trailing slash, but not as a URL prefix. */
+function containsSource(text: string, source: string): boolean {
+  let key = source.toLowerCase()
+  try {
+    const url = new URL(source)
+    key = `${url.host}${url.pathname.replace(/\/+$/u, '')}${url.search}`.toLowerCase()
+  } catch {}
+  for (let index = text.indexOf(key); index >= 0; index = text.indexOf(key, index + 1))
+    if (
+      !/[a-z0-9.-]/u.test(text[index - 1] ?? '') &&
+      !/^\/?(?:[a-z0-9_~%-]|[./][a-z0-9])/u.test(text.slice(index + key.length))
+    )
+      return true
+  return false
+}
+
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
@@ -162,9 +190,9 @@ export function selectReviewedReferences(
       (entry) => !groups.has(entry.group ?? entry.id),
     )
     if (!familyEntries.length) continue
-    const explicit = familyEntries.filter((entry) => request.includes(entry.id.toLowerCase()))
+    const explicit = familyEntries.filter((entry) => containsId(request, entry.id.toLowerCase()))
     const explicitSource = familyEntries.filter(
-      (entry) => entry.source && request.includes(entry.source.toLowerCase()),
+      (entry) => entry.source && containsSource(request, entry.source),
     )
     // Revisions share a vote: choose a group first, then its eligible revision.
     const pool = explicit.length ? explicit : explicitSource.length ? explicitSource : familyEntries

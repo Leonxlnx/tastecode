@@ -30,7 +30,8 @@ export function spawnCli(
 
   if (process.platform === 'win32') {
     if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
-    const executable = resolveWindowsExecutable(command, spawnOptions.env, options.cwd) ?? command
+    const resolved = resolveWindowsExecutable(command, spawnOptions.env, options.cwd)
+    const executable = resolved ?? command
     if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
     const batch = /\.(?:cmd|bat)$/i.test(executable)
     const shellCommand = [
@@ -39,6 +40,12 @@ export function spawnCli(
     ].join(' ')
     return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
       ...spawnOptions,
+      // cmd.exe searches cwd for a name it could not find on PATH either.
+      ...(resolved
+        ? {}
+        : {
+            env: { ...(spawnOptions.env ?? process.env), NoDefaultCurrentDirectoryInExePath: '1' },
+          }),
       windowsVerbatimArguments: true,
     })
   }
@@ -83,14 +90,18 @@ function resolveWindowsExecutable(
   const extensions = path.win32.extname(command)
     ? ['']
     : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
-  const directories = /[\\/]/.test(command) ? [cwd] : [cwd, ...(envValue('PATH') ?? '').split(';')]
+  // A bare command is searched on PATH only, never in cwd: cwd is usually the
+  // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
+  // Empty PATH entries are skipped because they would resolve to cwd as well.
+  const directories = /[\\/]/.test(command)
+    ? [cwd]
+    : (envValue('PATH') ?? '')
+        .split(';')
+        .map((directory) => directory.replace(/^"|"$/g, ''))
+        .filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
-      const candidate = path.win32.resolve(
-        cwd,
-        directory.replace(/^"|"$/g, ''),
-        command + extension,
-      )
+      const candidate = path.win32.resolve(cwd, directory, command + extension)
       try {
         if (statSync(candidate).isFile()) return candidate
       } catch {
