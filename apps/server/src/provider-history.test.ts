@@ -805,6 +805,23 @@ describe('provider history integration', () => {
     store.closeThread('external:codex:native')
     expect(listed()).toEqual([])
   })
+  it('lists a chat archived in the provider again once it is unarchived there', async () => {
+    const archived = { ...metadata('archived'), archived: true, updatedAt: 8000 }
+    const { history, source } = setup([archived])
+    await history.refresh()
+    expect(store.thread('external:codex:archived')?.closedAt).toBe(8000)
+
+    vi.mocked(source.list).mockResolvedValue([
+      { ...archived, archived: false, revision: '2', updatedAt: 9000 },
+    ])
+    await history.refresh()
+
+    expect(store.thread('external:codex:archived')?.closedAt).toBeUndefined()
+    expect(
+      store.sidebarThreads().find((thread) => thread.id === 'external:codex:archived'),
+    ).not.toHaveProperty('closedAt')
+    expect(store.thread('external:codex:archived')?.lastActiveAt).toBe(9000)
+  })
   it('matches repeated prompts once and keeps a distinct outside turn', async () => {
     store.addProject(process.cwd())
     store.addThread({
