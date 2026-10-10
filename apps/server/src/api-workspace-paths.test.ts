@@ -117,6 +117,15 @@ describe('direct API workspace path policy', () => {
     },
   )
 
+  it('names the workspace by its resolved folder, not the last segment as written', () => {
+    const aws = path.resolve(tmpdir(), '.aws')
+    for (const workspace of [`${aws}${path.sep}sso${path.sep}..`, `${aws}${path.sep}.`]) {
+      expect(() => assertPublicWorkspaceFile(path.join(aws, 'credentials'), workspace)).toThrow(
+        'credential files are not available',
+      )
+    }
+  })
+
   it('recognizes common credential files', () => {
     expect(isSecretWorkspaceName('.env.local')).toBe(true)
     expect(isSecretWorkspaceName('client.pem')).toBe(true)
