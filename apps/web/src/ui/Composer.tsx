@@ -1226,10 +1226,13 @@ function ComposerComponent(props: {
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
+    // Clear before handing the text over. A send that is rejected on the spot
+    // puts the words back into this chat's draft, and a later clear would
+    // erase them from the saved draft while the box still showed them.
+    updateText('')
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
     composerAtMaximumHeight.current = false
-    updateText('')
     setSelectedResources([])
     setResourceTrigger(undefined)
     clearAttachments()
