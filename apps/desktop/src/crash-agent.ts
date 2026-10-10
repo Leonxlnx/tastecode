@@ -163,7 +163,8 @@ export function terminalLaunch(
   linuxTerminal: { command: string; prefix: string[] } | undefined,
   searchPath = '',
 ): TerminalLaunch {
-  const promptFile = path.join(directory, PROMPT_FILE)
+  // Join for the target shell, not the host, so each launcher is testable anywhere.
+  const promptFile = (platform === 'win32' ? path.win32 : path.posix).join(directory, PROMPT_FILE)
   if (platform === 'win32') {
     const contents = [
       `Set-Location -LiteralPath ${powershellQuote(directory)}`,
