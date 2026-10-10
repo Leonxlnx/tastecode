@@ -161,6 +161,7 @@ export function terminalLaunch(
   directory: string,
   agent: AgentCommand,
   linuxTerminal: { command: string; prefix: string[] } | undefined,
+  searchPath = '',
 ): TerminalLaunch {
   const promptFile = path.join(directory, PROMPT_FILE)
   if (platform === 'win32') {
@@ -171,7 +172,9 @@ export function terminalLaunch(
       '',
     ].join('\r\n')
     return {
-      script: { name: 'open-agent.ps1', contents, executable: false },
+      // Windows PowerShell 5.1 reads a BOM-less script as the ANSI code page, which
+      // mangles a temp path under a non-ASCII user name.
+      script: { name: 'open-agent.ps1', contents: `\uFEFF${contents}`, executable: false },
       // A detached console child gets its own window, which Windows 11 hosts in
       // the user's default terminal app.
       spawn: (scriptPath) => ({
@@ -183,8 +186,13 @@ export function terminalLaunch(
   const shell = platform === 'darwin' ? '/bin/zsh' : '/bin/bash'
   const contents = [
     `#!${shell} -l`,
+    // The PATH that reported the agent as installed; a login shell may not
+    // load the rc file where a user's npm or nvm bin is added.
+    ...(searchPath ? [`export PATH=${posixQuote(searchPath)}`] : []),
     `cd ${posixQuote(directory)} || exit 1`,
     `${[agent.command, ...agent.args].map(posixQuote).join(' ')} "$(cat ${posixQuote(promptFile)})"`,
+    // Keep the window open on the agent's last words, or on why it did not start.
+    `exec "\${SHELL:-${shell}}" -l`,
     '',
   ].join('\n')
   if (platform === 'darwin') {
@@ -222,7 +230,13 @@ export async function launchCrashAgent(
   })
   await writeFile(path.join(directory, PROMPT_FILE), CRASH_AGENT_PROMPT, { mode: 0o600 })
   const linuxTerminal = process.platform === 'linux' ? await findLinuxTerminal() : undefined
-  const launch = terminalLaunch(process.platform, directory, crashAgentCommand(id), linuxTerminal)
+  const launch = terminalLaunch(
+    process.platform,
+    directory,
+    crashAgentCommand(id),
+    linuxTerminal,
+    process.env.PATH,
+  )
   const scriptPath = path.join(directory, launch.script.name)
   await writeFile(scriptPath, launch.script.contents, { mode: 0o600 })
   if (launch.script.executable) await chmod(scriptPath, 0o700)

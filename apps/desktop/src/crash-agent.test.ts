@@ -92,6 +92,7 @@ describe('crash agent', () => {
       undefined,
     )
     expect(launch.script.name).toBe('open-agent.ps1')
+    expect(launch.script.contents.startsWith('\uFEFF')).toBe(true)
     expect(launch.script.contents).toContain(
       "Set-Location -LiteralPath 'C:\\Temp\\tastecode-crash-o''k'",
     )
@@ -111,6 +112,8 @@ describe('crash agent', () => {
     )
     expect(launch.script).toMatchObject({ name: 'open-agent.command', executable: true })
     expect(launch.script.contents.split('\n')[0]).toBe('#!/bin/zsh -l')
+    expect(launch.script.contents).not.toContain('export PATH')
+    expect(launch.script.contents).toContain('exec "${SHELL:-/bin/zsh}" -l')
     expect(launch.script.contents).toContain(
       `'codex' '--dangerously-bypass-approvals-and-sandbox' "$(cat '/tmp/tastecode-crash-1/prompt.txt')"`,
     )
@@ -119,10 +122,14 @@ describe('crash agent', () => {
 
   it('uses the found Linux terminal and fails clearly without one', () => {
     const agent = { command: 'grok', args: [] }
-    const launch = terminalLaunch('linux', '/tmp/c', agent, {
-      command: 'gnome-terminal',
-      prefix: ['--'],
-    })
+    const launch = terminalLaunch(
+      'linux',
+      '/tmp/c',
+      agent,
+      { command: 'gnome-terminal', prefix: ['--'] },
+      "/home/me/.nvm/bin:/usr/bin:/it's",
+    )
+    expect(launch.script.contents).toContain(`export PATH='/home/me/.nvm/bin:/usr/bin:/it'\\''s'`)
     expect(launch.spawn('/tmp/c/open-agent')).toEqual({
       command: 'gnome-terminal',
       args: ['--', '/bin/bash', '-l', '/tmp/c/open-agent'],
