@@ -367,6 +367,21 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
   })
 
+  it('keeps the blank line that ends a binary patch before the next file', async () => {
+    writeFileSync(path.join(repo, 'asset.bin'), Buffer.from([0, 1, 2, 3]))
+    git('add', 'asset.bin')
+    git('commit', '-m', 'binary')
+    writeFileSync(path.join(repo, 'asset.bin'), Buffer.from([0, 9, 2, 3]))
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const patch = git('diff', '--binary', '--no-color')
+    expect(patch).toContain('\n\ndiff --git a/staged.txt')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'asset.bin'))).toEqual(Buffer.from([0, 1, 2, 3]))
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
   it('deletes a created file when an imported Codex patch has no mode lines', async () => {
     writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
     rmSync(path.join(repo, 'staged.txt'))

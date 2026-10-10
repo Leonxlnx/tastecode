@@ -261,19 +261,23 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
 export async function reverseUnifiedDiff(repoPath: string, patch: string): Promise<void> {
   const roots = new Set([gitPath(path.resolve(repoPath)), gitPath(await realpath(repoPath))])
   let insideContent = false
+  let binary = false
   let missingMode = false
   const lines = patch.split('\n')
   const relative = lines
-    // Older imported Codex turns joined files with a blank line, which
-    // `--recount` would read as one more context line of the previous hunk.
-    .filter((line, index) => line !== '' || !lines[index + 1]?.startsWith('diff --git '))
-    .flatMap((line) => {
+    .flatMap((line, index) => {
       if (line.startsWith('diff --git ')) {
         insideContent = false
+        binary = false
         missingMode = true
         return relativePatchPath(line, roots)
       }
-      if (line.startsWith('@@ ') || line === 'GIT binary patch') insideContent = true
+      // Older imported Codex turns joined files with a blank line, which
+      // `--recount` would read as one more context line of the previous hunk.
+      // A binary patch needs its blank line.
+      if (line === '' && !binary && lines[index + 1]?.startsWith('diff --git ')) return []
+      if (line.startsWith('@@ ')) insideContent = true
+      if (line === 'GIT binary patch') insideContent = binary = true
       if (insideContent) return line
       if (line.startsWith('new file mode ') || line.startsWith('deleted file mode '))
         missingMode = false
