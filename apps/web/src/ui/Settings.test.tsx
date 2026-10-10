@@ -245,6 +245,11 @@ describe('about status grammar', () => {
       'Setup needed · Newer: abcdef0 — pull and restart',
     ],
     ['unavailable', { localCommit: '1234567890' }, 'Unavailable · No verdict'],
+    [
+      'unavailable',
+      { remote: { sha: 'abcdef0123', message: 'Newer', date: '2026-08-12' } },
+      'Unavailable · Local commit unknown · latest abcdef0',
+    ],
   ] as const)('separates %s update state from build metadata', async (state, result, label) => {
     const update = deferred<ResultOf<'system.updateCheck'>>()
     const transport = new TestTransport((method) => {
