@@ -1543,8 +1543,10 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // A failed change leaves the session on its last applied mode, which is
+    // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
@@ -1732,7 +1734,7 @@ export class Orchestrator {
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     await this.#ensureThread(threadId)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')

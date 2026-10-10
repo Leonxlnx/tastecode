@@ -1186,6 +1186,54 @@ describe('live access level', () => {
     await orchestrator.disposeAll()
   })
 
+  it('still starts the queued prompt when an access change fails as the turn ends', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo', { approval: 'ask' })
+    const session = sessions[0]!
+    let reject!: (error: Error) => void
+    const apply = vi
+      .spyOn(session, 'setApproval')
+      .mockImplementationOnce(() => new Promise<void>((_resolve, fail) => (reject = fail)))
+    session.turnIds = ['turn-1', 'turn-2']
+    await orchestrator.submitTurn(thread.id, 'first')
+    session.emit(turnStarted(thread.id, 'turn-1'))
+    await expect(orchestrator.submitTurn(thread.id, 'second')).resolves.toMatchObject({
+      queued: true,
+    })
+    const changing = orchestrator.setThreadApproval(thread.id, 'full')
+    const failure = expect(changing).rejects.toThrow('permission mode change failed')
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+    session.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    reject(new Error('permission mode change failed'))
+    await failure
+
+    await vi.waitFor(() => expect(session.sent).toEqual(['first', 'second']))
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+    expect(store.threadApproval(thread.id)).toBe('ask')
+    await orchestrator.disposeAll()
+  })
+
+  it('sends a prompt submitted while an access change fails', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo', { approval: 'ask' })
+    const session = sessions[0]!
+    let reject!: (error: Error) => void
+    const apply = vi
+      .spyOn(session, 'setApproval')
+      .mockImplementationOnce(() => new Promise<void>((_resolve, fail) => (reject = fail)))
+    const changing = orchestrator.setThreadApproval(thread.id, 'full')
+    const failure = expect(changing).rejects.toThrow('permission mode change failed')
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+    const sending = orchestrator.submitTurn(thread.id, 'hello')
+    reject(new Error('permission mode change failed'))
+    await failure
+
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    expect(session.sent).toEqual(['hello'])
+    expect(store.threadApproval(thread.id)).toBe('ask')
+    await orchestrator.disposeAll()
+  })
+
   it('relaunches an idle session that cannot change its access mode', async () => {
     const { orchestrator, sessions, resumedOptions } = harness()
     const thread = await orchestrator.startThread('codex', '/repo', { approval: 'full' })
