@@ -64,6 +64,28 @@ describe('WorkspaceTerminal', () => {
     expect(terminal.getAttribute('data-project-path')).toBeNull()
   })
 
+  it('stays on the project checkout while the first message creates the chat', () => {
+    const props = {
+      active: true,
+      terminalKey: 'terminal-4',
+      transport: new TestTransport(),
+      projectPath: '/workspace/current-project',
+      theme: 'dark' as const,
+      onClose: vi.fn(),
+    }
+    const view = render(<WorkspaceTerminal {...props} />)
+
+    view.rerender(<WorkspaceTerminal {...props} threadId="pending:3f1c" />)
+    let terminal = screen.getByTestId('terminal-pane')
+    expect(terminal.getAttribute('data-project-path')).toBe('/workspace/current-project')
+    expect(terminal.getAttribute('data-thread-id')).toBeNull()
+
+    view.rerender(<WorkspaceTerminal {...props} threadId="thread-4" />)
+    terminal = screen.getByTestId('terminal-pane')
+    expect(terminal.getAttribute('data-thread-id')).toBe('thread-4')
+    expect(terminal.getAttribute('data-project-path')).toBeNull()
+  })
+
   it('forwards shell exit closure to the workspace tab', () => {
     const onClose = vi.fn()
     render(
