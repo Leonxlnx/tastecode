@@ -18,6 +18,7 @@ function sideChatServer() {
   const sideThreads = new Map<string, string>()
   const live = new Set<string>()
   let created = 0
+  let turns = 0
   const transport = new TestTransport(async (method, params) => {
     const values = params as Record<string, string>
     if (method === 'sideChat.start') {
@@ -40,7 +41,7 @@ function sideChatServer() {
     if (method === 'thread.history') return { events: [], running: false }
     if (method === 'thread.sendTurn') {
       if (!live.has(values['threadId']!)) throw new Error(`no such thread: ${values['threadId']}`)
-      return { queued: false, turnId: `turn-${transport.requests.length}` }
+      return { queued: false, turnId: `turn-${++turns}` }
     }
     throw new Error(`Unhandled test request: ${method}`)
   })
