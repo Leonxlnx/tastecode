@@ -1928,13 +1928,15 @@ function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['s
     value === 'FAILURE' ||
     value === 'ERROR' ||
     value === 'TIMED_OUT' ||
-    value === 'ACTION_REQUIRED'
+    value === 'ACTION_REQUIRED' ||
+    value === 'STARTUP_FAILURE'
   ) {
     return 'failure'
   }
   if (value === 'CANCELLED') return 'cancelled'
   if (value === 'SKIPPED') return 'skipped'
-  if (value === 'NEUTRAL' || value === 'STALE') return 'neutral'
+  // A check with any conclusion has finished, even one GitHub adds later.
+  if (value === 'NEUTRAL' || value === 'STALE' || raw.conclusion) return 'neutral'
   return 'pending'
 }
 
