@@ -955,6 +955,33 @@ describe('web client', () => {
     },
   )
 
+  it('keeps a rejected side prompt in the chat that is still starting', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    submitTurn('/side what is this?')
+    await screen.findByText('Start the main chat before opening a side chat.')
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    expect(composer().value).toBe('/side what is this?')
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    expect(composer().value).toBe('/side what is this?')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(composer().value).toBe('')
+    fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+    expect(composer().value).toBe('/side what is this?')
+  })
+
   it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
