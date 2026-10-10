@@ -55,6 +55,9 @@ export async function startStaticDesignPreview(
 ) {
   const previewUrl = new URL(plan.url)
   const previewId = randomUUID()
+  // Pin the folder the preview was approved for: a later swap of that folder
+  // for a link must not move what the server can reach.
+  const realRoot = realpathSync(root)
   const server = createServer((request, response) => {
     response.setHeader(STATIC_PREVIEW_HEADER, previewId)
     response.setHeader('cache-control', 'no-store')
@@ -63,7 +66,7 @@ export async function startStaticDesignPreview(
       return response.end()
     }
     try {
-      const file = requestFile(root, plan.entry, previewUrl.pathname, request.url)
+      const file = requestFile(realRoot, plan.entry, previewUrl.pathname, request.url)
       const size = statSync(file).size
       if (path.extname(file).toLowerCase() === '.html' && size > MAX_MARKUP_BYTES) {
         response.statusCode = 413
@@ -121,7 +124,7 @@ export async function startStaticDesignPreview(
     if (!response.ok || response.headers.get(STATIC_PREVIEW_HEADER) !== previewId) {
       throw new Error('TasteCode static preview ownership check failed')
     }
-    assertMarkupResources(root, { ...plan, url }, await response.text())
+    assertMarkupResources(realRoot, { ...plan, url }, await response.text())
   } catch (error) {
     await close(server)
     throw error
@@ -282,6 +285,7 @@ function attribute(element: DefaultTreeAdapterTypes.Element, name: string): stri
   return element.attrs.find((value) => value.name === name && !value.namespace)?.value
 }
 
+/** `root` is the real path resolved when the preview started. */
 function requestFile(root: string, entry: string, base: string, requestUrl = '/'): string {
   // Compare decoded segments: the base keeps its URL encoding while a request
   // may spell the same characters differently. A decoded separator inside one
@@ -299,7 +303,10 @@ function requestFile(root: string, entry: string, base: string, requestUrl = '/'
     throw new Error('invalid preview path')
   const relative = suffix.join('/') ? suffix.join(path.sep) : entry
   const file = existingWorkspacePath(root, relative, false)
-  assertPublicWorkspaceFile(file, realpathSync(root))
+  const inside = path.relative(root, file)
+  if (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside))
+    throw new Error('outside preview path')
+  assertPublicWorkspaceFile(file, root)
   if (!CONTENT_TYPES.has(path.extname(file).toLowerCase())) throw new Error('unsupported file type')
   return file
 }
