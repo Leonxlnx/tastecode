@@ -6838,6 +6838,71 @@ describe('sidebar chat ordering', () => {
     })
   })
 
+  it('moves to the previous and next chat in the order the rail shows', async () => {
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'one-a', title: 'One A' },
+        { id: 'one-pinned', title: 'One pinned', pinned: true },
+        { id: 'one-b', title: 'One B' },
+        { id: 'one-unread', title: 'One unread', status: 'ready', unread: true },
+      ]),
+      { ...serverProject('/work/two', 'Two', [{ id: 'two-a', title: 'Two A' }]), pinned: true },
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^One pinned,/ })
+    act(() => sidebarProps().onSelectSession('one-a'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
+    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-pinned')
+    await step('ArrowDown', 'two-a')
+    await step('ArrowUp', 'one-pinned')
+    await step('ArrowUp', 'one-b')
+  })
+
+  it('moves to the previous and next chat in the order the inbox shows', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    const active = { state: 'active', keepActive: false } as const
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'oldest', title: 'Oldest chat', createdAt: 1, lifecycle: active },
+        {
+          id: 'settled',
+          title: 'Settled chat',
+          createdAt: 5,
+          lifecycle: { state: 'settled', settledAt: 6, reason: 'manual' },
+        },
+        { id: 'newest', title: 'Newest chat', createdAt: 4, lifecycle: active },
+      ]),
+      serverProject('/work/two', 'Two', [
+        { id: 'older', title: 'Older chat', createdAt: 2, lifecycle: active },
+        { id: 'newer', title: 'Newer chat', createdAt: 3, lifecycle: active },
+      ]),
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Newest chat, One,/ })
+    act(() => sidebarProps().onSelectSession('newest'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('newest'))
+    // Active chats newest first, then settled ones.
+    await step('ArrowDown', 'newer')
+    await step('ArrowDown', 'older')
+    await step('ArrowDown', 'oldest')
+    await step('ArrowDown', 'settled')
+    await step('ArrowUp', 'oldest')
+  })
+
   it('keeps chats imported later from another provider in date order', async () => {
     // Every project's order used to be saved automatically, freezing the order
     // in which provider histories happened to arrive.

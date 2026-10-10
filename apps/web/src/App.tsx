@@ -85,6 +85,7 @@ import {
   moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
@@ -4314,7 +4315,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = visibleProjectsRef.current.flatMap((project) => project.sessions)
+      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
