@@ -71,19 +71,32 @@ describe('preview capture settling', () => {
 
   function scrollBox(box: {
     top?: number
+    left?: number
     width: number
     height: number
     contentHeight: number
+    /** A classic horizontal scrollbar takes this much of the box. */
+    scrollbar?: number
     overflowY?: string
+    visible?: boolean
     children?: unknown[]
     shadow?: unknown[]
   }) {
+    const top = box.top ?? 0
+    const left = box.left ?? 0
     return {
       clientWidth: box.width,
-      clientHeight: box.height,
+      clientHeight: box.height - (box.scrollbar ?? 0),
+      offsetHeight: box.height,
       scrollHeight: box.contentHeight,
       overflowY: box.overflowY ?? 'auto',
-      getBoundingClientRect: () => ({ top: box.top ?? 0 }),
+      checkVisibility: () => box.visible ?? true,
+      getBoundingClientRect: () => ({
+        top,
+        left,
+        bottom: top + box.height,
+        right: left + box.width,
+      }),
       children: box.children ?? [],
       shadowRoot: box.shadow ? { children: box.shadow } : null,
     }
@@ -135,6 +148,21 @@ describe('preview capture settling', () => {
       scrollBox({ width: 1440, height: 1000, contentHeight: 1001 }),
     ])
     expect(value).toMatchObject({ scrollContainer: 3200 })
+  })
+
+  it('ignores closed drawers and modals and a full-height gallery scrollbar', () => {
+    const value = measure(
+      [
+        // A mobile drawer moved off screen, and a modal hidden until it opens.
+        scrollBox({ left: -300, width: 300, height: 844, contentHeight: 1200 }),
+        scrollBox({ width: 390, height: 844, contentHeight: 2000, visible: false }),
+        // overflow-x: auto makes overflow-y auto too. Full-height slides then
+        // overflow the box by exactly the scrollbar a Windows or Linux build draws.
+        scrollBox({ width: 390, height: 844, contentHeight: 844, scrollbar: 17 }),
+      ],
+      { width: 390, height: 844 },
+    )
+    expect(value).toMatchObject({ scrollContainer: 0 })
   })
 
   it('rejects an invalid scroll container measurement', () => {

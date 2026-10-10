@@ -61,6 +61,7 @@ type FakeElement = {
   checkVisibility(): boolean
   clientWidth: number
   clientHeight: number
+  offsetHeight: number
   scrollHeight: number
 }
 
@@ -129,6 +130,7 @@ function build(
     checkVisibility: () => !fixture.hidden,
     clientWidth: width,
     clientHeight: height,
+    offsetHeight: height,
     scrollHeight: fixture.contentHeight ?? height,
   }
   element.children = (fixture.children ?? []).map((child) => build(child, element, root))
