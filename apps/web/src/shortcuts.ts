@@ -201,12 +201,46 @@ export function shortcutRoute(
   return surface.onboardingPreview || surface.modalOpen ? 'ignore' : 'run'
 }
 
+/** Shows or hides the hidden Debug settings category. */
+export const DEBUG_SETTINGS_SHORTCUT = {
+  key: 'd',
+  primary: true,
+  alt: true,
+  shift: true,
+} as const satisfies Shortcut
+
+/** Opens find in the open chat; Thread's own key handler takes it. */
+export const FIND_IN_CHAT_SHORTCUT = { key: 'f', primary: true } as const satisfies Shortcut
+
+/** Move the open chat a turn at a time. */
+export const PREVIOUS_TURN_SHORTCUT = { key: 'arrowup', alt: true } as const satisfies Shortcut
+export const NEXT_TURN_SHORTCUT = { key: 'arrowdown', alt: true } as const satisfies Shortcut
+
 export const WORKSPACE_TOOL_SHORTCUTS = [
-  { kind: 'review', shortcut: { key: 'g', primary: true, shift: true } },
-  { kind: 'browser', shortcut: { key: 't', primary: true } },
-  { kind: 'files', shortcut: { key: 'p', primary: true, alt: true } },
-  { kind: 'side-chat', shortcut: { key: 's', primary: true, alt: true } },
+  { kind: 'review', label: 'Open Review', shortcut: { key: 'g', primary: true, shift: true } },
+  { kind: 'browser', label: 'Open Browser', shortcut: { key: 't', primary: true } },
+  { kind: 'files', label: 'Open Files', shortcut: { key: 'p', primary: true, alt: true } },
+  {
+    kind: 'side-chat',
+    label: 'Open Temporary chat',
+    shortcut: { key: 's', primary: true, alt: true },
+  },
 ] as const
+
+/**
+ * Who owns a chord the app's own key handlers keep for themselves. A keybind
+ * on one of these either never runs or silently takes the built-in away.
+ */
+export function reservedShortcutLabel(shortcut: Shortcut): string | undefined {
+  if (shortcut.primary && !shortcut.alt && !shortcut.shift && /^[1-9]$/.test(shortcut.key)) {
+    return 'Open recent chat'
+  }
+  if (sameShortcut(shortcut, DEBUG_SETTINGS_SHORTCUT)) return 'Debug settings'
+  if (sameShortcut(shortcut, FIND_IN_CHAT_SHORTCUT)) return 'Find in chat'
+  if (sameShortcut(shortcut, PREVIOUS_TURN_SHORTCUT)) return 'Previous turn'
+  if (sameShortcut(shortcut, NEXT_TURN_SHORTCUT)) return 'Next turn'
+  return WORKSPACE_TOOL_SHORTCUTS.find((tool) => sameShortcut(tool.shortcut, shortcut))?.label
+}
 
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'> &
   Partial<Pick<KeyboardEvent, 'code' | 'isComposing' | 'getModifierState'>>

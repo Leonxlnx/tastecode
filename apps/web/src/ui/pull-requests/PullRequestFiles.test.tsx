@@ -216,6 +216,54 @@ describe('PullRequestFiles', () => {
     )
   })
 
+  it('opens an inline comment editor with the text a refresh brought in', async () => {
+    const request = vi.fn(async () => ({
+      headRefOid: detail.headRefOid,
+      baseRefOid: detail.baseRefOid,
+      files: [
+        {
+          sha: 'file-oid',
+          path: 'src/example.ts',
+          status: 'modified' as const,
+          additions: 1,
+          deletions: 1,
+          changes: 2,
+          patch: '@@ -1,2 +1,2 @@\n context\n-old\n+new',
+        },
+      ],
+      page: 1,
+      hasMore: false,
+    }))
+    const withBody = (body: string): PullRequestDetail => ({
+      ...detail,
+      reviewThreads: detail.reviewThreads.map((thread) => ({
+        ...thread,
+        comments: thread.comments.map((comment) => ({ ...comment, body, viewerDidAuthor: true })),
+      })),
+    })
+    const transport = { request } as unknown as Transport
+    const onAction = vi.fn(async () => true)
+    const files = (body: string) => (
+      <PullRequestFiles
+        detail={withBody(body)}
+        transport={transport}
+        onAction={onAction}
+        onComparisonChanged={vi.fn()}
+        onConfirmAction={vi.fn()}
+        actionBusy={false}
+      />
+    )
+    const view = render(files('first version'))
+    await screen.findByText('first version', undefined, { timeout: 5_000 })
+    view.rerender(files('edited on GitHub'))
+    await screen.findByText('edited on GitHub')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review comment actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit comment' }))
+
+    expect(screen.getByDisplayValue('edited on GitHub')).toBeTruthy()
+  })
+
   it('keeps review conversations and inline comments wired through Diffs annotations', async () => {
     const request = vi.fn(() =>
       Promise.resolve({

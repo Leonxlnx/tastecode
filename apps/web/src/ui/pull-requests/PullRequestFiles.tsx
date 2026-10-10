@@ -548,6 +548,7 @@ function InlineThreadComment(props: {
                   title="Edit comment"
                   icon={<Pencil size={12} aria-hidden />}
                   onClick={() => {
+                    if (!editing) setBody(props.comment.body)
                     setEditing(true)
                     close()
                   }}
