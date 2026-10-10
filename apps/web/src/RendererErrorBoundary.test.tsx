@@ -47,6 +47,7 @@ describe('renderer recovery', () => {
     expect(reportRendererError).toHaveBeenCalledWith(failure)
     fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Diagnostics copied.'))
+    expect(screen.getByRole('status').dataset['state']).toBe('copied')
     const copied = vi.mocked(writeClipboardText).mock.calls[0]?.[0]
     expect(copied).toContain('Failure: application render exception')
     expect(copied).not.toContain('private')
@@ -68,6 +69,23 @@ describe('renderer recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Could not copy'))
+    expect(screen.getByRole('status').dataset['state']).toBe('failed')
     expect(screen.getByRole('button', { name: 'Reload window' })).toBeTruthy()
+  })
+
+  it('orders actions so keyboard focus starts on reload and reaches copy next', () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(
+      <RendererErrorBoundary>
+        <Broken />
+      </RendererErrorBoundary>,
+    )
+    const buttons = screen.getAllByRole('button')
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      'Copy diagnostics',
+      'Reload window',
+    ])
+    expect(document.activeElement).toBe(buttons[1])
+    expect(screen.getByRole('status').textContent).toBe('')
   })
 })
