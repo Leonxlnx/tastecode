@@ -1166,7 +1166,10 @@ describe('Claude Agent SDK session', () => {
     adapter.on('event', (event) => events.push(event))
     const thread = await adapter.startThread('/repo', { effort: 'high' })
     const finish = async (query: FakeQuery, total: number) => {
-      query.emitMessage({ ...(resultMessage(false) as object), total_cost_usd: total } as SDKMessage)
+      query.emitMessage({
+        ...(resultMessage(false) as object),
+        total_cost_usd: total,
+      } as SDKMessage)
       await tick()
     }
     await adapter.sendTurn(thread.id, 'First')
@@ -1183,7 +1186,12 @@ describe('Claude Agent SDK session', () => {
     const store = new Store(':memory:')
     try {
       store.addProject('/repo')
-      store.addThread({ id: thread.id, projectPath: '/repo', provider: 'claude-code', title: 'Cost' })
+      store.addThread({
+        id: thread.id,
+        projectPath: '/repo',
+        provider: 'claude-code',
+        title: 'Cost',
+      })
       for (const event of events) store.append(thread.id, event)
       expect(store.usageSummary(thread.id, 0).session.costUsd).toBeCloseTo(0.3)
     } finally {
