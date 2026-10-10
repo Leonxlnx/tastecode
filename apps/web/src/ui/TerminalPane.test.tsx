@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { Profiler, StrictMode } from 'react'
+import { Profiler, StrictMode, useLayoutEffect } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResultOf } from '@harness/contracts'
@@ -120,6 +120,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   document.documentElement.style.removeProperty('--font-terminal')
+  document.documentElement.style.removeProperty('--terminal-workspace-bg')
+  document.documentElement.style.removeProperty('--rail-glass')
+  delete document.documentElement.dataset['theme']
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -1020,6 +1023,68 @@ describe('TerminalPane', () => {
       },
     })
     expect(xterm.instances.at(-1)?.unicode.activeVersion).toBe('11')
+  })
+
+  it.each([
+    ['workspace', { background: '#eff1f5' }, { background: '#0d0d0d' }],
+    ['inline', { red: '#ca4a55' }, { red: '#e06c75' }],
+  ] as const)(
+    'repaints a %s terminal once the app applies a theme switch',
+    async (mode, light, dark) => {
+      const harness = fakeTransport()
+      // App writes the theme onto the root in its own layout effect, which
+      // React runs after the terminal's.
+      function App(props: { theme: 'light' | 'dark' }) {
+        useLayoutEffect(() => {
+          document.documentElement.dataset['theme'] = props.theme
+        }, [props.theme])
+        return (
+          <TerminalPane
+            transport={harness.transport}
+            threadId="thread-theme"
+            theme={props.theme}
+            mode={mode}
+            onClose={vi.fn()}
+          />
+        )
+      }
+      document.documentElement.dataset['theme'] = 'light'
+      const view = render(<App theme="light" />)
+      const instance = xterm.instances[0]!
+      expect(instance.options['theme']).toMatchObject(light)
+
+      view.rerender(<App theme="dark" />)
+      await waitFor(() => expect(instance.options['theme']).toMatchObject(dark))
+      view.rerender(<App theme="light" />)
+      await waitFor(() => expect(instance.options['theme']).toMatchObject(light))
+      expect(xterm.instances).toHaveLength(1)
+    },
+  )
+
+  it('repaints when the backdrop changes the terminal background, and only then', async () => {
+    const harness = fakeTransport()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-backdrop"
+        theme="dark"
+        mode="workspace"
+        onClose={vi.fn()}
+      />,
+    )
+    const instance = xterm.instances[0]!
+    const initial = instance.options['theme']
+
+    await act(async () => document.documentElement.style.setProperty('--rail-glass', '0.2'))
+    expect(instance.options['theme']).toBe(initial)
+
+    act(() => document.documentElement.style.setProperty('--terminal-workspace-bg', '#1b1f2a'))
+    await waitFor(() =>
+      expect(instance.options['theme']).toMatchObject({
+        background: '#1b1f2a',
+        cursorAccent: '#1b1f2a',
+      }),
+    )
   })
 
   it('closes a workspace terminal tab when its shell exits', async () => {
