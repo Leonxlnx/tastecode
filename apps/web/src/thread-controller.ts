@@ -165,7 +165,7 @@ export class ThreadController {
   recoverDraft(id: string, rejected: RecoverableDraft): ComposerDraft {
     const current = this.#drafts.get(id)
     return this.editDraft(id, {
-      text: current ? current.text + '\n\n' + rejected.text : rejected.text,
+      text: current?.text ? current.text + '\n\n' + rejected.text : rejected.text,
       attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
     })
   }
