@@ -32,6 +32,17 @@ const lines = (replacements: Record<number, string> = {}) =>
 const git = (...args: string[]) =>
   execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true })
 
+/**
+ * The patch a provider sends with absolute paths. One pass over the header
+ * lines only, so a temp root that itself contains "b/" is never rewritten.
+ */
+const absolutePatch = (patch: string) => {
+  const root = repo.replaceAll('\\', '/')
+  return patch.replace(/^(?:diff --git |--- |\+\+\+ ).*$/gm, (line) =>
+    line.replace(/(^|[\s"])([ab])\//g, (_, lead, side) => `${lead}${side}/${root}/`),
+  )
+}
+
 beforeEach(() => {
   repo = mkdtempSync(path.join(os.tmpdir(), 'harness-diff-review-'))
   execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
@@ -335,11 +346,7 @@ describe('structured diff review', () => {
 
   it('reverses an absolute provider patch without touching unrelated work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
-    const relative = git('diff', '--binary', '--no-color', '--', 'file.txt')
-    const root = repo.replaceAll('\\', '/')
-    const absolute = relative
-      .replaceAll('a/file.txt', `a/${root}/file.txt`)
-      .replaceAll('b/file.txt', `b/${root}/file.txt`)
+    const absolute = absolutePatch(git('diff', '--binary', '--no-color', '--', 'file.txt'))
     writeFileSync(path.join(repo, 'unrelated.txt'), 'keep this\n')
 
     await reverseUnifiedDiff(repo, absolute)
@@ -355,10 +362,7 @@ describe('structured diff review', () => {
       git('add', '--', name)
       git('commit', '-m', 'named file')
       writeFileSync(path.join(repo, name), 'after\n')
-      const root = repo.replaceAll('\\', '/')
-      const patch = git('diff', '--binary', '--no-color', '--', name)
-        .replaceAll('a/', `a/${root}/`)
-        .replaceAll('b/', `b/${root}/`)
+      const patch = absolutePatch(git('diff', '--binary', '--no-color', '--', name))
       await reverseUnifiedDiff(repo, patch)
       expect(readFileSync(path.join(repo, name), 'utf8')).toBe('before\n')
     },
