@@ -805,9 +805,16 @@ export function App() {
     (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
     [setThreadDesignMode],
   )
-  const [checkoutDelete, setCheckoutDelete] = useState<
-    { id: string; title: string; branch: string } | undefined
-  >()
+  // A multi-chat delete can stop on several isolated checkouts; each one is
+  // confirmed in turn while the rest of the batch goes ahead.
+  const [checkoutDeletes, setCheckoutDeletes] = useState<
+    Array<{ id: string; title: string; branch: string }>
+  >([])
+  const checkoutDelete = checkoutDeletes[0]
+  const dropCheckoutDelete = useCallback(
+    (id: string) => setCheckoutDeletes((current) => current.filter((entry) => entry.id !== id)),
+    [],
+  )
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
@@ -3879,21 +3886,24 @@ export function App() {
   }, [selectSession, undoQueuedArchives])
 
   const archiveSession = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
       const found = findSession(projectsRef.current, id)
-      if (!found) return false
+      if (!found) return 'skipped'
       const check = {}
       pendingDeletionChecks.current.set(id, check)
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
-        if (pendingDeletionChecks.current.get(id) !== check) return false
+        if (pendingDeletionChecks.current.get(id) !== check) return 'skipped'
         if (work.isolated && work.uncommitted) {
-          setCheckoutDelete({
+          const confirmation = {
             id,
             title: found.session.title,
             branch: found.session.worktreeBranch ?? 'isolated checkout',
-          })
-          return false
+          }
+          setCheckoutDeletes((current) =>
+            current.some((entry) => entry.id === id) ? current : [...current, confirmation],
+          )
+          return 'confirming'
         }
         queueArchive(id, async () => {
           if (work.isolated) {
@@ -3902,11 +3912,11 @@ export function App() {
           }
           await deleteSession(id)
         })
-        return true
+        return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
-        return false
+        return 'failed'
       } finally {
         if (pendingDeletionChecks.current.get(id) === check)
           pendingDeletionChecks.current.delete(id)
@@ -3925,14 +3935,14 @@ export function App() {
         await transport.request('thread.discardWorktree', { threadId: id, force: true })
         await deleteSession(id)
       })
-      setCheckoutDelete(undefined)
+      dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
       await refreshProjects().catch(() => undefined)
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, refreshProjects, queueArchive])
+  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -4274,7 +4284,7 @@ export function App() {
     (sessionIds: string[]) => {
       void (async () => {
         for (const id of sessionIds) {
-          if (!(await archiveSession(id))) break
+          if ((await archiveSession(id)) === 'failed') break
         }
       })()
     },
@@ -5381,11 +5391,12 @@ export function App() {
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
+            key={checkoutDelete.id}
             title={checkoutDelete.title}
             branch={checkoutDelete.branch}
             busy={checkoutDeleteBusy}
             onDiscard={() => void discardAndArchive()}
-            onClose={() => setCheckoutDelete(undefined)}
+            onClose={() => dropCheckoutDelete(checkoutDelete.id)}
           />
         </Suspense>
       ) : null}
