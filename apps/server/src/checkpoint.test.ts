@@ -126,6 +126,7 @@ describe('takeSnapshot', () => {
     const fresh = mkdtempSync(path.join(os.tmpdir(), 'harness-cp-unborn-'))
     try {
       execFileSync('git', ['init', '-b', 'main', fresh], { windowsHide: true })
+      execFileSync('git', ['-C', fresh, 'config', 'core.autocrlf', 'false'], { windowsHide: true })
       expect((await takeSnapshot(fresh)).clean).toBe(true)
       writeFileSync(path.join(fresh, 'first.txt'), 'before the agent\n')
       const snapshot = await takeSnapshot(fresh)
