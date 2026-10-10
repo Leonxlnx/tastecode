@@ -209,6 +209,10 @@ export const DEBUG_SETTINGS_SHORTCUT = {
   shift: true,
 } as const satisfies Shortcut
 
+/** Move the open chat a turn at a time. */
+export const PREVIOUS_TURN_SHORTCUT = { key: 'arrowup', alt: true } as const satisfies Shortcut
+export const NEXT_TURN_SHORTCUT = { key: 'arrowdown', alt: true } as const satisfies Shortcut
+
 export const WORKSPACE_TOOL_SHORTCUTS = [
   { kind: 'review', label: 'Open Review', shortcut: { key: 'g', primary: true, shift: true } },
   { kind: 'browser', label: 'Open Browser', shortcut: { key: 't', primary: true } },
