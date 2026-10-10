@@ -7,6 +7,7 @@ import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 let store: Store
@@ -782,6 +783,27 @@ describe('provider history integration', () => {
       closedAt: 8000,
       lastActiveAt: 8000,
     })
+  })
+  it('keeps chats archived in the provider out of the project list', async () => {
+    const { history } = setup([
+      metadata(),
+      { ...metadata('archived'), archived: true, updatedAt: 8000 },
+    ])
+    await history.refresh()
+    const list = createProjectListProjector()
+    const state: ProjectListState = {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    }
+    const listed = () =>
+      list(store.projects(), store.sidebarThreads(), store.queuedThreadIds(), state)
+        .projects.flatMap((project) => project.sessions)
+        .map((session) => session.id)
+
+    expect(listed()).toEqual(['external:codex:native'])
+    store.closeThread('external:codex:native')
+    expect(listed()).toEqual([])
   })
   it('matches repeated prompts once and keeps a distinct outside turn', async () => {
     store.addProject(process.cwd())
