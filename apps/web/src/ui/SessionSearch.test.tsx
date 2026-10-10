@@ -105,6 +105,31 @@ describe('cross-session search', () => {
     expect(marks()).toEqual(['Cafe\u0301'])
   })
 
+  it('highlights a Greek title match that ends in a capital sigma', () => {
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: [{ id: 'greek', title: 'ΟΔΟΣ plan', provider: 'codex', createdAt: 0 }],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'οδος' },
+    })
+
+    expect(Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual([
+      'ΟΔΟΣ',
+    ])
+  })
+
   it('does not keep old content results when the next query fails', async () => {
     vi.useFakeTimers()
     const request = vi

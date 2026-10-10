@@ -507,19 +507,28 @@ function foldWithSourceOffsets(text: string) {
       ends.push(index + segment.length)
     }
   }
-  return { folded, starts, ends }
+  return { folded: matchEitherSigma(folded), starts, ends }
+}
+
+/**
+ * Lowercasing one grapheme at a time cannot see where a word ends, so "Σ"
+ * always becomes "σ" where the whole title would give final "ς".
+ */
+function matchEitherSigma(value: string): string {
+  return value.replaceAll('ς', 'σ')
 }
 
 function highlightText(text: string, terms: string[]): SearchSnippetPart[] {
   const { folded, starts, ends } = foldWithSourceOffsets(text)
   const ranges: Array<{ start: number; end: number }> = []
   for (const term of terms) {
+    const needle = matchEitherSigma(term)
     let from = 0
     for (;;) {
-      const start = folded.indexOf(term, from)
+      const start = folded.indexOf(needle, from)
       if (start < 0) break
-      ranges.push({ start: starts[start]!, end: ends[start + term.length - 1]! })
-      from = start + term.length
+      ranges.push({ start: starts[start]!, end: ends[start + needle.length - 1]! })
+      from = start + needle.length
     }
   }
   if (ranges.length === 0) return [{ text, highlighted: false }]
