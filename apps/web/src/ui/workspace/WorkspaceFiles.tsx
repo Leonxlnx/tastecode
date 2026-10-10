@@ -26,6 +26,7 @@ import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonCode, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import { indexedTextLine, indexTextLines } from '../text-line-index.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
@@ -278,27 +279,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     setSearchRevision((current) => current + 1)
   }, [loadDirectory, readFile])
 
-  useEffect(() => {
-    let refresh: ReturnType<typeof setTimeout> | undefined
-    const schedule = () => {
-      refresh ??= setTimeout(() => {
-        refresh = undefined
-        refreshDirectories()
-      }, 200)
-    }
-    const offEvent = props.transport.on('thread.event', ({ threadId, event }) => {
-      if (event.type === 'turn.completed' && (!props.threadId || threadId === props.threadId))
-        schedule()
-    })
-    const offState = props.transport.onState((state) => {
-      if (state === 'open') schedule()
-    })
-    return () => {
-      clearTimeout(refresh)
-      offEvent()
-      offState()
-    }
-  }, [props.threadId, props.transport, refreshDirectories])
+  useWorkspaceRefresh(props.transport, props.threadId, refreshDirectories)
 
   const rootEntries = directories.get('') ?? EMPTY_WORKSPACE_ENTRIES
   const visibleRoot = useMemo(
