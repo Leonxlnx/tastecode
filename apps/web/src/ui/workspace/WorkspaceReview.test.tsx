@@ -186,4 +186,54 @@ describe('WorkspaceReview', () => {
     await act(() => vi.advanceTimersByTimeAsync(200))
     expect(diffRequests()).toBe(3)
   })
+
+  it('keeps a commit draft across an automatic refresh until the changes differ', async () => {
+    vi.useFakeTimers()
+    const file: SessionDiff['files'][number] = {
+      path: 'src/index.ts',
+      status: 'modified',
+      binary: false,
+      hunks: [],
+    }
+    let diff: SessionDiff = { threadId: 'thread-1', version: 'tree-1', files: [file] }
+    let finishDraft!: (value: { message: string }) => void
+    const transport = new TestTransport((method) => {
+      if (method === 'workspace.diff') return diff
+      if (method === 'backgroundModel.generateCommitMessage')
+        return new Promise((resolve) => {
+          finishDraft = resolve
+        })
+      throw new Error(`unexpected method ${method}`)
+    })
+    render(
+      <WorkspaceReview
+        transport={transport}
+        projectPath="/repo"
+        threadId="thread-1"
+        branch="main"
+        theme="dark"
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(0))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Draft commit message' }))
+    act(() => transport.emitState('open'))
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    await act(async () => finishDraft({ message: 'fix: keep this draft' }))
+    expect(screen.getByText('fix: keep this draft')).toBeTruthy()
+
+    act(() =>
+      transport.emit('thread.event', {
+        threadId: 'thread-1',
+        event: { type: 'turn.completed', turnId: 'turn', status: 'completed' },
+      }),
+    )
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(screen.getByText('fix: keep this draft')).toBeTruthy()
+
+    diff = { threadId: 'thread-1', version: 'tree-2', files: [file] }
+    act(() => transport.emitState('open'))
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(screen.queryByText('fix: keep this draft')).toBeNull()
+  })
 })
