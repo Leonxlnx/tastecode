@@ -7263,6 +7263,52 @@ describe('queued turns', () => {
     },
   )
 
+  it.each(['dispatched', 'steered'] as const)(
+    'hands back a prompt being %s when its project is removed',
+    async (claim) => {
+      const { orchestrator, sessions, store } = harness()
+      const project = '/repo'
+      try {
+        store.addProject(project)
+        const thread = await orchestrator.startThread('codex', project)
+        const session = sessions[0]!
+        await orchestrator.submitTurn(thread.id, 'running', [], {}, 'running')
+        session.emit(turnStarted(thread.id, 's1-turn'))
+        const queued = await orchestrator.submitTurn(thread.id, 'next', [], {}, 'next')
+        if (!queued.queued) throw new Error('expected the prompt to queue')
+        // Claim the prompt and hold it before the agent has accepted it.
+        let release = () => {}
+        let claimed: Promise<void>
+        if (claim === 'dispatched') {
+          session.release = () => {}
+          session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          await vi.waitFor(() => expect(session.sent).toEqual(['running', 'next']))
+          release = () => session.release?.()
+          claimed = Promise.resolve()
+        } else {
+          session.steerBarriers.push(new Promise<void>((resolve) => (release = resolve)))
+          claimed = orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+          await vi.waitFor(() => expect(session.steered).toEqual(['next']))
+        }
+
+        // What projects.remove does.
+        await Promise.all(store.threads(project).map((t) => orchestrator.stopThread(t.id)))
+        orchestrator.forgetProject(project)
+        store.removeProject(project)
+        release()
+        await claimed
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        store.addProject(project)
+
+        expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['next'])
+        expect(store.queuedThreadIds().has(thread.id)).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
   it('restores a failed steer from durable state after its empty queue cache was evicted', async () => {
     const { orchestrator, sessions, store } = harness()
     try {
