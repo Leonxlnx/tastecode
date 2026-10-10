@@ -670,7 +670,7 @@ describe('native Codex history', () => {
     })
   })
 
-  it('leaves an empty created file out of the imported turn diff', async () => {
+  it('keeps an empty created file as a patch with only its header', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
       rich({
@@ -690,7 +690,8 @@ describe('native Codex history', () => {
     })
     const diff = events.find((entry) => entry.type === 'diff.updated')
     expect(diff?.type === 'diff.updated' && diff.diff).toBe(
-      'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
+      'diff --git a//project/__init__.py b//project/__init__.py\nnew file mode 100644\n' +
+        'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
     )
   })
 

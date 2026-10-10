@@ -40,8 +40,12 @@ function composeFile(edits: readonly string[]): string | undefined {
   const last = parsed.at(-1)!.headers
   const created = first.at(-2) === '--- /dev/null'
   const deleted = last.at(-1) === '+++ /dev/null'
-  if (!body) return ''
-  if (created && deleted) return undefined
+  if (created && deleted) return body ? undefined : ''
+  if (!body) {
+    // A file that ends up created or deleted empty keeps its header-only patch.
+    const mode = created ? first.slice(1, -2) : deleted ? last.slice(1, -2) : []
+    return mode.length ? [first[0], ...mode, ''].join('\n') : ''
+  }
   return [
     first[0],
     ...(created ? first.slice(1, -2) : []),

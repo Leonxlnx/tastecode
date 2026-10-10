@@ -83,7 +83,7 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
   const diff = updated?.type === 'diff.updated' ? updated.diff : ''
 
   expect(diff.match(/^diff --git .*$/gm)).toEqual(
-    ['f.txt', 'g.txt', 'new.txt', 'bare.txt', 'old.txt'].map(
+    ['f.txt', 'g.txt', 'new.txt', 'bare.txt', 'old.txt', '__init__.py'].map(
       (name) => `diff --git a/${root}/${name} b/${root}/${name}`,
     ),
   )
@@ -94,5 +94,6 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
   expect(readFileSync(path.join(repo, 'old.txt'), 'utf8')).toBe('gone\n')
   expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
   expect(existsSync(path.join(repo, 'bare.txt'))).toBe(false)
+  expect(existsSync(path.join(repo, '__init__.py'))).toBe(false)
   expect(existsSync(path.join(repo, 'dev'))).toBe(false)
 })
