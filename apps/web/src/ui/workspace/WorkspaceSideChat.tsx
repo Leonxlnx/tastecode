@@ -53,6 +53,10 @@ type Submission = {
   options: SideChatStartOptions
 }
 let submissionSequence = 0
+// App keeps the latest `/side` request after it is delivered, and every
+// Temporary chat that mounts later receives it again. Each request is sent by
+// the first view that handles it, so reopening the tab does not resend it.
+const deliveredPromptRequests = new WeakSet<SideChatPromptRequest>()
 
 export function WorkspaceSideChat(props: {
   active: boolean
@@ -87,7 +91,6 @@ export function WorkspaceSideChat(props: {
   const lastSeqRef = useRef(0)
   const loadingHistoryRef = useRef(false)
   const historyBufferRef = useRef<SequencedEvent[]>([])
-  const promptRequestRef = useRef(0)
   activeRef.current = props.active
   sideThreadIdRef.current = sideThreadId
 
@@ -407,8 +410,8 @@ export function WorkspaceSideChat(props: {
   useEffect(() => {
     const request = props.promptRequest
     if (!request || request.parentThreadId !== props.parentThreadId) return
-    if (request.request <= promptRequestRef.current) return
-    promptRequestRef.current = request.request
+    if (deliveredPromptRequests.has(request)) return
+    deliveredPromptRequests.add(request)
     if (!request.text.trim() && request.attachments.length === 0) {
       requestAnimationFrame(() => textarea.current?.focus())
       return
