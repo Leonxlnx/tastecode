@@ -60,7 +60,7 @@ describe('preview capture settling', () => {
     expect(
       vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
         document: {
-          body: { scrollHeight: 20_000, getElementsByTagName: () => [] },
+          body: { scrollHeight: 20_000, children: [] },
           documentElement: { scrollHeight: 20_000 },
         },
         innerHeight: 844,
@@ -75,6 +75,8 @@ describe('preview capture settling', () => {
     height: number
     contentHeight: number
     overflowY?: string
+    children?: unknown[]
+    shadow?: unknown[]
   }) {
     return {
       clientWidth: box.width,
@@ -82,13 +84,15 @@ describe('preview capture settling', () => {
       scrollHeight: box.contentHeight,
       overflowY: box.overflowY ?? 'auto',
       getBoundingClientRect: () => ({ top: box.top ?? 0 }),
+      children: box.children ?? [],
+      shadowRoot: box.shadow ? { children: box.shadow } : null,
     }
   }
 
   function measure(elements: unknown[], viewport = { width: 1440, height: 1000 }) {
     return vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
       document: {
-        body: { scrollHeight: viewport.height, getElementsByTagName: () => elements },
+        body: { scrollHeight: viewport.height, children: elements },
         documentElement: { scrollHeight: viewport.height },
       },
       getComputedStyle: (element: { overflowY: string }) => ({ overflowY: element.overflowY }),
@@ -99,8 +103,12 @@ describe('preview capture settling', () => {
   }
 
   it('reports what a full-screen scroll container hides below its first screen', () => {
-    // html, body { height: 100% } main { height: 100%; overflow-y: auto } with three sections.
-    const value = measure([scrollBox({ width: 1440, height: 1000, contentHeight: 3000 })])
+    // html, body { height: 100% } main { height: 100%; overflow-y: auto } with three
+    // sections, inside the app's root element.
+    const main = scrollBox({ width: 1440, height: 1000, contentHeight: 3000 })
+    const value = measure([
+      scrollBox({ width: 1440, height: 1000, contentHeight: 1000, children: [main] }),
+    ])
     expect(value).toEqual({ documentElement: 1000, body: 1000, scrollContainer: 2000 })
     // The bitmap still holds one screen, so the capture now reads as cut short.
     expect(previewPageHeights(value, 1000)).toEqual({ documentHeight: 3000, capturedHeight: 1000 })
@@ -112,9 +120,17 @@ describe('preview capture settling', () => {
       scrollBox({ width: 600, height: 200, contentHeight: 900 }),
       scrollBox({ width: 1440, height: 1000, contentHeight: 9000, overflowY: 'hidden' }),
       scrollBox({ top: 1200, width: 1440, height: 800, contentHeight: 6000 }),
-      // A sidebar layout: the content pane scrolls beside a fixed navigation column.
-      scrollBox({ width: 1180, height: 1000, contentHeight: 4200 }),
-      scrollBox({ width: 260, height: 1000, contentHeight: 1600 }),
+      // A sidebar layout inside an app shell's open shadow root: the content pane
+      // scrolls beside a fixed navigation column.
+      scrollBox({
+        width: 1440,
+        height: 1000,
+        contentHeight: 1000,
+        shadow: [
+          scrollBox({ width: 1180, height: 1000, contentHeight: 4200 }),
+          scrollBox({ width: 260, height: 1000, contentHeight: 1600 }),
+        ],
+      }),
       // One pixel of rounding is not hidden content.
       scrollBox({ width: 1440, height: 1000, contentHeight: 1001 }),
     ])
@@ -255,7 +271,7 @@ describe('preview capture settling', () => {
   it('ignores hostile page Math and bounds valid raw measurements', () => {
     const value = vm.runInNewContext(PREVIEW_PAGE_HEIGHT_SCRIPT, {
       document: {
-        body: { scrollHeight: 800, getElementsByTagName: () => [] },
+        body: { scrollHeight: 800, children: [] },
         documentElement: { scrollHeight: 800 },
       },
       Math: new Proxy(
