@@ -1159,6 +1159,39 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('reports each turn its own share of the running session cost', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { effort: 'high' })
+    const finish = async (query: FakeQuery, total: number) => {
+      query.emitMessage({ ...(resultMessage(false) as object), total_cost_usd: total } as SDKMessage)
+      await tick()
+    }
+    await adapter.sendTurn(thread.id, 'First')
+    await finish(fake.queries[0]!, 0.1)
+    await adapter.sendTurn(thread.id, 'Second')
+    await finish(fake.queries[0]!, 0.25)
+    // An effort change restarts the query, and the resumed query's total starts over.
+    await adapter.sendTurn(thread.id, 'Third', [], { effort: 'low' })
+    await finish(fake.queries[1]!, 0.05)
+    const costs = events.flatMap((event) =>
+      event.type === 'usage.updated' ? [event.usage.costUsd] : [],
+    )
+    expect(costs.map((cost) => cost?.toFixed(2))).toEqual(['0.10', '0.15', '0.05'])
+    const store = new Store(':memory:')
+    try {
+      store.addProject('/repo')
+      store.addThread({ id: thread.id, projectPath: '/repo', provider: 'claude-code', title: 'Cost' })
+      for (const event of events) store.append(thread.id, event)
+      expect(store.usageSummary(thread.id, 0).session.costUsd).toBeCloseTo(0.3)
+    } finally {
+      store.close()
+      adapter.dispose()
+    }
+  })
+
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
