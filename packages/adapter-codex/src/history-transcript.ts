@@ -1,6 +1,7 @@
 import type { DomainEvent, ProviderHistorySession, Turn } from '@harness/contracts'
 import { object, timestamp } from './history-values.js'
 import { historyItem, responseItem, type HistoryItem } from './history-items.js'
+import { turnDiff } from './turn-diff.js'
 
 type RecordValue = Record<string, unknown>
 type Entry = {
@@ -135,14 +136,8 @@ export function parseCodexHistory(
       events.push({ type: 'item.completed', item })
       if (diff) diffs.push(diff)
     }
-    // Each patch must end its last hunk itself: `git apply --recount` reads a
-    // blank separator line as one more context line, and Undo then fails.
-    if (diffs.length)
-      events.push({
-        type: 'diff.updated',
-        turnId: saved.id,
-        diff: diffs.map((diff) => (diff.endsWith('\n') ? diff : `${diff}\n`)).join(''),
-      })
+    const patch = turnDiff(diffs)
+    if (patch) events.push({ type: 'diff.updated', turnId: saved.id, diff: patch })
     events.push({
       type: 'turn.completed',
       turnId: saved.id,
