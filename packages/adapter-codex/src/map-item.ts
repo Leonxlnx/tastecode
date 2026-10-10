@@ -390,14 +390,28 @@ function unifiedDiff(change: {
 }): string {
   const kind = change.kind?.type ?? 'update'
   const target = change.kind?.move_path ?? change.path
-  const body = (change.diff ?? '').replace(/\n$/, '')
-  if (body.startsWith('diff --git')) return body
+  const raw = (change.diff ?? '').replace(/\n$/, '')
+  if (raw.startsWith('diff --git')) return raw
+  const body =
+    (kind === 'add' && !/^@@ -0,0 \+/.test(raw)) ||
+    (kind === 'delete' && !/^@@ -1(?:,\d+)? \+0,0 @@/.test(raw))
+      ? wholeFileHunk(kind, raw)
+      : raw
   const header = [
     `diff --git a/${change.path} b/${target}`,
     `--- ${kind === 'add' ? '/dev/null' : `a/${change.path}`}`,
     `+++ ${kind === 'delete' ? '/dev/null' : `b/${target}`}`,
   ]
   return body ? `${header.join('\n')}\n${body}` : header.join('\n')
+}
+
+/** Codex sends an added or deleted file's whole content instead of a hunk. */
+function wholeFileHunk(kind: 'add' | 'delete', content: string): string {
+  if (!content) return ''
+  const lines = content.split('\n')
+  return kind === 'add'
+    ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}`
+    : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}`
 }
 
 function countDiffLines(diff: string, marker: '+' | '-'): number {
