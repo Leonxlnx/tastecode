@@ -4794,6 +4794,10 @@ describe('new chats', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
     expect(await screen.findByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }), {
+      detail: 2,
+    })
+    expect(screen.getByText(/Deleting “Second dirty” now/)).toBeTruthy()
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Discard isolated checkout' }), {
       key: 'Escape',
     })
