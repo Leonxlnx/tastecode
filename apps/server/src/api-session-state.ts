@@ -58,17 +58,35 @@ export function persistentApiSession(
   })
 }
 
+const REDACTED = '[redacted]'
+
 // Only free text is rewritten. Ids, roles and numbers stay as they are, because
 // local servers are often given placeholder keys such as "1" that also occur there.
 function redactState(state: ApiSessionState, secret: string): ApiSessionState {
-  const text = (value: string) => value.replaceAll(secret, '[redacted]')
+  // A resumed thread is saved again; leave earlier markers alone so a key that
+  // occurs inside "[redacted]" (such as "e") does not grow the text every save.
+  const text = (value: string) =>
+    value
+      .split(REDACTED)
+      .map((part) => part.replaceAll(secret, REDACTED))
+      .join(REDACTED)
   const json = <T>(value: T): T => {
     if (typeof value === 'string') return text(value) as T
     if (Array.isArray(value)) return value.map(json) as T
     if (value && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, json(item)])) as T
+      return Object.fromEntries(
+        Object.entries(value).map(([key, item]) => [text(key), json(item)]),
+      ) as T
     }
     return value
+  }
+  const holdsSecret = (value: unknown): boolean => {
+    if (typeof value === 'string') return value.includes(secret)
+    if (Array.isArray(value)) return value.some(holdsSecret)
+    if (value && typeof value === 'object') {
+      return Object.entries(value).some(([key, item]) => key.includes(secret) || holdsSecret(item))
+    }
+    return false
   }
   return {
     ...state,
@@ -76,17 +94,18 @@ function redactState(state: ApiSessionState, secret: string): ApiSessionState {
       state.thread.title === undefined
         ? state.thread
         : { ...state.thread, title: text(state.thread.title) },
-    messages: state.messages.map((message) =>
-      message.role === 'assistant'
-        ? {
-            ...message,
-            content: text(message.content),
-            toolCalls: message.toolCalls.map((call) => ({ ...call, input: json(call.input) })),
-            ...(message.transportState === undefined
-              ? {}
-              : { transportState: json(message.transportState) }),
-          }
-        : { ...message, content: text(message.content) },
-    ),
+    messages: state.messages.map((message) => {
+      if (message.role !== 'assistant') return { ...message, content: text(message.content) }
+      // Provider replay state is opaque: its ids, types and signatures must
+      // match the rest of the conversation exactly. Rather than rewrite it,
+      // drop it; the transports rebuild the message from content and tool calls.
+      const { transportState, ...rest } = message
+      return {
+        ...rest,
+        content: text(message.content),
+        toolCalls: message.toolCalls.map((call) => ({ ...call, input: json(call.input) })),
+        ...(transportState === undefined || holdsSecret(transportState) ? {} : { transportState }),
+      }
+    }),
   }
 }
