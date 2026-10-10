@@ -9960,3 +9960,80 @@ describe('connection recovery regressions', () => {
     })
   })
 })
+
+// Last in this file: it resets the module registry so App starts with the
+// workspace panel unloaded, the way a fresh window opens it on first use.
+describe('workspace panel loading', () => {
+  it('keeps a Temporary chat across the first update after a cold /side', async () => {
+    vi.resetModules()
+    const { App: ColdApp } = await import('./App.js')
+    // Spies from earlier tests can leave frames that never run, and Temporary
+    // chat starts and sends on the next frame.
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      setTimeout(() => callback(performance.now()), 0),
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => clearTimeout(frame))
+    localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
+    const fallback = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (
+        method === 'thread.history' &&
+        methods['thread.history'].params.parse(params).threadId === 'untouched-thread'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'main-user',
+                  turnId: 'main-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the build',
+                  createdAt: 1,
+                },
+              },
+            },
+          ],
+          running: false,
+        })
+      }
+      if (method === 'sideChat.start') return Promise.resolve({ threadId: 'side-1' })
+      if (
+        method === 'thread.history' &&
+        methods['thread.history'].params.parse(params).threadId === 'side-1'
+      ) {
+        return Promise.resolve({ events: [], running: false })
+      }
+      return fallback(method, params)
+    })
+    const calls = (method: string) =>
+      transport.request.mock.calls.filter(([called]) => called === method)
+
+    render(<ColdApp />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/side why did it fail?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // The first load of the panel's modules is slow in a reset registry.
+    await waitFor(
+      () =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.sendTurn',
+          expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
+        ),
+      { timeout: 15_000 },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show workspace tools' }))
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 50)))
+
+    expect(calls('sideChat.close')).toEqual([])
+    expect(calls('sideChat.start')).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: 'Message temporary chat' })).toBeTruthy()
+  }, 30_000)
+})

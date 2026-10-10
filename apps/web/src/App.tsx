@@ -4915,7 +4915,18 @@ export function App() {
     workspacePanelOpen,
   ])
 
-  const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel
+  // A lazy wrapper and the component it loads are different element types, so
+  // swapping one for the other on a later render remounts the panel and closes
+  // its tabs. Each panel keeps the type it first rendered with: the loaded
+  // component when it was preloaded, otherwise the lazy wrapper.
+  const rightPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  const bottomPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  if (workspacePanelHasMounted) rightPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  if (activePath && bottomTerminalMounted) {
+    bottomPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  }
+  const RightWorkspacePanel = rightPanelType.current ?? WorkspacePanel
+  const BottomWorkspacePanel = bottomPanelType.current ?? WorkspacePanel
 
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
@@ -5180,7 +5191,7 @@ export function App() {
                       <Suspense
                         fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
                       >
-                        <RenderedWorkspacePanel
+                        <BottomWorkspacePanel
                           placement="bottom"
                           open={terminalOpen}
                           expanded={false}
@@ -5218,7 +5229,7 @@ export function App() {
             <Suspense
               fallback={<WorkspacePanelSkeleton placement="right" open={workspacePanelOpen} />}
             >
-              <RenderedWorkspacePanel
+              <RightWorkspacePanel
                 open={workspacePanelOpen}
                 expanded={workspacePanelExpanded}
                 width={workspacePanelWidth}
