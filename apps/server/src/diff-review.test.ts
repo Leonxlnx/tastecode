@@ -368,6 +368,24 @@ describe('structured diff review', () => {
     },
   )
 
+  it('reverses an imported Codex turn that joined its edits with blank lines', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'second edit' }))
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const root = repo.replaceAll('\\', '/')
+    const edit = (file: string, hunk: string) =>
+      `diff --git a/${root}/${file} b/${root}/${file}\n--- a/${root}/${file}\n+++ b/${root}/${file}\n${hunk}`
+    const patch = [
+      edit('file.txt', '@@ -1,3 +1,3 @@\n line 1\n-line 2\n+first edit\n line 3\n'),
+      edit('staged.txt', '@@ -1 +1 @@\n-original\n+agent change\n'),
+      edit('file.txt', '@@ -1,3 +1,3 @@\n line 1\n-first edit\n+second edit\n line 3\n'),
+    ].join('\n')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
   it('does not partially reverse a patch after one of its files changed again', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
     writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
