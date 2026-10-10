@@ -694,6 +694,40 @@ describe('native Codex history', () => {
     )
   })
 
+  it('marks imported file creations and deletions so Git does not read /dev/null as a path', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: {
+          '/project/new.txt': { type: 'add', content: 'fresh\n' },
+          '/project/old.txt': { type: 'delete', content: 'gone\n' },
+        },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      [
+        'diff --git a//project/new.txt b//project/new.txt',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b//project/new.txt',
+        '@@ -0,0 +1,1 @@',
+        '+fresh',
+        'diff --git a//project/old.txt b//project/old.txt',
+        'deleted file mode 100644',
+        '--- a//project/old.txt',
+        '+++ /dev/null',
+        '@@ -1,1 +0,0 @@',
+        '-gone',
+        '',
+      ].join('\n'),
+    )
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
