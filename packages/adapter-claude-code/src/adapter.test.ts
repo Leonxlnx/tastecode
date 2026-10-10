@@ -1110,6 +1110,29 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('still reports a real error when the stop request itself failed', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    vi.spyOn(fake.queries[0]!, 'interrupt').mockRejectedValueOnce(new Error('control failed'))
+    await expect(adapter.interrupt()).rejects.toThrow('control failed')
+    fake.queries[0]!.emitMessage({
+      ...(resultMessage(true) as object),
+      errors: ['API error: overloaded'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'failed',
+    })
+    expect(events.find((event) => event.type === 'thread.error')).toMatchObject({
+      message: 'API error: overloaded',
+    })
+    adapter.dispose()
+  })
+
   it('keeps subagent messages out of the main transcript, plan and model label', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
