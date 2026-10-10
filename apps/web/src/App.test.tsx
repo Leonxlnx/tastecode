@@ -6841,6 +6841,30 @@ describe('sidebar chat ordering', () => {
     })
   })
 
+  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'thread-b', title: 'B chat' },
+        { id: 'thread-c', title: 'C chat' },
+        { id: 'thread-a', title: 'A chat', status: 'ready', unread: true },
+      ]),
+    ]
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^C chat,/ })
+    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
+    dropChatRow('C chat', 'A chat', 'after')
+
+    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    await waitFor(() => {
+      const order = SessionOrderSchema.parse(
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
+      )
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+    })
+  })
+
   it('keeps chats imported later from another provider in date order', async () => {
     // Every project's order used to be saved automatically, freezing the order
     // in which provider histories happened to arrive.
@@ -8834,6 +8858,20 @@ function emitQueue(
 
 function sessionTitles(): string[] {
   return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+}
+
+function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
+  const row = (title: string) =>
+    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const source = row(sourceTitle)
+  const target = row(targetTitle)
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
+  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+  const clientY = position === 'before' ? 65 : 85
+
+  fireEvent.dragStart(source, { dataTransfer })
+  fireEvent.dragOver(target, { clientY, dataTransfer })
+  fireEvent.drop(target, { clientY, dataTransfer })
 }
 
 describe('reopening a session', () => {
