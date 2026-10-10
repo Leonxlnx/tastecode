@@ -330,6 +330,37 @@ describe('PullRequestsView', () => {
     expect(detailRequests()).toBe(2)
   })
 
+  it('adds an authored pull request that only the reviewed search returned to Authored', async () => {
+    const reviewedOnly: PullRequestListItem = {
+      ...result.items[0]!,
+      title: 'My older PR I replied on',
+      relationship: 'reviewing',
+    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return { ...result, items: [reviewedOnly] }
+      if (method === 'pullRequests.detail')
+        return detailOf({ ...reviewedOnly, relationship: 'authored' })
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(await listPane().findByText('My older PR I replied on')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored0')
+    await waitFor(() =>
+      expect(transport.requests.some((entry) => entry.method === 'pullRequests.detail')).toBe(true),
+    )
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored1'),
+    )
+    expect(screen.getByRole('tab', { name: /^Reviewing/ }).textContent).toBe('Reviewing1')
+  })
+
   it.each([
     {
       account: { available: false, authenticated: false, error: 'GitHub CLI is not installed' },
