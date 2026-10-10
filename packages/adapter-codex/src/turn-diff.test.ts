@@ -59,6 +59,15 @@ describe('imported Codex turn diff', () => {
     )
   })
 
+  it('keeps a created file that a later edit emptied', () => {
+    expect(
+      turnDiff([
+        `${header('f.txt', 'new file mode 100644')}\n--- /dev/null\n+++ b/f.txt\n@@ -0,0 +1 @@\n+a\n`,
+        edit('f.txt', '@@ -1 +0,0 @@', '-a'),
+      ]),
+    ).toBe(`${header('f.txt', 'new file mode 100644')}\n`)
+  })
+
   it('leaves out a file whose edits cancel out', () => {
     expect(
       turnDiff([

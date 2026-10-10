@@ -150,9 +150,13 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
             : kind === 'delete'
               ? 'deleted file mode 100644\n'
               : ''
+        const header = `diff --git a/${file} b/${file}\n${mode}`
+        // An empty created or deleted file has no hunk, only its header.
         const diff = body.startsWith('diff --git')
           ? body
-          : `diff --git a/${file} b/${file}\n${mode}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+          : body
+            ? `${header}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+            : header
         return {
           item: {
             ...base,
@@ -167,7 +171,7 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
               .split('\n')
               .filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
           },
-          ...(body ? { diff } : {}),
+          ...(body || mode ? { diff } : {}),
         }
       })
     }
