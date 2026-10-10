@@ -210,11 +210,27 @@ export const DEBUG_SETTINGS_SHORTCUT = {
 } as const satisfies Shortcut
 
 export const WORKSPACE_TOOL_SHORTCUTS = [
-  { kind: 'review', shortcut: { key: 'g', primary: true, shift: true } },
-  { kind: 'browser', shortcut: { key: 't', primary: true } },
-  { kind: 'files', shortcut: { key: 'p', primary: true, alt: true } },
-  { kind: 'side-chat', shortcut: { key: 's', primary: true, alt: true } },
+  { kind: 'review', label: 'Open Review', shortcut: { key: 'g', primary: true, shift: true } },
+  { kind: 'browser', label: 'Open Browser', shortcut: { key: 't', primary: true } },
+  { kind: 'files', label: 'Open Files', shortcut: { key: 'p', primary: true, alt: true } },
+  {
+    kind: 'side-chat',
+    label: 'Open Temporary chat',
+    shortcut: { key: 's', primary: true, alt: true },
+  },
 ] as const
+
+/**
+ * Who owns a chord the window key handler keeps for itself. A keybind on one
+ * of these either never runs or silently takes the built-in shortcut away.
+ */
+export function reservedShortcutLabel(shortcut: Shortcut): string | undefined {
+  if (shortcut.primary && !shortcut.alt && !shortcut.shift && /^[1-9]$/.test(shortcut.key)) {
+    return 'Open recent chat'
+  }
+  if (sameShortcut(shortcut, DEBUG_SETTINGS_SHORTCUT)) return 'Debug settings'
+  return WORKSPACE_TOOL_SHORTCUTS.find((tool) => sameShortcut(tool.shortcut, shortcut))?.label
+}
 
 type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'> &
   Partial<Pick<KeyboardEvent, 'code' | 'isComposing' | 'getModifierState'>>
