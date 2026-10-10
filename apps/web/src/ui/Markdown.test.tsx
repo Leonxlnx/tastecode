@@ -34,6 +34,18 @@ describe('Markdown plain fast path', () => {
     expect(full.container.querySelector('a, code, em, strong, blockquote, table')).toBeNull()
     expect(fast.container.querySelector('a, code, em, strong, blockquote, table')).toBeNull()
   })
+  it.each([
+    'Docs are at www.example.com now.',
+    'Write to someone@example.com today.',
+    'This is ~struck~ text.',
+  ])('keeps GFM autolinks and strikethrough for %s', async (text) => {
+    const full = render(<CompletedMarkdown text={text} />)
+    const fast = render(<Markdown text={text} />)
+    const element = (container: HTMLElement) => container.querySelector('a, del')?.outerHTML
+
+    await waitFor(() => expect(element(fast.container)).toBeDefined())
+    expect(element(fast.container)).toBe(element(full.container))
+  })
 })
 
 describe('Markdown inline references', () => {
