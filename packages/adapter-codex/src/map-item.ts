@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
 import { z } from 'zod'
 import { jsonWithoutBinary } from './binary-content.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
 const UserMessageSchema = z.object({
@@ -390,28 +391,20 @@ function unifiedDiff(change: {
 }): string {
   const kind = change.kind?.type ?? 'update'
   const target = change.kind?.move_path ?? change.path
-  const raw = (change.diff ?? '').replace(/\n$/, '')
-  if (raw.startsWith('diff --git')) return raw
-  const body =
+  const raw = change.diff ?? ''
+  // Codex sends a created or deleted file's whole content, so a patch file's
+  // content must not be read as the diff.
+  const whole =
     (kind === 'add' && !raw.startsWith('@@ -0,0 +')) ||
     (kind === 'delete' && !/^@@ -1(?:,\d+)? \+0,0 @@/.test(raw))
-      ? wholeFileHunk(kind, raw)
-      : raw
+  if (!whole && raw.startsWith('diff --git')) return raw.replace(/\n$/, '')
+  const body = (whole ? wholeFileHunk(kind, raw) : raw).replace(/\n$/, '')
   const header = [
     `diff --git a/${change.path} b/${target}`,
     `--- ${kind === 'add' ? '/dev/null' : `a/${change.path}`}`,
     `+++ ${kind === 'delete' ? '/dev/null' : `b/${target}`}`,
   ]
   return body ? `${header.join('\n')}\n${body}` : header.join('\n')
-}
-
-/** Codex sends an added or deleted file's whole content instead of a hunk. */
-function wholeFileHunk(kind: 'add' | 'delete', content: string): string {
-  if (!content) return ''
-  const lines = content.split('\n')
-  return kind === 'add'
-    ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}`
-    : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}`
 }
 
 function countDiffLines(diff: string, marker: '+' | '-'): number {

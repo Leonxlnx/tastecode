@@ -448,6 +448,27 @@ describe('Codex activity items', () => {
     )
   })
 
+  it('reads a created patch file and a one-blank-line file as content', () => {
+    const item = mapThreadItem(
+      CodexThreadItemSchema.parse({
+        type: 'fileChange',
+        id: 'patch-4',
+        status: 'completed',
+        changes: [
+          { path: 'fix.patch', kind: { type: 'add' }, diff: 'diff --git a/x b/x\n-old\n+new\n' },
+          { path: 'blank.txt', kind: { type: 'add' }, diff: '\n' },
+        ],
+      }),
+      context,
+    )
+
+    expect(item).toMatchObject({ linesAdded: 4, linesRemoved: 0 })
+    expect(item.text).toContain(
+      '+++ b/fix.patch\n@@ -0,0 +1,3 @@\n+diff --git a/x b/x\n+-old\n++new\n',
+    )
+    expect(item.text).toMatch(/\+\+\+ b\/blank.txt\n@@ -0,0 \+1,1 @@\n\+$/)
+  })
+
   it('keeps an added or deleted file that already arrives as a hunk', () => {
     const item = mapThreadItem(
       CodexThreadItemSchema.parse({
