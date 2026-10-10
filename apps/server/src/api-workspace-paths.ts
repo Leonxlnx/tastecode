@@ -82,7 +82,7 @@ export function assertPublicWorkspaceFile(file: string, workspace?: string): voi
     relative !== undefined &&
     !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
   const checked = inside
-    ? [path.basename(workspace!), ...relative.split(path.sep)]
+    ? [path.basename(path.resolve(workspace!)), ...relative.split(path.sep)]
     : file.split(path.sep)
   if (checked.some(isSecretWorkspaceName)) {
     throw new Error('credential files are not available')
