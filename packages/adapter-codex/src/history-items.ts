@@ -148,9 +148,17 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
               ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`
               : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}\n`
         }
+        // Without its mode line Git reads `/dev/null` as a path, and Undo would
+        // move a created file to `dev/null` instead of deleting it.
+        const mode =
+          kind === 'add'
+            ? 'new file mode 100644\n'
+            : kind === 'delete'
+              ? 'deleted file mode 100644\n'
+              : ''
         const diff = body.startsWith('diff --git')
           ? body
-          : `diff --git a/${file} b/${file}\n--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+          : `diff --git a/${file} b/${file}\n${mode}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
         return {
           item: {
             ...base,
