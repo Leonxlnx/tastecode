@@ -23,6 +23,7 @@ import {
 import { isDesktop, revealPath } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isConfirmEnter,
   shortcutAria,
   type KeybindingId,
   type Keybindings,
@@ -105,6 +106,21 @@ function closeThenRun(close: () => void, action: () => void) {
   action()
 }
 
+type RenameTarget = { id: string; title: string | undefined }
+
+/**
+ * A new chat keeps a provisional id until its thread starts. The same chat
+ * then takes the real id with its title unchanged; another chat would not.
+ */
+function startedAs(target: RenameTarget, sessionId: string | undefined, title: string | undefined) {
+  return (
+    target.id.startsWith('pending:') &&
+    sessionId !== undefined &&
+    !sessionId.startsWith('pending:') &&
+    title === target.title
+  )
+}
+
 /** Chat identity and direct workspace actions above the thread. */
 function StageHeaderComponent(props: {
   sessionId: string | undefined
@@ -121,9 +137,12 @@ function StageHeaderComponent(props: {
   onArchiveSession: (id: string) => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const [renaming, setRenaming] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<RenameTarget>()
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
+  const renaming =
+    renameTarget !== undefined &&
+    (renameTarget.id === props.sessionId || startedAs(renameTarget, props.sessionId, props.title))
 
   useEffect(() => {
     if (!renaming) setDraft(props.title ?? '')
@@ -135,9 +154,18 @@ function StageHeaderComponent(props: {
 
   const commitRename = () => {
     const title = draft.trim()
-    if (title && props.sessionId) props.onRenameSession(props.sessionId, title)
-    setRenaming(false)
+    if (title && renameTarget) props.onRenameSession(renameTarget.id, title)
+    setRenameTarget(undefined)
   }
+
+  // Chat shortcuts still run while the field has focus. The draft belongs to
+  // the chat it was typed for, so a switch saves it there and closes the field.
+  useEffect(() => {
+    if (renameTarget === undefined || renameTarget.id === props.sessionId) return
+    if (startedAs(renameTarget, props.sessionId, props.title))
+      setRenameTarget({ id: props.sessionId!, title: props.title })
+    else commitRename()
+  }, [props.sessionId])
 
   return (
     <header className="stagehead">
@@ -152,8 +180,8 @@ function StageHeaderComponent(props: {
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commitRename}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') commitRename()
-              if (event.key === 'Escape') setRenaming(false)
+              if (isConfirmEnter(event)) commitRename()
+              if (event.key === 'Escape') setRenameTarget(undefined)
             }}
           />
         ) : (
@@ -260,7 +288,7 @@ function StageHeaderComponent(props: {
                     title="Rename chat"
                     icon={<Pencil size={14} aria-hidden />}
                     onClick={() => {
-                      setRenaming(true)
+                      setRenameTarget({ id: props.sessionId!, title: props.title })
                       close()
                     }}
                   />

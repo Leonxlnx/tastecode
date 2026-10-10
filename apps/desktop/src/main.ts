@@ -4,6 +4,7 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import {
   app,
@@ -723,6 +724,31 @@ ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
 ipcMain.handle('harness:openDiagnostics', async (event) => {
   requireOwnRenderer(event.sender)
   return openDiagnosticsDirectory()
+})
+
+ipcMain.handle('harness:crashAgents', async (event) => {
+  requireOwnRenderer(event.sender)
+  return (await import('./crash-agent.js')).crashAgentAvailability()
+})
+
+// The renderer names only an agent from a fixed list; the command line, the
+// prompt and the launcher are all built here. Crash details only reach a file.
+ipcMain.handle('harness:launchCrashAgent', async (event, agent: unknown, details: unknown) => {
+  requireOwnRenderer(event.sender)
+  const { isCrashAgentId, launchCrashAgent, parseCrashDetails } = await import('./crash-agent.js')
+  if (!isCrashAgentId(agent)) throw new Error('Unknown crash agent')
+  await launchCrashAgent(agent, parseCrashDetails(details), {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? '',
+    chromeVersion: process.versions.chrome ?? '',
+    platform: process.platform,
+    osRelease: os.release(),
+    arch: process.arch,
+    time: new Date().toISOString(),
+    diagnosticsLog: diagnostics?.isEnabled()
+      ? path.join(diagnostics.directory, 'errors.log')
+      : undefined,
+  })
 })
 
 ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {

@@ -48,6 +48,8 @@ type Bridge = {
   setDiagnosticsEnabled?: (enabled: boolean) => Promise<boolean>
   openDiagnostics?: () => Promise<boolean>
   reportRendererError?: (message: string) => void
+  crashAgents?: () => Promise<unknown>
+  launchCrashAgent?: (agent: CrashAgentId, details: CrashDetails) => Promise<void>
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
@@ -361,6 +363,42 @@ export function setLocalDiagnosticsEnabled(enabled: boolean): Promise<boolean> {
 
 export function openLocalDiagnostics(): Promise<boolean> {
   return bridge?.openDiagnostics?.() ?? Promise.resolve(false)
+}
+
+export const CRASH_AGENT_IDS = ['claude-code', 'codex', 'grok'] as const
+export type CrashAgentId = (typeof CRASH_AGENT_IDS)[number]
+export type CrashAgentAvailability = { id: CrashAgentId; installed: boolean }
+type CrashDetails = { name: string; message: string; stack: string; componentStack: string }
+
+export const canLaunchCrashAgent = bridge?.launchCrashAgent !== undefined
+
+/** Unknown or missing answers count as installed: the launch itself reports a real failure. */
+export async function crashAgents(): Promise<CrashAgentAvailability[]> {
+  const reported = await bridge?.crashAgents?.().catch(() => undefined)
+  const installed = new Map<unknown, unknown>(
+    Array.isArray(reported)
+      ? reported.map((entry: { id?: unknown; installed?: unknown }) => [
+          entry?.id,
+          entry?.installed,
+        ])
+      : [],
+  )
+  return CRASH_AGENT_IDS.map((id) => ({ id, installed: installed.get(id) !== false }))
+}
+
+export function launchCrashAgent(
+  agent: CrashAgentId,
+  cause: unknown,
+  componentStack: string,
+): Promise<void> {
+  if (!bridge?.launchCrashAgent) return Promise.reject(new Error('No desktop bridge'))
+  const error = cause instanceof Error ? cause : undefined
+  return bridge.launchCrashAgent(agent, {
+    name: error?.name ?? '',
+    message: error ? error.message : String(cause),
+    stack: error?.stack ?? '',
+    componentStack,
+  })
 }
 
 export function reportRendererError(cause: unknown): void {

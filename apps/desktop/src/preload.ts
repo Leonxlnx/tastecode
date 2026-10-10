@@ -73,6 +73,9 @@ const api = {
   setDiagnosticsEnabled: (enabled: boolean): Promise<boolean> =>
     ipcRenderer.invoke('harness:setDiagnosticsEnabled', enabled),
   openDiagnostics: (): Promise<boolean> => ipcRenderer.invoke('harness:openDiagnostics'),
+  crashAgents: (): Promise<unknown> => ipcRenderer.invoke('harness:crashAgents'),
+  launchCrashAgent: (agent: string, details: unknown): Promise<void> =>
+    ipcRenderer.invoke('harness:launchCrashAgent', agent, details),
   reportRendererError: (message: string): void =>
     ipcRenderer.send('harness:reportRendererError', message.slice(0, 4_000)),
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
