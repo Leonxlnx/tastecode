@@ -841,6 +841,49 @@ describe('idle thread runtime retention', () => {
     }
   })
 
+  it('keeps chats resumable after their project is removed and added back', async () => {
+    const store = new Store(':memory:')
+    const { orchestrator, sessions, resumedIds } = harness(undefined, store)
+    const project = process.cwd()
+    try {
+      store.addProject(project)
+      const thread = await orchestrator.startThread('codex', project)
+
+      // What projects.remove does.
+      await Promise.all(store.threads(project).map((t) => orchestrator.stopThread(t.id)))
+      orchestrator.forgetProject(project)
+      store.removeProject(project)
+      expect(sessions[0]?.disposed).toBe(true)
+      expect(orchestrator.isRunning(thread.id)).toBe(false)
+
+      store.addProject(project)
+      expect(store.sidebarThreads().map((t) => t.id)).toContain(thread.id)
+      await orchestrator.submitTurn(thread.id, 'continue')
+
+      expect(resumedIds).toEqual([thread.id])
+      expect(sessions[1]?.sent).toEqual(['continue'])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('stops a Side chat with its parent without archiving the parent', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const parent = await orchestrator.startThread('claude-code', process.cwd())
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+
+      await orchestrator.stopThread(parent.id)
+
+      expect(sessions.every((session) => session.disposed)).toBe(true)
+      expect(store.threads().filter((thread) => thread.ephemeral)).toEqual([])
+      expect(store.thread(parent.id)?.closedAt).toBeUndefined()
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('resumes an evicted runtime on the next submission', async () => {
     const { orchestrator, sessions, resumedIds } = harness(undefined, new Store(':memory:'), 1)
     const first = await orchestrator.startThread('codex', process.cwd())
