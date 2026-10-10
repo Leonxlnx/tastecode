@@ -244,7 +244,7 @@ function ProviderMcpSettings(props: {
             projectPath: props.projectPath,
           })
           if (!isCurrentContext()) return false
-          setNotice(`${success} Active sessions reloaded.`)
+          setNotice(`${success} Open chats pick up the change from their next message.`)
         } catch (cause) {
           if (!isCurrentContext()) return false
           setNotice(`${success} ${message(cause)}`)
