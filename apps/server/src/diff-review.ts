@@ -261,8 +261,11 @@ function parseHunks(filePath: string, patch: string, renamed: boolean): ParsedHu
 export async function reverseUnifiedDiff(repoPath: string, patch: string): Promise<void> {
   const roots = new Set([gitPath(path.resolve(repoPath)), gitPath(await realpath(repoPath))])
   let insideContent = false
-  const relative = patch
-    .split('\n')
+  const lines = patch.split('\n')
+  const relative = lines
+    // Older imported Codex turns joined files with a blank line, which
+    // `--recount` would read as one more context line of the previous hunk.
+    .filter((line, index) => line !== '' || !lines[index + 1]?.startsWith('diff --git '))
     .map((line) => {
       if (line.startsWith('diff --git ')) {
         insideContent = false
