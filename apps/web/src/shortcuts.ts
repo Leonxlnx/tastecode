@@ -217,6 +217,14 @@ function isShortcutInput(event: ShortcutEvent): boolean {
   )
 }
 
+/** An Enter that confirms the field, not one that accepts an IME conversion (Japanese, Chinese, Korean). */
+export function isConfirmEnter(event: {
+  key: string
+  nativeEvent: Pick<KeyboardEvent, 'isComposing'>
+}): boolean {
+  return event.key === 'Enter' && !event.nativeEvent.isComposing
+}
+
 export function matchesShortcut(
   event: ShortcutEvent,
   shortcut: Shortcut | null | undefined,

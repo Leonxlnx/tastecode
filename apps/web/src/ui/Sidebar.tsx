@@ -59,7 +59,12 @@ import {
 } from '../haptics.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import {
+  DEFAULT_KEYBINDINGS,
+  isConfirmEnter,
+  shortcutAria,
+  type Keybindings,
+} from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
@@ -2003,7 +2008,7 @@ function InlineRename(props: {
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit()
+        if (isConfirmEnter(e)) commit()
         if (e.key === 'Escape') props.onCancel()
       }}
     />

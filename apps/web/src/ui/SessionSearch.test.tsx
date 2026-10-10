@@ -133,6 +133,8 @@ describe('cross-session search', () => {
     fireEvent.change(search, { target: { value: 'regres' } })
 
     expect(screen.getByRole('option', { name: /Regression planning/ })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true })
+    expect(onSelect).not.toHaveBeenCalled()
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onSelect).toHaveBeenCalledWith('title-thread', undefined)
     onSelect.mockClear()

@@ -35,6 +35,7 @@ import {
 import { providerPresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import { AppSelect } from './AppSelect.js'
+import { isConfirmEnter } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
@@ -1204,7 +1205,7 @@ function Rename(props: { value: string; onCommit: (value: string) => void; onCan
       onChange={(event) => setValue(event.currentTarget.value)}
       onBlur={commit}
       onKeyDown={(event) => {
-        if (event.key === 'Enter') commit()
+        if (isConfirmEnter(event)) commit()
         if (event.key === 'Escape') props.onCancel()
       }}
     />

@@ -78,6 +78,23 @@ describe('CommandPalette', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
+  it('leaves the Enter that confirms an IME conversion to the input method', () => {
+    const run = vi.fn()
+    render(
+      <CommandPalette
+        scope="all"
+        onClose={vi.fn()}
+        commands={[{ id: 'archive', title: 'あいう', group: 'Actions', run }]}
+      />,
+    )
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+    fireEvent.change(input, { target: { value: 'あ' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(run).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(run).toHaveBeenCalledOnce()
+  })
+
   it('keeps hover highlight and Enter target in sync', () => {
     const { commands, ran } = makeCommands()
     render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)

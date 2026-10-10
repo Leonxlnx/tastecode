@@ -23,6 +23,7 @@ import {
 import { isDesktop, revealPath } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isConfirmEnter,
   shortcutAria,
   type KeybindingId,
   type Keybindings,
@@ -152,7 +153,7 @@ function StageHeaderComponent(props: {
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commitRename}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') commitRename()
+              if (isConfirmEnter(event)) commitRename()
               if (event.key === 'Escape') setRenaming(false)
             }}
           />

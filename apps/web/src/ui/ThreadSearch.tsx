@@ -8,6 +8,7 @@ import {
 import type { LiveItemUpdate } from '../thread-store.js'
 import type { ThreadFrameStore } from '../thread-frame-store.js'
 import { createThreadSearchIndexer, findThreadSearchHits } from '../thread-search-index.js'
+import { isConfirmEnter } from '../shortcuts.js'
 
 /**
  * Find within the open thread.
@@ -93,7 +94,7 @@ export function ThreadSearch(props: {
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') props.onClose()
-          if (e.key === 'Enter') advance(e.shiftKey)
+          if (isConfirmEnter(e)) advance(e.shiftKey)
         }}
       />
       <span className="find__count">
