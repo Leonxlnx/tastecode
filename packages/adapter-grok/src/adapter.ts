@@ -468,7 +468,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       entry: OpenTool,
       status: 'completed' | 'failed',
       output?: string,
-      diff?: string,
+      diff?: GrokDiff,
     ) => {
       this.emit('event', {
         type: 'item.completed',
@@ -486,15 +486,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
           ...(entry.itemType === 'file_change' && (diff || output)
             ? {
-                text: diff ?? output,
-                ...(diff
-                  ? {
-                      linesAdded: diff.split('\n').filter((line) => /^\+(?!\+\+ )/.test(line))
-                        .length,
-                      linesRemoved: diff.split('\n').filter((line) => /^-(?!-- )/.test(line))
-                        .length,
-                    }
-                  : {}),
+                text: diff?.text ?? output,
+                ...(diff ? { linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved } : {}),
               }
             : {}),
           ...(entry.itemType === 'tool_call'
@@ -803,12 +796,22 @@ export function grokToolOutput(frame: {
   return unique.length ? unique.join('\n') : undefined
 }
 
+interface GrokDiff {
+  text: string
+  linesAdded: number
+  linesRemoved: number
+}
+
 /**
  * Grok reports an edit as `{ type: 'diff', path, oldText, newText }` content
  * parts. The transcript renders file changes as unified diffs, so build one.
+ * The line counts come from the texts: in the rendered diff a removed
+ * `-- comment` line reads like a `---` header.
  */
-export function grokDiff(content: unknown): string | undefined {
+export function grokDiff(content: unknown): GrokDiff | undefined {
   if (!Array.isArray(content)) return undefined
+  let linesAdded = 0
+  let linesRemoved = 0
   const files = content.flatMap((part) => {
     if (typeof part !== 'object' || part === null) return []
     const record = part as Record<string, unknown>
@@ -819,6 +822,8 @@ export function grokDiff(content: unknown): string | undefined {
     const removed = lines(record.oldText)
     const added = lines(record.newText)
     if (removed.length === 0 && added.length === 0) return []
+    linesAdded += added.length
+    linesRemoved += removed.length
     return [
       [
         `diff --git a/${path} b/${path}`,
@@ -830,7 +835,7 @@ export function grokDiff(content: unknown): string | undefined {
       ].join('\n'),
     ]
   })
-  return files.length ? files.join('\n') : undefined
+  return files.length ? { text: files.join('\n'), linesAdded, linesRemoved } : undefined
 }
 
 function grokToolPath(input: GrokFrame['rawInput']): string | undefined {
