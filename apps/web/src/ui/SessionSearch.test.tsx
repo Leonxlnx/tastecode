@@ -74,6 +74,37 @@ describe('cross-session search', () => {
     expect(document.activeElement).toBe(search)
   })
 
+  it('highlights title matches whose folded form changes length', () => {
+    const titles = ['İzmir deploy', 'ｄｅｐｌｏｙ checklist', 'Cafe\u0301 deploy']
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: titles.map((title, index) => ({
+              id: `thread-${index}`,
+              title,
+              provider: 'codex' as const,
+              createdAt: index,
+            })),
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    const search = screen.getByRole('combobox', { name: 'Search every chat' })
+    const marks = () => Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)
+
+    fireEvent.change(search, { target: { value: 'deploy' } })
+    expect(marks().sort()).toEqual(['deploy', 'deploy', 'ｄｅｐｌｏｙ'])
+
+    fireEvent.change(search, { target: { value: 'café' } })
+    expect(marks()).toEqual(['Cafe\u0301'])
+  })
+
   it('does not keep old content results when the next query fails', async () => {
     vi.useFakeTimers()
     const request = vi

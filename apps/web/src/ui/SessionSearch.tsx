@@ -487,15 +487,38 @@ function searchTerms(query: string): string[] {
   return [...new Set(query.normalize('NFKC').toLowerCase().match(SEARCH_TOKEN) ?? [])]
 }
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+/**
+ * Folds `text` the way the title index does and maps each folded code unit
+ * back to the grapheme it came from. Folding can change the length ("İ"
+ * lowercases to two code units, fullwidth letters fold to ASCII), so folded
+ * offsets cannot slice the original title directly.
+ */
+function foldWithSourceOffsets(text: string) {
+  let folded = ''
+  const starts: number[] = []
+  const ends: number[] = []
+  for (const { segment, index } of GRAPHEMES.segment(text)) {
+    const piece = segment.normalize('NFKC').toLowerCase()
+    folded += piece
+    for (let offset = 0; offset < piece.length; offset += 1) {
+      starts.push(index)
+      ends.push(index + segment.length)
+    }
+  }
+  return { folded, starts, ends }
+}
+
 function highlightText(text: string, terms: string[]): SearchSnippetPart[] {
-  const normalized = text.toLowerCase()
+  const { folded, starts, ends } = foldWithSourceOffsets(text)
   const ranges: Array<{ start: number; end: number }> = []
   for (const term of terms) {
     let from = 0
     for (;;) {
-      const start = normalized.indexOf(term, from)
+      const start = folded.indexOf(term, from)
       if (start < 0) break
-      ranges.push({ start, end: start + term.length })
+      ranges.push({ start: starts[start]!, end: ends[start + term.length - 1]! })
       from = start + term.length
     }
   }
