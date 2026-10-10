@@ -6263,6 +6263,62 @@ describe('several sessions at once', () => {
       vi.useRealTimers()
     }
   })
+
+  it('closes the open turn and its requests when Stop all force-stops an agent', async () => {
+    vi.useFakeTimers()
+    try {
+      const { sessions, orchestrator, store, received } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      await orchestrator.submitTurn(thread.id, 'work')
+      session.emit(turnStarted(thread.id, 'turn-1'))
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'cmd-1',
+          turnId: 'turn-1',
+          type: 'command',
+          status: 'started',
+          text: 'npm test',
+          createdAt: 1,
+        },
+      })
+      session.emit({
+        type: 'approval.requested',
+        request: { id: 'approval-1', kind: 'command', createdAt: 1 },
+      })
+      expect(orchestrator.inboxStatus(thread.id)).toBe('approval')
+      session.interruptBarrier = new Promise(() => {})
+      // The adapter's own cleanup arrives after the runtime is detached.
+      session.dispose = () => {
+        session.disposed = true
+        session.emit({ type: 'approval.resolved', id: 'approval-1' })
+      }
+
+      const stopping = orchestrator.panicStop()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await stopping
+
+      const types = store.history(thread.id).map(({ event }) => event.type)
+      expect(types.slice(-3)).toEqual(['item.completed', 'approval.resolved', 'turn.completed'])
+      expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(store.history(thread.id).at(-3)?.event).toMatchObject({
+        type: 'item.completed',
+        item: { id: 'cmd-1', status: 'failed' },
+      })
+      expect(received.at(-1)?.event).toMatchObject({ type: 'turn.completed' })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).toBe('ready')
+      expect(() => orchestrator.settleThread(thread.id)).not.toThrow()
+      expect(store.recoverInterruptedThreads()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('sidebar inbox lifecycle', () => {

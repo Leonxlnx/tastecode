@@ -2971,7 +2971,11 @@ export class Orchestrator {
             // Force-stop the runtime only. Stop all is not the user closing the chat.
             // A runtime that replaced it meanwhile was not the one that hung.
             if (this.#threads.get(threadId) === entry) {
-              await this.#disposeThreadRuntime(threadId, 'disconnect')
+              const disposed = this.#disposeThreadRuntime(threadId, 'disconnect')
+              // The detached runtime's own cleanup events are dropped, so settle
+              // its turn and requests here, before anything can start another.
+              this.#settleInterruptedLifecycles(threadId)
+              await disposed
             }
             return {
               threadId,
@@ -2988,6 +2992,17 @@ export class Orchestrator {
       return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
+    }
+  }
+
+  /** Record what restart recovery would for a runtime that is gone. */
+  #settleInterruptedLifecycles(threadId: string): void {
+    try {
+      for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        this.#record(threadId, event)
+      }
+    } catch (error) {
+      this.#onLog(`Could not settle the force-stopped turn: ${errorMessage(error)}`)
     }
   }
 
