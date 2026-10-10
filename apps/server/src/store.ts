@@ -2018,6 +2018,13 @@ export class Store {
     this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
   }
 
+  /** Clears the closed mark of an imported chat its provider can resume again. */
+  reopenThread(id: string): void {
+    this.#db.prepare(`UPDATE threads SET closed_at = NULL WHERE id = ?`).run(id)
+    this.#updateCachedThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
+    this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
+  }
+
   deleteThread(id: string): void {
     if (this.thread(id)?.worktreePath) {
       throw new Error('discard the isolated session checkout before deleting it')
