@@ -102,10 +102,18 @@ export class Streamer {
   #chunk(kind: 'message' | 'reasoning', text: string): DomainEvent[] {
     if (!text) return []
 
+    // Thinking and answering alternate. Close the other kind's item so a later
+    // thought starts below the answer it follows instead of joining the first.
+    const other = this.#complete(kind === 'message' ? 'reasoning' : 'message')
+    const closed = other ? [other] : []
+
     const existing = this.#open.get(kind)
     if (existing) {
       this.#open.set(kind, { ...existing, text: (existing.text ?? '') + text })
-      return [{ type: 'item.delta', turnId: this.#turnId, itemId: existing.id, textDelta: text }]
+      return [
+        ...closed,
+        { type: 'item.delta', turnId: this.#turnId, itemId: existing.id, textDelta: text },
+      ]
     }
 
     const id = `${this.#turnId}-${kind}-${++this.#counter}`
@@ -120,6 +128,7 @@ export class Streamer {
     }
     this.#open.set(kind, item)
     return [
+      ...closed,
       {
         type: 'item.started',
         item,
@@ -158,9 +167,12 @@ export class Streamer {
     const type = (kind && KIND_TO_ITEM.get(kind)) ?? 'tool_call'
     const finished = update.status === 'completed' || update.status === 'failed'
 
-    // A tool call interrupts the prose around it. Complete that message before
-    // the tool so its text remains immutable and the next sentence starts fresh.
-    const completedMessage = this.#complete('message')
+    // A tool call interrupts the prose and thinking around it. Complete both
+    // before the tool so their text remains immutable and whatever follows the
+    // tool starts a fresh item below it.
+    const completedText = [this.#complete('reasoning'), this.#complete('message')].filter(
+      (event): event is DomainEvent => event !== undefined,
+    )
 
     const item: Item = {
       id,
@@ -188,7 +200,7 @@ export class Streamer {
     }
 
     const events: DomainEvent[] = [
-      ...(completedMessage ? [completedMessage] : []),
+      ...completedText,
       finished ? { type: 'item.completed', item } : { type: 'item.started', item },
     ]
 

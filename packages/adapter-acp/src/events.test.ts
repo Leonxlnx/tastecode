@@ -44,9 +44,10 @@ describe('Streamer', () => {
     streamer.translate(chunk('agent_message_chunk', 'answer'))
     const thought = streamer.translate(chunk('agent_thought_chunk', 'reasoning'))
 
-    // A thought must open its own item rather than appending to the message.
-    expect(thought[0]?.type).toBe('item.started')
-    const event = thought[0]
+    // A thought must close the message and open its own item rather than
+    // appending to the message.
+    expect(thought.map((event) => event.type)).toEqual(['item.completed', 'item.started'])
+    const event = thought[1]
     if (event?.type !== 'item.started') throw new Error('shape')
     expect(event.item.type).toBe('reasoning')
   })
@@ -319,5 +320,48 @@ describe('streamed tool output', () => {
     // the first call's accumulated output.
     expect(secondDone.item.id).not.toBe(firstDone.item.id)
     expect(secondDone.item.text ?? secondDone.item.command ?? '').not.toContain('first output')
+  })
+
+  it('starts a new thought after a tool call instead of joining the first', () => {
+    const streamer = new Streamer('t1')
+    const first = streamer.translate(chunk('agent_thought_chunk', 'plan A'))
+    const tool = streamer.translate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'c1',
+      kind: 'read',
+      title: 'Read a.ts',
+      status: 'completed',
+    })
+    const second = streamer.translate(chunk('agent_thought_chunk', 'plan B'))
+
+    const opened = first[0]
+    if (opened?.type !== 'item.started') throw new Error('shape')
+    // The first thought ends before the tool, so it renders above it.
+    expect(tool[0]).toMatchObject({
+      type: 'item.completed',
+      item: { id: opened.item.id, text: 'plan A' },
+    })
+    expect(second[0]?.type).toBe('item.started')
+    const next = second[0]
+    if (next?.type !== 'item.started') throw new Error('shape')
+    expect(next.item.id).not.toBe(opened.item.id)
+  })
+
+  it('starts a new message after a thought instead of joining the first', () => {
+    const streamer = new Streamer('t1')
+    const first = streamer.translate(chunk('agent_message_chunk', 'first'))
+    streamer.translate(chunk('agent_thought_chunk', 'think'))
+    const second = streamer.translate(chunk('agent_message_chunk', 'second'))
+
+    const opened = first[0]
+    if (opened?.type !== 'item.started') throw new Error('shape')
+    expect(second.map((event) => event.type)).toEqual(['item.completed', 'item.started'])
+    const [closed, next] = second
+    if (closed?.type !== 'item.completed' || next?.type !== 'item.started') {
+      throw new Error('shape')
+    }
+    expect(closed.item).toMatchObject({ type: 'reasoning', text: 'think' })
+    expect(next.item.id).not.toBe(opened.item.id)
+    expect(next.item.text).toBe('second')
   })
 })
