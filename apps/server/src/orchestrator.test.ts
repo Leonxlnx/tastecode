@@ -5814,6 +5814,25 @@ describe('MCP inventory', () => {
       }
     })
 
+    it('signs in through a chat that already has the saved servers', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        const working = await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit(turnStarted(working.id, 'turn-1'))
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        await orchestrator.startThread('codex', '/repo')
+
+        await orchestrator.startMcpOAuth('codex', '/repo', 'docs')
+
+        expect(sessions[0]!.mcpOAuthStarts).toEqual([])
+        expect(sessions[1]!.mcpOAuthStarts).toEqual([expect.objectContaining({ serverId: 'docs' })])
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
     it('says that a Temporary chat keeps its servers', async () => {
       const { orchestrator, sessions, store } = harness()
       try {

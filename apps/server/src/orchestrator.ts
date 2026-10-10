@@ -1190,11 +1190,15 @@ export class Orchestrator {
   ): [string, AttachedThreadRuntime] | undefined {
     const threadIds = this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath)
     if (!threadIds) return undefined
+    let stale: [string, AttachedThreadRuntime] | undefined
     for (const threadId of threadIds) {
       const entry = this.#threads.get(threadId)
-      if (entry && (!accepts || accepts(entry))) return [threadId, entry]
+      if (!entry || (accepts && !accepts(entry))) continue
+      // A runtime still waiting to resume does not know the saved MCP servers.
+      if (this.#mcpStaleRuntimes.get(threadId) !== entry.session) return [threadId, entry]
+      stale ??= [threadId, entry]
     }
-    return undefined
+    return stale
   }
 
   #requireMcpManagement(provider: ProviderId): void {
