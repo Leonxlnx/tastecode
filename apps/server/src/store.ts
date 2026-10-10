@@ -2478,6 +2478,40 @@ export class Store {
 
   // ---- events ------------------------------------------------------------
 
+  #interruptedThreadStates(rows: InterruptedThreadRow[]): Map<string, InterruptedThreadState> {
+    const states = new Map<string, InterruptedThreadState>()
+    for (const row of rows) {
+      // Leave newer-provider histories intact; they must not abort recovery of other threads.
+      if (!this.thread(row.thread_id)) continue
+      const event = parseDomainEvent(
+        row.payload,
+        `recovery for interrupted thread ${row.thread_id}`,
+      )
+      if (event === undefined) continue
+      const state = states.get(row.thread_id) ?? {
+        openTurns: new Set<string>(),
+        activeItems: new Map(),
+        approvals: new Set<string>(),
+        userInputs: new Set<string>(),
+        reviews: new Map(),
+        hasResumableInput: false,
+      }
+      states.set(row.thread_id, state)
+
+      if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
+      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+      if (event.type === 'user_input.requested') {
+        if (row.resumable) state.hasResumableInput = true
+        else state.userInputs.add(event.request.id)
+      }
+      if (event.type === 'approval.review.started') {
+        state.reviews.set(event.review.id, event.review)
+      }
+    }
+    return states
+  }
+
   /**
    * Close event lifecycles that cannot still be live in this server process.
    *
@@ -2494,71 +2528,13 @@ export class Store {
       // long transcript therefore costs the same to recover as a short one.
       const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThreads)
 
-      const states = new Map<string, InterruptedThreadState>()
-      for (const row of rows) {
-        // Leave newer-provider histories intact; they must not abort recovery of other threads.
-        if (!this.thread(row.thread_id)) continue
-        const event = parseDomainEvent(
-          row.payload,
-          `recovery for interrupted thread ${row.thread_id}`,
-        )
-        if (event === undefined) continue
-        const state = states.get(row.thread_id) ?? {
-          openTurns: new Set<string>(),
-          activeItems: new Map(),
-          approvals: new Set<string>(),
-          userInputs: new Set<string>(),
-          reviews: new Map(),
-          hasResumableInput: false,
-        }
-        states.set(row.thread_id, state)
-
-        if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
-        if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
-        if (event.type === 'approval.requested') state.approvals.add(event.request.id)
-        if (event.type === 'user_input.requested') {
-          if (row.resumable) state.hasResumableInput = true
-          else state.userInputs.add(event.request.id)
-        }
-        if (event.type === 'approval.review.started') {
-          state.reviews.set(event.review.id, event.review)
-        }
-      }
-
       const recovered: string[] = []
       const at = Date.now()
-      for (const [threadId, state] of states) {
-        for (const item of state.activeItems.values()) {
-          // Omitting text preserves every persisted delta when the renderer
-          // folds this terminal item over the streamed version.
-          const { text: _streamedText, ...started } = item
-          this.#appendEvent(
-            threadId,
-            { type: 'item.completed', item: { ...started, status: 'failed' } },
-            at,
-          )
-        }
-        for (const id of state.approvals) {
-          this.#appendEvent(threadId, { type: 'approval.resolved', id }, at)
-        }
-        for (const id of state.userInputs) {
-          this.#appendEvent(threadId, { type: 'user_input.resolved', id }, at)
-        }
-        for (const review of state.reviews.values()) {
-          if (review.status !== 'in_progress') continue
-          this.#appendEvent(
-            threadId,
-            {
-              type: 'approval.review.completed',
-              review: { ...review, status: 'aborted', completedAt: at },
-            },
-            at,
-          )
+      for (const [threadId, state] of this.#interruptedThreadStates(rows)) {
+        for (const event of interruptedLifecycleEvents(state, at)) {
+          this.#appendEvent(threadId, event, at)
         }
         if (state.openTurns.size === 0) continue
-        for (const turnId of state.openTurns) {
-          this.#appendEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' }, at)
-        }
         if (!state.hasResumableInput) {
           this.#appendEvent(
             threadId,
@@ -3671,6 +3647,30 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
     default:
       return undefined
   }
+}
+
+/** The terminal events that settle every lifecycle a dead runtime left open. */
+function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+  const events: DomainEvent[] = []
+  for (const item of state.activeItems.values()) {
+    // Omitting text preserves every persisted delta when the renderer
+    // folds this terminal item over the streamed version.
+    const { text: _streamedText, ...started } = item
+    events.push({ type: 'item.completed', item: { ...started, status: 'failed' } })
+  }
+  for (const id of state.approvals) events.push({ type: 'approval.resolved', id })
+  for (const id of state.userInputs) events.push({ type: 'user_input.resolved', id })
+  for (const review of state.reviews.values()) {
+    if (review.status !== 'in_progress') continue
+    events.push({
+      type: 'approval.review.completed',
+      review: { ...review, status: 'aborted', completedAt: at },
+    })
+  }
+  for (const turnId of state.openTurns) {
+    events.push({ type: 'turn.completed', turnId, status: 'interrupted' })
+  }
+  return events
 }
 
 function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
