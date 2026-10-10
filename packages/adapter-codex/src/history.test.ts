@@ -728,6 +728,23 @@ describe('native Codex history', () => {
     )
   })
 
+  it('marks an imported file content without a final newline', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'files',
+        changes: { '/project/new.txt': { type: 'add', content: 'one\ntwo' } },
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(items(events).find((entry) => entry.type === 'file_change')).toMatchObject({
+      linesAdded: 2,
+      text: '@@ -0,0 +1,2 @@\n+one\n+two\n\\ No newline at end of file\n',
+    })
+  })
+
   it('keeps late native activities in their completed turn without duplicating the turn', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
