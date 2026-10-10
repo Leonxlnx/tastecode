@@ -453,6 +453,19 @@ type CodexApprovalResponse =
       scope: 'session' | 'turn'
     }
 
+type PendingApproval = {
+  kind: ApprovalRequest['kind']
+  respond: (result: JsonRpcValue) => void
+  rpcId?: RequestId | undefined
+  permissions?: RequestPermissionProfile
+  threadId?: string
+  turnId?: string
+}
+
+function approvalReply(pending: PendingApproval, decision: ApprovalDecision): JsonRpcValue {
+  return mapApprovalResponse(pending.kind, decision, pending.permissions)
+}
+
 type ParsedApprovalRequest =
   | { kind: 'permissions'; params: PermissionsRequestApprovalParams }
   | { kind: 'command' | 'file_change'; params: ApprovalParams }
@@ -524,17 +537,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
    * responder because Codex is blocked on that specific request id.
    */
-  #approvals = new Map<
-    string,
-    {
-      kind: ApprovalRequest['kind']
-      respond: (result: JsonRpcValue) => void
-      rpcId?: RequestId | undefined
-      permissions?: RequestPermissionProfile
-      threadId?: string
-      turnId?: string
-    }
-  >()
+  #approvals = new Map<string, PendingApproval>()
   #threadApprovals = new Map<string, ApprovalMode>()
   #userInputs = new Map<
     string,
@@ -1155,7 +1158,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const pending = this.#approvals.get(approvalId)
     if (!pending) return
     this.#approvals.delete(approvalId)
-    pending.respond(mapApprovalResponse(pending.kind, decision, pending.permissions))
+    pending.respond(approvalReply(pending, decision))
     this.emit('event', { type: 'approval.resolved', id: approvalId })
     if (
       pending.kind === 'permissions' &&
@@ -1294,7 +1297,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // drop the earlier responder and leave Codex blocked on it forever.
     const previous = this.#approvals.get(id)
     if (previous) {
-      previous.respond(mapApprovalResponse(previous.kind, 'deny', previous.permissions))
+      previous.respond(approvalReply(previous, 'deny'))
       this.emit('event', { type: 'approval.resolved', id })
     }
     this.#approvals.set(id, {
@@ -1390,7 +1393,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           )
             continue
           this.#approvals.delete(id)
-          pending.respond(mapApprovalResponse(pending.kind, 'deny', pending.permissions))
+          pending.respond(approvalReply(pending, 'deny'))
           emit({ type: 'approval.resolved', id })
         }
         for (const [id, pending] of this.#userInputs) {
