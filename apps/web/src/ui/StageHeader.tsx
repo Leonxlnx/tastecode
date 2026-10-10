@@ -122,9 +122,10 @@ function StageHeaderComponent(props: {
   onArchiveSession: (id: string) => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const [renaming, setRenaming] = useState(false)
+  const [renamingId, setRenamingId] = useState<string>()
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
+  const renaming = renamingId !== undefined && renamingId === props.sessionId
 
   useEffect(() => {
     if (!renaming) setDraft(props.title ?? '')
@@ -136,9 +137,15 @@ function StageHeaderComponent(props: {
 
   const commitRename = () => {
     const title = draft.trim()
-    if (title && props.sessionId) props.onRenameSession(props.sessionId, title)
-    setRenaming(false)
+    if (title && renamingId) props.onRenameSession(renamingId, title)
+    setRenamingId(undefined)
   }
+
+  // Chat shortcuts still run while the field has focus. The draft belongs to
+  // the chat it was typed for, so a switch saves it there and closes the field.
+  useEffect(() => {
+    if (renamingId !== undefined && renamingId !== props.sessionId) commitRename()
+  }, [props.sessionId])
 
   return (
     <header className="stagehead">
@@ -154,7 +161,7 @@ function StageHeaderComponent(props: {
             onBlur={commitRename}
             onKeyDown={(event) => {
               if (isConfirmEnter(event)) commitRename()
-              if (event.key === 'Escape') setRenaming(false)
+              if (event.key === 'Escape') setRenamingId(undefined)
             }}
           />
         ) : (
@@ -261,7 +268,7 @@ function StageHeaderComponent(props: {
                     title="Rename chat"
                     icon={<Pencil size={14} aria-hidden />}
                     onClick={() => {
-                      setRenaming(true)
+                      setRenamingId(props.sessionId)
                       close()
                     }}
                   />
