@@ -21,11 +21,15 @@ describe('application menu', () => {
     })
 
     for (const item of menuItems(template))
-      item.click?.(item as never, undefined, undefined as never)
+      item.click?.(item as never, undefined, { triggeredByAccelerator: false } as never)
 
     expect(new Set(onAction.mock.calls.map(([action]) => action))).toEqual(
       new Set<NativeMenuAction>(NATIVE_MENU_ACTIONS),
     )
+    expect(new Set(onAction.mock.calls.map(([, source]) => source))).toEqual(new Set(['menu']))
+    const settings = findLabel(template, 'Settings…')!
+    settings.click?.(settings as never, undefined, { triggeredByAccelerator: true } as never)
+    expect(onAction).toHaveBeenLastCalledWith('settings', 'accelerator')
     expect(template.map((item) => item.label ?? item.role)).toEqual([
       ...(platform === 'macOS' ? ['Taste Code'] : []),
       'File',
@@ -36,6 +40,8 @@ describe('application menu', () => {
       'Window',
       'help',
     ])
+    expect(findLabel(template, 'Delete Current Chat…')).toBeDefined()
+    expect(findLabel(template, 'Archive Current Chat…')).toBeUndefined()
   })
 
   it('uses current custom shortcuts and leaves unassigned actions free', () => {

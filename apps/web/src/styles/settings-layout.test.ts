@@ -16,7 +16,7 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('compacts appearance controls from their usable pane width', () => {
+  it('compacts appearance from its usable pane width', () => {
     expect(settingsCss).toMatch(
       /\.settings__content \{[^}]*container: settings-content \/ inline-size;/s,
     )
@@ -24,10 +24,7 @@ describe('settings viewport CSS', () => {
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.theme-picker \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s,
     )
     expect(settingsCss).toMatch(
-      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-code-preview \{[^}]*grid-template-columns: 1fr;[\s\S]*?\.appearance-editor \.settings__row \{[^}]*flex-direction: column;[\s\S]*?\.appearance-control,[\s\S]*?\{[^}]*width: 100%;/s,
-    )
-    expect(settingsCss).toMatch(
-      /\.appearance-control__select \{[^}]*width: min\(152px, 100%\);[^}]*max-width: none;/s,
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-row__leader \{[^}]*display: none;/s,
     )
   })
 
@@ -59,14 +56,39 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
     )
+    // Slots space themselves, so the empty action column collapses to nothing.
+    expect(settingsCss).toMatch(/\.settings__row\.provider-row \{[^}]*gap: 0;/s)
     expect(settingsCss).toMatch(
-      /\.provider-row__primary \{[^}]*grid-column: 4;[^}]*\}[\s\S]*?\.provider-row__secondary:has\(\+ \.provider-row__primary:empty\) \{[^}]*grid-column: 4;/s,
+      /\.provider-row__secondary \{[^}]*grid-column: 5;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 6;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*min-width: 0;/s,
+      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
     )
+    expect(settingsCss).toMatch(/\.provider-row__status \{[^}]*grid-column: 4;[^}]*min-width: 0;/s)
     expect(settingsCss).toMatch(
       /\.provider-row \.settings__action \{[^}]*min-width: 70px;[^}]*min-height: 28px;/s,
+    )
+  })
+
+  it('draws the provider account wire from the link state', () => {
+    expect(settingsCss).toMatch(
+      /\.provider-row::after \{[^}]*grid-column: 3;[^}]*radial-gradient\([^}]*repeat-x;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-link='connected'\]::after \{[^}]*linear-gradient\([^}]*animation: provider-wire-draw/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-link='none'\]::after \{[^}]*background: none;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.provider-row\[data-live\]::after \{[^}]*animation: provider-wire-flow/s,
+    )
+    expect(settingsCss).toMatch(
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.provider-row::after \{[^}]*animation: none !important;/s,
+    )
+    // Too narrow for a wire: it steps aside instead of squeezing the account.
+    expect(settingsCss).toMatch(
+      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row::after \{[^}]*display: none;/s,
     )
   })
 })

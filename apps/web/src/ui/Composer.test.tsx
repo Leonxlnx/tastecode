@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
 import { Composer, composerResourceTriggerAt } from './Composer.js'
@@ -128,6 +128,202 @@ describe('composer resource triggers', () => {
   })
 })
 
+describe('Composer loading controls', () => {
+  function expectSkeleton(label: string, className: string) {
+    const labelElement = screen.getByText(label)
+    const status = labelElement.closest('[role="status"]') as HTMLElement
+    expect(labelElement.classList.contains('visually-hidden')).toBe(true)
+    expect(status.classList.contains('skeleton-group')).toBe(true)
+    expect(status.classList.contains(className)).toBe(true)
+    expect(status.getAttribute('aria-busy')).toBe('true')
+    expect(status.hasAttribute('tabindex')).toBe(false)
+    expect(status.querySelector('button, input, [tabindex]')).toBeNull()
+    expect(status.querySelectorAll('.skeleton[aria-hidden="true"]').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/^Loading(?: models?)?…$/)).toBeNull()
+    return status
+  }
+
+  it('keeps the model trigger skeleton through discovery and its first lazy load', async () => {
+    const view = renderComposer(vi.fn(), { modelsLoaded: false })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+
+    view.rerenderComposer({
+      modelsLoaded: true,
+      models: [
+        {
+          key: 'codex:model',
+          provider: 'codex',
+          sourceName: 'Codex',
+          mark: 'openai',
+          model: {
+            id: 'model',
+            displayName: 'Test model',
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        },
+      ],
+    })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    expect(await screen.findByRole('button', { name: 'Model and reasoning' })).toBeTruthy()
+    expect(screen.queryByText('Loading model')).toBeNull()
+  })
+
+  it('removes the model placeholder when discovery finishes without models', () => {
+    const view = renderComposer(vi.fn(), { modelsLoaded: false })
+    expectSkeleton('Loading model', 'composer-skeleton-model')
+    view.rerenderComposer({ modelsLoaded: true })
+    expect(screen.queryByText('Loading model')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+  })
+
+  it('keeps the permission frame disabled until its icon and label arrive', () => {
+    const onApprovalChange = vi.fn()
+    const view = renderComposer(vi.fn(), { approvalLoading: true, onApprovalChange })
+    const button = screen.getByRole('button', { name: 'Permissions' }) as HTMLButtonElement
+    const status = expectSkeleton('Loading permissions', 'composer-skeleton-permission')
+    expect(button.contains(status)).toBe(true)
+    expect(button.disabled).toBe(true)
+    fireEvent.click(button)
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(onApprovalChange).not.toHaveBeenCalled()
+
+    view.rerenderComposer({ approvalLoading: false })
+    expect(screen.getByRole('button', { name: 'Permissions' })).toBe(button)
+    expect(button.disabled).toBe(false)
+    expect(button.textContent).toBe('Ask first')
+    expect(screen.queryByText('Loading permissions')).toBeNull()
+  })
+
+  it('replaces the attachment slot with the real button once support is known', () => {
+    const view = renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      attachmentsSupported: false,
+    })
+    const status = expectSkeleton('Loading attachments', 'composer-skeleton-attachment')
+    expect(status.parentElement?.classList.contains('tools')).toBe(true)
+    expect(status.previousElementSibling).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+
+    view.rerenderComposer({ attachmentsLoading: false, attachmentsSupported: true })
+    expect(screen.getByRole('button', { name: 'Attach files' }).previousElementSibling).toBeNull()
+    expect(screen.queryByText('Loading attachments')).toBeNull()
+  })
+
+  it('keeps the voice slot through status discovery and its first lazy load', async () => {
+    const view = renderComposer(vi.fn(), { voiceLoading: true })
+    const status = expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expect(status.querySelector('.skeleton--circle')).toBeTruthy()
+    expect(status.nextElementSibling?.classList.contains('composer__send-beam')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+
+    view.rerenderComposer({ voiceLoading: false, voiceAvailable: true })
+    expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    expect(screen.queryByText('Loading voice')).toBeNull()
+  })
+
+  it('does not reserve an idle voice control while a turn is running', () => {
+    renderComposer(vi.fn(), { voiceLoading: true, running: true })
+    expect(screen.queryByText('Loading voice')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+  })
+
+  it('replaces the branch placeholder in the new-session shelf', () => {
+    const view = renderComposer(vi.fn(), { branchesLoading: true, branches: [] })
+    const status = expectSkeleton('Loading branches', 'composer-skeleton-branch')
+    expect(status.parentElement?.classList.contains('composer__shelf')).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+
+    view.rerenderComposer({ branchesLoading: false, branches: ['main'] })
+    expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
+    expect(screen.queryByText('Loading branches')).toBeNull()
+  })
+
+  it('does not offer “Choose project” before the project list has arrived', () => {
+    const view = renderComposer(vi.fn(), {
+      projects: [],
+      projectPath: undefined,
+      projectName: undefined,
+      projectsLoading: true,
+    })
+    const project = screen.getByRole('button', { name: 'Choose project' })
+    expect(project.querySelector('.skeleton')).not.toBeNull()
+    expect(project.textContent).toBe('')
+
+    view.rerenderComposer({ projectsLoading: false })
+    expect(project.querySelector('.skeleton')).toBeNull()
+    expect(project.textContent).toBe('Choose project')
+  })
+
+  it('removes unavailable controls after loading without leaving false placeholders', () => {
+    const view = renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      attachmentsSupported: false,
+      voiceLoading: true,
+      branchesLoading: true,
+      branches: [],
+    })
+    expectSkeleton('Loading attachments', 'composer-skeleton-attachment')
+    expectSkeleton('Loading voice', 'composer-skeleton-voice')
+    expectSkeleton('Loading branches', 'composer-skeleton-branch')
+    view.rerenderComposer({
+      attachmentsLoading: false,
+      voiceLoading: false,
+      branchesLoading: false,
+    })
+    expect(screen.queryByText(/^Loading (attachments|voice|branches)$/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Attach files' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Choose branch' })).toBeNull()
+  })
+
+  it('does not replace known controls with placeholders during a refresh', async () => {
+    renderComposer(vi.fn(), {
+      attachmentsLoading: true,
+      branchesLoading: true,
+      voiceLoading: true,
+      voiceAvailable: true,
+    })
+    expect(screen.getByRole('button', { name: 'Attach files' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Choose branch' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Record voice note' })).toBeTruthy()
+    expect(screen.queryByText(/^Loading (attachments|voice|branches)$/)).toBeNull()
+  })
+
+  it('opens a non-interactive resource frame before the picker chunk arrives', async () => {
+    renderComposer(vi.fn(), { transport: populatedResourceTransport() })
+    const textarea = screen.getByRole('textbox', { name: 'Message' })
+    textarea.focus()
+    for (const marker of ['/', '$', '@']) {
+      fireEvent.change(textarea, { target: { value: marker } })
+      const status = expectSkeleton('Loading skills and MCP servers…', 'skeleton-group')
+      const list = screen.getByRole('listbox', { name: 'Skills and MCP servers' })
+      expect(list.classList.contains('composer-skeleton-picker__list')).toBe(true)
+      expect(list.parentElement?.classList.contains('composer-skeleton-picker')).toBe(true)
+      expect(textarea.getAttribute('aria-controls')).toBe(list.id)
+      expect(
+        Array.from(
+          status.querySelectorAll<HTMLElement>('.skeleton-row__title'),
+          (bar) => bar.style.width,
+        ),
+      ).toEqual(['108px', '76px', '132px', '92px'])
+      expect(document.activeElement).toBe(textarea)
+      expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true)
+      fireEvent.keyDown(textarea, { key: 'Escape' })
+      expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    }
+
+    fireEvent.change(textarea, { target: { value: '@skill' } })
+    fireEvent.change(textarea, { target: { value: '@' } })
+    expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
+    expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    expect(document.activeElement).toBe(textarea)
+  })
+})
+
 describe('Composer draft state', () => {
   it('keeps the native draft through unrelated rerenders and submits the latest text', () => {
     const onSend = vi.fn()
@@ -203,6 +399,83 @@ describe('Composer docking motion', () => {
 })
 
 describe('Composer media attachments', () => {
+  it('attaches native drops larger than 25 MiB without copying them', () => {
+    const onSend = vi.fn()
+    const nativeLookup = vi.fn(() => '/work/large.zip')
+    vi.stubGlobal('harness', { droppedFilePath: nativeLookup })
+    renderComposer(onSend)
+    const file = new File(['native file'], 'large.zip')
+    Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 })
+    fireEvent.drop(document.querySelector('.composer__box')!, { dataTransfer: { files: [file] } })
+    expect(nativeLookup).toHaveBeenCalledWith(file)
+    expect(bridge.savePastedFile).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('', ['/work/large.zip'])
+  })
+
+  it('keeps a pasted file registered with its original draft while saving', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    const view = renderComposer(vi.fn(), {
+      draftRequest: { request: 1, text: '', attachments: [] },
+      onPendingAttachment: register,
+    })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    expect(register).toHaveBeenCalledOnce()
+    const saved = register.mock.calls[0]![0] as Promise<string | undefined>
+    view.rerenderComposer({ draftRequest: { request: 2, text: 'Other chat', attachments: [] } })
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(saved).resolves.toBe('/saved/notes.txt')
+    expect(screen.queryByText('notes.txt')).toBeNull()
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Other chat',
+    )
+  })
+
+  it('keeps a saved paste itself while its draft is still shown', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    const onSend = vi.fn()
+    renderComposer(onSend, { onPendingAttachment: register })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(register.mock.calls[0]![0]).resolves.toBeUndefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    expect(onSend).toHaveBeenCalledWith('', ['/saved/notes.txt'])
+  })
+
+  it('does not restore a removed pending paste when its save finishes', async () => {
+    let resolve!: (value: { path: string; name: string }) => void
+    bridge.savePastedFile.mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done
+      }),
+    )
+    const register = vi.fn()
+    renderComposer(vi.fn(), { onPendingAttachment: register })
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove notes.txt' }))
+    await act(async () => resolve({ path: '/saved/notes.txt', name: 'notes.txt' }))
+    await expect(register.mock.calls[0]![0]).resolves.toBeUndefined()
+    expect(screen.queryByText('notes.txt')).toBeNull()
+  })
+
   it('previews a pasted image and sends its materialized path', async () => {
     const onSend = vi.fn()
     renderComposer(onSend)
@@ -457,6 +730,65 @@ describe('Composer send handoff', () => {
 })
 
 describe('Composer queue', () => {
+  it('waits for queue deletion confirmation and preserves typing during the wait', async () => {
+    let finish!: (removed: boolean) => void
+    const onDeleteQueuedTurn = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          finish = resolve
+        }),
+    )
+    renderComposer(vi.fn(), {
+      queuedTurns: [
+        { id: 'q1', text: 'Queued prompt', attachments: ['/work/notes.txt'], createdAt: 1 },
+      ],
+      onDeleteQueuedTurn,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queued prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queued prompt' }))
+    expect(onDeleteQueuedTurn).toHaveBeenCalledOnce()
+    expect(composer.value).toBe('')
+    expect(screen.queryByRole('button', { name: 'Remove notes.txt' })).toBeNull()
+    fireEvent.change(composer, { target: { value: 'Still typing' } })
+    await act(async () => finish(true))
+    expect(composer.value).toBe('Queued prompt\n\nStill typing')
+    expect(screen.getByRole('button', { name: 'Remove notes.txt' })).toBeTruthy()
+  })
+
+  it.each([false, undefined])(
+    'does not copy a prompt when deletion returns %s',
+    async (removed) => {
+      renderComposer(vi.fn(), {
+        queuedTurns: [{ id: 'q1', text: 'Already started', attachments: [], createdAt: 1 }],
+        onDeleteQueuedTurn: vi.fn(async () => removed),
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Edit Already started' }))
+      expect((await screen.findByRole('alert')).textContent).toContain('may have already started')
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
+    },
+  )
+
+  it('shows the server reason when a queued prompt cannot be removed or edited', async () => {
+    const onDeleteQueuedTurn = vi.fn(async () => {
+      throw new Error('That queued prompt already started or was removed.')
+    })
+    renderComposer(vi.fn(), {
+      queuedTurns: [{ id: 'q1', text: 'Already started', attachments: [], createdAt: 1 }],
+      onDeleteQueuedTurn,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Already started from queue' }))
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'already started or was removed',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Already started' }))
+    await waitFor(() => expect(onDeleteQueuedTurn).toHaveBeenCalledTimes(2))
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'already started or was removed',
+    )
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe('')
+  })
+
   it('shows the first queued media and restores every preview when editing', async () => {
     const previews = new Map([
       [
@@ -483,7 +815,7 @@ describe('Composer queue', () => {
     bridge.previewViewedImage.mockImplementation(async (reference: string) =>
       previews.get(reference),
     )
-    const onDeleteQueuedTurn = vi.fn()
+    const onDeleteQueuedTurn = vi.fn(async () => true)
     renderComposer(vi.fn(), {
       running: true,
       queuedTurns: [
@@ -802,7 +1134,7 @@ describe('Composer queue', () => {
   })
 
   it('offers drag reorder, steer, remove, and edit actions for queued prompts', async () => {
-    const onDeleteQueuedTurn = vi.fn()
+    const onDeleteQueuedTurn = vi.fn(async () => true)
     const onMoveQueuedTurn = vi.fn()
     const onSteerQueuedTurn = vi.fn()
     renderComposer(vi.fn(), {
@@ -866,8 +1198,10 @@ describe('Composer queue', () => {
     expect(onMoveQueuedTurn).toHaveBeenCalledTimes(3)
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit Polish the queue' }))
-    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
-      'Polish the queue',
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Polish the queue',
+      ),
     )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
@@ -1378,6 +1712,29 @@ describe('Composer branch shelf', () => {
 })
 
 describe('Composer draft replacement', () => {
+  it.each(['remove', 'send'])(
+    'publishes an empty resource list after %s returns to the hydrated value',
+    async (action) => {
+      const onResourcesChange = vi.fn()
+      renderComposer(vi.fn(), {
+        transport: populatedResourceTransport(),
+        draftRequest: { text: '', attachments: [], resources: [], request: 1 },
+        onResourcesChange,
+      })
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), { target: { value: '/air' } })
+      fireEvent.click(await screen.findByRole('option', { name: /Airtable CLI/ }))
+      await waitFor(() =>
+        expect(onResourcesChange).toHaveBeenLastCalledWith([
+          expect.objectContaining({ name: 'Airtable CLI' }),
+        ]),
+      )
+      if (action === 'remove')
+        fireEvent.click(screen.getByRole('button', { name: 'Remove Airtable CLI' }))
+      else fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+      expect(onResourcesChange).toHaveBeenLastCalledWith([])
+    },
+  )
+
   it('loads a previous prompt for editing and focuses it', async () => {
     renderComposer(vi.fn(), {
       draftRequest: { text: 'Rewrite this request', request: 1 },
@@ -1553,7 +1910,7 @@ function renderComposer(
       onSend={onSend}
       onSteer={vi.fn()}
       onInterrupt={vi.fn()}
-      onDeleteQueuedTurn={vi.fn()}
+      onDeleteQueuedTurn={vi.fn(async () => true)}
       onMoveQueuedTurn={vi.fn()}
       onSteerQueuedTurn={vi.fn()}
       {...currentOverrides}

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { captureCli } from './cli.js'
 import { EventEmitter } from 'node:events'
 import {
   chmodSync,
@@ -93,6 +94,35 @@ describe('StdioJsonRpc', () => {
 })
 
 describe('runCli', () => {
+  it.each(['stdout', 'stderr'] as const)(
+    'rejects an endless %s flood without disclosing output and stops the child',
+    async (stream) => {
+      const script = `setInterval(() => process.${stream}.write('private-fixture'.repeat(8192)), 1)`
+      const child = spawnCli(process.execPath, ['-e', script])
+      const result = captureCli(child, 2000, 1024)
+      await expect(result).rejects.toThrow(
+        'CLI output exceeded the size limit. Reduce command output and retry.',
+      )
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+    },
+  )
+
+  it('counts UTF-8 bytes across both pipes before retaining output', async () => {
+    const child = spawnCli(process.execPath, [
+      '-e',
+      "process.stdout.write('é'.repeat(200)); process.stderr.write('é'.repeat(200))",
+    ])
+    await expect(captureCli(child, 2000, 700)).rejects.toThrow('output exceeded the size limit')
+  })
+
+  it('drains stderr when probing a version and reports no version after overflow', async () => {
+    // A fake process verifies the same capture path used by version probes without
+    // relying on platform-specific executable scripts.
+    const child = spawnCli(process.execPath, ['-e', "process.stderr.write('x'.repeat(65537))"])
+    await expect(captureCli(child, 2000, 65536)).rejects.toThrow('output exceeded the size limit')
+    await expect(commandVersion(process.execPath)).resolves.toMatch(/^v\d+\./)
+  })
+
   it('captures a short command without invoking a platform shell directly', async () => {
     const result = await runCli('node', ['--version'])
     expect(result.code).toBe(0)
@@ -110,13 +140,13 @@ describe('runCli', () => {
 
     const result = await runCli(process.execPath, ['-e', script], 2_000)
 
-    expect(result).toEqual({ code: 0, stdout: 'early-late', stderr: '' })
+    expect(result).toEqual({ code: 0, signal: null, stdout: 'early-late', stderr: '' })
   })
 
   it('captures provider status text written to stderr', async () => {
     const result = await runCli(process.execPath, ['-e', "process.stderr.write('provider status')"])
 
-    expect(result).toEqual({ code: 0, stdout: '', stderr: 'provider status' })
+    expect(result).toEqual({ code: 0, signal: null, stdout: '', stderr: 'provider status' })
   })
 })
 

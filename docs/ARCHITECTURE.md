@@ -60,7 +60,18 @@ cross-platform problem.
 The local Node server remains a separate long-lived process behind the typed WebSocket
 protocol. Closing or restarting the Electron window does not stop active agents. The renderer
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
-credentials.
+credentials. Quitting asks the server to shut down over IPC (`{ type: 'harness:shutdown' }`),
+so it flushes streamed text and closes the store; the desktop force-stops it only after three
+seconds. A crashed renderer reloads once on its own and then offers a Reload dialog instead of
+looping. The packaged server takes its port from the renderer's compiled CSP, so a stray
+`HARNESS_PORT` cannot split the two.
+
+Durable user data never lives in the OS temp folder, which the system may clean at any time.
+Pasted attachments are written under the app's data folder, because chat history keeps their
+paths; files pasted by older builds into `<temp>/TasteCode/pasted-files` stay readable. They
+are never pruned by age: only chat history knows whether a file is still referenced. New
+isolated chat checkouts live in `trees` beside the database for the same reason
+(`HARNESS_WORKTREE_DIR` overrides it); existing checkouts keep their stored paths.
 
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
@@ -94,12 +105,43 @@ Linux.
 
 ### Desktop update assets
 
-The desktop updater reads public releases in `Leonxlnx/tastecode` and selects
-the highest semantic app version, including prereleases, regardless of publication order.
-Beta 7 through 0.1.1 selected by publication date; those installed clients still require
-the newest public release to contain both desktop installers. The installed
-version must still be lower than the offered version. The client requires the matching
-EXE or DMG and verifies its size and SHA-256 against GitHub's asset metadata.
+The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
+feed on github.com. The API's anonymous limit is 60 requests an hour per IP address, shared
+by everything behind one office, school or VPN address, and an anonymous 304 still counts.
+The feed is outside that limit. A check that finds no newer version tag in the feed spends
+no API request. The newest newer tag costs one request to `/releases/tags/<tag>`, which
+confirms the release is published and supplies the asset digests. When that tag has no
+published release (drafts and bare tags answer 404), when none of the feed's ten newest
+tags is the installed version or older, when a feed entry has no readable tag, or when a
+full feed has nothing newer but no longer lists the installed release (later-published
+older versions can push a newer release out of the window), the release list is read
+instead. The feed is ordered by publication, so while it still lists the installed release
+everything published after it is in view. A check therefore spends at most two API
+requests while the project has fewer than 100 releases. Either way the highest semantic
+version wins regardless of publication order, and downgrades stay disabled.
+
+GitHub's pre-release flag does not matter: during the alpha every release is published as
+a pre-release, and every published release reaches every install. Drafts stay invisible.
+Beta 7 through 0.1.1 select by publication date; those installed clients still require the
+newest public release to contain both desktop installers. The client requires the matching EXE or DMG and verifies
+its size and SHA-256 against GitHub's asset metadata.
+
+Downloads survive failures and restarts. The installer is stored in the machine's cache
+directory (`~/Library/Caches/TasteCode/update-downloads` on macOS, local AppData on Windows)
+under its SHA-256, and the next attempt asks for the remaining bytes with a Range request.
+A minute without data ends an attempt and keeps the bytes so far. The bytes are verified
+before use, removed once the native updater holds its own copy, and discarded when a check
+finds nothing newer. A verified download also survives a failed preparation (`ditto`,
+`hdiutil`, `codesign`, a timeout or a Squirrel error); only proof that the package itself
+is bad (wrong signature, invalid or corrupt image) discards it, so a local failure never
+costs a silent 500 MB re-download. Removal retries and never fails an update, because
+Windows virus scanners briefly lock fresh installers.
+
+Background attempts never surface their failures. An offline launch, a GitHub outage or a
+dropped download falls back to the last verdict, is recorded in opt-in local diagnostics,
+and retries after 5, 15 and 30 minutes, then hourly. A rate-limited answer waits for
+GitHub's reset. A check the user starts, and a failed install of a ready update, show the
+error. After the machine wakes, an overdue check runs within 15 seconds.
 
 Installation remains owned by electron-updater's NSIS and Squirrel.Mac paths. On macOS,
 the client mounts the DMG read-only, validates its app ID, version and signature, and
@@ -116,6 +158,12 @@ native signing checks and replacement logic; a second release repository would s
 the release process. Removing compatibility files in beta 7 would strand beta 6 users.
 Sorting by publication date allows an older, later-published platform proof to hide the
 current version and fail asset validation before the downgrade check runs.
+Conditional API requests with ETags do not save the anonymous limit. electron-updater's
+YAML feeds and blockmaps would add files to every release and give up the two-asset
+release that installed clients rely on, so differential downloads are not offered either.
+Stable and beta channels keyed on the pre-release flag were built and removed the same day:
+with every alpha release published as a pre-release, a stable default would have blocked all
+updates. Channels need a real stable line first, at v1 at the earliest.
 
 ---
 
@@ -227,6 +275,11 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
+
+**Branch scope (2026-10-03).** `main` ships only the Codex, Claude Code and Grok adapters.
+Every other adapter in this document, the ACP agent roster and the direct API runtime exist
+only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
+behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
 
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
@@ -344,8 +397,9 @@ identities prevent duplicate chats. Imported messages use the same
 typed items and renderer as local turns. New versions append events; source membership hides
 replaced native branches without moving local event positions or checkpoints. Replay orders
 imported turns by their original time and replaces stale partial client histories when needed.
-Provider files stay read-only. Local names, pins, archives, project removal, and deletion remain
-local choices. Cloud-only chats and missing native transcript files are outside this local reader.
+Provider files stay read-only. Local names, pins, project removal, and deletion remain local
+choices; a deleted chat or closed Side chat keeps an import marker, so a rescan does not bring
+it back. Cloud-only chats and missing native transcript files are outside this local reader.
 Background rescans stay cheap: Codex reuses indexed transcript file stats for up to 60 seconds
 while its state index is unchanged, and Grok keeps a parsed session summary until the file's
 size or modification time changes.
@@ -404,7 +458,9 @@ text, so transcripts stay identical. This maintenance command is the only path t
 event rows without removing their task. See [History maintenance](./HISTORY.md).
 
 Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
-retained commits by Git common directory before removing unused refs. Restore and branch
+retained commits by Git common directory before removing unused refs. Its identity is the
+filesystem-native canonical path, so Windows long paths and 8.3 aliases share one retained-commit
+set. Resolution errors propagate and separate repositories remain distinct. Restore and branch
 switch guards instead use the canonical checkout directory: separate worktrees can work
 independently, while tasks sharing a checkout cannot restore files during another turn or
 while its process is still stopping. An isolated start receives its base ref directly.
@@ -425,6 +481,18 @@ libsql/Turso (sync story we don't need yet) · SQLite in the renderer (source of
 most disposable process) · whole-DB encryption (the DB holds no credentials by policy).
 
 ---
+
+### Direct API request retention
+
+Direct API sessions keep a bounded request context independently of the durable transcript.
+Known GPT-4.1/GPT-4o/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
+unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
+or advertised vendor context windows. Each transport checks its final JSON body too.
+Older turns are removed as complete user/assistant/tool groups; current-turn data and
+shared instructions are retained. A visible transcript notice identifies omission. If the
+current turn or tool definitions alone exceed the cap, the turn fails with an actionable
+message before network I/O. Provider errors can still impose a smaller model-specific limit.
+No transcript events are deleted by this policy.
 
 ## Long threads must feel instant
 
@@ -450,6 +518,17 @@ The rules that solve it:
    reply or patch with one em dash anywhere is stored two bytes wide, and V8 tokenized it
    about half as fast in Electron 43. Copying whole blocks was rejected because one wide
    character inside the block defeats it.
+   Completed fences above 32 KiB keep all source lines mounted while decorative token DOM
+   is applied in 12-line animation-frame batches. Repeated foreground colors inherit from
+   their line; tokens with attributes or other styles retain their elements. Simple complete
+   fences skip Markdown/HTML AST construction; complex fences retain Streamdown parsing.
+   Plain chunks reserve their full line height in one layout box, and adjacent inherited
+   text shares a text node to avoid unnecessary initial layout and removal work.
+   Large code containers override Streamdown's block-level content visibility so
+   offscreen token batches also lay out incrementally rather than all at first scroll.
+   Whole-block token commits exceeded the frame budget. CSS layout containment was rejected
+   because it increased theme compositing cost; clipping or dropping source was rejected
+   because selection, copy, horizontal scrolling and accessibility must remain intact.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
@@ -503,6 +582,11 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
+| 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
+| 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
+| 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
+| 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
 | 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |

@@ -34,12 +34,6 @@ const isProviderId = enumValidator<ProviderId>({
   codex: true,
   'claude-code': true,
   grok: true,
-  cursor: true,
-  opencode: true,
-  antigravity: true,
-  pi: true,
-  acp: true,
-  api: true,
 })
 const isInboxStatus = enumValidator<ThreadInboxStatus>({
   starting: true,
@@ -85,6 +79,20 @@ const isLifecycle = (value: unknown): boolean => {
   return lifecycleValidators[value['state'] as ThreadLifecycle['state']](value)
 }
 
+const isContextControl = objectValidator<NonNullable<Capabilities['context']>>({
+  windows: (value) =>
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((window) => Number.isSafeInteger(window) && window > 0),
+  compaction: isBoolean,
+  compactionOff: isBoolean,
+  defaultCompactAt: optional(
+    (value) => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 100,
+  ),
+  latestCompactAt: optional(
+    (value) => typeof value === 'number' && Number.isInteger(value) && value >= 10 && value <= 99,
+  ),
+})
 const isCapabilities = objectValidator<Capabilities>({
   steer: isBoolean,
   fork: isBoolean,
@@ -94,6 +102,7 @@ const isCapabilities = objectValidator<Capabilities>({
   userInput: optional(isBoolean),
   autoReview: optional(isBoolean),
   images: isBoolean,
+  context: optional(isContextControl),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,

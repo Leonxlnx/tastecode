@@ -12,6 +12,7 @@ import '../styles/composer-voice-control.css'
 export type ComposerVoiceState = 'idle' | 'starting' | 'recording' | 'transcribing'
 
 export function ComposerVoiceControl(props: {
+  contextKey?: string | undefined
   disabled: boolean
   running: boolean
   getCursor: () => number
@@ -29,6 +30,9 @@ export function ComposerVoiceControl(props: {
   const mounted = useRef(true)
   const cancelRequest = useRef(props.onCancelVoice)
   cancelRequest.current = props.onCancelVoice
+  const context = useRef(props.contextKey)
+  const currentContext = useRef(props.contextKey)
+  currentContext.current = props.contextKey
 
   const updateState = (next: ComposerVoiceState) => {
     stateRef.current = next
@@ -46,17 +50,30 @@ export function ComposerVoiceControl(props: {
     }
   }, [recorder.cancel])
 
+  useEffect(() => {
+    if (context.current === props.contextKey) return
+    context.current = props.contextKey
+    operation.current += 1
+    if (request.current) cancelRequest.current(request.current)
+    request.current = undefined
+    void recorder.cancel()
+    props.onError(undefined)
+    updateState('idle')
+  }, [props.contextKey, recorder.cancel])
+
   const start = async () => {
     if (stateRef.current !== 'idle') return
     updateState('starting')
     const generation = operation.current + 1
     operation.current = generation
+    const owner = props.contextKey
     props.onError(undefined)
     try {
       await recorder.start()
-      if (mounted.current && operation.current === generation) updateState('recording')
+      if (mounted.current && currentContext.current === owner && operation.current === generation)
+        updateState('recording')
     } catch (error) {
-      if (mounted.current && operation.current === generation) {
+      if (mounted.current && currentContext.current === owner && operation.current === generation) {
         updateState('idle')
         props.onError(describeMicrophoneError(error))
       }
@@ -66,6 +83,7 @@ export function ComposerVoiceControl(props: {
   const transcribe = async (sendAfter = false) => {
     if (stateRef.current !== 'recording') return
     const generation = operation.current
+    const owner = props.contextKey
     const cursor = props.getCursor()
     updateState('transcribing')
     props.onError(undefined)
@@ -73,21 +91,37 @@ export function ComposerVoiceControl(props: {
     request.current = requestId
     try {
       const recording = await recorder.stop()
-      if (!mounted.current || operation.current !== generation) return
+      if (!mounted.current || currentContext.current !== owner || operation.current !== generation)
+        return
       if (!recording) {
         props.onError('No audio was captured. Check the selected microphone and try again.')
         return
       }
       const transcript = await props.onTranscribeVoice(requestId, recording)
-      if (mounted.current && operation.current === generation && request.current === requestId) {
+      if (
+        mounted.current &&
+        currentContext.current === owner &&
+        operation.current === generation &&
+        request.current === requestId
+      ) {
         props.onTranscript(transcript, cursor, sendAfter)
       }
     } catch (error) {
-      if (mounted.current && operation.current === generation && request.current === requestId) {
+      if (
+        mounted.current &&
+        currentContext.current === owner &&
+        operation.current === generation &&
+        request.current === requestId
+      ) {
         props.onError(error instanceof Error ? error.message : 'Voice transcription failed.')
       }
     } finally {
-      if (mounted.current && operation.current === generation && request.current === requestId) {
+      if (
+        mounted.current &&
+        currentContext.current === owner &&
+        operation.current === generation &&
+        request.current === requestId
+      ) {
         request.current = undefined
         updateState('idle')
       }

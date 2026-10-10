@@ -1,39 +1,58 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { ComponentProps } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { methods, type Account, type ProviderId, type ResultOf } from '@harness/contracts'
 import { customModelChoice, type ModelChoice } from '../model-catalog.js'
 import { MODEL_PICKER_LAYOUT_KEY, writeModelPickerLayout } from '../model-picker-layout.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerUpdatesStore } from '../provider-updates.js'
+import { SIMULATED_CHECK_MS, stopAppUpdateSimulation } from '../app-update-simulation.js'
 import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
 import { ProviderSettings, Settings } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
+import * as bridge from '../bridge.js'
 
 type ProviderStatus = ResultOf<'providers.list'>['providers'][number]
 
+const settingsLoading = vi.hoisted(() => ({
+  desktop: false,
+  terminal: undefined as Promise<void> | undefined,
+}))
+
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  get isDesktop() {
+    return settingsLoading.desktop
+  },
+}))
+
 vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: (props: { installKey: string }) => (
-    <div data-testid="install-terminal" data-install-key={props.installKey} />
-  ),
+  InstallTerminal: (props: { installKey: string }) => {
+    if (settingsLoading.terminal) throw settingsLoading.terminal
+    return <div data-testid="install-terminal" data-install-key={props.installKey} />
+  },
 }))
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'about'
+    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
     transport?: Transport
     showMacOSHaptics?: boolean
     onKeybindingChange?: (action: KeybindingId, shortcut: Shortcut | null) => void
     onKeybindingsReset?: () => void
+    overrides?: Partial<ComponentProps<typeof Settings>>
   } = {},
 ) {
   const transport = options.transport ?? new TestTransport()
 
-  return render(
+  const element = (
     <Settings
       provider="codex"
       providerName="Codex"
@@ -42,8 +61,6 @@ function renderSettings(
       projectName={undefined}
       account={undefined}
       providerStatuses={[]}
-      acpAgents={[]}
-      modelConnections={[]}
       models={[]}
       hiddenModels={new Set()}
       onModelVisibilityChange={() => {}}
@@ -69,10 +86,18 @@ function renderSettings(
       showMacOSHaptics={options.showMacOSHaptics ?? false}
       onAccountChange={() => {}}
       initialSection={options.initialSection ?? 'appearance'}
+      showDebug={options.showDebug}
       onReset={options.onReset ?? (() => {})}
       onClose={options.onClose ?? (() => {})}
-    />,
+      {...options.overrides}
+    />
   )
+  const view = render(element)
+  return {
+    ...view,
+    rerenderSettings: (updates: Partial<ComponentProps<typeof Settings>>) =>
+      view.rerender(<Settings {...element.props} {...updates} />),
+  }
 }
 
 function renderAppearanceSettings(showMacOSHaptics = false) {
@@ -81,14 +106,17 @@ function renderAppearanceSettings(showMacOSHaptics = false) {
 
 afterEach(() => {
   cleanup()
+  stopAppUpdateSimulation()
   vi.useRealTimers()
   vi.restoreAllMocks()
   resetInstalls()
+  settingsLoading.desktop = false
+  settingsLoading.terminal = undefined
   writeModelPickerLayout('list')
   localStorage.removeItem(MODEL_PICKER_LAYOUT_KEY)
   writeAppHaptics(true)
   localStorage.removeItem(HAPTICS_KEY)
-  writeTerminalPlacement('bottom')
+  writeTerminalPlacement('workspace')
   localStorage.removeItem(TERMINAL_PLACEMENT_KEY)
   localStorage.removeItem('harness.providerEmail.codex')
   localStorage.removeItem('harness.providerEmail.claude-code')
@@ -105,6 +133,12 @@ describe('settings viewport layout', () => {
     expect(settings?.querySelector(':scope > .settings__main')).toBeTruthy()
   })
 
+  it('opens on General when no section is asked for', () => {
+    renderSettings({ overrides: { initialSection: undefined } })
+
+    expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
+  })
+
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
@@ -118,23 +152,20 @@ describe('settings viewport layout', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
-    expect(screen.getByRole('switch', { name: 'Provider rail layout' })).toBeTruthy()
-    expect(
-      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
-    ).toContain('Bottom panel')
+    expect(screen.getByRole('radiogroup', { name: 'Model picker' })).toBeTruthy()
+    expect(screen.getByRole('radio', { name: 'Right' }).getAttribute('aria-checked')).toBe('true')
 
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
-    expect(screen.queryByRole('switch', { name: 'Provider rail layout' })).toBeNull()
+    expect(screen.queryByRole('radiogroup', { name: 'Model picker' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: 'Data & privacy' }))
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeTruthy()
   })
 
-  it('pairs theme previews with compact appearance controls', () => {
+  it('pairs theme previews with open appearance rows', () => {
     renderSettings()
 
     expect(screen.getByRole('heading', { name: 'Theme', level: 2 })).toBeTruthy()
-    expect(screen.getByRole('img', { name: /code.*preview/i })).toBeTruthy()
     expect(screen.getAllByRole('radio').map((option) => option.getAttribute('value'))).toEqual([
       'system',
       'light',
@@ -148,21 +179,48 @@ describe('settings viewport layout', () => {
       within(details)
         .getAllByRole('combobox')
         .map((control) => control.getAttribute('aria-label')),
-    ).toEqual(['Dark mode theme', 'Interface font', 'Sidebar translucency'])
-    expect(within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })).toBeTruthy()
+    ).toEqual(['Interface font', 'Sidebar translucency'])
+    const accent = within(details).getByRole('button', { name: 'Accent palette: #4C9DFF' })
+    expect(accent.textContent).toBe('Neutral')
     expect(within(details).getByRole('button', { name: 'Background: #0F0F0F' })).toBeTruthy()
+    expect(within(details).queryByRole('button', { name: 'Reset colors' })).toBeNull()
   })
 
-  it('lets the terminal shortcut target the right sidebar', () => {
+  it('resets one mode to its default colors once they change', () => {
+    const onAppearancePreferenceChange = vi.fn()
+    renderSettings({
+      overrides: {
+        appearancePreferences: {
+          light: { font: 'geist', accent: 'neutral', backdrop: 'default', glass: 0 },
+          dark: { font: 'geist', accent: 'rose', backdrop: '#1B1A17', glass: 0 },
+        },
+        onAppearancePreferenceChange,
+      },
+    })
+
+    const dark = screen.getByRole('region', { name: 'Dark mode' })
+    expect(within(dark).getByRole('button', { name: 'Background: #1B1A17' }).textContent).toBe(
+      '#1B1A17',
+    )
+    expect(
+      within(screen.getByRole('region', { name: 'Light mode' })).queryByRole('button', {
+        name: 'Reset colors',
+      }),
+    ).toBeNull()
+    fireEvent.click(within(dark).getByRole('button', { name: 'Reset colors' }))
+    expect(onAppearancePreferenceChange).toHaveBeenCalledWith('dark', {
+      accent: 'neutral',
+      backdrop: 'default',
+    })
+  })
+
+  it('lets the terminal shortcut target the bottom panel', () => {
     renderSettings({ initialSection: 'workflows' })
 
-    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Bottom' }))
 
-    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
-    expect(
-      screen.getByRole('combobox', { name: 'Default terminal location' }).textContent,
-    ).toContain('Right sidebar')
+    expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('bottom')
+    expect(screen.getByRole('radio', { name: 'Bottom' }).getAttribute('aria-checked')).toBe('true')
   })
 })
 
@@ -198,7 +256,7 @@ describe('about status grammar', () => {
       transport,
     })
 
-    expect(screen.getByText('Browser · pre-release').className).toBe('settings-meta')
+    expect((await screen.findByText('Browser · pre-release')).className).toBe('settings-meta')
     fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
     expect(screen.getByRole('status', { name: 'Checking' }).className).toContain('is-checking')
 
@@ -210,16 +268,56 @@ describe('about status grammar', () => {
   })
 })
 
+describe('app update simulation', () => {
+  it('plays a fake release through About and stops back to the real updater', async () => {
+    vi.useFakeTimers()
+    renderSettings({ initialSection: 'debug', showDebug: true })
+    const stop = screen.getByRole('button', { name: 'Stop' })
+    expect(stop.hasAttribute('disabled')).toBe(true)
+
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Update' })))
+    expect(stop.hasAttribute('disabled')).toBe(false)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'About' })))
+    expect(screen.getByRole('status', { name: 'Checking' })).toBeTruthy()
+
+    await act(() => vi.advanceTimersByTimeAsync(SIMULATED_CHECK_MS))
+    expect(screen.getByRole('button', { name: 'Downloading…' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByText(/Downloading 1\.0\.0/)).toBeTruthy()
+
+    await act(async () => stopAppUpdateSimulation())
+    expect(screen.getByRole('button', { name: 'Check for updates' })).toBeTruthy()
+    expect(screen.queryByRole('status', { name: /Checking/ })).toBeNull()
+  })
+})
+
+describe('provider update simulation', () => {
+  it('starts and stops made-up releases from Debug', () => {
+    const transport = new TestTransport(() => ({ updates: [] }))
+    renderSettings({ initialSection: 'debug', showDebug: true, transport })
+    const stop = screen.getByRole('button', { name: 'Stop provider update simulation' })
+    expect(stop.hasAttribute('disabled')).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Three releases' }))
+    expect(providerUpdatesStore(transport).snapshot()).toMatchObject({ simulation: 'several' })
+    expect(providerUpdatesStore(transport).snapshot().updates).toHaveLength(3)
+    expect(stop.hasAttribute('disabled')).toBe(false)
+
+    fireEvent.click(stop)
+    expect(providerUpdatesStore(transport).snapshot().simulation).toBeUndefined()
+    expect(stop.hasAttribute('disabled')).toBe(true)
+  })
+})
+
 describe('model picker layout setting', () => {
   it('reflects changes from the shared layout preference', () => {
     renderSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
-    const toggle = screen.getByRole('switch', { name: 'Provider rail layout' })
-    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    const rail = screen.getByRole('radio', { name: 'Rail' })
+    expect(rail.getAttribute('aria-checked')).toBe('false')
 
     act(() => writeModelPickerLayout('rail'))
 
-    expect(toggle.getAttribute('aria-checked')).toBe('true')
+    expect(rail.getAttribute('aria-checked')).toBe('true')
   })
 })
 
@@ -342,6 +440,223 @@ function deferred<T>() {
   return { promise, resolve, reject }
 }
 
+describe('settings loading values', () => {
+  it('holds model source cards until the first catalog arrives', async () => {
+    const { container, rerenderSettings } = renderSettings({
+      initialSection: 'models',
+      overrides: { modelsLoading: true },
+    })
+    const loading = screen.getByText('Loading models…').closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('model-settings__sources')).toBe(true)
+    expect(loading.querySelectorAll('.model-visibility')).toHaveLength(2)
+    expect(loading.querySelectorAll('.model-visibility__model')).toHaveLength(7)
+    expect(loading.querySelectorAll('.settings__switch-skeleton')).toHaveLength(7)
+    expect(container.querySelector('.model-settings__empty')).toBeNull()
+    expect(within(loading as HTMLElement).queryByRole('switch')).toBeNull()
+
+    const models: ModelChoice[] = [
+      {
+        key: 'codex:luna',
+        provider: 'codex',
+        sourceName: 'Codex',
+        mark: 'openai',
+        model: {
+          id: 'luna',
+          displayName: 'Luna',
+          isDefault: true,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      },
+    ]
+    rerenderSettings({ modelsLoading: false, models })
+    expect(screen.queryByText('Loading models…')).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Include Luna in model picker' })).toBeTruthy()
+
+    rerenderSettings({ modelsLoading: true, models })
+    expect(screen.queryByText('Loading models…')).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Include Luna in model picker' })).toBeTruthy()
+
+    rerenderSettings({ modelsLoading: false, models: [] })
+    expect(
+      screen.getByText('No models are available from your connected providers yet.'),
+    ).toBeTruthy()
+    await act(async () => {})
+  })
+
+  it('loads the background model value and note without guessing Automatic', async () => {
+    const settings = deferred<ResultOf<'backgroundModel.settings'>>()
+    const transport = new TestTransport(() => settings.promise)
+    renderSettings({ initialSection: 'models', transport })
+    const background = screen.getByRole('region', { name: 'Background work' })
+    const loading = within(background).getByText('Loading background model…')
+    expect(loading.closest('[role="status"]')?.getAttribute('aria-busy')).toBe('true')
+    expect(loading.closest('[role="status"]')?.querySelector('.skeleton--block')).toBeTruthy()
+    expect(within(background).getByText('Loading background model details…').className).toBe(
+      'visually-hidden',
+    )
+    expect(within(background).queryByRole('combobox')).toBeNull()
+    expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
+    expect(within(background).queryByText(/Connect a provider with an available model/)).toBeNull()
+    expect(within(background).queryByText('Reasoning effort')).toBeNull()
+    expect(within(background).queryByText('Speed')).toBeNull()
+
+    await act(async () =>
+      settings.resolve({
+        preference: { mode: 'automatic' },
+        sources: [],
+        resolved: {
+          provider: 'codex',
+          model: 'luna',
+          sourceName: 'Codex',
+          automatic: true,
+        },
+      }),
+    )
+    expect(within(background).queryByText('Loading background model…')).toBeNull()
+    expect(within(background).getByRole('combobox', { name: 'Background model' }).textContent).toBe(
+      'Automatic (recommended)',
+    )
+    expect(within(background).getByText('Currently luna through Codex.')).toBeTruthy()
+  })
+
+  it('ends the background skeleton on failure without inventing a selection', async () => {
+    const settings = deferred<ResultOf<'backgroundModel.settings'>>()
+    renderSettings({
+      initialSection: 'models',
+      transport: new TestTransport(() => settings.promise),
+    })
+    await act(async () => settings.reject(new Error('Background settings offline')))
+    const background = screen.getByRole('region', { name: 'Background work' })
+    expect(within(background).queryByText('Loading background model…')).toBeNull()
+    expect(within(background).getByRole('alert').textContent).toBe('Background settings offline')
+    expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
+  })
+
+  it('holds the app version and update verdict until native state arrives', async () => {
+    const update = deferred<bridge.AppUpdateState>()
+    settingsLoading.desktop = true
+    vi.spyOn(bridge, 'appUpdateState').mockReturnValue(update.promise)
+    renderSettings({ initialSection: 'about' })
+    const version = screen.getByText('Loading app version…').closest('[aria-busy="true"]')!
+    expect(version.closest('.settings-meta')).toBeTruthy()
+    expect(version.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 9px')
+    expect(screen.getByText('Loading update status…').className).toBe('visually-hidden')
+    expect(screen.queryByText(/pre-release/)).toBeNull()
+
+    await act(async () =>
+      update.resolve({
+        status: 'current',
+        currentVersion: '1.2.3',
+      }),
+    )
+    expect(screen.queryByText('Loading app version…')).toBeNull()
+    expect(screen.queryByText('Loading update status…')).toBeNull()
+    expect(screen.getByText('Desktop · 1.2.3')).toBeTruthy()
+    expect(screen.getByRole('status', { name: 'Ready · Up to date' })).toBeTruthy()
+  })
+
+  it('passes the account loading state to the profile plan slot', () => {
+    const { rerenderSettings } = renderSettings({
+      overrides: { initialSection: 'profile', accountLoading: true },
+    })
+    expect(screen.getByText('Loading account plan…').closest('.profile__plan')).toBeTruthy()
+    rerenderSettings({
+      initialSection: 'profile',
+      accountLoading: false,
+      account: { signedIn: true, plan: 'Pro' },
+    })
+    expect(screen.queryByText('Loading account plan…')).toBeNull()
+    expect(screen.getByText('Pro plan')).toBeTruthy()
+  })
+
+  it.each([true, false])(
+    'does not assume diagnostics is off before IPC returns %s',
+    async (enabled) => {
+      const diagnostics = deferred<boolean>()
+      settingsLoading.desktop = true
+      vi.spyOn(bridge, 'localDiagnosticsEnabled').mockReturnValue(diagnostics.promise)
+      const toggle = vi.spyOn(bridge, 'setLocalDiagnosticsEnabled').mockResolvedValue(!enabled)
+      renderSettings({ initialSection: 'data' })
+      const loading = screen.getByText('Loading local diagnostics…').closest('[role="status"]')!
+      expect(loading.getAttribute('aria-busy')).toBe('true')
+      expect(loading.classList.contains('settings__switch-skeleton')).toBe(true)
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 36px')
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 22px')
+      expect(screen.queryByRole('switch', { name: 'Local diagnostics' })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull()
+
+      await act(async () => diagnostics.resolve(enabled))
+      expect(screen.queryByText('Loading local diagnostics…')).toBeNull()
+      expect(
+        screen.getByRole('switch', { name: 'Local diagnostics' }).getAttribute('aria-checked'),
+      ).toBe(String(enabled))
+      expect(Boolean(screen.queryByRole('button', { name: 'Open folder' }))).toBe(enabled)
+      await act(async () =>
+        fireEvent.click(screen.getByRole('switch', { name: 'Local diagnostics' })),
+      )
+      expect(toggle).toHaveBeenCalledWith(!enabled)
+      expect(
+        screen.getByRole('switch', { name: 'Local diagnostics' }).getAttribute('aria-checked'),
+      ).toBe(String(!enabled))
+    },
+  )
+
+  it('keeps the project count pending without asserting zero projects', async () => {
+    const { rerenderSettings } = renderSettings({
+      initialSection: 'data',
+      overrides: { projectsLoading: true },
+    })
+    const loading = screen.getByText('Loading project count…')
+    expect(loading.className).toBe('visually-hidden')
+    expect(loading.closest('[aria-busy="true"]')?.querySelector('.skeleton')).toBeTruthy()
+    expect(screen.queryByText('0 projects on this machine')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Reset app preferences' })).toBeTruthy()
+    rerenderSettings({ projectsLoading: false, projectCount: 3 })
+    expect(screen.queryByText('Loading project count…')).toBeNull()
+    expect(screen.getByText('3 projects on this machine')).toBeTruthy()
+    await act(async () => {})
+  })
+
+  it('fills the install terminal frame while its lazy content opens', async () => {
+    const terminal = deferred<void>()
+    settingsLoading.terminal = terminal.promise
+    renderProviders(
+      [
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: false,
+          auth: 'unknown',
+          setup: {
+            installUrl: 'https://example.test/claude',
+            installCommand: 'npm install -g @anthropic-ai/claude-code',
+            login: 'provider',
+          },
+        },
+      ],
+      (method) =>
+        method === 'providers.install' ? { terminalId: 'loading-install' } : { signedIn: false },
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    const loading = (await screen.findByText('Opening terminal…')).closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.classList.contains('install-terminal')).toBe(true)
+    expect(loading.querySelectorAll('.skeleton-code__line')).toHaveLength(9)
+    expect(loading.querySelector('.skeleton-code__gutter')).toBeNull()
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+
+    await act(async () => {
+      settingsLoading.terminal = undefined
+      terminal.resolve()
+    })
+    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    expect(screen.queryByText('Opening terminal…')).toBeNull()
+  })
+})
+
 function renderProviders(
   statuses: ProviderStatus[],
   request: TestRequestResolver,
@@ -435,13 +750,18 @@ describe('provider authentication states', () => {
       'is-primary',
     )
     const signOut = within(codex).getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-secondary')
+    expect(signOut.className).toContain('is-primary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
     fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
     expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
     expect(within(grok).queryByRole('button', { name: 'Problem details' })).toBeNull()
+    expect([codex, claude, grok].map((row) => row.dataset['link'])).toEqual([
+      'connected',
+      'open',
+      'none',
+    ])
     const guide = within(grok).getByRole('link', { name: 'Open setup guide' })
     expect(guide.querySelector('svg')).toBeTruthy()
     expect(guide.getAttribute('href')).toBe('https://x.ai/cli')
@@ -727,13 +1047,13 @@ describe('model settings', () => {
   it('uses All and None buttons to change every model for one provider', () => {
     const models: ModelChoice[] = [
       {
-        key: 'opencode:ling',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:ling',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'zen/ling-3.0-tiny',
-          displayName: 'OpenCode Zen · Ling-3.0-tiny Free',
+          displayName: 'Grok 4.6 Fast',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -741,13 +1061,13 @@ describe('model settings', () => {
         },
       },
       {
-        key: 'opencode:qwen',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:qwen',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'go/qwen3.8-max',
-          displayName: 'OpenCode Go · Qwen3.8 Max',
+          displayName: 'Grok Code Max',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -767,8 +1087,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={models}
         hiddenModels={hiddenModels}
         onModelVisibilityChange={onModelVisibilityChange}
@@ -792,28 +1110,28 @@ describe('model settings', () => {
         onClose={() => {}}
       />
     )
-    const view = render(settings(new Set(['opencode:ling'])))
+    const view = render(settings(new Set(['grok:ling'])))
 
     const categories = screen.getByRole('navigation', { name: 'Settings categories' })
     expect(within(categories).getAllByRole('button')[0]?.textContent).toBe('General')
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const sourceHeading = screen.getByText('OpenCode').closest('.source-identity')
-    expect(sourceHeading?.getAttribute('title')).toBe('OpenCode')
+    const sourceHeading = screen.getByText('Grok').closest('.source-identity')
+    expect(sourceHeading?.getAttribute('title')).toBe('Grok')
     expect(sourceHeading?.querySelector('svg')?.getAttribute('width')).toBe('15')
     expect(screen.queryByRole('searchbox')).toBeNull()
-    expect(screen.getByText('OpenCode Zen · Ling-3.0-tiny Free')).toBeTruthy()
+    expect(screen.getByText('Grok 4.6 Fast')).toBeTruthy()
     const allButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const noneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     const ling = screen.getByRole('switch', {
-      name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+      name: 'Include Grok 4.6 Fast in model picker',
     })
     const qwen = screen.getByRole('switch', {
-      name: 'Include OpenCode Go · Qwen3.8 Max in model picker',
+      name: 'Include Grok Code Max in model picker',
     })
     expect(allButton.textContent).toBe('All')
     expect(noneButton.textContent).toBe('None')
@@ -821,7 +1139,7 @@ describe('model settings', () => {
     expect((noneButton as HTMLButtonElement).disabled).toBe(false)
     expect(
       screen.queryByRole('switch', {
-        name: 'Include models from OpenCode in model picker',
+        name: 'Include models from Grok in model picker',
       }),
     ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
@@ -829,54 +1147,54 @@ describe('model settings', () => {
 
     fireEvent.click(allButton)
     expect(onModelVisibilityChange).toHaveBeenCalledOnce()
-    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('grok:ling', true)
 
     onModelVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
     const disabledAllButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const enabledNoneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
     expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(enabledNoneButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', false)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', false)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', false)
 
     onModelVisibilityChange.mockClear()
-    view.rerender(settings(new Set(['opencode:ling', 'opencode:qwen'])))
+    view.rerender(settings(new Set(['grok:ling', 'grok:qwen'])))
     const enabledAllButton = screen.getByRole('button', {
-      name: 'Show all OpenCode models in model picker',
+      name: 'Show all Grok models in model picker',
     })
     const disabledNoneButton = screen.getByRole('button', {
-      name: 'Hide all OpenCode models from model picker',
+      name: 'Hide all Grok models from model picker',
     })
     expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
     expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(enabledAllButton)
     expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'opencode:ling', true)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'opencode:qwen', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', true)
+    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', true)
 
     onModelVisibilityChange.mockClear()
     fireEvent.click(
       screen.getByRole('switch', {
-        name: 'Include OpenCode Zen · Ling-3.0-tiny Free in model picker',
+        name: 'Include Grok 4.6 Fast in model picker',
       }),
     )
-    expect(onModelVisibilityChange).toHaveBeenCalledWith('opencode:ling', true)
-    expect(screen.getByText('OpenCode Go · Qwen3.8 Max')).toBeTruthy()
+    expect(onModelVisibilityChange).toHaveBeenCalledWith('grok:ling', true)
+    expect(screen.getByText('Grok Code Max')).toBeTruthy()
   })
 
   it('omits stored custom-model management from beta settings', () => {
-    const custom = customModelChoice(
-      { provider: 'codex', modelId: 'qwen-max', displayName: 'Qwen Max' },
-      'Codex',
-      'openai',
-    )
+    const custom = customModelChoice({
+      provider: 'codex',
+      modelId: 'qwen-max',
+      displayName: 'Qwen Max',
+    })
     const onCustomModelAdd = vi.fn()
     const onCustomModelRemove = vi.fn()
     const transport = new TestTransport()
@@ -890,8 +1208,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={[custom]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -928,13 +1244,13 @@ describe('model settings', () => {
   it('does not offer raw custom ids from a provider list', () => {
     const models: ModelChoice[] = [
       {
-        key: 'opencode:ling',
-        provider: 'opencode',
-        sourceName: 'OpenCode',
-        mark: 'opencode',
+        key: 'grok:ling',
+        provider: 'grok',
+        sourceName: 'Grok',
+        mark: 'grok',
         model: {
           id: 'zen/ling-3.0-tiny',
-          displayName: 'OpenCode Zen · Ling-3.0-tiny Free',
+          displayName: 'Grok 4.6 Fast',
           description: '',
           isDefault: false,
           reasoningEfforts: [],
@@ -954,8 +1270,6 @@ describe('model settings', () => {
         projectName={undefined}
         account={undefined}
         providerStatuses={[]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={models}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -981,7 +1295,7 @@ describe('model settings', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Models' }))
-    const group = screen.getByRole('region', { name: 'OpenCode' })
+    const group = screen.getByRole('region', { name: 'Grok' })
     expect(within(group).queryByRole('button', { name: 'Add custom model' })).toBeNull()
     expect(onCustomModelAdd).not.toHaveBeenCalled()
   })
@@ -1041,8 +1355,6 @@ describe('provider settings', () => {
     const transport = new TestTransport(async (method, params) => {
       if (method === 'auth.status') {
         const request = methods[method].params.parse(params)
-        // The Kimi CLI on this machine is already logged in; Qwen is not.
-        if (request.agent) return { signedIn: request.agent === 'kimi' }
         return accountFor(request.provider)
       }
       if (method === 'auth.startLogin') {
@@ -1057,6 +1369,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1079,42 +1392,6 @@ describe('provider settings', () => {
             setup: { installUrl: 'https://example.test/grok', login: 'provider' },
           },
         ]}
-        acpAgents={[
-          // A stale server may still list retired gemini; the row must not render.
-          {
-            id: 'gemini',
-            name: 'Gemini CLI',
-            installed: false,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/gemini',
-              installCommand: 'npm install -g @google/gemini-cli',
-              login: 'provider',
-            },
-          },
-          {
-            id: 'qwen',
-            name: 'Qwen Code',
-            installed: false,
-            verified: false,
-            setup: {
-              installUrl: 'https://example.test/qwen',
-              installCommand: 'npm install -g @qwen-code/qwen-code',
-              login: 'provider',
-            },
-          },
-          {
-            id: 'kimi',
-            name: 'Kimi CLI',
-            installed: true,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/kimi',
-              login: 'provider',
-            },
-          },
-        ]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1173,11 +1450,7 @@ describe('provider settings', () => {
     expect(emailControl.getAttribute('data-pinned')).toBe('false')
     expect(within(codexRow).queryByText(/\*+@example\.com/)).toBeNull()
 
-    // Beta scope: agent rows and the API-connection form stay out entirely,
-    // even when the server still reports agents.
-    expect(screen.queryByText('Gemini CLI')).toBeNull()
-    expect(screen.queryByText('Qwen Code')).toBeNull()
-    expect(screen.queryByText('Kimi CLI')).toBeNull()
+    // API connections do not exist on main.
     expect(screen.queryByRole('button', { name: 'Connect another plan or API' })).toBeNull()
 
     const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
@@ -1209,6 +1482,7 @@ describe('provider settings', () => {
 
     const settingsFor = (onChanged: () => void) => (
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1217,19 +1491,17 @@ describe('provider settings', () => {
         account={undefined}
         providerStatuses={[
           {
-            id: 'opencode',
-            displayName: 'OpenCode',
+            id: 'claude-code',
+            displayName: 'Claude Code',
             installed: false,
             auth: 'unknown',
             setup: {
-              installUrl: 'https://example.test/opencode',
-              installCommand: 'npm install -g opencode-ai',
+              installUrl: 'https://example.test/claude',
+              installCommand: 'npm install -g @anthropic-ai/claude-code',
               login: 'provider',
             },
           },
         ]}
-        acpAgents={[]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1259,7 +1531,7 @@ describe('provider settings', () => {
     await waitFor(() =>
       expect(transport.requests).toContainEqual({
         method: 'providers.install',
-        params: { provider: 'opencode', columns: 100, rows: 30 },
+        params: { provider: 'claude-code', columns: 100, rows: 30 },
       }),
     )
 
@@ -1267,7 +1539,7 @@ describe('provider settings', () => {
       terminalId: 'term-install-2',
       data: 'added 12 packages\r\n',
     })
-    const installRow = providerRow('OpenCode')
+    const installRow = providerRow('Claude Code')
     expect(within(installRow).getByRole('status').textContent).toContain('Installing…')
     expect(screen.queryByText('added 12 packages')).toBeNull()
     const details = within(installRow).getByRole('button', { name: 'Details' })
@@ -1354,6 +1626,7 @@ describe('provider settings', () => {
 
     render(
       <Settings
+        initialSection="providers"
         provider="codex"
         providerName="Codex"
         transport={transport}
@@ -1372,20 +1645,6 @@ describe('provider settings', () => {
             },
           },
         ]}
-        acpAgents={[
-          {
-            id: 'kimi',
-            name: 'Kimi CLI',
-            installed: true,
-            verified: true,
-            setup: {
-              installUrl: 'https://example.test/kimi',
-              login: 'provider',
-            },
-            problem: 'Vendor ended individual sign-in.',
-          },
-        ]}
-        modelConnections={[]}
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
@@ -1453,8 +1712,6 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
-    // Beta scope: agent rows never render, even when the server reports one.
-    expect(screen.queryByText('Kimi CLI')).toBeNull()
     expect(open).toHaveBeenCalledTimes(1)
     expect(onConnectionsChanged).not.toHaveBeenCalled()
   })
@@ -1601,5 +1858,178 @@ describe('provider settings', () => {
       'noopener,noreferrer',
     )
     expect(screen.queryByTestId('install-terminal')).toBeNull()
+  })
+})
+
+describe('provider defaults', () => {
+  const codex: ProviderStatus = {
+    id: 'codex',
+    displayName: 'Codex',
+    installed: true,
+    auth: 'unknown',
+    capabilities: {
+      steer: true,
+      fork: true,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: true,
+      images: true,
+      autoReview: true,
+      context: {
+        windows: [272_000, 872_000],
+        compaction: true,
+        compactionOff: false,
+        defaultCompactAt: 90,
+        latestCompactAt: 90,
+      },
+    },
+  }
+  const codexModels = [
+    { id: 'gpt-6', displayName: 'GPT-6' },
+    { id: 'gpt-5.5', displayName: 'GPT-5.5' },
+    { id: 'gpt-5.4', displayName: 'GPT-5.4' },
+  ].map((model): ModelChoice => ({
+    key: `codex:${model.id}`,
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: { ...model, isDefault: false, reasoningEfforts: [], serviceTiers: [] },
+  }))
+
+  it('hangs new-chat defaults off signed-in providers and reports changes per provider', async () => {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status') {
+        return { signedIn: (params as { provider: ProviderId }).provider === 'codex' }
+      }
+      if (method === 'providers.contextSettings') return { codex: { compactAt: 70 } }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onPinChange = vi.fn()
+    const onAccessChange = vi.fn()
+
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[codex, installedProvider('grok', 'Grok')]}
+        transport={transport}
+        models={codexModels}
+        hiddenModels={new Set(['codex:gpt-5.4'])}
+        providerDefaults={{
+          pins: { codex: { model: 'gpt-6' } },
+          onPinChange,
+          access: { codex: 'auto' },
+          onAccessChange,
+        }}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />,
+    )
+
+    const defaults = await screen.findByRole('group', { name: 'Codex defaults' })
+    expect(screen.queryByRole('group', { name: 'Grok defaults' })).toBeNull()
+    await waitFor(() =>
+      expect(within(defaults).getByRole('button', { name: /^Codex context: / }).textContent).toBe(
+        'Compacts at 70%',
+      ),
+    )
+
+    const model = within(defaults).getByRole('button', { name: /^Codex default model: / })
+    expect(model.textContent).toBe('GPT-6')
+    fireEvent.click(model)
+    const models = screen.getByRole('dialog', { name: 'Codex default model' })
+    expect(
+      within(models)
+        .getAllByRole('button')
+        .map((choice) => choice.getAttribute('aria-label')),
+    ).toEqual(['Last used', 'GPT-6', 'GPT-5.5'])
+    fireEvent.click(within(models).getByRole('button', { name: 'Last used' }))
+    expect(onPinChange).toHaveBeenCalledWith('codex', undefined)
+
+    const access = within(defaults).getByRole('button', { name: /^Codex default access: / })
+    expect(access.textContent).toBe('Auto')
+    fireEvent.click(access)
+    const modes = screen.getByRole('menu', { name: 'Codex default access' })
+    expect(
+      within(modes)
+        .getByRole('menuitemradio', { name: /^Auto-approve/ })
+        .getAttribute('aria-checked'),
+    ).toBe('true')
+    fireEvent.click(within(modes).getByRole('menuitemradio', { name: /^Ask first/ }))
+    expect(onAccessChange).toHaveBeenCalledWith('codex', 'ask')
+  })
+
+  function renderRoster(
+    props: { providerStatuses: ProviderStatus[]; providersLoading?: boolean },
+    readAccount: (provider: ProviderId) => Account | Promise<Account> = () => ({
+      signedIn: true,
+    }),
+  ) {
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'auth.status')
+        return readAccount((params as { provider: ProviderId }).provider)
+      if (method === 'providers.contextSettings') return {}
+      throw new Error(`unexpected ${method}`)
+    })
+    const view = (next: typeof props) => (
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        {...next}
+        transport={transport}
+        models={codexModels}
+        providerDefaults={{ pins: {}, onPinChange: vi.fn(), access: {}, onAccessChange: vi.fn() }}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+      />
+    )
+    const rendered = render(view(props))
+    return { rerender: (next: typeof props) => rendered.rerender(view(next)) }
+  }
+
+  it('holds the defaults in place while an account is checked, but not for a signed-out one', async () => {
+    const account = deferred<Account>()
+    renderRoster(
+      {
+        providerStatuses: [
+          codex,
+          { ...installedProvider('grok', 'Grok'), auth: 'unauthenticated' as const },
+        ],
+      },
+      (provider) => (provider === 'codex' ? account.promise : new Promise<Account>(() => {})),
+    )
+
+    const defaults = screen.getByRole('group', { name: 'Codex defaults' })
+    expect(defaults.getAttribute('aria-busy')).toBe('true')
+    expect(within(defaults).queryByRole('button')).toBeNull()
+    expect(defaults.querySelectorAll('.tune-skeleton')).toHaveLength(3)
+    expect(screen.queryByRole('group', { name: 'Grok defaults' })).toBeNull()
+
+    await act(async () => account.resolve({ signedIn: true }))
+    // The same rows fill in rather than being replaced.
+    expect(screen.getByRole('group', { name: 'Codex defaults' })).toBe(defaults)
+    expect(
+      within(defaults).getByRole('button', { name: /^Codex default model: / }).textContent,
+    ).toBe('Last used')
+    expect(defaults.querySelector('.tune-skeleton')).toBeNull()
+    expect(defaults.hasAttribute('aria-busy')).toBe(false)
+  })
+
+  it('drops the held defaults when the account turns out signed out', async () => {
+    renderRoster({ providerStatuses: [codex] }, () => ({ signedIn: false }))
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Codex defaults' })).toBeNull())
+    expect(action(providerRow('Codex'), 'Sign in')).toBeTruthy()
+  })
+
+  it('shows the roster as a skeleton until the provider list arrives', async () => {
+    const { rerender } = renderRoster({ providerStatuses: [], providersLoading: true })
+    const loading = screen.getByText('Loading providers…').closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.querySelectorAll('.provider-row--skeleton')).toHaveLength(3)
+    expect(loading.querySelectorAll('.provider-tune')).toHaveLength(3)
+
+    rerender({ providerStatuses: [codex], providersLoading: false })
+    expect(screen.queryByText('Loading providers…')).toBeNull()
+    expect(await screen.findByRole('group', { name: 'Codex defaults' })).toBeTruthy()
   })
 })

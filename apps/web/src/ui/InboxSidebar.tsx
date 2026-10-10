@@ -32,14 +32,20 @@ import {
   IconTrash as Trash2,
   IconX as X,
 } from '@tabler/icons-react'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import { AppSelect } from './AppSelect.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { InboxCardsSkeleton } from './SurfaceSkeletons.js'
 
-type Entry = { project: Project; session: Session }
+type ProjectMetadata = Pick<Project, 'path' | 'name'>
+type Entry = { project: ProjectMetadata; session: Session }
+
+function projectMetadata(project: ProjectMetadata): ProjectMetadata {
+  return { path: project.path, ...(project.name === undefined ? {} : { name: project.name }) }
+}
 type InboxEntryGroups = { active: Entry[]; snoozed: Entry[]; settled: Entry[]; ordered: Entry[] }
 const PAGE_SIZE = 25
 const INITIAL_ACTIVE_LIMIT = 12
@@ -140,6 +146,8 @@ export type InboxActions = {
 
 function InboxSidebarComponent(props: {
   projects: Project[]
+  /** The project list has not arrived yet, so an empty one is not the answer. */
+  loading?: boolean | undefined
   scope: string
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
@@ -191,7 +199,7 @@ function InboxSidebarComponent(props: {
     if (normalizedQuery && !selected.session.title.toLocaleLowerCase().includes(normalizedQuery)) {
       return undefined
     }
-    return selected
+    return { project: projectMetadata(selected.project), session: selected.session }
   }, [normalizedQuery, props.activeSessionId, props.projects, props.scope])
   const selectedActive =
     selectedEntry?.session.lifecycle.state === 'active' ? selectedEntry : undefined
@@ -252,10 +260,15 @@ function InboxSidebarComponent(props: {
         : [],
     [normalizedQuery, props.projects, props.scope, selectedIds],
   )
-  const orderedRef = useRef(ordered)
+  const visibleOrdered = [
+    ...visibleActive,
+    ...(snoozedExpanded ? visibleSnoozed : []),
+    ...(settledExpanded ? visibleSettled : []),
+  ]
+  const orderedRef = useRef(visibleOrdered)
   const selectedIdsRef = useRef(selectedIds)
   const selectionAnchorRef = useRef(selectionAnchor)
-  orderedRef.current = ordered
+  orderedRef.current = visibleOrdered
   selectedIdsRef.current = selectedIds
   selectionAnchorRef.current = selectionAnchor
 
@@ -423,26 +436,82 @@ function InboxSidebarComponent(props: {
       </div>
 
       <div className="rail__body inbox__body">
-        <div className="inbox">
-          {selectedIds.size > 1 ? (
-            <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
-          ) : null}
+        {props.loading && props.projects.length === 0 ? (
+          <InboxCardsSkeleton />
+        ) : (
+          <div className="inbox">
+            {selectedIds.size > 1 ? (
+              <p className="inbox__selection-count">{selectedIds.size} threads selected</p>
+            ) : null}
 
-          {!normalizedQuery || active.length > 0 ? (
-            <>
-              <SectionHeading title="Active" count={active.length} />
-              {active.length > 0 ? (
-                <ul className="inbox__list" aria-label="Active threads">
-                  {visibleActive.map((entry) => {
+            {!normalizedQuery || active.length > 0 ? (
+              <>
+                <SectionHeading title="Active" count={active.length} />
+                {active.length > 0 ? (
+                  <ul className="inbox__list" aria-label="Active threads">
+                    {visibleActive.map((entry) => {
+                      const selected = selectedIds.has(entry.session.id)
+                      return (
+                        <ActiveRow
+                          {...entry}
+                          key={entry.session.id}
+                          current={entry.session.id === props.activeSessionId}
+                          selected={selected}
+                          eagerActions={eagerRowActions}
+                          menuEntries={
+                            selected && selectedIds.size > 1 ? selectedEntries : undefined
+                          }
+                          actions={props.actions}
+                          onChoose={chooseEntry}
+                          onContextMenu={prepareContextMenu}
+                          onRegister={registerRow}
+                          onNavigate={focusResult}
+                          onRename={props.onRenameSession}
+                          onTogglePin={props.onToggleSessionPin}
+                          onArchive={props.onArchiveSession}
+                          onArchiveMany={archiveSessions}
+                          onClearSelection={clearSelection}
+                        />
+                      )
+                    })}
+                    {active.length > activeLimit && !activePageDeferred ? (
+                      <li>
+                        <button
+                          className="inbox__more"
+                          type="button"
+                          onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
+                        >
+                          Show {PAGE_SIZE} more
+                        </button>
+                      </li>
+                    ) : null}
+                  </ul>
+                ) : (
+                  <p className="inbox__empty">No active threads in this project.</p>
+                )}
+              </>
+            ) : null}
+
+            <Shelf
+              title="Snoozed"
+              count={snoozed.length}
+              open={snoozedExpanded}
+              onToggle={() => setSnoozedOpen((open) => !open)}
+            >
+              {snoozedExpanded ? (
+                <>
+                  {visibleSnoozed.map((entry) => {
                     const selected = selectedIds.has(entry.session.id)
                     return (
-                      <ActiveRow
+                      <ShelfRow
                         {...entry}
                         key={entry.session.id}
                         current={entry.session.id === props.activeSessionId}
                         selected={selected}
                         eagerActions={eagerRowActions}
                         menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
+                        action="Wake now"
+                        actionIcon="wake"
                         actions={props.actions}
                         onChoose={chooseEntry}
                         onContextMenu={prepareContextMenu}
@@ -452,130 +521,82 @@ function InboxSidebarComponent(props: {
                         onTogglePin={props.onToggleSessionPin}
                         onArchive={props.onArchiveSession}
                         onArchiveMany={archiveSessions}
+                        onAction={unsnooze}
                         onClearSelection={clearSelection}
                       />
                     )
                   })}
-                  {active.length > activeLimit && !activePageDeferred ? (
+                  {snoozed.length > snoozedLimit ? (
                     <li>
                       <button
                         className="inbox__more"
                         type="button"
-                        onClick={() => setActiveLimit((limit) => limit + PAGE_SIZE)}
+                        onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
                       >
                         Show {PAGE_SIZE} more
                       </button>
                     </li>
                   ) : null}
-                </ul>
-              ) : (
-                <p className="inbox__empty">No active threads in this project.</p>
-              )}
-            </>
-          ) : null}
+                </>
+              ) : null}
+            </Shelf>
 
-          <Shelf
-            title="Snoozed"
-            count={snoozed.length}
-            open={snoozedExpanded}
-            onToggle={() => setSnoozedOpen((open) => !open)}
-          >
-            {snoozedExpanded ? (
-              <>
-                {visibleSnoozed.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Wake now"
-                      actionIcon="wake"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsnooze}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {snoozed.length > snoozedLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSnoozedLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
+            <Shelf
+              title="Settled"
+              count={settled.length}
+              open={settledExpanded}
+              onToggle={() => setSettledOpen((open) => !open)}
+            >
+              {settledExpanded ? (
+                <>
+                  {visibleSettled.map((entry) => {
+                    const selected = selectedIds.has(entry.session.id)
+                    return (
+                      <ShelfRow
+                        {...entry}
+                        key={entry.session.id}
+                        current={entry.session.id === props.activeSessionId}
+                        selected={selected}
+                        eagerActions={eagerRowActions}
+                        menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
+                        action="Un-settle"
+                        actionIcon="unsettle"
+                        actions={props.actions}
+                        onChoose={chooseEntry}
+                        onContextMenu={prepareContextMenu}
+                        onRegister={registerRow}
+                        onNavigate={focusResult}
+                        onRename={props.onRenameSession}
+                        onTogglePin={props.onToggleSessionPin}
+                        onArchive={props.onArchiveSession}
+                        onArchiveMany={archiveSessions}
+                        onAction={unsettle}
+                        onClearSelection={clearSelection}
+                      />
+                    )
+                  })}
+                  {settled.length > settledLimit ? (
+                    <li>
+                      <button
+                        className="inbox__more"
+                        type="button"
+                        onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
+                      >
+                        Show {PAGE_SIZE} more
+                      </button>
+                    </li>
+                  ) : null}
+                </>
+              ) : null}
+            </Shelf>
+
+            {normalizedQuery && !hasMatches ? (
+              <p className="inbox__empty inbox__empty--search">
+                No threads match “{query.trim()}”.
+              </p>
             ) : null}
-          </Shelf>
-
-          <Shelf
-            title="Settled"
-            count={settled.length}
-            open={settledExpanded}
-            onToggle={() => setSettledOpen((open) => !open)}
-          >
-            {settledExpanded ? (
-              <>
-                {visibleSettled.map((entry) => {
-                  const selected = selectedIds.has(entry.session.id)
-                  return (
-                    <ShelfRow
-                      {...entry}
-                      key={entry.session.id}
-                      current={entry.session.id === props.activeSessionId}
-                      selected={selected}
-                      eagerActions={eagerRowActions}
-                      menuEntries={selected && selectedIds.size > 1 ? selectedEntries : undefined}
-                      action="Un-settle"
-                      actionIcon="unsettle"
-                      actions={props.actions}
-                      onChoose={chooseEntry}
-                      onContextMenu={prepareContextMenu}
-                      onRegister={registerRow}
-                      onNavigate={focusResult}
-                      onRename={props.onRenameSession}
-                      onTogglePin={props.onToggleSessionPin}
-                      onArchive={props.onArchiveSession}
-                      onArchiveMany={archiveSessions}
-                      onAction={unsettle}
-                      onClearSelection={clearSelection}
-                    />
-                  )
-                })}
-                {settled.length > settledLimit ? (
-                  <li>
-                    <button
-                      className="inbox__more"
-                      type="button"
-                      onClick={() => setSettledLimit((limit) => limit + PAGE_SIZE)}
-                    >
-                      Show {PAGE_SIZE} more
-                    </button>
-                  </li>
-                ) : null}
-              </>
-            ) : null}
-          </Shelf>
-
-          {normalizedQuery && !hasMatches ? (
-            <p className="inbox__empty inbox__empty--search">No threads match “{query.trim()}”.</p>
-          ) : null}
-        </div>
+          </div>
+        )}
       </div>
     </InboxClock>
   )
@@ -684,7 +705,7 @@ const ActiveRow = memo(function ActiveRow(
           )}
           <span aria-hidden>·</span>
           <SourceIdentity
-            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+            presentation={providerPresentation(props.session.provider)}
             density="compact"
           />
           {props.session.pinned ? (
@@ -734,7 +755,7 @@ const ActiveRow = memo(function ActiveRow(
 })
 
 function ActiveRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
   initialNow: number
@@ -748,7 +769,7 @@ function ActiveRowClock(props: {
 }
 
 function SecondActiveRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
 }) {
@@ -757,7 +778,7 @@ function SecondActiveRowClock(props: {
 }
 
 function MinuteActiveRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
 }) {
@@ -766,7 +787,7 @@ function MinuteActiveRowClock(props: {
 }
 
 function ClockedActiveRow(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
   now: number
@@ -903,7 +924,7 @@ const ShelfRow = memo(function ShelfRow(
 })
 
 function ShelfRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
 }) {
@@ -915,7 +936,7 @@ function ShelfRowClock(props: {
 }
 
 function DayShelfRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
 }) {
@@ -924,7 +945,7 @@ function DayShelfRowClock(props: {
 }
 
 function MinuteShelfRowClock(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
 }) {
@@ -933,7 +954,7 @@ function MinuteShelfRowClock(props: {
 }
 
 function ClockedShelfRow(props: {
-  project: Project
+  project: ProjectMetadata
   session: Session
   target: RefObject<HTMLButtonElement | null>
   now: number
@@ -1251,7 +1272,7 @@ export function classifyInboxEntries(
     if (scope && project.path !== scope) continue
     for (const session of project.sessions) {
       if (normalizedQuery && !session.title.toLocaleLowerCase().includes(normalizedQuery)) continue
-      const entry = { project, session }
+      const entry = { project: projectMetadata(project), session }
       if (session.lifecycle.state === 'active') active.push(entry)
       else if (session.lifecycle.state === 'snoozed') snoozed.push(entry)
       else settled.push(entry)
@@ -1297,7 +1318,7 @@ export function resolveInboxSelection(
     if (normalizedQuery && !selected.session.title.toLocaleLowerCase().includes(normalizedQuery)) {
       continue
     }
-    selectedEntries.push(selected)
+    selectedEntries.push({ project: projectMetadata(selected.project), session: selected.session })
   }
   return selectedEntries
 }
@@ -1427,7 +1448,7 @@ export function createInboxEntryClassifier(): typeof classifyInboxEntries {
           group === previousGroup &&
           compareInboxEntries({ project, session }, previousEntry, previousGroup, sourceOrder) === 0
         ) {
-          const entry = { project, session }
+          const entry = { project: projectMetadata(project), session }
           entries[index] = entry
           entriesById.set(session.id, entry)
           continue
@@ -1436,7 +1457,7 @@ export function createInboxEntryClassifier(): typeof classifyInboxEntries {
         entriesById.delete(session.id)
       }
       if (!included) continue
-      const entry = { project, session }
+      const entry = { project: projectMetadata(project), session }
       insertInboxEntry(writable(group), entry, group, sourceOrder)
       entriesById.set(session.id, entry)
     }
@@ -1632,15 +1653,15 @@ function relativeTime(at: number, now: number): string {
 }
 
 function providerName(session: Session): string {
-  return sessionSourcePresentation(session.provider, session.agent).label
+  return providerPresentation(session.provider).label
 }
 
-function projectName(project: Project): string {
+function projectName(project: ProjectMetadata): string {
   return project.name ?? project.path.split(/[\\/]/).filter(Boolean).at(-1) ?? project.path
 }
 
 type StaticThreadPresentation = {
-  project: Project
+  project: ProjectMetadata
   rowLabelPrefix: string
   summaryPrefix: string[]
   created: string
@@ -1648,13 +1669,16 @@ type StaticThreadPresentation = {
 
 const staticThreadPresentations = new WeakMap<Session, StaticThreadPresentation>()
 
-function staticThreadPresentation(project: Project, session: Session): StaticThreadPresentation {
+function staticThreadPresentation(
+  project: ProjectMetadata,
+  session: Session,
+): StaticThreadPresentation {
   const cached = staticThreadPresentations.get(session)
-  if (cached?.project === project) return cached
+  if (cached?.project.path === project.path && cached.project.name === project.name) return cached
   const projectLabel = projectName(project)
   const provider = providerName(session)
   const presentation = {
-    project,
+    project: projectMetadata(project),
     rowLabelPrefix: `${session.title}, ${projectLabel}, ${provider}`,
     summaryPrefix: [
       session.title,
@@ -1669,12 +1693,12 @@ function staticThreadPresentation(project: Project, session: Session): StaticThr
   return presentation
 }
 
-function rowLabel(project: Project, session: Session, now: number): string {
+function rowLabel(project: ProjectMetadata, session: Session, now: number): string {
   const presentation = staticThreadPresentation(project, session)
   return `${presentation.rowLabelPrefix}, ${statusPresentation(session, now).label}`
 }
 
-function threadSummary(project: Project, session: Session, now: number): string {
+function threadSummary(project: ProjectMetadata, session: Session, now: number): string {
   const lifecycle =
     session.lifecycle.state === 'active'
       ? 'Active'

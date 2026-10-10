@@ -4,14 +4,23 @@ Packages use public releases in `Leonxlnx/tastecode`. End users do not need a Gi
 account or token. Only published releases are discoverable; drafts remain invisible.
 A source merge or tag alone is not an app update.
 
-The app checks after 15 seconds and hourly while open. It downloads a newer compatible
-version in the background, shows an in-app notice, and offers **Restart to update** under
-**Settings → About**. Users can defer the restart; a prepared update also installs on normal
-quit. A ready download is retained until installation. From beta 7, the app reads the GitHub
+The app checks after 15 seconds, hourly while open, and soon after the computer wakes. It
+downloads a newer compatible version in the background, shows an in-app notice, and offers
+**Restart to update** under **Settings → About**. Users can defer the restart; a prepared
+update also installs on normal quit. A ready download is retained until installation, and
+an interrupted download continues where it stopped. From beta 7, the app reads the GitHub
 release list. Beta 7 through 0.1.1 choose the newest publication, including prereleases,
 regardless of the GitHub "Latest" badge. The next desktop build selects the highest semantic
-version instead. Downgrades remain disabled. A missing matching installer or SHA-256
-digest is an error; the app does not silently fall back to an older release.
+version instead and finds it through the release feed. A release published as a pre-release
+reaches every install like any other; only drafts stay hidden. Downgrades remain disabled. A missing matching installer or SHA-256 digest is an
+error; the app does not silently fall back to an older release.
+
+## How installs find a release
+
+The app reads the public release feed, which lists the ten newest tags, and spends a GitHub
+API request only on a tag newer than the installed version. A pushed tag without a published
+release is harmless. More than ten new tags after the newest release push installs onto the
+slower full release list, which spends API quota, so avoid bursts of non-release tags.
 
 ## 0.1.2 source preparation
 
@@ -213,6 +222,12 @@ works without a GitHub login and can be used on the landing page.
    normally be present before publication. For beta 7, the release owner explicitly approved
    macOS first and Windows later on the same tag. Beta 7 still needs each available platform's
    compatibility files. Public publication is the point at which apps see it.
+9. Right before publishing, with `GH_TOKEN` set in the release process environment (for
+   example from `gh auth token`), run `pnpm release:check-updates --draft <tag>`. It shows
+   which release beta 7 to 0.1.1 installs (most recently published) and later builds
+   (highest version) would take if the draft were published now, and fails if either would
+   miss an installer or its digest. Run `pnpm release:check-updates` without a token again
+   after publishing. Both generations must report `ok`.
 
 For the beta 7 bridge, GitHub metadata is named **`latest.yml`** for Windows and
 **`latest-mac.yml`** for macOS. Beta 6's updater selects the beta tag and falls back to those

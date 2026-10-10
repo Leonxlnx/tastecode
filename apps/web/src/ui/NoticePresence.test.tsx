@@ -152,9 +152,9 @@ describe('NoticePresence', () => {
     fireEvent.mouseEnter(screen.getByRole('status'))
     act(() => vi.advanceTimersByTime(6_000))
     fireEvent.mouseLeave(screen.getByRole('status'))
-    fireEvent.focus(screen.getByRole('button'))
+    act(() => screen.getByRole('button').focus())
     act(() => vi.advanceTimersByTime(6_000))
-    fireEvent.blur(screen.getByRole('button'))
+    act(() => screen.getByRole('button').blur())
     view.rerender(renderNotice(true))
     act(() => vi.advanceTimersByTime(6_000))
     expect(dismiss).not.toHaveBeenCalled()
@@ -164,6 +164,30 @@ describe('NoticePresence', () => {
     act(() => vi.advanceTimersByTime(4_999))
     expect(dismiss).not.toHaveBeenCalled()
     act(() => vi.advanceTimersByTime(1))
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
+  it('resumes once the focused control removes itself', () => {
+    vi.useFakeTimers()
+    const dismiss = vi.fn()
+    const renderNotice = (phase: 'idle' | 'running') => (
+      <NoticePresence
+        className="notice"
+        role="status"
+        visible
+        onDismiss={dismiss}
+        dismissKey={phase}
+      >
+        {phase === 'idle' ? <button>Update</button> : <span>Updating</span>}
+      </NoticePresence>
+    )
+    const view = render(renderNotice('idle'))
+    act(() => screen.getByRole('button').focus())
+    act(() => vi.advanceTimersByTime(6_000))
+    expect(dismiss).not.toHaveBeenCalled()
+    // Browsers fire no blur for a focused element that leaves the document.
+    view.rerender(renderNotice('running'))
+    act(() => vi.advanceTimersByTime(5_000))
     expect(dismiss).toHaveBeenCalledOnce()
   })
 

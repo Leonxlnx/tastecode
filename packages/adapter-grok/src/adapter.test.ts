@@ -30,6 +30,10 @@ class FakeChild extends ChildProcess {
     null,
   ]
   wasKilled = false
+  constructor(spawns = true) {
+    super()
+    if (spawns) queueMicrotask(() => this.emit('spawn'))
+  }
 
   override kill(): boolean {
     this.wasKilled = true
@@ -54,6 +58,67 @@ const MODELS_OUTPUT = [
 ].join('\n')
 
 describe('Grok adapter', () => {
+  it('applies an access change to the next print-mode launch', async () => {
+    const args: string[][] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args.push(value)
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { approval: 'full' })
+    await adapter.sendTurn(thread.id, 'one')
+    adapter.setApproval('ask')
+    await adapter.interrupt()
+    await adapter.sendTurn(thread.id, 'two')
+    expect(args[0]).toContain('bypassPermissions')
+    expect(args[1]).not.toContain('--permission-mode')
+    expect(() => adapter.setApproval('auto-review')).toThrow('does not support')
+    await adapter.dispose()
+  })
+
+  it.each(['throw', 'error', 'attachment'] as const)(
+    'retains initial session creation and instructions after %s failure',
+    async (failure) => {
+      const children: FakeChild[] = []
+      const args: string[][] = []
+      let fail = true
+      const adapter = new GrokAdapter({
+        spawn: (_command, value) => {
+          if (fail && failure === 'throw') throw new Error('launch failed')
+          args.push(value)
+          const child = new FakeChild(!fail)
+          children.push(child)
+          return child
+        },
+      })
+      const thread = await adapter.startThread('C:\\repo', { instructions: 'Keep the rules.' })
+      if (failure === 'error') {
+        await adapter.sendTurn(thread.id, 'first')
+        children[0]!.emit('error', new Error('ENOENT'))
+      } else {
+        await expect(
+          adapter.sendTurn(
+            thread.id,
+            'first',
+            failure === 'attachment'
+              ? [path.join(os.tmpdir(), `missing-${crypto.randomUUID()}.png`)]
+              : [],
+          ),
+        ).rejects.toThrow()
+      }
+      fail = false
+      await adapter.sendTurn(thread.id, 'retry')
+      const retryArgs = args.at(-1)!
+      expect(retryArgs).toContain('--session-id')
+      expect(retryArgs).not.toContain('--resume')
+      expect(readFileSync(retryArgs[retryArgs.indexOf('--prompt-file') + 1]!, 'utf8')).toContain(
+        '<system-instructions>\nKeep the rules.\n</system-instructions>\n\nretry',
+      )
+      await adapter.dispose()
+    },
+  )
+
   it('encodes images and files as ACP prompt content blocks', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-attachment-'))
     try {
@@ -866,4 +931,26 @@ describe('Grok adapter', () => {
   it('declares the one-shot print-mode capability set', () => {
     expect(GROK_CAPABILITIES).toMatchObject({ steer: false, interrupt: true, reasoningItems: true })
   })
+})
+
+describe('bounded model discovery capture', () => {
+  it.each(['stdout', 'stderr'] as const)(
+    'rejects a %s flood before parsing output',
+    async (stream) => {
+      const child = new FakeChild()
+      let killed = 0
+      child.kill = () => {
+        killed++
+        return true
+      }
+      const adapter = new GrokAdapter({ spawn: () => child })
+      const discovery = adapter.listModels()
+      const rejected = expect(discovery).rejects.toThrow('CLI output exceeded the size limit')
+      child[stream].write('harmless-fixture'.repeat(100_000))
+      await rejected
+      child[stream].write('late output')
+      child.emit('close', 0)
+      expect(killed).toBe(1)
+    },
+  )
 })

@@ -127,7 +127,7 @@
 /* Inline code sits inside a line of prose, so it must not change line height. */
 .md :not(pre) > code {
   background: var(--surface-2);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 1px 5px;
@@ -381,6 +381,16 @@
    custom property. Without the second, highlighting runs correctly and every
    token still renders in the inherited foreground. */
 .md pre code > span {
+  display: block;
+  min-height: 1lh;
+}
+
+/* Block chunks keep late token layout local while retaining normal selection and overflow. */
+.md pre code > .md-code-chunk {
+  display: block;
+}
+
+.md .md-code-line {
   display: block;
   min-height: 1lh;
 }

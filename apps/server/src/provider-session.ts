@@ -1,6 +1,9 @@
 import type { DomainEvent, Thread } from '@harness/contracts'
 import type { AgentSession } from './adapters.js'
 
+export const RESTORE_CONTEXT_NOTICE =
+  'TasteCode restored the conversation and workspace to a saved checkpoint (or undid a restore). Your provider memory may still include turns that are no longer part of this conversation. Treat those later turns as superseded, inspect the current files, and follow the request below rather than continuing removed work.\n\n'
+
 /** Preserve the local identity while resuming an imported provider session. */
 export function mapProviderSession(
   threadId: string,
@@ -41,4 +44,21 @@ function mapEventThread(event: DomainEvent, id: string): DomainEvent {
   if (event.type === 'turn.started') return { ...event, turn: { ...event.turn, threadId: id } }
   if (event.type === 'thread.error') return { ...event, threadId: id }
   return event
+}
+
+/**
+ * A session failed to start and then could not confirm that its process exited.
+ * The caller must keep the session for a later stop, and its checkout until then.
+ */
+export class StartupCleanupError extends Error {
+  constructor(
+    readonly startError: unknown,
+    readonly cleanupError: unknown,
+    readonly session: { dispose(): void | Promise<void> },
+  ) {
+    super(startError instanceof Error ? startError.message : String(startError), {
+      cause: startError,
+    })
+    this.name = 'StartupCleanupError'
+  }
 }

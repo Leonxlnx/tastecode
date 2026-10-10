@@ -17,7 +17,6 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { createPortal } from 'react-dom'
 import type {
   Account,
   ProviderId,
@@ -26,7 +25,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import {
-  IconArchive as Archive,
+  IconTrash as Trash,
   IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -43,7 +42,6 @@ import {
   IconSettings as Settings,
   IconEdit as SquarePen,
   IconUser as UserRound,
-  IconX as X,
 } from '@tabler/icons-react'
 import {
   canDropProjectFolders,
@@ -59,16 +57,16 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { sessionSourcePresentation } from '../provider-presentation.js'
-import type { ProfileIdentityPreferences } from '../profile-preferences.js'
+import { providerPresentation } from '../provider-presentation.js'
+import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
-import { useDialogFocus } from './dialog-focus.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
 type AccountLimitsComponent = AccountLimitsModule['AccountLimits']
@@ -110,6 +108,12 @@ function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
 
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
+)
+
+const SidebarConfirmDialog = lazy(() =>
+  import('./SidebarConfirmDialog.js').then((module) => ({
+    default: module.SidebarConfirmDialog,
+  })),
 )
 
 /**
@@ -191,6 +195,7 @@ const projectMenuTrigger = () => (
 
 function SidebarComponent(props: {
   projects: Project[]
+  projectsLoading?: boolean | undefined
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   account: Account | undefined
@@ -715,9 +720,12 @@ function SidebarComponent(props: {
           </div>
         ) : null}
         {inbox ? (
-          <Suspense fallback={null}>
+          <Suspense
+            fallback={<InboxRailSkeleton pullRequests={Boolean(props.onOpenPullRequests)} />}
+          >
             <InboxSidebar
               projects={props.projects}
+              loading={props.projectsLoading}
               scope={scope}
               activeProjectPath={props.activeProjectPath}
               activeSessionId={props.activeSessionId}
@@ -839,7 +847,11 @@ function SidebarComponent(props: {
                 </button>
               </div>
               {orderedProjects.length === 0 ? (
-                <p className="rail__hint">Nothing here yet.</p>
+                props.projectsLoading ? (
+                  <SidebarTreeSkeleton />
+                ) : (
+                  <p className="rail__hint">Nothing here yet.</p>
+                )
               ) : (
                 renderedProjects.map((project) => (
                   <ProjectRow
@@ -891,7 +903,7 @@ function SidebarComponent(props: {
                   {props.profileIdentity?.avatarDataUrl ? (
                     <img src={props.profileIdentity.avatarDataUrl} alt="" />
                   ) : (
-                    <GeneratedAvatar name={profileDisplayName} />
+                    <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
                   )}
                 </span>
                 <span className="account__name">{profileDisplayName}</span>
@@ -1352,8 +1364,8 @@ const ProjectRow = memo(function ProjectRow(props: {
                     }}
                   />
                   <MenuItem
-                    title="Archive chats"
-                    icon={<Archive size={14} aria-hidden />}
+                    title="Delete chats"
+                    icon={<Trash size={14} aria-hidden />}
                     onClick={() => {
                       setConfirming('archive')
                       close()
@@ -1384,25 +1396,23 @@ const ProjectRow = memo(function ProjectRow(props: {
       </div>
 
       {confirming ? (
-        <SidebarConfirmDialog
-          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project?'}
-          body={
-            confirming === 'archive'
-              ? `This archives every chat in ${displayName(props.project)}. Files on your computer stay untouched.`
-              : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
-          }
-          action={confirming === 'archive' ? 'Archive chats' : 'Remove project'}
-          destructive={confirming === 'remove'}
-          onConfirm={() => {
-            if (confirming === 'archive') {
-              props.onArchiveProject(props.project.sessions.map((session) => session.id))
-            } else {
-              props.onRemoveProject(props.project.path)
-            }
-            setConfirming(undefined)
-          }}
-          onClose={() => setConfirming(undefined)}
-        />
+        <Suspense fallback={null}>
+          <SidebarConfirmDialog
+            {...(confirming === 'archive'
+              ? deleteChatsCopy(props.project)
+              : removeProjectCopy(props.project))}
+            path={props.project.path}
+            onConfirm={() => {
+              if (confirming === 'archive') {
+                props.onArchiveProject(props.project.sessions.map((session) => session.id))
+              } else {
+                props.onRemoveProject(props.project.path)
+              }
+              setConfirming(undefined)
+            }}
+            onClose={() => setConfirming(undefined)}
+          />
+        </Suspense>
       ) : null}
 
       {/* Height comes from grid-template-rows in CSS, so the animation covers
@@ -1733,7 +1743,7 @@ function SessionRow(props: {
         <span className="sess__title">{props.session.title}</span>
         <SourceIdentity
           className="sess__source"
-          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
+          presentation={providerPresentation(props.session.provider)}
           density="compact"
         />
         <SessionStatus status={props.session.status} />
@@ -1753,10 +1763,10 @@ function SessionRow(props: {
           type="button"
           className="sess__action"
           onClick={props.onDelete}
-          aria-label={`Archive ${props.session.title}`}
-          title="Archive chat"
+          aria-label={`Delete ${props.session.title}`}
+          title="Delete chat"
         >
-          <Archive size={14} aria-hidden />
+          <Trash size={14} aria-hidden />
         </button>
       </span>
 
@@ -1793,8 +1803,8 @@ function SessionRow(props: {
               }}
             />
             <MenuItem
-              title="Archive chat"
-              icon={<Archive size={14} aria-hidden />}
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
               onClick={() => {
                 props.onDelete()
                 close()
@@ -1817,50 +1827,45 @@ function SessionRow(props: {
   )
 }
 
-function SidebarConfirmDialog(props: {
-  title: string
-  body: string
-  action: string
-  destructive: boolean
-  onConfirm: () => void
-  onClose: () => void
-}) {
-  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
+type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }
 
-  return createPortal(
-    <div
-      className="sheet"
-      role="dialog"
-      aria-modal="true"
-      aria-label={props.title}
-      onKeyDown={dialog.onKeyDown}
-    >
-      <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
-      <div className="sheet__panel sidebar-confirm" ref={dialog.panel} tabIndex={-1}>
-        <header className="sheet__head">
-          <h2 className="sheet__title">{props.title}</h2>
-          <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
-            <X size={13} aria-hidden />
-          </button>
-        </header>
-        <section className="sheet__section">
-          <p>{props.body}</p>
-          <div className="sidebar-confirm__actions">
-            <button className="ghost" onClick={props.onClose} autoFocus>
-              Cancel
-            </button>
-            <button
-              className={`btn${props.destructive ? ' btn--danger' : ''}`}
-              onClick={props.onConfirm}
-            >
-              {props.action}
-            </button>
-          </div>
-        </section>
-      </div>
-    </div>,
-    document.body,
-  )
+function chatCount(count: number): string {
+  return `${count} chat${count === 1 ? '' : 's'}`
+}
+
+/** Removing only forgets the sidebar entry, so it is not styled as destructive.
+ *  It does stop live turns, which is the one consequence worth naming. */
+function removeProjectCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  const live = project.sessions.filter((session) =>
+    ['starting', 'working', 'queued', 'approval', 'input'].includes(session.status),
+  ).length
+  const kept =
+    chats === 0
+      ? 'The folder stays where it is.'
+      : `The folder and its ${chatCount(chats)} stay where they are. Add the folder again to bring them back.`
+  return {
+    title: `Remove ${displayName(project)} from the sidebar?`,
+    body:
+      live === 0
+        ? kept
+        : `${kept} ${live === 1 ? 'The running chat' : `${live} running chats`} will stop.`,
+    action: 'Remove',
+    destructive: false,
+  }
+}
+
+function deleteChatsCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  return {
+    title:
+      chats === 0
+        ? `Delete all chats in ${displayName(project)}?`
+        : `Delete ${chatCount(chats)} in ${displayName(project)}?`,
+    body: 'Their restore points go with them once the Undo window closes. Files in the folder stay untouched.',
+    action: chats === 0 ? 'Delete chats' : `Delete ${chatCount(chats)}`,
+    destructive: true,
+  }
 }
 
 function SessionStatus(props: { status: Session['status'] }) {
@@ -1880,7 +1885,7 @@ function SessionStatus(props: { status: Session['status'] }) {
 }
 
 function sessionLabel(session: Session): string {
-  const source = sessionSourcePresentation(session.provider, session.agent).label
+  const source = providerPresentation(session.provider).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {

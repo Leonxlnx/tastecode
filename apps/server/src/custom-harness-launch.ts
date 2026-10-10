@@ -3,9 +3,8 @@ import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { CustomHarness } from '@harness/contracts'
-import { spawnCli } from '@harness/proc/cli'
+import { captureCli, spawnCli } from '@harness/proc/cli'
 import { desktopPath } from '@harness/proc/desktop-path'
-import { killTree } from '@harness/proc/kill'
 import { z } from 'zod'
 
 type SpawnOptions = NonNullable<Parameters<typeof spawnCli>[2]>
@@ -74,52 +73,20 @@ export function runCustomHarness(
       reject(error)
       return
     }
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    const finish = (result: { code: number | null; stdout: string } | Error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void killTree(child).then(() => {
-        if (result instanceof Error) reject(result)
-        else resolve(result)
-      }, reject)
-    }
-    const timer = setTimeout(() => {
-      finish(new Error(`${harness.displayName} did not answer within ${timeoutMs / 1_000}s`))
-    }, timeoutMs)
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      if (stdout.length < 1_000_000) stdout += chunk
-    })
-    child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      if (stderr.length < 16_000) stderr += chunk
-    })
-    child.on('error', (error) => finish(actionableLaunchError(harness, error)))
-    // `exit` can fire before inherited stdout/stderr pipes have drained. Waiting
-    // for `close` preserves the final protocol bytes emitted during shutdown.
-    child.on('close', (code) => {
-      if (code === 0 || code === null) {
-        finish({ code, stdout })
-        return
-      }
-      const detail = stderr.trim() || stdout.trim()
-      finish(
-        new Error(
-          `${harness.displayName} exited with code ${code}${detail ? `: ${detail.slice(0, 500)}` : ''}`,
-        ),
-      )
-    })
+    void captureCli(child, timeoutMs).then((result) => {
+      if (result.code === 0) resolve(result)
+      else
+        reject(
+          new Error(
+            result.signal
+              ? `Custom harness was stopped by ${result.signal} before it finished. Check its configuration.`
+              : `Custom harness exited with code ${result.code}. Check its configuration.`,
+          ),
+        )
+    }, reject)
     child.stdin.on('error', () => undefined)
     child.stdin.end()
   })
-}
-
-export function customHarnessRun(harness: CustomHarness, fallbackWorkspacePath?: string) {
-  return (_defaultCommand: string, args: string[], timeoutMs = 5_000) =>
-    runCustomHarness(harness, fallbackWorkspacePath, args, timeoutMs)
 }
 
 export function actionableLaunchError(harness: CustomHarness, cause: unknown): Error {
@@ -142,16 +109,37 @@ function launchEnvironment(
   workspacePath: string,
   adapterEnvironment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
-  const custom = harness.environment ?? {}
-  const merged = { ...process.env, ...custom, ...adapterEnvironment }
-  const suppliedPath = adapterEnvironment.PATH ?? custom.PATH ?? process.env.PATH ?? ''
   return {
-    ...merged,
-    PATH: desktopPath(suppliedPath, { env: merged }),
+    ...mergeLaunchEnvironment([process.env, harness.environment ?? {}, adapterEnvironment]),
     // A wrapper can boot from its own directory without losing the project it
     // should operate on. Native protocols also receive the workspace normally.
     HARNESS_WORKSPACE_PATH: workspacePath,
   }
+}
+
+/**
+ * Later layers win. Windows variable names are case-insensitive, so a `Path`
+ * in one layer replaces a `PATH` from an earlier one and only one spelling is
+ * emitted; on other platforms the case is part of the name.
+ */
+export function mergeLaunchEnvironment(
+  layers: NodeJS.ProcessEnv[],
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const sameName = (left: string, right: string) =>
+    platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right
+  const merged: NodeJS.ProcessEnv = {}
+  for (const layer of layers) {
+    for (const [key, value] of Object.entries(layer)) {
+      for (const existing of Object.keys(merged))
+        if (sameName(existing, key)) delete merged[existing]
+      merged[key] = value
+    }
+  }
+  const pathKey = Object.keys(merged).find((key) => sameName(key, 'PATH'))
+  const suppliedPath = pathKey === undefined ? '' : (merged[pathKey] ?? '')
+  if (pathKey !== undefined) delete merged[pathKey]
+  return { ...merged, PATH: desktopPath(suppliedPath, { env: merged, platform }) }
 }
 
 function resolveExecutable(command: string, cwd: string, environment: NodeJS.ProcessEnv): string {
@@ -166,7 +154,8 @@ function resolveExecutable(command: string, cwd: string, environment: NodeJS.Pro
   for (const directory of (environment.PATH ?? '').split(path.delimiter)) {
     if (!directory) continue
     for (const extension of extensions) {
-      const candidate = path.join(stripQuotes(directory), `${command}${extension}`)
+      // Relative entries belong to the launch directory, which is where the child runs.
+      const candidate = path.resolve(cwd, stripQuotes(directory), `${command}${extension}`)
       if (isExecutable(candidate)) return candidate
     }
   }

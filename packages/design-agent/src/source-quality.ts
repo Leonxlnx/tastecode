@@ -68,7 +68,9 @@ function designSourceViolations(
           ? asset.destination
           : asset.status === 'existing' && asset.source?.kind === 'project'
             ? asset.source.reference
-            : undefined
+            : asset.status === 'existing' && asset.source?.kind === 'user'
+              ? asset.destination
+              : undefined
       const normalized = approvedPath ? normalizeWorkspaceFile(approvedPath) : undefined
       return normalized &&
         ['.svg', '.html', '.jsx', '.tsx', '.vue', '.svelte'].includes(
@@ -116,10 +118,7 @@ function designSourceViolations(
     }
     scanMarkupCardRails(source, normalized, cardRails)
     if (!approvedSvgFiles.has(normalized)) {
-      for (const match of source.matchAll(/<svg\b/gi)) {
-        const start = match.index!
-        const closing = source.indexOf('</svg>', start)
-        const fragment = source.slice(start, closing < 0 ? start + 1_024 : closing + 6)
+      for (const fragment of svgFragments(source)) {
         violations.push(
           `${normalized}: unmanifested inline SVG substitute ${sourceFingerprint(fragment)}`,
         )
@@ -133,10 +132,42 @@ function sourceFingerprint(source: string): string {
   return createHash('sha256').update(source).digest('hex').slice(0, 12)
 }
 
+function* svgFragments(source: string): Generator<string> {
+  let start: number | undefined
+  let depth = 0
+  for (const match of source.matchAll(/<svg\b[^<>]*\/>|<svg\b|<\/svg\s*>/gi)) {
+    if (match[0][1] !== '/') {
+      if (match[0].endsWith('/>')) {
+        if (depth === 0) yield match[0]
+      } else if (depth++ === 0) start = match.index
+    } else if (depth > 0 && --depth === 0) {
+      yield source.slice(start, match.index + match[0].length)
+      start = undefined
+    }
+  }
+  if (start !== undefined) yield source.slice(start)
+}
+
+function* cssBlocks(source: string): Generator<{ selector: string; body: string }> {
+  let segmentStart = 0
+  let bodyStart: number | undefined
+  let selector = ''
+  for (const match of source.matchAll(/[{}]/g)) {
+    if (match[0] === '{') {
+      selector = source.slice(segmentStart, match.index).trim().slice(-200)
+      bodyStart = match.index + 1
+    } else {
+      if (bodyStart !== undefined) {
+        yield { selector, body: source.slice(bodyStart, match.index) }
+      }
+      bodyStart = undefined
+    }
+    segmentStart = match.index + 1
+  }
+}
+
 function scanCssCardRails(source: string, file: string, violations: string[]): void {
-  for (const match of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = (match[1]?.trim() ?? '').slice(-200)
-    const body = match[2] ?? ''
+  for (const { selector, body } of cssBlocks(source)) {
     if (!isCardLike(selector)) continue
 
     if (

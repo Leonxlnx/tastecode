@@ -29,7 +29,29 @@ describe('websocket origin gate', () => {
     expect(allowedOrigin('file://')).toBe(true)
     // The dev server and the web UI.
     expect(allowedOrigin('http://127.0.0.1:5183')).toBe(true)
-    expect(allowedOrigin('http://localhost:5173')).toBe(true)
+  })
+
+  it.each([
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:4311',
+    'http://localhost:5183',
+    'http://[::1]:5183',
+    'http://127.0.0.2:5183',
+    'https://127.0.0.1:5183',
+    'http://127.0.0.1:5183/preview',
+    'ws://127.0.0.1:5183',
+    '',
+  ])('refuses an origin other than the renderer: %s', (origin) => {
+    expect(allowedOrigin(origin)).toBe(false)
+  })
+
+  it('replaces the default HTTP origin when the renderer is explicitly configured', () => {
+    const rendererOrigin = 'http://127.0.0.1:6100'
+    expect(allowedOrigin(rendererOrigin, undefined, rendererOrigin)).toBe(true)
+    expect(allowedOrigin('http://127.0.0.1:5183', undefined, rendererOrigin)).toBe(false)
+    expect(allowedOrigin('http://127.0.0.1:5183', undefined, 'file://')).toBe(false)
+    expect(allowedOrigin('file://', undefined, 'file://')).toBe(true)
+    expect(allowedOrigin(undefined, undefined, 'file://')).toBe(true)
   })
 
   it('refuses a hostile page — loopback is not a trust boundary in a browser', () => {
@@ -77,5 +99,9 @@ describe('server access token', () => {
     expect(hasAccess('/?token=correct-token', 'correct-token')).toBe(true)
     expect(hasAccess('/?token=wrong-token', 'correct-token')).toBe(false)
     expect(hasAccess('/', 'correct-token')).toBe(false)
+  })
+
+  it.each(['//[', 'http://[', '//%'])('refuses a malformed request target: %s', (target) => {
+    expect(hasAccess(target, 'correct-token')).toBe(false)
   })
 })

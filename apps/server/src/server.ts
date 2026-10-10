@@ -17,7 +17,11 @@ import { createProjectListProjector, type ProjectListState } from './project-lis
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
-import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import {
+  listWorkspaceDirectory,
+  readWorkspaceTextFile,
+  searchWorkspaceFiles,
+} from './workspace-files.js'
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
@@ -25,6 +29,7 @@ import { createSerializedResultCache, serializeSuccessResponse } from './respons
 import { ProviderHistory } from './provider-history.js'
 
 const SERVER_VERSION = '0.0.0'
+const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -50,11 +55,14 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    rendererOrigin?: string
   } = {},
 ) {
   applyDesktopPath()
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
+  const rendererOrigin =
+    options.rendererOrigin ?? process.env['HARNESS_RENDERER_ORIGIN'] ?? DEFAULT_RENDERER_ORIGIN
   assertSafeBind(host, options.accessToken)
   const databasePath = storeLocation()
   const releaseDataLease = acquireDataLease(databasePath)
@@ -146,9 +154,9 @@ export function startServer(
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
-    capturePreview: (url, viewports) =>
+    capturePreview: (url, viewports, signal) =>
       previewCapture.available
-        ? previewCapture.capture(url, viewports)
+        ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
   })
   reportStartupMilestone('server-orchestrator-ready')
@@ -228,7 +236,10 @@ export function startServer(
   void orchestrator.recoverWorktrees().catch(() => undefined)
 
   wss.on('connection', (socket, request) => {
-    if (!allowedOrigin(request.headers.origin, options.accessToken)) {
+    // Rejected sockets remain live until their close handshake ends. Handle
+    // protocol errors before either access check so they cannot crash the server.
+    socket.on('error', () => socket.terminate())
+    if (!allowedOrigin(request.headers.origin, options.accessToken, rendererOrigin)) {
       socket.close(1008, 'Origin not allowed')
       return
     }
@@ -258,8 +269,6 @@ export function startServer(
       push.remove(socket)
     }
     socket.on('close', removeSocket)
-    // Without a handler, a client resetting its connection emits 'error' on a
-    // bare EventEmitter and crashes the whole server.
     socket.on('error', removeSocket)
   }
 
@@ -371,6 +380,7 @@ export function startServer(
         return (await pullRequestService()).files(
           p.repository,
           p.number,
+          { headRefOid: p.expectedHeadOid, baseRefOid: p.expectedBaseOid },
           p.page ?? 1,
           p.refresh ?? false,
         )
@@ -391,6 +401,14 @@ export function startServer(
 
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
+
+      case 'providers.contextSettings':
+        return orchestrator.contextSettings()
+
+      case 'providers.updateContextSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
 
       case 'providers.updates':
         return {
@@ -434,44 +452,19 @@ export function startServer(
       case 'providers.install': {
         const p = parseParams(method, params)
         const { installCommandFor } = await import('./providers.js')
-        const command = await installCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
-        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+        const command = await installCommandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(p.provider, command, p.columns, p.rows),
+        }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
         const { launchCommandFor } = await import('./providers.js')
-        const command = await launchCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const command = await launchCommandFor(p.provider)
         return {
-          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          terminalId: orchestrator.launchProviderLogin(p.provider, command, p.columns, p.rows),
         }
-      }
-
-      case 'connections.list':
-        return { connections: orchestrator.listModelConnections() }
-
-      case 'connections.upsert':
-        return {
-          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
-        }
-
-      case 'connections.setCredential': {
-        const p = parseParams(method, params)
-        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
-        return { credentialConfigured: true }
-      }
-
-      case 'connections.remove': {
-        const p = parseParams(method, params)
-        orchestrator.removeModelConnection(p.connectionId)
-        return {}
-      }
-
-      case 'connections.models': {
-        const p = parseParams(method, params)
-        return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
@@ -589,6 +582,11 @@ export function startServer(
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
       }
 
+      case 'workspace.searchFiles': {
+        const p = parseParams(method, params)
+        return searchWorkspaceFiles(workspaceForRequest(store, p), p.query, p.limit)
+      }
+
       case 'workspace.readFile': {
         const p = parseParams(method, params)
         return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
@@ -628,21 +626,6 @@ export function startServer(
         const p = parseParams(method, params)
         orchestrator.cancelVoice(p.requestId)
         return {}
-      }
-
-      case 'acp.agents': {
-        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
-        return {
-          agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
-            id,
-            name,
-            installed,
-            verified,
-            setup,
-            ...(!(install === undefined) ? { install } : {}),
-            ...(!(problem === undefined) ? { problem } : {}),
-          })),
-        }
       }
 
       case 'projects.list': {
@@ -896,7 +879,6 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
-          connectionId: p.connectionId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }
@@ -1087,8 +1069,13 @@ export function startServer(
  * approval, or open a terminal.
  *
  * Allowed: no Origin at all (non-browser clients such as the CLI and tests),
- * `file://` (the packaged Electron renderer), and loopback origins (the dev
- * server and our own web UI).
+ * `file://` (the packaged Electron renderer), and the exact renderer origin.
+ * Browsers always send Origin on an upgrade; an empty or opaque one is not
+ * equivalent to the missing header of a non-browser client.
+ *
+ * The dev renderer defaults to http://127.0.0.1:5183. HARNESS_RENDERER_ORIGIN
+ * replaces it for a custom renderer port; desktop-owned servers set file://
+ * so a packaged app does not trust an unrelated HTTP server on the dev port.
  *
  * `null` is NOT allowed, and must never be added back. It is the opaque
  * origin, and any page can mint one on demand — `<iframe sandbox=
@@ -1102,22 +1089,20 @@ export function startServer(
  * any origin may attempt the handshake, but only a connection carrying the
  * token is admitted.
  */
-export function allowedOrigin(origin: string | undefined, accessToken?: string): boolean {
-  if (!origin || origin === 'file://') return true
+export function allowedOrigin(
+  origin: string | undefined,
+  accessToken?: string,
+  rendererOrigin = DEFAULT_RENDERER_ORIGIN,
+): boolean {
+  if (origin === undefined || origin === 'file://') return true
   if (origin === 'null') return false
-  let hostname: string
   try {
-    ;({ hostname } = new URL(origin))
+    const parsed = new URL(origin)
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) return false
   } catch {
     return false
   }
-  if (accessToken) return true
-  return (
-    hostname === 'localhost' ||
-    hostname === '::1' ||
-    hostname === '[::1]' ||
-    (isIPv4(hostname) && hostname.startsWith('127.'))
-  )
+  return Boolean(accessToken) || origin === rendererOrigin
 }
 
 function workspaceForRequest(
@@ -1193,7 +1178,12 @@ export function clientErrorMessage(error: unknown): string {
 
 export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {
   if (!expected) return true
-  const supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  let supplied: string | null
+  try {
+    supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  } catch {
+    return false
+  }
   if (!supplied) return false
 
   const expectedBytes = Buffer.from(expected)

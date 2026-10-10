@@ -5,7 +5,9 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type Dispatch,
   type ReactNode,
+  type SetStateAction,
 } from 'react'
 import { createPortal } from 'react-dom'
 import type {
@@ -59,6 +61,7 @@ import { comparePullRequestText, countLabel } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
 
 type DetailTab = 'summary' | 'files'
+type ComposerMode = 'comment' | 'approve' | 'request_changes'
 
 type Confirmation = {
   title: string
@@ -96,16 +99,23 @@ export function PullRequestDetailPane(props: {
   }>()
   const [pendingKeys, setPendingKeys] = useState<ReadonlySet<string>>(() => new Set())
   const [tab, setTab] = useState<DetailTab>('summary')
+  const [body, setBody] = useState('')
+  const [mode, setMode] = useState<ComposerMode>('comment')
+  const [filesRevision, setFilesRevision] = useState(0)
   const [confirmation, setConfirmation] = useState<Confirmation>()
   const request = useRef(0)
   const detailRef = useRef<PullRequestDetail | undefined>(undefined)
   const pendingKeysRef = useRef(new Set<string>())
   const needsRevalidation = useRef(false)
   const revalidationTimer = useRef<number | undefined>(undefined)
+  const loadingRef = useRef(false)
+  const onChangedRef = useRef(props.onChanged)
+  onChangedRef.current = props.onChanged
 
   const load = useCallback(
     async (refresh = false, silent = false): Promise<PullRequestDetail | undefined> => {
       const id = ++request.current
+      loadingRef.current = true
       if (!silent) {
         if (refresh) setRefreshing(true)
         else setLoading(true)
@@ -121,6 +131,7 @@ export function PullRequestDetailPane(props: {
         if (id === request.current) {
           detailRef.current = next
           setDetail(next)
+          if (refresh && !silent) setFilesRevision((current) => current + 1)
           return next
         }
       } catch (cause) {
@@ -129,7 +140,8 @@ export function PullRequestDetailPane(props: {
           else setError(messageOf(cause))
         }
       } finally {
-        if (id === request.current && !silent) {
+        if (id === request.current) {
+          loadingRef.current = false
           setLoading(false)
           setRefreshing(false)
         }
@@ -149,6 +161,29 @@ export function PullRequestDetailPane(props: {
     }
   }, [load])
 
+  useEffect(() => {
+    let lastRefresh = 0
+    const refresh = () => {
+      if (
+        document.hidden ||
+        loadingRef.current ||
+        pendingKeysRef.current.size > 0 ||
+        Date.now() - lastRefresh < 30_000
+      )
+        return
+      lastRefresh = Date.now()
+      void load(true, true).then((next) => {
+        if (next) onChangedRef.current(next)
+      })
+    }
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [load])
+
   const runAction = useCallback<RunPullRequestAction>(
     async (action, update) => {
       const pendingKey = actionPendingKey(action)
@@ -163,6 +198,12 @@ export function PullRequestDetailPane(props: {
           number: props.item.number,
           action,
         })
+        // A load that started before this change can only return the old state.
+        // The revalidation scheduled below owns the next read.
+        request.current += 1
+        loadingRef.current = false
+        setLoading(false)
+        setRefreshing(false)
         const current = detailRef.current
         if (current) {
           const next = (update ?? ((value) => applySuccessfulAction(value, action)))(current)
@@ -175,6 +216,10 @@ export function PullRequestDetailPane(props: {
         return true
       } catch (cause) {
         setNotice({ kind: 'error', text: messageOf(cause) })
+        if (action.type === 'merge' || action.type === 'enable_auto_merge') {
+          setConfirmation(undefined)
+          needsRevalidation.current = true
+        }
         return false
       } finally {
         pendingKeysRef.current.delete(pendingKey)
@@ -188,8 +233,8 @@ export function PullRequestDetailPane(props: {
             revalidationTimer.current = undefined
             if (pendingKeysRef.current.size > 0 || !needsRevalidation.current) return
             needsRevalidation.current = false
-            void load(false, true).then((next) => {
-              if (next) props.onChanged(next)
+            void load(true, true).then((next) => {
+              if (next) onChangedRef.current(next)
             })
           }, 50)
         }
@@ -287,6 +332,7 @@ export function PullRequestDetailPane(props: {
                 action: {
                   type: 'merge',
                   method,
+                  expectedHeadOid: detail.headRefOid,
                   // GitHub applies delete_branch_on_merge itself. Passing gh's
                   // --delete-branch would additionally touch a local checkout.
                   deleteBranch: false,
@@ -353,11 +399,14 @@ export function PullRequestDetailPane(props: {
             />
           ) : (
             <PullRequestFiles
-              key={detail.headRefOid}
+              key={`${detail.headRefOid}:${detail.baseRefOid}:${detail.baseRefName}:${filesRevision}`}
               detail={detail}
               transport={props.transport}
               onAction={runAction}
               actionBusy={conversationBusy}
+              onComparisonChanged={() => {
+                void load(true)
+              }}
               onConfirmAction={(action) =>
                 setConfirmation({
                   title: 'Delete this review comment?',
@@ -375,6 +424,10 @@ export function PullRequestDetailPane(props: {
       {tab === 'summary' && detail.state === 'OPEN' ? (
         <PullRequestComposer
           detail={detail}
+          body={body}
+          setBody={setBody}
+          mode={mode}
+          setMode={setMode}
           busy={pendingKeys.has('composer')}
           onAction={runAction}
         />
@@ -1461,12 +1514,9 @@ function mergeMilestones(
   return [{ number: Number.MAX_SAFE_INTEGER, title: current }, ...available]
 }
 
+/** Git refs are case-sensitive: `release` and `Release` are different branches. */
 function mergeStrings(available: string[], current: string[]): string[] {
-  const values = new Map<string, string>()
-  for (const value of [...current, ...available]) {
-    if (!values.has(value.toLowerCase())) values.set(value.toLowerCase(), value)
-  }
-  return [...values.values()]
+  return [...new Set([...current, ...available])]
 }
 
 function lowerSet(values: string[]): Set<string> {
@@ -1569,6 +1619,13 @@ function PullRequestActivity(props: {
           ) : null}
         </section>
       ) : null}
+      {props.detail.reviewThreadsUnavailable ? (
+        <p className="pr-list-note is-error" role="alert">
+          Review conversations could not be loaded. Refresh to try again.
+        </p>
+      ) : props.detail.reviewThreads.length === 0 && props.detail.reviewThreadsTruncated ? (
+        <p className="pr-list-note">Review conversations are available on GitHub.</p>
+      ) : null}
 
       <section className="pr-timeline">
         <div className="pr-section-title">
@@ -1621,7 +1678,9 @@ function ReviewThreadCard(props: {
 }) {
   const [replying, setReplying] = useState(false)
   const [reply, setReply] = useState('')
-  const lastComment = props.thread.comments.at(-1)
+  const rootComment = props.thread.comments[0]
+  const replyRef = useRef(reply)
+  replyRef.current = reply
 
   return (
     <article className={`pr-thread-card${props.thread.resolved ? ' is-resolved' : ''}`}>
@@ -1659,6 +1718,18 @@ function ReviewThreadCard(props: {
           onConfirm={props.onConfirm}
         />
       ))}
+      {props.thread.commentsTruncated ? (
+        <p className="pr-list-note">
+          Later replies are not shown.{' '}
+          {rootComment ? (
+            <a href={rootComment.url} target="_blank" rel="noreferrer">
+              Read the whole conversation on GitHub
+            </a>
+          ) : (
+            'Read the whole conversation on GitHub.'
+          )}
+        </p>
+      ) : null}
       {replying ? (
         <div className="pr-thread-reply">
           <textarea value={reply} onChange={(event) => setReply(event.target.value)} autoFocus />
@@ -1669,17 +1740,18 @@ function ReviewThreadCard(props: {
             <button
               type="button"
               className="pr-button is-primary"
-              disabled={props.busy || !reply.trim() || !lastComment?.databaseId}
+              disabled={props.busy || !reply.trim() || !rootComment?.databaseId}
               onClick={() => {
-                if (!lastComment?.databaseId) return
+                if (!rootComment?.databaseId) return
+                const sentReply = reply
                 void props
                   .onAction({
                     type: 'reply_to_review',
-                    commentId: lastComment.databaseId,
+                    commentId: rootComment.databaseId,
                     body: reply.trim(),
                   })
                   .then((success) => {
-                    if (success) {
+                    if (success && replyRef.current === sentReply) {
                       setReply('')
                       setReplying(false)
                     }
@@ -1936,11 +2008,14 @@ function ReviewCard({ review }: { review: PullRequestReview }) {
 
 function PullRequestComposer(props: {
   detail: PullRequestDetail
+  body: string
+  setBody: Dispatch<SetStateAction<string>>
+  mode: ComposerMode
+  setMode: Dispatch<SetStateAction<ComposerMode>>
   busy: boolean
   onAction: (action: PullRequestAction) => Promise<boolean>
 }) {
-  const [body, setBody] = useState('')
-  const [mode, setMode] = useState<'comment' | 'approve' | 'request_changes'>('comment')
+  const { body, setBody, mode, setMode } = props
   const input = useRef<HTMLTextAreaElement>(null)
   const canReview = props.detail.relationship === 'reviewing'
   const needsBody = mode === 'comment' || mode === 'request_changes'
@@ -1961,8 +2036,9 @@ function PullRequestComposer(props: {
             type: 'review',
             verdict: mode,
             body: text,
+            commitId: props.detail.headRefOid,
           }
-    if (await props.onAction(action)) setBody('')
+    if (await props.onAction(action)) setBody((current) => (current === body ? '' : current))
   }
 
   return (
@@ -2069,7 +2145,11 @@ function AutoMergeMenu(props: {
                 icon={<Clock3 size={13} aria-hidden />}
                 onClick={() => {
                   close()
-                  void props.onAction({ type: 'enable_auto_merge', method })
+                  void props.onAction({
+                    type: 'enable_auto_merge',
+                    method,
+                    expectedHeadOid: props.detail.headRefOid,
+                  })
                 }}
               />
             ))

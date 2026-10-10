@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-09-27 main 20bf4dad · local delivery checked</span>
+        <span class="meta">2026-10-04 main e29c3382 · checkpoint identity correction</span>
       </div>
     </div>
 
@@ -234,7 +234,7 @@
         Every feature the app has today, as concrete as it gets. This is the working checklist for
         deciding the first release scope: tick a box to mark a feature as keep. Ticks are saved in
         this browser only. Nothing here is a plan: everything listed is implemented. Sections marked
-        parked are built and tested but out of the beta UI (see dashboard.html).
+        nightly only are built and tested but absent from main's code (see dashboard.html).
       </p>
 
       <div class="toc">
@@ -351,7 +351,9 @@
                 <span class="d"
                   >claude auth login runs in the expanded setup terminal card; SDK initialization
                   fills account details without sending a prompt; null email and subscription
-                  metadata preserve signed-in status without inventing account details</span
+                  metadata preserve signed-in status without inventing account details; readable
+                  plan labels include Max x5 or Max x20 when the local CLI configuration provides
+                  that tier</span
                 ></span
               ></label
             >
@@ -384,7 +386,8 @@
                 <span class="d"
                   >one long-lived prompt stream carries follow-up turns while SDK controls change
                   the model and stop active work without replacing the process; incomplete text,
-                  reasoning, and tool blocks settle before every terminal result</span
+                  reasoning, and tool blocks settle before every terminal result; if the CLI process
+                  dies, the next send resumes the saved session in a new process</span
                 ></span
               ></label
             >
@@ -394,7 +397,9 @@
               ><input type="checkbox" /><span
                 >SDK permissions and structured questions use TasteCode-native cards
                 <span class="d"
-                  >ask, accept edits, automatic review, bypass, and AskUserQuestion</span
+                  >ask, accept edits, automatic review, bypass, and AskUserQuestion, including
+                  multi-select questions; MCP and other tool cards name the tool and show its
+                  arguments</span
                 ></span
               ></label
             >
@@ -413,9 +418,7 @@
           </li>
         </ul>
 
-        <h3>
-          Cursor (cursor-agent stream-json) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>Cursor (cursor-agent stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -440,9 +443,7 @@
           </li>
         </ul>
 
-        <h3>
-          OpenCode (local server, HTTP/SSE) <span class="pill-parked">parked for the beta</span>
-        </h3>
+        <h3>OpenCode (local server, HTTP/SSE) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -472,7 +473,7 @@
           </li>
         </ul>
 
-        <h3>Antigravity (agy, stream-json) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Antigravity (agy, stream-json) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -529,11 +530,15 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Signed-in detection through the CLI itself, sign out runs grok logout
+                >Signed-in detection through the CLI itself, redacted account email and plan, sign
+                out runs grok logout
                 <span class="d"
-                  >successful login retains the exact provider-confirmed email as soon as the CLI
-                  reports it; Settings otherwise reports only Signed in, uses a fixed-width privacy
-                  blur, and never asks the user to type an address</span
+                  >grok models decides sign-in; Grok's own ACP auth extension then supplies the
+                  email and its subscription tier as the plan, such as X Premium, without reading
+                  Grok's credential file; successful login retains the exact provider-confirmed
+                  email as soon as the CLI reports it; when neither is available Settings reports
+                  only Signed in, uses a fixed-width privacy blur, and never asks the user to type
+                  an address</span
                 ></span
               ></label
             >
@@ -551,7 +556,7 @@
           </li>
         </ul>
 
-        <h3>Kimi CLI (over ACP) <span class="pill-parked">parked for the beta</span></h3>
+        <h3>Kimi CLI (over ACP) <span class="pill-parked">nightly only</span></h3>
         <ul class="check">
           <li>
             <label
@@ -573,7 +578,7 @@
 
         <h3>
           Direct API connections (TasteCode-owned agent loop)
-          <span class="pill-parked">parked for the beta</span>
+          <span class="pill-parked">nightly only</span>
         </h3>
         <ul class="check">
           <li>
@@ -621,15 +626,20 @@
                 >One fixed setup and account row grammar
                 <span class="d"
                   >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; empty action
-                  slots stay hidden, with account details below the provider name in compact rows;
-                  primary and secondary actions share the right edge on desktop and narrow layouts;
-                  CLI versions live in the provider-mark tooltip instead of widening account rows;
-                  account labels use the same email-or-signed-in grammar; error tooltips escape
-                  clipped cards, stay inside the viewport, and support keyboard dismissal;
-                  <a href="./screenshots/provider-density-after.png">compact evidence</a>,
-                  <a href="./screenshots/provider-settings-desktop.png">desktop</a> and
-                  <a href="./screenshots/provider-settings-390.png">390 px</a> evidence</span
+                  stable slots across loading, ready, setup, busy, and failure states; the roster is
+                  open type instead of a card, and a wire between the provider name and its account
+                  carries the state: solid between two terminals once an account is attached, a
+                  dotted leader while the provider waits for one, absent when the provider is not
+                  installed, flowing dashes while work is in flight, and the error colour after an
+                  announced failure; connected providers read in full ink and the rest are dimmed;
+                  hovering a row lights its wire; empty action slots stay hidden; in narrow rosters
+                  the wire steps aside and account details sit below the provider name between
+                  hairlines; primary and secondary actions share the right edge on desktop and
+                  narrow layouts; CLI versions live in the provider-mark tooltip instead of widening
+                  account rows; account labels use the same email-or-signed-in grammar; error
+                  tooltips stay inside the viewport and support keyboard dismissal;
+                  <a href="./screenshots/provider-roster-wired.png">desktop</a> and
+                  <a href="./screenshots/provider-roster-wired-390.png">390 px</a> evidence</span
                 ></span
               ></label
             >
@@ -653,12 +663,16 @@
                 >Provider update buttons and release notifications
                 <span class="d"
                   >background checks for Codex, Claude Code, and Grok; a compact Providers footer
-                  reopens available updates. The toast shows versions, runs trusted update commands,
-                  and handles progress, verified completion, retry, terminal details, and managed
-                  install guides. Idle toasts close after 5 seconds, pausing on hover or focus and
-                  during updates. Closing the toast mid-update leaves the update running; the toast
-                  returns only if it fails. Hidden or cancelled exits release the notice, while
-                  reopening keeps it visible. Dismissal is remembered per release</span
+                  reopens available updates. The toast lists each release as installed → new version
+                  with the changed parts brought forward; the installed version turns over to the
+                  new one on odometer wheels once the update is verified, and the heading's count
+                  turns down with it. It runs trusted update commands and handles progress, verified
+                  completion, retry, terminal details, and managed install guides. Idle toasts close
+                  after 5 seconds, pausing on hover or focus and during updates, and also after an
+                  update that removed the focused button. Closing the toast mid-update leaves the
+                  update running; the toast returns only if it fails. Hidden or cancelled exits
+                  release the notice, while reopening keeps it visible. Dismissal is remembered per
+                  release</span
                 ></span
               ></label
             >
@@ -679,7 +693,8 @@
                 <span class="d"
                   >separate model-picker source, desktop-safe PATH resolution, fixed argv without
                   shell parsing, optional cwd/environment, protocol-aware verification, bounded
-                  startup, explicit stability and secret warning; includes Pi RPC</span
+                  startup, explicit stability and secret warning; Codex, Claude Code and Grok only
+                  on main</span
                 ></span
               ></label
             >
@@ -719,8 +734,7 @@
                 >Honest rows for what does not exist
                 <span class="d"
                   >canonical source names and marks across the picker, inbox, search, Profile, and
-                  Usage; Pi only through an explicit custom RPC harness, Gemini CLI and Qwen
-                  retired</span
+                  Usage; only Codex, Claude Code and Grok exist on main</span
                 ></span
               ></label
             >
@@ -809,9 +823,10 @@
                 and a direction-aware 75% drag threshold; the flat list is the first-run layout,
                 while both layouts share full-catalog search, arrow-key entry into filtered results,
                 and selection preservation; new-chat source changes keep readiness checks silent;
-                default visibility includes Astra, Sol, Terra, Luna, Fable 5.1, Opus 5, Sonnet 5,
-                Fable 5, Grok 4.6, and Grok 4.5; new models start enabled, and saved visibility
-                choices persist after the one-time defaults update</span
+                default visibility hides superseded GPT 6 Sol, GPT 5.6 variants, Opus 5 and Sonnet
+                5; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and Claude 5.5 stay enabled when
+                discovered; new models start enabled, and saved visibility choices persist after the
+                one-time defaults update</span
               ></label
             >
           </li>
@@ -1220,7 +1235,12 @@
                 >Checkpoint every turn, reversible rollback with changed-file inspection
                 <span class="d"
                   >Git refs protect saved states; shared-checkout guards wait for active and
-                  stopping agents; nested project restore stays in scope</span
+                  stopping agents; nested project restore stays in scope. Filesystem-native Git
+                  common-directory identity combines Windows long/8.3 aliases during history
+                  cleanup, retaining all linked-worktree checkpoints (<a
+                    href="https://github.com/Leonxlnx/tastecode/pull/1404"
+                    >#1404</a
+                  >)</span
                 ></span
               ></label
             >
@@ -1281,13 +1301,14 @@
                   picker; dropping one or many folders onto either Desktop sidebar adds every unique
                   valid folder with a clear drop target; the first empty Desktop run opens a
                   full-window five-page setup (welcome, name with live identicon, theme applied on
-                  choice, three-provider readiness, choose a folder) with Enter to continue, Back,
-                  Skip, and a page that survives a Settings round trip; opening an empty project's
-                  drawer reveals No chats without replacing or collapsing the current chat;
-                  switching chats reveals the selected project without collapsing other open
-                  projects, and manual project folding remains available; compact folder rows align
-                  directly below Projects and expanded Show more actions have no extra leading
-                  spacer; <a href="./screenshots/empty-project.png">production evidence</a></span
+                  choice, three-provider readiness, choose a folder) beside a live app preview that
+                  receives each answer as it is given, with Enter to continue, Back, Skip, and a
+                  page that survives a Settings round trip; opening an empty project's drawer
+                  reveals No chats without replacing or collapsing the current chat; switching chats
+                  reveals the selected project without collapsing other open projects, and manual
+                  project folding remains available; compact folder rows align directly below
+                  Projects and expanded Show more actions have no extra leading spacer;
+                  <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
             >
@@ -1376,9 +1397,10 @@
                 <span class="d"
                   >inline base, reviewer, assignee, label, milestone and status controls; checks,
                   Diffs-powered file review, inline threads, comments, reviews, branch updates,
-                  merge and auto-merge; authenticated private image uploads and repository-file
-                  previews, including SVG and animated images up to 10 MiB, relative image paths,
-                  lazy loading, bounded caches and retryable errors</span
+                  merge and auto-merge; reviews, merges and auto-merge are bound to the head commit
+                  the user inspected and fail if new commits arrive; authenticated private image
+                  uploads and repository-file previews, including SVG and animated images up to 10
+                  MiB, relative image paths, lazy loading, bounded caches and retryable errors</span
                 ></span
               ></label
             >
@@ -1450,8 +1472,8 @@
               ><input type="checkbox" /><span
                 >Two versions switchable in Settings
                 <span class="d"
-                  >V1 Classic and V2 Inbox with auto-settle after N days; new profiles start on
-                  Classic with three-day settling enabled</span
+                  >Classic and Inbox with auto-settle after N days; new profiles start on Classic
+                  with three-day settling enabled</span
                 ></span
               ></label
             >
@@ -1481,12 +1503,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Undo recently archived chats
+                >Undo recently deleted chats
                 <span class="d"
-                  >sidebar archive actions show a top toast with a white Undo button. The toast
+                  >sidebar delete actions show a top toast with a white Undo button. The toast
                   closes after 5 seconds, pausing on hover or focus within the 10-second undo
-                  window, and fade and slide visible rows before removal. Reduced motion skips these
-                  effects</span
+                  window, and fade and slide visible rows before removal. Deletion is permanent once
+                  the window ends; selecting or sending in a pending chat cancels it. Shift-click
+                  range selection covers only visible rows. Reduced motion skips these effects</span
                 ></span
               ></label
             >
@@ -1495,7 +1518,8 @@
             <label
               ><input type="checkbox" /><span
                 >Drag to reorder projects and sessions with matching inset drop lines, with the
-                chosen order restored on reload</span
+                chosen order restored on reload; undragged projects stay newest first, and chats
+                imported later from another provider slot in by date</span
               ></label
             >
           </li>
@@ -1541,8 +1565,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Archive a whole project's sessions; project removal uses a centered confirmation
-                and never deletes its folder or chats</span
+                >Delete all of a project's chats after a centered confirmation; project removal uses
+                its own confirmation and never deletes its folder or chats
+                <span class="d"
+                  >both name the project, its folder path and chat count; removal says how to bring
+                  the chats back, warns when running chats will stop and is not styled as
+                  destructive</span
+                ></span
               ></label
             >
           </li>
@@ -1619,16 +1648,19 @@
               ><input type="checkbox" /><span
                 >Custom keybinds with hints rendered in the UI
                 <span class="d"
-                  >22 app, chat, project, and workspace actions; searchable native editor, conflict
-                  checks, automatic persistence, reset, and safe keyboard ownership for Settings and
-                  modal dialogs; the always-available top-row Options menu exposes common sidebar,
-                  terminal, workspace, chat, search, pull request, and settings actions, while the
-                  desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
-                  actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
-                  Windows/Linux open the nine newest sessions in the first sidebar project.
-                  Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key labels
-                  and portable recorded Option keys. Direct workspace tool shortcuts work before and
-                  after the panel opens and respect modal keyboard ownership</span
+                  >22 app, chat, project, and workspace actions; searchable editor where each action
+                  is wired to its shortcut by a dotted leader that runs while recording, turns red
+                  on a conflict and draws in when keys land, live modifier feedback while recording,
+                  conflict checks that can move a taken shortcut, per-action restore and clear,
+                  automatic persistence, reset of every default, and safe keyboard ownership for
+                  Settings and modal dialogs; the always-available top-row Options menu exposes
+                  common sidebar, terminal, workspace, chat, search, pull request, and settings
+                  actions, while the desktop File, View, Chat, Workspace, Window, and Help menus
+                  mirror the same actions and current custom accelerators. Cmd+1–9 on macOS and
+                  Ctrl+1–9 on Windows/Linux open the nine newest sessions in the first sidebar
+                  project. Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key
+                  labels and portable recorded Option keys. Direct workspace tool shortcuts work
+                  before and after the panel opens and respect modal keyboard ownership</span
                 ></span
               ></label
             >
@@ -1688,7 +1720,14 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >General section: sidebar version switch and inbox auto-settle</span
+                >General section: each setting chosen by picture
+                <span class="d"
+                  >Sidebar, Terminal and Model picker each show their two choices as the window they
+                  make, painted in the app's surfaces with the changed part in ink and the chosen
+                  one ringed, beside a line on what the setting decides; the terminal starts on the
+                  right until moved. Under Inbox a logarithmic settle scale from 1 to 90 days or
+                  never moves the Settled fold in the Inbox picture as it is dragged</span
+                ></span
               ></label
             >
           </li>
@@ -1706,8 +1745,9 @@
               ><input type="checkbox" /><span
                 >Theme preview: System, Light, Dark
                 <span class="d"
-                  >Large selectable cards and a two-pane code sample expose surface, syntax,
-                  semantic color, and contrast differences before customization</span
+                  >Three centred previews, each a miniature TasteCode window (sidebar, reply, prompt
+                  bar) painted in that mode's chosen background and accent, so a color change shows
+                  in its preview at once. The chosen one is ringed just outside its edge</span
                 ></span
               ></label
             >
@@ -1719,10 +1759,13 @@
                 <span class="d"
                   >New profiles use the native system font: San Francisco on macOS, Segoe UI on
                   Windows, and the desktop system font on Linux. Saved font choices are preserved.
-                  System default, bundled font families, and every installed font family appear in
-                  one deduplicated alphabetical list with name search. The complete list is cached
-                  across app restarts, refreshes after 24 hours, and replaces the first-load message
-                  only when ready</span
+                  The picker opens on a Built in group (System default first, then the bundled
+                  families) above every installed family in alphabetical order, each row with an Ag
+                  sample set in its own face. There is no search bar: opening the picker turns the
+                  row's value into a field, typing filters in place with names that start with the
+                  query ranked first, and the list keeps its size while it filters. The complete
+                  list is cached across app restarts, refreshes after 24 hours, and replaces the
+                  first-load message only when ready</span
                 ></span
               ></label
             >
@@ -1730,13 +1773,16 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Compact appearance controls
+                >Open appearance rows
                 <span class="d"
-                  >Light mode and Dark mode each have a labeled, bordered settings card with
-                  independently saved accent, background, installed font, and sidebar translucency.
-                  Trackpad haptics and font smoothing remain shared macOS controls. Accent and
-                  background use color pills with hex values, a custom color picker, and saved
-                  presets. Custom backgrounds choose light or dark text for contrast</span
+                  >Light mode and Dark mode each list independently saved accent, background,
+                  installed font, and sidebar translucency as open rows like the provider roster: no
+                  card or fill, a dotted leader from each name to its value that lights on hover.
+                  Accent and background show a square chip with the preset name (hex for a custom
+                  color) and open the custom color picker with saved presets; Reset colors appears
+                  beside a mode once either color changes. Trackpad haptics and font smoothing
+                  remain shared macOS controls. Custom backgrounds choose light or dark text for
+                  contrast</span
                 ></span
               ></label
             >
@@ -1826,7 +1872,7 @@
                 >Ten compact sections with flat selection states
                 <span class="d"
                   >General, Profile, Appearance, and Keybinds first, then Providers, Models, MCP,
-                  Skills, Data &amp; privacy, About</span
+                  Skills, Data &amp; privacy, About; Settings opens on General</span
                 ></span
               ></label
             >
@@ -1834,10 +1880,25 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Profile: renderer-local display name, a pixel avatar generated from the name
-                (deterministic 8×8 sprite, curated palettes, hash-picked symmetry and ground
-                pattern) and an uploaded PNG, JPEG, or WebP photo that replaces it; Settings › Debug
-                has an avatar generator lab for previewing names at every shipped size</span
+                >Profile: one coin, its two faces the two pictures
+                <span class="d"
+                  >The seal on one face is read letter by letter from the renderer-local name, or
+                  from any word kept with Strike from a word (typed or rolled with the die,
+                  previewed live, kept only on Keep this seal; Back to your name returns to the name
+                  in one click): the first letter picks the colour, a vowel at the end a light
+                  ground, the letter count the symmetry, and each character lays one tile (vowels in
+                  the second colour, A–M in the first, the rest a gap). A small coin-shaped "?"
+                  turns the coin into its own explanation: the slice that repeats carries the
+                  letters that laid each tile, the rest steps back, and four notes tied to the rim
+                  read the colour, ground, symmetry and tile rules for the word; words without
+                  letters are hashed. The seal is minted when the page opens, re-struck from the
+                  centre out once typing pauses, and shown in the sidebar too. The other face holds
+                  a PNG, JPEG or WebP photo up to 1 MB: Turn over for a photo flips the coin and
+                  opens the file picker, dragging a photo onto the page turns it to the empty face,
+                  Turn back returns to the seal and keeps the photo for this session. Brushing the
+                  cursor across the coin nudges it on a damped spring. Settings › Debug has an
+                  avatar generator lab for previewing names at every shipped size</span
+                ></span
               ></label
             >
           </li>
@@ -1846,6 +1907,20 @@
               ><input type="checkbox" /><span
                 >Flat Settings cards with small corners, 48 px base rows, clear labels and notes,
                 and provider names aligned beside their icons</span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Providers: each signed-in provider sets its own New chat model, effort, and access
+                default, plus its context window and compaction point
+                <span class="d"
+                  >the context ruler offers only what the provider declares (Codex 272K or 872K and
+                  compaction no later than 90%, Claude Code 200K or 1M and no later than 93% or Off,
+                  Grok 256K); model, effort, and access apply to New chat, context settings apply
+                  when a session starts or resumes, and neither changes a running session</span
+                ></span
               ></label
             >
           </li>
@@ -1885,17 +1960,22 @@
               ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
-                  >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D, and
-                  offers Force onboarding without resetting saved data; projects, workspaces, files,
-                  history, and provider credentials remain untouched; upgrades move legacy history
-                  and config into TasteCode paths without overwriting existing TasteCode data;
-                  desktop background provider probes start in app storage instead of inheriting the
-                  launch directory (macOS removable-volume permission verification pending); bounded
-                  opt-in text diagnostics rotate at 512 KiB, stop when disabled, and exclude legacy
-                  native dumps from the revealed folder; native crash collection is removed; logs
-                  can be revealed or copied only by the user after keyed and standalone credential
-                  shapes, private keys, emails, project paths, and cross-platform home paths are
-                  scrubbed;
+                  >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D and kept
+                  unlocked across restarts until toggled off, and offers Force onboarding without
+                  resetting saved data and a simulated app update (update, failure with retry, or up
+                  to date) that drives the sidebar button and About without downloading anything,
+                  plus simulated provider updates (one release, three, or a failure that recovers on
+                  retry) that pop the update notice with releases one step past the installed
+                  versions and play the update without running a CLI or remembering a dismissal;
+                  projects, workspaces, files, history, and provider credentials remain untouched;
+                  upgrades move legacy history and config into TasteCode paths without overwriting
+                  existing TasteCode data; desktop background provider probes start in app storage
+                  instead of inheriting the launch directory (macOS removable-volume permission
+                  verification pending); bounded opt-in text diagnostics rotate at 512 KiB, stop
+                  when disabled, and exclude legacy native dumps from the revealed folder; native
+                  crash collection is removed; logs can be revealed or copied only by the user after
+                  keyed and standalone credential shapes, private keys, emails, project paths, and
+                  cross-platform home paths are scrubbed;
                   <a href="./screenshots/reset-preferences-confirm.png"
                     >production evidence</a
                   ></span
@@ -1926,7 +2006,14 @@
                 later-published Linux-only Beta 8 proof was returned to draft to restore existing
                 clients. The next build selects releases by semantic version. Public discovery and
                 both downloads pass. Beta 6 and earlier users who missed the Beta 7 bridge need one
-                manual installer update</span
+                manual installer update. Next build: the release feed finds updates without spending
+                GitHub's anonymous API limit, interrupted downloads resume after a restart,
+                background check failures stay out of the sidebar and retry with backoff, and an
+                overdue check runs after the computer wakes. After the last byte the update shows
+                Preparing instead of a frozen 100 percent while it is verified and handed to the
+                system updater. Regression tests inject EBUSY for locked leftovers and EACCES for
+                denied writes, preserving real download and stream-error checks across platforms
+                (#1394)</span
               ></label
             >
           </li>
@@ -1967,9 +2054,10 @@
                   nested guest webviews are disabled, renderer error reports are bounded, and
                   project-file reveals check resolved paths; spawned commands use a private per-user
                   runtime directory on POSIX and exclude current-directory executable lookup on
-                  Windows; media access requires explicit audio-only details from the owning main
-                  renderer and main frame, with malformed, mixed, unknown, camera and subframe
-                  requests denied in both Chromium checks and permission requests</span
+                  Windows; Windows child-process cleanup waits for Node to observe exit after
+                  taskkill succeeds (#1394); media access requires explicit audio-only details from
+                  the owning main renderer and main frame, with malformed, mixed, unknown, camera
+                  and subframe requests denied in both Chromium checks and permission requests</span
                 ></span
               ></label
             >
@@ -1984,7 +2072,14 @@
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Loopback origin gate on every connection</span></label
+              ><input type="checkbox" /><span
+                >Exact origin gate on every connection
+                <span class="d"
+                  >accepts no Origin, the packaged <code>file://</code> renderer, and one renderer
+                  origin (<code>http://127.0.0.1:5183</code> or
+                  <code>HARNESS_RENDERER_ORIGIN</code>); other loopback ports are refused</span
+                ></span
+              ></label
             >
           </li>
           <li>

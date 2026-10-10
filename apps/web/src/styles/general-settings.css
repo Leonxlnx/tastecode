@@ -1,0 +1,599 @@
+/* General is chosen by picture, as Appearance chooses a theme. Each setting is
+   a name in the roster's weight, a line on what it decides, and its two choices
+   drawn as the window they make. Nothing is a card: the pictures are the only
+   painted surfaces, and the chosen one is ringed a step outside its edge. */
+
+.general {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+}
+
+.general-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 344px);
+  column-gap: 32px;
+  align-items: start;
+}
+
+@container settings-content (max-width: 600px) {
+  .general-setting {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 16px;
+  }
+}
+
+.general-setting__copy {
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.general-setting__name {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 550;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+}
+
+.general-setting__note {
+  max-width: 34ch;
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  letter-spacing: -0.006em;
+  line-height: 1.45;
+}
+
+.general-setting__options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.general-option {
+  min-width: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  text-align: center;
+}
+
+.general-option[aria-checked='true'] {
+  color: var(--text);
+  cursor: default;
+}
+
+.general-option:focus-visible {
+  outline: none;
+}
+
+.general-option__picture {
+  display: block;
+  border-radius: var(--r-md);
+  outline: 1.5px solid transparent;
+  outline-offset: 3px;
+  transition: outline-color var(--dur-fast) var(--ease-out);
+}
+
+.general-option:not([aria-checked='true']):hover .general-option__picture {
+  outline-color: color-mix(in srgb, var(--text) 24%, transparent);
+}
+
+.general-option[aria-checked='true'] .general-option__picture {
+  outline-color: var(--text);
+}
+
+.general-option:focus-visible .general-option__picture {
+  outline: 2px solid var(--text-2);
+}
+
+.general-option__label {
+  display: block;
+  margin-top: 10px;
+  font-size: var(--t-md);
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.general-option:not([aria-checked='true']):hover {
+  color: var(--text-2);
+}
+
+/* Settling only shows in the Inbox sidebar, so its scale sits under the
+   pictures and folds away under Classic. */
+.general-settle {
+  display: grid;
+  grid-column: 2;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--dur-slow) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+
+@container settings-content (max-width: 600px) {
+  .general-settle {
+    grid-column: 1;
+  }
+}
+
+.general-settle[data-open] {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.general-settle__inner {
+  min-height: 0;
+  overflow: clip;
+  overflow-clip-margin: 8px;
+}
+
+/* Spacing lives inside the fold, so the closed fold takes no room at all. */
+.general-settle__head {
+  margin-top: 22px;
+}
+
+.general-settle__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.general-settle__name,
+.general-settle__value {
+  margin: 0;
+  font-size: var(--t-md);
+  letter-spacing: -0.006em;
+  line-height: 1.3;
+}
+
+.general-settle__name {
+  color: var(--text-2);
+  font-weight: 500;
+}
+
+.general-settle__value {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+/* A measuring scale, not a slider track: hairline run, ticks and a needle. The
+   run is logarithmic and ends at 90 days; past it a dashed tail runs out to
+   "never". */
+.settle-scale {
+  --tail: 64px;
+  --run: calc(100% - var(--tail));
+  position: relative;
+  height: 34px;
+  margin: 10px 0 14px;
+  border-radius: var(--r-md);
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.settle-scale[data-grabbing] {
+  cursor: grabbing;
+}
+
+.settle-scale:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 4px;
+}
+
+.settle-scale__run,
+.settle-scale__tail {
+  position: absolute;
+  top: 9px;
+  height: 1px;
+}
+
+.settle-scale__run {
+  left: 0;
+  width: var(--run);
+  background: var(--line-strong);
+}
+
+.settle-scale__tail {
+  left: calc(var(--run) + 8px);
+  right: 0;
+  background: linear-gradient(90deg, var(--line-strong) 50%, transparent 0) left / 4px 1px repeat-x;
+}
+
+.settle-scale__tick,
+.settle-scale__label,
+.settle-scale__needle {
+  position: absolute;
+  left: calc(var(--at) * var(--run));
+}
+
+.settle-scale__tick {
+  top: 9px;
+  width: 1px;
+  height: 4px;
+  background: var(--line-strong);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__tick[data-major] {
+  height: 7px;
+  background: var(--text-3);
+}
+
+.settle-scale:hover .settle-scale__tick {
+  background: var(--text-3);
+}
+
+.settle-scale__label {
+  top: 20px;
+  translate: -50% 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__label[data-edge='start'] {
+  translate: -1px 0;
+}
+
+.settle-scale__label[data-current] {
+  color: var(--text);
+}
+
+.settle-scale__tick[data-never],
+.settle-scale__needle[data-never] {
+  left: calc(100% - 1px);
+}
+
+.settle-scale__label[data-never] {
+  left: 100%;
+  translate: -100% 0;
+}
+
+.settle-scale__needle {
+  top: 1px;
+  width: 2px;
+  height: 16px;
+  translate: -0.5px 0;
+  background: var(--text);
+  border-radius: var(--r-xs);
+  transition: left var(--dur-fast) var(--ease-out);
+}
+
+.settle-scale__needle::before {
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  width: 8px;
+  height: 5px;
+  translate: -50% 0;
+  background: inherit;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  content: '';
+}
+
+.settle-scale[data-grabbing] .settle-scale__needle {
+  transition-duration: 90ms;
+}
+
+/* ---------- the window in miniature ---------- */
+
+/* Painted in the app's own surfaces, so the pictures follow the theme. The
+   part a setting changes is drawn in ink; the rest stays quiet. */
+.gwin {
+  --gw-paper: var(--bg);
+  --gw-rail: color-mix(in srgb, var(--text) 3.5%, var(--bg));
+  --gw-edge: color-mix(in srgb, var(--text) 9%, var(--bg));
+  --gw-quiet: color-mix(in srgb, var(--text) 15%, var(--bg));
+  --gw-ink: color-mix(in srgb, var(--text) 58%, var(--bg));
+  --gw-strong: color-mix(in srgb, var(--text) 82%, var(--bg));
+  --gw-panel: color-mix(in srgb, var(--text) 6%, var(--bg));
+  --gw-term: var(--chrome-recessed);
+  --gw-step: 7.5%;
+
+  position: relative;
+  display: block;
+  aspect-ratio: 1.5;
+  overflow: hidden;
+  background: var(--gw-paper);
+  border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+.gwin i,
+.gwin b {
+  position: absolute;
+  display: block;
+  height: 3px;
+  border-radius: var(--r-pill);
+}
+
+/* rail */
+
+.gwin__rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 30%;
+  background: var(--gw-rail);
+  box-shadow: inset -1px 0 var(--gw-edge);
+}
+
+.gwin__rail i {
+  left: 22%;
+  top: calc(13% + var(--row) * var(--gw-step));
+  width: calc(var(--w) * 66%);
+  background: var(--gw-quiet);
+  transition:
+    top var(--dur-slow) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+
+.gwin__project {
+  position: absolute;
+  inset: 0;
+}
+
+.gwin__project .gwin__chat {
+  left: 30%;
+  width: calc(var(--w) * 58%);
+}
+
+.gwin__heading {
+  width: calc(var(--w) * 60%) !important;
+}
+
+/* Inbox: one run by last activity, each chat keeping its project's colour. */
+.gwin__chat[data-project]::before,
+.gwin__heading::before {
+  position: absolute;
+  top: 50%;
+  left: -7px;
+  width: 4px;
+  height: 4px;
+  translate: 0 -50%;
+  background: var(--gw-dot);
+  border-radius: var(--r-circle);
+  content: '';
+}
+
+[data-project='0'] {
+  --gw-dot: var(--attention);
+}
+
+[data-project='1'] {
+  --gw-dot: var(--success);
+}
+
+.gwin__rail i[data-settled] {
+  opacity: 0.45;
+}
+
+.gwin__fold {
+  height: 1px !important;
+  margin-top: 1px;
+  background: transparent !important;
+  border-top: 1px dashed var(--gw-quiet);
+  border-radius: 0 !important;
+}
+
+.gwin[data-focus='sidebar'] .gwin__rail i {
+  background: var(--gw-ink);
+}
+
+.gwin[data-focus='sidebar'] .gwin__heading {
+  background: var(--gw-strong);
+}
+
+.gwin[data-focus='sidebar'] .gwin__fold {
+  border-top-color: var(--gw-ink);
+}
+
+/* main */
+
+.gwin__main {
+  position: absolute;
+  inset: 0 0 0 30%;
+  transition: inset var(--dur-slow) var(--ease-out);
+}
+
+.gwin__thread i {
+  left: 10%;
+  top: calc(24% + var(--row) * 7.5%);
+  width: calc(var(--w) * 80%);
+  background: var(--gw-quiet);
+}
+
+.gwin__ask {
+  top: 10% !important;
+  right: 9%;
+  left: auto !important;
+  width: 34% !important;
+  height: 9px !important;
+  background: var(--gw-panel) !important;
+  border-radius: var(--r-xs) !important;
+}
+
+.gwin__prompt {
+  position: absolute;
+  right: 7%;
+  bottom: 8%;
+  left: 7%;
+  height: 15%;
+  background: var(--gw-rail);
+  border-radius: var(--r-sm);
+  box-shadow: inset 0 0 0 1px var(--gw-edge);
+  transition: bottom var(--dur-slow) var(--ease-out);
+}
+
+.gwin__prompt b {
+  top: 50%;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  translate: 0 -50%;
+  background: var(--attention);
+}
+
+/* terminal */
+
+.gwin__terminal {
+  position: absolute;
+  background: var(--gw-term);
+  box-shadow: 0 0 0 1px var(--gw-edge);
+}
+
+.gwin[data-terminal='bottom'] .gwin__terminal {
+  inset: auto 0 0 30%;
+  height: 36%;
+}
+
+.gwin[data-terminal='bottom'] .gwin__prompt {
+  bottom: calc(36% + 6%);
+}
+
+.gwin[data-terminal='bottom'] .gwin__thread i:nth-child(n + 4) {
+  display: none;
+}
+
+.gwin[data-terminal='workspace'] .gwin__terminal {
+  inset: 0 0 0 auto;
+  width: 30%;
+}
+
+.gwin[data-terminal='workspace'] .gwin__main {
+  right: 30%;
+}
+
+.gwin__term-line {
+  left: 16%;
+  top: calc(18% + var(--row) * 18%);
+  width: calc(var(--w) * 70%);
+  background: var(--gw-ink);
+}
+
+.gwin[data-terminal='workspace'] .gwin__term-line {
+  top: calc(12% + var(--row) * 8%);
+}
+
+.gwin__term-line[data-prompt]::before {
+  position: absolute;
+  top: 50%;
+  left: -7px;
+  width: 4px;
+  height: 4px;
+  translate: 0 -50%;
+  rotate: -45deg;
+  border-right: 1px solid var(--gw-strong);
+  border-bottom: 1px solid var(--gw-strong);
+  content: '';
+}
+
+.gwin__term-line[data-cursor] {
+  width: 4px !important;
+  height: 6px;
+  margin-top: -1.5px;
+  border-radius: var(--r-xs);
+  background: var(--gw-strong);
+  animation: gwin-cursor 1.1s steps(1) infinite;
+}
+
+@keyframes gwin-cursor {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* model picker */
+
+.gwin__picker {
+  position: absolute;
+  right: 18%;
+  bottom: calc(8% + 15% + 4%);
+  left: 7%;
+  height: 58%;
+  display: flex;
+  overflow: hidden;
+  background: var(--gw-panel);
+  border-radius: var(--r-sm);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent),
+    0 6px 14px -8px rgb(0 0 0 / 50%);
+}
+
+.gwin__strip {
+  position: relative;
+  flex: none;
+  width: 22%;
+  box-shadow: inset -1px 0 var(--gw-edge);
+}
+
+.gwin__strip i {
+  left: 50%;
+  width: 7px;
+  height: 7px;
+  translate: -50% 0;
+  border-radius: var(--r-xs);
+  background: var(--gw-ink);
+}
+
+.gwin__strip i:nth-child(1) {
+  top: 12%;
+}
+
+.gwin__strip i:nth-child(2) {
+  top: 32%;
+}
+
+.gwin__strip i:nth-child(3) {
+  top: 52%;
+}
+
+.gwin__strip i[data-selected] {
+  background: var(--gw-strong);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 18%, transparent);
+}
+
+.gwin__models {
+  position: relative;
+  flex: 1;
+}
+
+.gwin__models i {
+  left: 12%;
+  top: calc(10% + var(--row) * 12%);
+  width: calc(var(--w) * 76%);
+  background: var(--gw-ink);
+}
+
+.gwin__models i[data-head] {
+  width: calc(var(--w) * 50%);
+  background: var(--gw-quiet);
+}
+
+.gwin[data-focus='picker'] .gwin__thread i {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .general-settle,
+  .general-option__picture,
+  .general-option__label,
+  .gwin *,
+  .settle-scale__needle {
+    transition-duration: 0s !important;
+    animation: none !important;
+  }
+}

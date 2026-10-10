@@ -1,10 +1,13 @@
 /* ---------- first-run onboarding ----------
    A full-window page, not a sheet: the app has nothing to show behind it yet.
-   Every step keeps the same silhouette — bar on top, one column in the middle,
-   actions under the content — so moving through it feels like paging, not
-   like five different dialogs. */
+   Two columns: the question on the left, and on the right the app itself,
+   drawn small. The question column pages; the preview stays put, answers
+   travel into it, and when setup ends it opens up into the real app. */
 
 .onboarding {
+  --onboarding-window-shadow:
+    0 0 0 1px var(--line-strong), 0 2px 4px rgb(0 0 0 / 18%), 0 32px 80px -32px rgb(0 0 0 / 72%);
+
   position: fixed;
   inset: 0;
   z-index: 60;
@@ -15,7 +18,13 @@
   background: var(--bg);
   color: var(--text);
   outline: none;
-  animation: fade-in var(--dur-fast) var(--ease-out);
+  animation: fade-in var(--dur-slow) var(--ease-out);
+}
+
+:root[data-theme='light'] .onboarding {
+  --onboarding-window-shadow:
+    0 0 0 1px var(--line-strong), 0 2px 6px rgb(24 24 27 / 6%),
+    0 32px 72px -34px rgb(24 24 27 / 30%);
 }
 
 .onboarding[hidden] {
@@ -33,6 +42,8 @@
 }
 
 .onboarding__bar {
+  position: relative;
+  z-index: 4;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
   align-items: center;
@@ -56,44 +67,99 @@
   color: var(--text);
 }
 
+/* A page indicator: the current page stretches into a bar, pages behind it
+   stay filled, and every page already seen is a target to jump back to. */
 .onboarding__progress {
   display: flex;
+  align-items: center;
   gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* Each segment fills from its left edge, so progress is seen travelling
-   rather than a colour swapping; stepping back drains it the same way. */
 .onboarding__progress li {
   position: relative;
-  width: 28px;
-  height: 3px;
-  overflow: hidden;
+  width: 6px;
+  height: 6px;
   background: var(--line-strong);
   border-radius: var(--r-pill);
+  transition:
+    width 460ms var(--ease-rail),
+    background-color 240ms var(--ease-out);
 }
 
-.onboarding__progress li::after {
-  content: '';
-  position: absolute;
-  inset: 0;
+.onboarding__progress li.is-done {
+  background: var(--text-3);
+}
+
+.onboarding__progress li[aria-current='step'] {
+  width: 24px;
   background: var(--text);
-  border-radius: inherit;
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 320ms var(--ease-out);
 }
 
-.onboarding__progress li.is-done::after {
-  transform: scaleX(1);
+.onboarding__progress button {
+  position: absolute;
+  inset: -8px -3px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+}
+
+.onboarding__progress button:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 0;
+}
+
+/* A page already seen names itself as the pointer reaches it. */
+.onboarding__progress button::after {
+  content: attr(data-label);
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  padding: 3px 8px;
+  background: var(--menu-bg);
+  border: 1px solid var(--menu-line);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.3;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -3px);
+  transition:
+    opacity 140ms var(--ease-out),
+    transform 200ms var(--ease-out);
+}
+
+.onboarding__progress button:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .onboarding__progress li:has(> button:hover) {
+    background: var(--text-2);
+  }
+
+  .onboarding__progress button:hover::after {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
 }
 
 .onboarding__bar-end {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   min-width: 0;
+  /* Holds the bar's height on the last page, where Skip steps aside, so the
+     page under it does not jump. */
+  min-height: 28px;
 }
 
 .onboarding__skip {
@@ -109,151 +175,355 @@
 .onboarding__body {
   display: flex;
   min-height: 0;
-  overflow-y: auto;
-  padding: 16px 32px 48px;
+  overflow: hidden auto;
+  padding: 16px 48px 56px;
 }
 
-/* Paging: the old page slips out along the travel direction, then the new
-   one assembles top to bottom — mark, heading, copy, control, actions — with a
-   short stagger so it reads as one page arriving rather than a block fading.
-   Going back reverses the travel so the pages feel stacked in order. */
-.onboarding__step {
-  --onboarding-shift: 12px;
-  --onboarding-exit: -10px;
-
+.onboarding__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 380px) minmax(0, 700px);
+  justify-content: center;
+  align-items: center;
+  gap: clamp(48px, 6vw, 96px);
   width: 100%;
-  max-width: 560px;
   margin: auto;
 }
 
+.onboarding__preview {
+  min-width: 0;
+}
+
+@media (max-width: 960px) {
+  .onboarding__layout {
+    grid-template-columns: minmax(0, 460px);
+  }
+
+  .onboarding__preview {
+    display: none;
+  }
+}
+
+/* ---------- paging ----------
+   The old page slides away along the travel direction and goes soft, then
+   the new one assembles top to bottom — each piece arriving from the side it
+   is travelling in and sharpening as it lands. Going back reverses the
+   travel so the pages feel stacked in order. */
+
+.onboarding__step {
+  --onboarding-shift: 20px;
+
+  min-width: 0;
+}
+
 .onboarding__step[data-direction='back'] {
-  --onboarding-shift: -12px;
-  --onboarding-exit: 10px;
+  --onboarding-shift: -20px;
 }
 
-.onboarding[data-step='welcome'] .onboarding__step {
-  max-width: 940px;
+.onboarding__step[data-phase='entering'] > :not(.onboarding__mark, .onboarding__title--display) {
+  animation: onboarding-arrive 560ms var(--ease-out) both;
+  animation-delay: calc(var(--onboarding-order, 0) * 55ms + 30ms);
 }
 
-.onboarding__step[data-phase='entering'] > :not(.onboarding__cover),
-.onboarding__step[data-phase='entering'] .onboarding__cover-copy > *,
-.onboarding__step[data-phase='entering'] .onboarding__hero {
-  animation: onboarding-rise 380ms var(--ease-out) both;
+.onboarding__step > :nth-child(2) {
+  --onboarding-order: 1;
 }
 
-.onboarding__step[data-phase='entering'] > :nth-child(2),
-.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(2) {
-  animation-delay: 45ms;
+.onboarding__step > :nth-child(3) {
+  --onboarding-order: 2;
 }
 
-.onboarding__step[data-phase='entering'] > :nth-child(3),
-.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(3) {
-  animation-delay: 90ms;
+.onboarding__step > :nth-child(4) {
+  --onboarding-order: 3;
 }
 
-.onboarding__step[data-phase='entering'] > :nth-child(4),
-.onboarding__step[data-phase='entering'] .onboarding__cover-copy > :nth-child(4) {
-  animation-delay: 135ms;
+.onboarding__step > :nth-child(5) {
+  --onboarding-order: 4;
 }
 
-.onboarding__step[data-phase='entering'] > :nth-child(5) {
-  animation-delay: 180ms;
-}
-
-.onboarding__step[data-phase='entering'] .onboarding__hero {
-  animation-delay: 120ms;
+.onboarding__step > :nth-child(6) {
+  --onboarding-order: 5;
 }
 
 .onboarding__step[data-phase='leaving'] {
-  animation: onboarding-step-out 160ms var(--ease-out) both;
+  animation: onboarding-leave 180ms cubic-bezier(0.4, 0, 1, 1) both;
   pointer-events: none;
 }
 
-@keyframes onboarding-rise {
+@keyframes onboarding-arrive {
   from {
     opacity: 0;
-    transform: translateY(var(--onboarding-shift));
+    filter: blur(6px);
+    transform: translateX(var(--onboarding-shift));
   }
 }
 
-@keyframes onboarding-step-out {
+@keyframes onboarding-leave {
   to {
     opacity: 0;
-    transform: translateY(var(--onboarding-exit));
+    filter: blur(4px);
+    transform: translateX(calc(var(--onboarding-shift) * -0.6));
   }
 }
 
-/* The whole page dissolves into the app behind it instead of vanishing. */
+/* ---------- leaving setup ----------
+   Where the preview is on screen, setup morphs into the app: each part the
+   app also has — the rail and its rows, the profile, the top bar, the
+   composer — travels on the rail curve to where it really lives, cross-fading
+   into its real self on the way. Everything only setup has fades off the top
+   of the app, which is already in place underneath. Elsewhere the page lifts
+   off in a plain fade. */
+
 .onboarding[data-closing] {
-  animation: onboarding-out 200ms var(--ease-out) both;
   pointer-events: none;
+}
+
+.onboarding[data-exit='fade'] {
+  animation: onboarding-out 260ms var(--ease-out) both;
+}
+
+:root[data-onboarding-morph]::view-transition-group(*) {
+  animation-duration: 780ms;
+  animation-timing-function: var(--ease-rail);
+}
+
+/* The large parts reveal their real selves as their boxes grow; small
+   controls travel whole, never cut by their own box. */
+:root[data-onboarding-morph]::view-transition-group(onboarding-window),
+:root[data-onboarding-morph]::view-transition-group(onboarding-rail),
+:root[data-onboarding-morph]::view-transition-group(onboarding-topbar),
+:root[data-onboarding-morph]::view-transition-group(onboarding-composer) {
+  overflow: clip;
+}
+
+/* Pictures keep their own size and sit at the box's corner; the script
+   scales them by the type ratio, and the box clips them as it resizes. */
+:root[data-onboarding-morph]::view-transition-old(*),
+:root[data-onboarding-morph]::view-transition-new(*) {
+  inset: 0 auto auto 0;
+  inline-size: auto;
+  block-size: auto;
+  transform-origin: 0 0;
+}
+
+/* Each part hands over from its preview self to its real self quickly, in
+   the stretch where it travels fastest. The two fades mirror each other, so
+   with the default additive blend the part never dims on the way. */
+:root[data-onboarding-morph]::view-transition-old(*) {
+  animation: onboarding-morph-leave 780ms linear both;
+}
+
+:root[data-onboarding-morph]::view-transition-new(*) {
+  animation: onboarding-morph-arrive 780ms linear both;
+}
+
+@keyframes onboarding-morph-leave {
+  0%,
+  14% {
+    opacity: 1;
+  }
+
+  34%,
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes onboarding-morph-arrive {
+  0%,
+  14% {
+    opacity: 0;
+  }
+
+  34%,
+  to {
+    opacity: 1;
+  }
+}
+
+/* The preview's frame is only chrome by now — everything in it travels on
+   its own — so it stretches with its box into the app window. */
+:root[data-onboarding-morph]::view-transition-old(onboarding-window) {
+  inline-size: 100%;
+  block-size: 100%;
+}
+
+/* What only setup has steps aside before the app arrives where it was: the
+   question slides off towards the edge the rail is coming to, and the
+   sample conversation settles and goes. */
+:root[data-onboarding-morph]::view-transition-group(onboarding-bar),
+:root[data-onboarding-morph]::view-transition-group(onboarding-question),
+:root[data-onboarding-morph]::view-transition-group(onboarding-thread) {
+  overflow: visible;
+}
+
+:root[data-onboarding-morph]::view-transition-old(onboarding-bar) {
+  animation: onboarding-fade-out 220ms var(--ease-out) both;
+}
+
+:root[data-onboarding-morph]::view-transition-old(onboarding-question) {
+  animation: onboarding-question-out 300ms var(--ease-out) both;
+}
+
+:root[data-onboarding-morph]::view-transition-old(onboarding-thread) {
+  animation: onboarding-thread-out 300ms var(--ease-out) both;
+}
+
+@keyframes onboarding-question-out {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+
+@keyframes onboarding-thread-out {
+  to {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* The old page stays on top of the new one and lets go of it evenly,
+   rather than the two cross-fading through a half-lit middle. */
+:root[data-onboarding-morph]::view-transition-old(root) {
+  z-index: 1;
+  mix-blend-mode: normal;
+  animation: onboarding-fade-out 480ms cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+
+:root[data-onboarding-morph]::view-transition-new(root) {
+  mix-blend-mode: normal;
+  animation: none;
 }
 
 @keyframes onboarding-out {
   to {
     opacity: 0;
+    transform: scale(1.015);
   }
 }
 
+@keyframes onboarding-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* ---------- type ---------- */
+
 .onboarding__title {
-  margin: 0 0 10px;
+  margin: 0 0 12px;
   color: var(--text);
-  font-size: var(--t-2xl);
-  font-weight: 580;
+  font-size: calc(var(--t-2xl) * 1.15);
+  font-weight: 600;
   letter-spacing: -0.03em;
-  line-height: 1.15;
+  line-height: 1.12;
+  text-wrap: balance;
   outline: none;
 }
 
 .onboarding__title--display {
-  margin-top: 20px;
-  font-size: calc(var(--t-2xl) * 1.35);
-  letter-spacing: -0.035em;
-  line-height: 1.08;
+  margin-top: 28px;
+  font-size: clamp(calc(var(--t-2xl) * 1.4), 4.2vw, calc(var(--t-2xl) * 1.8));
+  letter-spacing: -0.042em;
+  line-height: 1.02;
 }
 
 .onboarding__lead {
-  max-width: 46ch;
-  margin: 0 0 28px;
+  max-width: 40ch;
+  margin: 0 0 32px;
   color: var(--text-2);
   font-size: var(--t-lg);
   line-height: 1.55;
+  text-wrap: pretty;
 }
 
-/* ---------- cover ---------- */
-
-.onboarding__cover {
-  display: grid;
-  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
-  align-items: center;
-  gap: 56px;
-}
-
-.onboarding__cover-copy {
-  min-width: 0;
-}
+/* ---------- welcome ----------
+   The mark builds itself — the arch rises, the wings fold in, the dot drops
+   into place — and the greeting resolves word by word under it. */
 
 .onboarding__mark {
   display: block;
+  overflow: visible;
   color: var(--text);
 }
 
-.onboarding__hero {
-  width: 100%;
-  min-width: 0;
-  border-radius: var(--r-card);
-  box-shadow: var(--shadow-modal);
+.onboarding__step[data-phase='entering'] .onboarding__mark path {
+  transform-box: fill-box;
+  animation: onboarding-arch 720ms var(--ease-out) both;
 }
 
-@media (max-width: 840px) {
-  .onboarding__cover {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 36px;
-  }
+.onboarding__step[data-phase='entering'] .onboarding__mark path:nth-child(3) {
+  transform-origin: 50% 100%;
+}
 
-  .onboarding__hero {
-    max-width: 440px;
+.onboarding__step[data-phase='entering'] .onboarding__mark path:nth-child(2) {
+  transform-origin: 100% 0%;
+  animation-name: onboarding-wing-left;
+  animation-delay: 120ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__mark path:nth-child(4) {
+  transform-origin: 0% 0%;
+  animation-name: onboarding-wing-right;
+  animation-delay: 120ms;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__mark path:nth-child(1) {
+  transform-origin: 50% 50%;
+  animation: onboarding-drop 640ms cubic-bezier(0.34, 1.56, 0.64, 1) 320ms both;
+}
+
+@keyframes onboarding-arch {
+  from {
+    opacity: 0;
+    transform: translateY(24%) scaleY(0.5);
   }
+}
+
+@keyframes onboarding-wing-left {
+  from {
+    opacity: 0;
+    transform: translate(-18%, -8%) rotate(-14deg);
+  }
+}
+
+@keyframes onboarding-wing-right {
+  from {
+    opacity: 0;
+    transform: translate(18%, -8%) rotate(14deg);
+  }
+}
+
+@keyframes onboarding-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-90%) scale(0.4);
+  }
+}
+
+.onboarding__word {
+  display: inline-block;
+}
+
+.onboarding__step[data-phase='entering'] .onboarding__word {
+  animation: onboarding-word 900ms var(--ease-out) both;
+  animation-delay: calc(var(--word) * 90ms + 200ms);
+}
+
+@keyframes onboarding-word {
+  from {
+    opacity: 0;
+    filter: blur(10px);
+    transform: translateY(0.28em);
+  }
+}
+
+.onboarding[data-step='welcome'] .onboarding__step[data-phase='entering'] > .onboarding__lead {
+  animation-delay: 520ms;
+}
+
+.onboarding[data-step='welcome'] .onboarding__step[data-phase='entering'] > .onboarding__actions {
+  animation-delay: 620ms;
 }
 
 /* ---------- actions ---------- */
@@ -262,12 +532,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 8px;
 }
 
 .onboarding__actions--split {
   justify-content: space-between;
-  margin-top: 28px;
+  margin-top: 32px;
 }
 
 .onboarding__actions-end {
@@ -280,11 +549,14 @@
   display: inline-flex;
   align-items: center;
   gap: 10px;
-  min-height: 34px;
-  padding: 6px 9px 6px 14px;
+  min-height: 38px;
+  padding: 0 10px 0 16px;
   border-radius: var(--r-xl);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 14%),
+    0 10px 24px -14px rgb(0 0 0 / 50%);
   font-size: var(--t-md);
-  font-weight: 520;
+  font-weight: 550;
 }
 
 .onboarding__primary:hover {
@@ -297,11 +569,18 @@
   transform: scale(0.98);
 }
 
+.onboarding__primary:focus-visible,
+.onboarding__ghost:focus-visible,
+.onboarding__skip:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
 .onboarding__ghost {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 30px;
+  min-height: 32px;
   padding: 4px 10px;
   color: var(--text-2);
 }
@@ -323,8 +602,8 @@
 .onboarding kbd {
   display: inline-grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   background: color-mix(in srgb, currentColor 12%, transparent);
   border-radius: var(--r-sm);
   color: inherit;
@@ -353,23 +632,24 @@
 
 /* ---------- name ---------- */
 
-/* The identicon redraws as the name is typed: the same picture that will sit
-   in the rail, so the answer has a visible consequence. */
 .onboarding__avatar {
-  width: 64px;
-  height: 64px;
-  margin-bottom: 22px;
+  display: grid;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 26px;
   overflow: hidden;
-  border: 1px solid var(--chrome-border);
   border-radius: var(--r-circle);
-  box-shadow: 0 13px 28px -18px rgb(0 0 0 / 58%);
+  box-shadow:
+    0 0 0 1px var(--chrome-border),
+    0 16px 32px -18px rgb(0 0 0 / 60%);
 }
 
+/* Each redraw settles over the previous picture: it arrives turned and soft
+   and straightens into focus, so the name visibly shapes the image. */
 .onboarding__avatar-art {
   display: block;
-  width: 100%;
-  height: 100%;
-  animation: onboarding-redraw 240ms var(--ease-out) both;
+  grid-area: 1 / 1;
+  animation: onboarding-redraw 460ms var(--ease-out) both;
 }
 
 .onboarding__avatar svg {
@@ -378,39 +658,30 @@
   height: 100%;
 }
 
-/* Every keystroke remounts the picture; while typing fast it hovers in the
-   half-drawn state, which is exactly what it is doing. */
 @keyframes onboarding-redraw {
   from {
-    opacity: 0.35;
-    transform: scale(0.96);
+    opacity: 0;
+    filter: blur(6px);
+    transform: scale(1.14) rotate(-10deg);
   }
-}
-
-.onboarding__field {
-  display: grid;
-  gap: 8px;
-}
-
-.onboarding__field label {
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  font-weight: 550;
 }
 
 .onboarding__field input {
   width: 100%;
-  min-height: 44px;
-  padding: 8px 14px;
+  height: 50px;
+  padding: 0 16px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-xl);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text);
   font: inherit;
-  font-size: var(--t-lg);
+  font-size: calc(var(--t-lg) + 2px);
+  letter-spacing: -0.01em;
   outline: none;
-  transition: border-color var(--dur-fast) var(--ease-out);
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
 .onboarding__field input::placeholder {
@@ -421,9 +692,46 @@
   border-color: var(--line-strong);
 }
 
+/* A soft halo instead of a hard outline: the field reads as picked up. */
 .onboarding__field input:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  border-color: color-mix(in srgb, var(--text) 40%, var(--chrome-border));
+  box-shadow:
+    var(--chrome-inset-shadow),
+    0 0 0 4px color-mix(in srgb, var(--text) 9%, transparent);
+}
+
+/* ---------- a copy in flight ----------
+   What travels into the preview is a detached copy, fixed to the viewport so
+   paging underneath cannot drag it along. It is frozen as it was when it
+   left, and casts a shadow as if lifted off the page. */
+
+.onboarding__flyer {
+  position: fixed;
+  z-index: 10;
+  margin: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.onboarding__flyer:not(.onboarding__flyer--text) {
+  filter: drop-shadow(0 10px 14px rgb(0 0 0 / 26%));
+}
+
+.onboarding__flyer > * {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+}
+
+.onboarding__flyer,
+.onboarding__flyer * {
+  animation: none !important;
+  transition: none !important;
+}
+
+.onboarding__flyer--text {
+  overflow: visible;
+  white-space: pre;
 }
 
 /* ---------- appearance ---------- */
@@ -431,7 +739,7 @@
 .onboarding__themes {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px;
+  gap: 12px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -454,51 +762,104 @@
   opacity: 0;
 }
 
-/* The cards arrive one after another, and the chosen one sits a touch
-   proud of the others — lifted and shadowed, the way a selected swatch
-   would be picked up off a table. */
 .onboarding__step[data-phase='entering'] .onboarding__theme {
-  animation: onboarding-rise 380ms var(--ease-out) both;
+  animation: onboarding-arrive 560ms var(--ease-out) both;
   animation-delay: 140ms;
 }
 
-.onboarding__step[data-phase='entering'] .onboarding__theme:nth-child(3) {
+.onboarding__step[data-phase='entering'] .onboarding__theme:nth-of-type(2) {
   animation-delay: 190ms;
 }
 
-.onboarding__step[data-phase='entering'] .onboarding__theme:nth-child(4) {
+.onboarding__step[data-phase='entering'] .onboarding__theme:nth-of-type(3) {
   animation-delay: 240ms;
 }
 
-.onboarding__theme-preview {
-  --mini-stroke: color-mix(in oklab, var(--text) 16%, transparent);
-  --mini-stroke-width: 1px;
-
-  margin-bottom: 8px;
+/* Each card is the app itself at thumbnail size, in the scheme it names. The
+   chosen card sits a touch proud of the others — lifted, shadowed and ticked
+   — the way a selected swatch would be picked up off a table. */
+.onboarding__theme-frame {
+  position: relative;
+  display: grid;
+  margin-bottom: 10px;
+  overflow: hidden;
+  border-radius: var(--r-card);
   transition:
-    transform 220ms var(--ease-out),
-    box-shadow 220ms var(--ease-out);
+    transform 300ms var(--ease-out),
+    box-shadow 300ms var(--ease-out);
 }
 
-.onboarding__theme:not(.is-selected):hover .onboarding__theme-preview {
-  --mini-stroke: color-mix(in oklab, var(--text) 32%, transparent);
+.onboarding__theme-frame > .preview,
+.onboarding__theme-half {
+  grid-area: 1 / 1;
+}
+
+.onboarding__theme-half {
+  clip-path: inset(0 0 0 50%);
+}
+
+.onboarding__theme-frame .preview__window {
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.onboarding__theme-frame::after {
+  content: '';
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  pointer-events: none;
+  border: 1px solid color-mix(in oklab, var(--text) 16%, transparent);
+  border-radius: inherit;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.onboarding__theme:not(.is-selected):hover .onboarding__theme-frame::after {
+  border-color: color-mix(in oklab, var(--text) 32%, transparent);
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .onboarding__theme:not(.is-selected):hover .onboarding__theme-preview {
+  .onboarding__theme:not(.is-selected):hover .onboarding__theme-frame {
     transform: translateY(-2px);
   }
 }
 
-.onboarding__theme.is-selected .onboarding__theme-preview,
-.onboarding__theme input:focus-visible ~ .onboarding__theme-preview {
-  --mini-stroke: var(--text);
-  --mini-stroke-width: 2px;
+.onboarding__theme.is-selected .onboarding__theme-frame::after,
+.onboarding__theme input:focus-visible ~ .onboarding__theme-frame::after {
+  border: 2px solid var(--text);
 }
 
-.onboarding__theme.is-selected .onboarding__theme-preview {
+.onboarding__theme.is-selected .onboarding__theme-frame {
   transform: translateY(-3px);
   box-shadow: var(--shadow-flyout);
+}
+
+.onboarding__theme-check {
+  position: absolute;
+  z-index: 4;
+  top: 7px;
+  right: 7px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  background: var(--text);
+  border-radius: var(--r-circle);
+  box-shadow: 0 2px 6px -2px rgb(0 0 0 / 40%);
+  color: var(--bg);
+  opacity: 0;
+  transform: scale(0.4);
+  transition:
+    opacity 160ms var(--ease-out),
+    transform 160ms var(--ease-out);
+}
+
+.onboarding__theme.is-selected .onboarding__theme-check {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity 200ms var(--ease-out),
+    transform 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .onboarding__theme-label {
@@ -516,9 +877,26 @@
   font-size: var(--t-xs);
 }
 
-@media (max-width: 560px) {
-  .onboarding__themes {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+/* The new theme spreads from the card that chose it: a circle of the new
+   page grows over a still picture of the old one. Scoped to the reveal so
+   no other view transition in the app inherits it. */
+:root[data-theme-reveal]::view-transition-old(root),
+:root[data-theme-reveal]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+:root[data-theme-reveal]::view-transition-new(root) {
+  animation: onboarding-theme-reveal 720ms var(--ease-in-out) both;
+}
+
+@keyframes onboarding-theme-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-reveal-x) var(--theme-reveal-y));
+  }
+
+  to {
+    clip-path: circle(var(--theme-reveal-r) at var(--theme-reveal-x) var(--theme-reveal-y));
   }
 }
 
@@ -550,7 +928,7 @@
 
 /* The frame lands first, then the rows populate it. */
 .onboarding__step[data-phase='entering'] .onboarding__provider {
-  animation: onboarding-rise 380ms var(--ease-out) both;
+  animation: onboarding-arrive 560ms var(--ease-out) both;
   animation-delay: 160ms;
 }
 
@@ -565,11 +943,11 @@
 .onboarding__provider-mark {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   background: var(--surface-2);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   color: var(--text);
 }
 
@@ -588,9 +966,12 @@
   font-weight: 450;
 }
 
-/* Status is plain text: a ready row has nothing to ask for and stays quiet,
-   a pending row carries its own action instead of a coloured badge. */
+/* Status is quiet text with a glyph: a ready row draws its check and asks
+   for nothing, a pending row carries its own action instead of a badge. */
 .onboarding__provider-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--text-3);
   font-size: var(--t-sm);
   white-space: nowrap;
@@ -600,13 +981,54 @@
   color: var(--text-2);
 }
 
-.onboarding__provider[data-tone='checking'] .onboarding__provider-status {
-  animation: onboarding-pulse 1.4s var(--ease-in-out) infinite;
+.onboarding__check {
+  flex: none;
+  fill: none;
+  stroke: var(--success);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.onboarding__check circle {
+  stroke-width: 1.25;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  opacity: 0.5;
+  animation: onboarding-draw 560ms var(--ease-out) 300ms forwards;
+}
+
+.onboarding__check path {
+  stroke-width: 1.75;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: onboarding-draw 380ms var(--ease-out) 560ms forwards;
+}
+
+@keyframes onboarding-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.onboarding__spinner {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--text-2);
+  border-radius: var(--r-circle);
+  animation: onboarding-spin 760ms linear infinite;
+}
+
+@keyframes onboarding-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .onboarding__provider-action {
   min-height: 28px;
-  padding: 4px 10px;
+  padding: 4px 11px;
   background: var(--control-hover);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-md);
@@ -628,318 +1050,801 @@
   outline-offset: 2px;
 }
 
-@keyframes onboarding-pulse {
-  50% {
-    opacity: 0.45;
-  }
+/* ---------- project ---------- */
+
+.onboarding__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: -8px 0 0;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.5;
 }
 
-/* ---------- app miniature ----------
-   Pinned schemes carry their own greys so a card previews the theme it names
-   regardless of the live one; without a scheme the block inherits the live
-   tokens and the cover shows exactly what the user will get. */
+.onboarding__note svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-3);
+}
 
-.mini {
-  --mini-bg: var(--bg);
-  --mini-rail: var(--bg-rail);
-  --mini-line: var(--line);
-  --mini-surface: var(--surface-2);
-  --mini-ink: var(--text-3);
-  --mini-ink-soft: var(--surface-3);
-  --mini-orb: var(--text);
-  --mini-stroke: var(--line-strong);
-  --mini-stroke-width: 1px;
+/* ---------- preview ----------
+   The app at a third of its size, drawn with the same tokens and icons as
+   the real thing. Everything inside is sized in em off one base that follows
+   the preview's own width, so it scales like a picture — down to the theme
+   cards, where the same markup becomes a thumbnail. */
 
-  position: relative;
-  display: grid;
-  grid-template-columns: 27% minmax(0, 1fr);
+.preview {
+  display: block;
   width: 100%;
-  aspect-ratio: 16 / 10;
-  overflow: hidden;
-  background: var(--mini-bg);
-  border-radius: var(--r-card);
   container-type: inline-size;
 }
 
-.mini::after,
-.mini-split::after {
-  content: '';
-  position: absolute;
-  z-index: 3;
-  inset: 0;
-  pointer-events: none;
-  border: var(--mini-stroke-width) solid var(--mini-stroke);
-  border-radius: inherit;
-  transition: border-color var(--dur-fast) var(--ease-out);
+/* Pinned schemes carry their own copy of the theme tokens the preview uses,
+   so a card shows the theme it names whatever the live one is. */
+.preview[data-scheme='dark'] {
+  --bg: #0f0f0f;
+  --bg-rail: #131313;
+  --bg-prompt: #1a1a1a;
+  --surface-2: #222222;
+  --surface-3: #2b2b2b;
+  --line: #262626;
+  --line-strong: #333333;
+  --chrome-border: #303030;
+  --text: #ededed;
+  --text-2: #a3a3a3;
+  --text-3: #6f6f6f;
+  --composer-placeholder: #828282;
+  --composer-orb: #ededed;
+  --composer-on-orb: #101010;
+  --composer-shadow: 0 14px 34px -26px rgb(0 0 0 / 70%);
+  --success: #6fbf8e;
+  --error: #e5687a;
 }
 
-.mini[data-scheme='light'] {
-  --mini-bg: #fdfdfd;
-  --mini-rail: #f6f6f7;
-  --mini-line: #e6e6e9;
-  --mini-surface: #efeff1;
-  --mini-ink: #b9b9be;
-  --mini-ink-soft: #e2e2e5;
-  --mini-orb: #27272a;
+.preview[data-scheme='light'] {
+  --bg: #fdfdfd;
+  --bg-rail: #fcfcfc;
+  --bg-prompt: #ffffff;
+  --surface-2: #f5f5f6;
+  --surface-3: #ececef;
+  --line: #ebebed;
+  --line-strong: #dedee2;
+  --chrome-border: #e3e3e6;
+  --text: #27272a;
+  --text-2: #52525b;
+  --text-3: #71717a;
+  --composer-placeholder: #71717a;
+  --composer-orb: #1d1d1f;
+  --composer-on-orb: #ffffff;
+  --composer-shadow: 0 12px 30px -18px rgb(24 24 27 / 18%);
+  --success: #16803c;
+  --error: #be123c;
 }
 
-.mini[data-scheme='dark'] {
-  --mini-bg: #0f0f0f;
-  --mini-rail: #151515;
-  --mini-line: #262626;
-  --mini-surface: #222222;
-  --mini-ink: #6f6f6f;
-  --mini-ink-soft: #2e2e2e;
-  --mini-orb: #ededed;
-}
-
-.mini-split {
-  --mini-stroke: var(--line-strong);
-  --mini-stroke-width: 1px;
-
+.preview__window {
   position: relative;
   display: grid;
-  width: 100%;
+  grid-template-columns: 27% minmax(0, 1fr);
+  aspect-ratio: 16 / 10.5;
   overflow: hidden;
-  border-radius: var(--r-card);
+  background: var(--bg);
+  border-radius: var(--r-panel);
+  box-shadow: var(--onboarding-window-shadow);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 1.65cqi;
+  line-height: 1.35;
+  user-select: none;
 }
 
-.mini-split > .mini {
-  grid-area: 1 / 1;
+.preview .tabler-icon {
+  flex: none;
+  width: 1.2em;
+  height: 1.2em;
+  stroke-width: 1.75;
 }
 
-.mini-split > .mini::after {
-  content: none;
+.preview__rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  min-width: 0;
+  padding: 0.85em 0.6em 0.7em;
+  background: var(--bg-rail);
+  border-right: 1px solid var(--line);
 }
 
-.mini--half {
-  clip-path: inset(0 0 0 50%);
+.preview__rail-top {
+  display: flex;
+  justify-content: space-between;
+  margin: 0 0.45em 0.75em;
+  color: var(--text-3);
 }
 
-.mini__rail {
-  display: grid;
-  align-content: start;
-  gap: 6cqi;
-  padding: 7cqi 4cqi;
-  background: var(--mini-rail);
-  border-right: 1px solid var(--mini-line);
+.preview__nav,
+.preview__project,
+.preview__chat,
+.preview__profile {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-width: 0;
+  height: 2.15em;
+  padding: 0 0.5em;
+  overflow: hidden;
+  border-radius: var(--r-md);
+  white-space: nowrap;
 }
 
-.mini__rail-head,
-.mini__nav,
-.mini__turn,
-.mini__turn--agent > span,
-.mini__composer {
-  display: block;
-  border-radius: var(--r-pill);
+.preview__nav,
+.preview__project {
+  color: var(--text);
 }
 
-.mini__rail-head {
-  width: 55%;
-  height: 3.2cqi;
-  margin-bottom: 2cqi;
-  background: var(--mini-ink);
+.preview__nav .tabler-icon,
+.preview__project .tabler-icon {
+  color: var(--text-2);
 }
 
-.mini__nav {
-  width: 82%;
-  height: 2.6cqi;
-  background: var(--mini-ink-soft);
-}
-
-.mini__nav.is-active {
-  width: 100%;
-  background: var(--mini-ink);
-}
-
-.mini__stage {
-  position: relative;
-  display: grid;
-  align-content: end;
-  gap: 5cqi;
-  padding: 6cqi 8cqi 6cqi 7cqi;
-}
-
-.mini__turn--user {
-  width: 42%;
-  height: 4.4cqi;
-  margin-left: auto;
-  background: var(--mini-surface);
-}
-
-.mini__turn--short {
-  width: 30%;
-}
-
-.mini__turn--agent {
-  display: grid;
-  gap: 2.2cqi;
-  width: 74%;
-}
-
-.mini__turn--agent > span {
-  height: 2.2cqi;
-  background: var(--mini-ink-soft);
-}
-
-.mini__turn--agent > span:nth-child(1) {
-  width: 92%;
-}
-
-.mini__turn--agent > span:nth-child(2) {
-  width: 100%;
-}
-
-.mini__turn--agent > span:nth-child(3) {
-  width: 58%;
-}
-
-.mini__composer {
+.preview__group {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 9cqi;
-  margin-top: 3cqi;
-  padding: 0 2.4cqi 0 3cqi;
-  background: var(--mini-surface);
-  border: 1px solid var(--mini-line);
-  border-radius: var(--r-lg);
+  margin: 1.1em 0.5em 0.3em;
+  color: var(--text-3);
+  font-size: 0.9em;
 }
 
-.mini__caret {
-  width: 1px;
-  height: 3.6cqi;
-  background: var(--mini-ink);
+.preview__chat {
+  justify-content: space-between;
+  padding-left: 2.3em;
+  color: var(--text-2);
 }
 
-.mini__orb {
-  width: 5cqi;
-  height: 5cqi;
-  background: var(--mini-orb);
+.preview__chat > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview__chat time {
+  flex: none;
+  color: var(--text-3);
+  font-size: 0.85em;
+}
+
+.preview__chat.is-active {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.preview__profile {
+  height: 2.6em;
+  margin-top: auto;
+  padding: 0 0.45em;
+  color: var(--text);
+}
+
+.preview__avatar {
+  flex: none;
+  width: 1.7em;
+  height: 1.7em;
+  overflow: hidden;
   border-radius: var(--r-circle);
 }
 
-/* Cover only: the frame lands, then the exchange assembles inside it — rail
-   first, then the conversation in reading order, the composer last, and the
-   caret keeps time once everything is in place. */
-.mini[data-animate] {
-  --mini-delay: 220ms;
+.preview__avatar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
-.mini[data-animate] :is(.mini__nav, .mini__turn, .mini__composer) {
-  animation: mini-in 420ms var(--ease-out) both;
-  animation-delay: var(--mini-delay);
+.preview__profile-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.mini[data-animate] .mini__nav:nth-child(2) {
-  animation-delay: calc(var(--mini-delay) + 60ms);
+.preview__profile .tabler-icon {
+  color: var(--text-3);
 }
 
-.mini[data-animate] .mini__nav:nth-child(3) {
-  animation-delay: calc(var(--mini-delay) + 110ms);
+/* The part of the app the current page changes wears its hover state, the
+   way the pointer would leave it: no overlay, just the app's own highlight. */
+.preview__project,
+.preview__profile,
+.preview__model {
+  transition:
+    background-color 360ms var(--ease-out),
+    border-color 360ms var(--ease-out),
+    box-shadow 360ms var(--ease-out);
 }
 
-.mini[data-animate] .mini__nav:nth-child(4) {
-  animation-delay: calc(var(--mini-delay) + 160ms);
+.preview :is(.preview__project, .preview__profile)[data-hint] {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
 }
 
-.mini[data-animate] .mini__nav:nth-child(5) {
-  animation-delay: calc(var(--mini-delay) + 210ms);
+.preview__model[data-hint] {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
 }
 
-.mini[data-animate] .mini__nav:nth-child(6) {
-  animation-delay: calc(var(--mini-delay) + 260ms);
+/* On the last page the project list makes room at its top for the folder
+   about to be chosen. With the pointer on Choose a folder the row firms up
+   and its folder opens — a beat before anything is picked. */
+.preview__incoming {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows 560ms var(--ease-rail),
+    opacity 320ms var(--ease-out);
 }
 
-.mini[data-animate] .mini__turn:nth-child(1) {
-  animation-delay: calc(var(--mini-delay) + 240ms);
+.preview__incoming[data-state] {
+  grid-template-rows: 1fr;
+  opacity: 1;
 }
 
-.mini[data-animate] .mini__turn:nth-child(2) {
-  animation-delay: calc(var(--mini-delay) + 360ms);
+.preview__incoming-row {
+  min-height: 0;
+  overflow: hidden;
 }
 
-.mini[data-animate] .mini__turn:nth-child(3) {
-  animation-delay: calc(var(--mini-delay) + 480ms);
+.preview__project--new {
+  color: var(--text-2);
+  outline: 1px dashed var(--line-strong);
+  outline-offset: -1px;
+  transition:
+    background-color 220ms var(--ease-out),
+    color 220ms var(--ease-out),
+    outline-color 220ms var(--ease-out);
 }
 
-.mini[data-animate] .mini__composer {
-  animation-delay: calc(var(--mini-delay) + 560ms);
+.preview__incoming[data-state='ready'] .preview__project--new {
+  background: var(--surface-2);
+  color: var(--text);
+  outline-style: solid;
 }
 
-.mini[data-animate] .mini__orb {
-  animation: mini-orb-in 360ms var(--ease-out) both;
-  animation-delay: calc(var(--mini-delay) + 720ms);
-}
+/* The preview answers the pointer the way the app does: rows and controls
+   take their hover state, nothing more. */
+@media (hover: hover) and (pointer: fine) {
+  .preview:not([data-still])
+    :is(
+      .preview__nav,
+      .preview__chat:not(.is-active),
+      .preview__project:not(.preview__project--new),
+      .preview__profile:not([data-hint]),
+      .preview__tool,
+      .preview__model:not([data-hint])
+    ):hover {
+    background: var(--surface-2);
+  }
 
-.mini[data-animate] .mini__caret {
-  animation: mini-caret 1.1s steps(1, end) infinite;
-  animation-delay: calc(var(--mini-delay) + 900ms);
-}
-
-@keyframes mini-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
+  .preview:not([data-still]) .preview__chat.is-active:hover {
+    background: var(--surface-3);
   }
 }
 
-@keyframes mini-orb-in {
+/* While a name is in flight the row lets go of the old one, so the new one
+   lands in an empty place instead of on top of it. */
+.onboarding__preview[data-receiving] :is(.preview__avatar, .preview__profile-name) {
+  opacity: 0;
+  transition: opacity 240ms var(--ease-out);
+}
+
+.preview__main {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.preview__topbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  height: 2.9em;
+  padding: 0 1em 0 1.3em;
+  color: var(--text-3);
+}
+
+.preview__title {
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview__spacer {
+  flex: 1;
+}
+
+.preview__icon {
+  display: flex;
+  gap: 0.5em;
+}
+
+.preview__thread {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 0.85em;
+  min-height: 0;
+  padding: 0.4em 2.4em 1em;
+  overflow: hidden;
+}
+
+.preview__said {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: 0.55em 0.85em;
+  background: var(--surface-2);
+  border-radius: var(--r-md);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.preview__activity {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  color: var(--text-2);
+  font-size: 0.93em;
+}
+
+.preview__activity > .tabler-icon {
+  width: 1em;
+  height: 1em;
+  color: var(--text-3);
+}
+
+.preview__activity-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.2em;
+  height: 1.2em;
+  color: var(--text-3);
+}
+
+.preview__activity-icon > * {
+  grid-area: 1 / 1;
+}
+
+.preview__stat {
+  display: flex;
+  gap: 0.4em;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+.preview__stat ins,
+.preview__stat del {
+  text-decoration: none;
+}
+
+.preview__stat ins {
+  color: var(--success);
+}
+
+.preview__stat del {
+  color: var(--error);
+}
+
+.preview__diff {
+  display: grid;
+  padding: 0.4em 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  font-family: var(--font-mono);
+  font-size: 0.82em;
+}
+
+.preview__diff-line {
+  display: flex;
+  gap: 0.9em;
+  padding: 0 0.9em;
+  color: var(--text);
+  line-height: 1.75;
+  white-space: pre;
+}
+
+.preview__diff-line b {
+  flex: none;
+  font-weight: 400;
+}
+
+.preview__diff-line.is-added {
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.preview__diff-line.is-added b {
+  color: var(--success);
+}
+
+.preview__diff-line.is-removed {
+  background: color-mix(in srgb, var(--error) 11%, transparent);
+  color: var(--text-2);
+}
+
+.preview__diff-line.is-removed b {
+  color: var(--error);
+}
+
+.preview__answer {
+  color: var(--text);
+  line-height: 1.5;
+}
+
+/* The end of the previous turn, scrolled mostly out of view. */
+.preview__thread {
+  mask-image: linear-gradient(to bottom, transparent, #000 3.2em);
+}
+
+.preview__composer {
+  display: grid;
+  gap: 0.9em;
+  margin: 0 1.6em 1.3em;
+  padding: 0.85em 0.7em 0.65em 0.95em;
+  background: var(--bg-prompt);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-card);
+  box-shadow: var(--composer-shadow);
+}
+
+.preview__prompt {
+  display: flex;
+  align-items: center;
+  color: var(--composer-placeholder);
+}
+
+.preview__caret {
+  width: 1px;
+  height: 1.15em;
+  margin-right: 0.15em;
+  background: var(--text);
+}
+
+.preview__tools {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  min-width: 0;
+}
+
+.preview__tool,
+.preview__model {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 0.4em;
+  height: 2.1em;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  white-space: nowrap;
+}
+
+.preview__tool {
+  justify-content: center;
+  min-width: 2.1em;
+  color: var(--text-2);
+}
+
+.preview__tool--text {
+  padding: 0 0.6em 0 0.45em;
+}
+
+.preview__tool .tabler-icon,
+.preview__model .tabler-icon {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+.preview__model {
+  padding: 0 0.45em 0 0.3em;
+  color: var(--text);
+}
+
+.preview__model > .tabler-icon {
+  color: var(--text-3);
+}
+
+.preview__muted {
+  color: var(--text-3);
+}
+
+.preview__marks {
+  display: flex;
+  align-items: center;
+}
+
+/* An empty socket until an agent arrives in it. */
+.preview__socket {
+  width: 1.55em;
+  height: 1.55em;
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-circle);
+}
+
+.preview__mark {
+  display: grid;
+  place-items: center;
+  width: 1.55em;
+  height: 1.55em;
+  background: var(--surface-2);
+  border-radius: var(--r-circle);
+  box-shadow: 0 0 0 0.14em var(--bg-prompt);
+  color: var(--text);
+}
+
+.preview__mark + .preview__mark {
+  margin-left: -0.4em;
+}
+
+.preview__mark svg {
+  width: 0.9em;
+  height: 0.9em;
+}
+
+/* Space is kept for an agent in flight, so the copy has a place to land. */
+.preview__mark[data-arriving] {
+  visibility: hidden;
+}
+
+.preview__orb {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.1em;
+  height: 2.1em;
+  background: var(--composer-orb);
+  border-radius: var(--r-circle);
+  color: var(--composer-on-orb);
+}
+
+.preview__spinner {
+  width: 0.95em;
+  height: 0.95em;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--text-2);
+  border-radius: var(--r-circle);
+}
+
+/* ---------- the preview coming to life ----------
+   Once, on first sight: the window lands, the rail fills in from the top,
+   and then the conversation plays out the way a turn really streams — the
+   request, two working steps that spin and settle, the diff unfolding line
+   by line, and the answer arriving a word at a time. Thumbnails skip all of
+   it and show the finished picture. */
+
+.preview:not([data-still]) .preview__window {
+  animation: preview-in 1000ms var(--ease-out) 140ms both;
+}
+
+.preview:not([data-still]) :is(.preview__rail > *, .preview__topbar, .preview__composer) {
+  animation: preview-part 700ms var(--ease-out) both;
+  animation-delay: calc(var(--preview-order, 0) * 45ms + 460ms);
+}
+
+.preview__rail > :nth-child(2),
+.preview__topbar {
+  --preview-order: 1;
+}
+
+.preview__rail > :nth-child(3) {
+  --preview-order: 2;
+}
+
+.preview__rail > :nth-child(4),
+.preview__composer {
+  --preview-order: 3;
+}
+
+.preview__rail > :nth-child(5) {
+  --preview-order: 4;
+}
+
+.preview__rail > :nth-child(6) {
+  --preview-order: 5;
+}
+
+.preview__rail > :nth-child(7) {
+  --preview-order: 6;
+}
+
+.preview__rail > :nth-child(8) {
+  --preview-order: 7;
+}
+
+.preview__rail > :nth-child(9) {
+  --preview-order: 8;
+}
+
+.preview__rail > :nth-child(n + 10) {
+  --preview-order: 9;
+}
+
+.preview:not([data-still]) .preview__said {
+  transform-origin: 100% 100%;
+  animation: preview-said 520ms var(--ease-out) 1150ms both;
+}
+
+.preview:not([data-still]) .preview__activity {
+  animation: preview-part 460ms var(--ease-out) var(--preview-at) both;
+}
+
+.preview__activity--first {
+  --preview-at: 1650ms;
+  --preview-done: 2250ms;
+}
+
+.preview__activity--second {
+  --preview-at: 2350ms;
+  --preview-done: 3000ms;
+}
+
+/* A step spins while it works and settles on its own icon when done. */
+.preview:not([data-still]) .preview__activity-icon > .preview__spinner {
+  animation:
+    preview-spin 700ms linear infinite,
+    preview-gone 160ms var(--ease-out) var(--preview-done) forwards;
+}
+
+.preview:not([data-still]) .preview__activity-icon > .tabler-icon {
+  animation: preview-part 260ms var(--ease-out) var(--preview-done) both;
+}
+
+.preview[data-still] .preview__activity-icon > .preview__spinner {
+  display: none;
+}
+
+.preview:not([data-still]) .preview__diff {
+  animation: preview-unfold 560ms var(--ease-out) 2500ms both;
+}
+
+.preview:not([data-still]) .preview__diff-line {
+  animation: preview-part 360ms var(--ease-out) both;
+  animation-delay: calc(var(--line) * 90ms + 2580ms);
+}
+
+.preview:not([data-still]) .preview__answer > span {
+  animation: preview-word 260ms var(--ease-out) both;
+  animation-delay: calc(var(--word) * 38ms + 3150ms);
+}
+
+.preview:not([data-still]) .preview__caret {
+  animation: preview-caret 1.1s steps(1, end) infinite;
+}
+
+/* An agent that has just landed in the model picker pops into place. */
+.preview:not([data-still]) .preview__mark:not([data-arriving]) {
+  animation: preview-mark-in 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes preview-in {
   from {
     opacity: 0;
-    transform: scale(0.6);
+    filter: blur(12px);
+    transform: translateY(24px) scale(0.97);
   }
 }
 
-@keyframes mini-caret {
+@keyframes preview-part {
+  from {
+    opacity: 0;
+    transform: translateY(0.5em);
+  }
+}
+
+@keyframes preview-said {
+  from {
+    opacity: 0;
+    transform: translateY(0.5em) scale(0.94);
+  }
+}
+
+@keyframes preview-unfold {
+  from {
+    clip-path: inset(0 0 100% 0);
+    opacity: 0;
+  }
+
+  to {
+    clip-path: inset(0);
+  }
+}
+
+@keyframes preview-word {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes preview-spin {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes preview-gone {
+  to {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+@keyframes preview-caret {
   50% {
     opacity: 0;
+  }
+}
+
+@keyframes preview-mark-in {
+  from {
+    transform: scale(0.4);
   }
 }
 
 /* Reduced motion keeps the paging legible through opacity alone: nothing
-   travels, lifts, presses or pulses, but pages still cross-fade so a change
-   of place is not a hard cut. */
+   travels, blurs, lifts, presses, spins or draws, and the preview shows its
+   finished picture from the start. */
 @media (prefers-reduced-motion: reduce) {
   .onboarding,
-  .onboarding__step[data-phase='entering'] > :not(.onboarding__cover),
-  .onboarding__step[data-phase='entering'] .onboarding__cover-copy > *,
-  .onboarding__step[data-phase='entering'] .onboarding__hero,
+  .onboarding__step[data-phase='entering'] > *,
+  .onboarding__step[data-phase='entering'] .onboarding__mark path,
+  .onboarding__step[data-phase='entering'] .onboarding__word,
   .onboarding__step[data-phase='entering'] .onboarding__theme,
   .onboarding__step[data-phase='entering'] .onboarding__provider,
-  .onboarding__avatar-art,
-  .mini[data-animate] :is(.mini__nav, .mini__turn, .mini__composer, .mini__orb) {
+  .onboarding__avatar-art {
     animation: fade-in var(--dur-fast) var(--ease-out) both !important;
   }
 
   .onboarding__step[data-phase='leaving'],
-  .onboarding[data-closing] {
-    animation: onboarding-out var(--dur-fast) var(--ease-out) both !important;
+  .onboarding[data-exit='fade'] {
+    animation: onboarding-fade-out var(--dur-fast) var(--ease-out) both !important;
   }
 
-  .mini[data-animate] .mini__caret,
-  .onboarding__provider[data-tone='checking'] .onboarding__provider-status {
+  .preview *,
+  .preview__window,
+  .onboarding__spinner,
+  .onboarding__check circle,
+  .onboarding__check path {
     animation: none !important;
   }
 
-  .onboarding__progress li::after,
-  .onboarding__theme-preview,
+  .preview__activity-icon > .preview__spinner {
+    display: none;
+  }
+
+  .onboarding__check circle,
+  .onboarding__check path {
+    stroke-dashoffset: 0;
+  }
+
+  .onboarding__progress li,
+  .onboarding__theme-frame,
+  .onboarding__theme-check,
   .onboarding__ghost > svg,
-  .onboarding kbd {
+  .onboarding kbd,
+  .preview__project,
+  .preview__profile,
+  .preview__model,
+  .preview__incoming,
+  .onboarding__progress button::after {
     transition: opacity var(--dur-fast) var(--ease-out) !important;
   }
 
-  .onboarding__progress li::after {
-    transform: none;
-    opacity: 0;
-  }
-
-  .onboarding__progress li.is-done::after {
-    opacity: 1;
-  }
-
-  .onboarding__theme.is-selected .onboarding__theme-preview,
-  .onboarding__theme:hover .onboarding__theme-preview,
+  .onboarding__theme.is-selected .onboarding__theme-frame,
+  .onboarding__theme:hover .onboarding__theme-frame,
+  .onboarding__theme-check,
   .onboarding__ghost:hover > svg,
   .onboarding kbd[data-pressed],
   .onboarding__primary:active kbd,

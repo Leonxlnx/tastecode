@@ -1,10 +1,16 @@
+import { SemVer } from 'semver'
 import { describe, expect, it, vi } from 'vitest'
 import type { AppUpdater } from 'electron-updater'
 import type { ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
 import {
+  deferredUntil,
+  feedTags,
   GitHubReleaseProvider,
+  newerTags,
   releaseUpdateInfo,
   selectLatestRelease,
+  UpdateCheckDeferredError,
+  type ReleaseFetch,
 } from './github-release-provider.js'
 
 function release(version = '0.1.0-beta.8', date = '2026-09-20T00:00:00Z') {
@@ -105,38 +111,274 @@ describe('GitHub asset releases', () => {
     )
   })
 
-  it('checks all pages without credentials or YAML requests', async () => {
-    const newest = release()
-    newest.assets = newest.assets.map((asset) => ({
-      ...asset,
-      name: asset.name.replace('mac-arm64', `mac-${process.arch}`),
-      browser_download_url: asset.browser_download_url.replace('mac-arm64', `mac-${process.arch}`),
-    }))
-    const request = vi
-      .fn()
+  it('reads release and bare tags from the GitHub release feed', () => {
+    expect(
+      feedTags(feed('linux-preview-e9ac0a03', 'v0.1.1', 'v0.1.0-beta.8', 'v1.0.0%2Bmac')),
+    ).toEqual(['linux-preview-e9ac0a03', 'v0.1.1', 'v0.1.0-beta.8', 'v1.0.0+mac'])
+    expect(feedTags('<link href="https://github.com/other/repo/releases/tag/v9.0.0"/>')).toEqual([])
+  })
+
+  it('orders newer tags by version, not by feed position', () => {
+    expect(
+      newerTags(
+        ['v0.1.0-beta.10', 'linux-preview-e9ac0a03', 'v0.2.0', 'v0.1.1', '0.2.0', 'v0.1.2-beta.1'],
+        '0.1.1',
+      ),
+    ).toEqual(['v0.2.0', 'v0.1.2-beta.1'])
+  })
+
+  it('finds nothing newer without spending API requests', async () => {
+    const fetch = feedFetch(feed('linux-preview-e9ac0a03', 'v0.1.1', 'v0.1.0-beta.9'))
+    const result = await providerWith(fetch, '0.1.1').getLatestVersion()
+    expect(result).toMatchObject({ version: '0.1.1', files: [] })
+    expect(fetch).toHaveBeenCalledOnce()
+    expect(fetch.mock.calls[0]![0]).toBe('https://github.com/Leonxlnx/tastecode/releases.atom')
+  })
+
+  it('confirms the newest tag through the API with one request', async () => {
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
+      'v0.1.2': Response.json(localRelease('0.1.2')),
+    })
+    expect((await providerWith(fetch, '0.1.1').getLatestVersion()).version).toBe('0.1.2')
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+      'https://github.com/Leonxlnx/tastecode/releases.atom',
+      'https://api.github.com/repos/Leonxlnx/tastecode/releases/tags/v0.1.2',
+    ])
+    expect(JSON.stringify(fetch.mock.calls)).not.toMatch(/authorization|\.yml/i)
+  })
+
+  it('looks past any number of unpublished tags with one list request', async () => {
+    const drafts = ['v0.2.5', 'v0.2.4', 'v0.2.3', 'v0.2.2', 'v0.2.1', 'v0.2.0']
+    const fetch = feedFetch(
+      feed(...drafts, 'v0.1.3', 'v0.1.2'),
+      { 'v0.2.5': new Response(null, { status: 404 }) },
+      [localRelease('0.1.3'), localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    expect(fetch.mock.calls.map(([url]) => url.split('/').pop())).toEqual([
+      'releases.atom',
+      'v0.2.5',
+      'releases?per_page=100&page=1',
+    ])
+  })
+
+  it('treats a tag whose release has no publication date as unpublished', async () => {
+    const fetch = feedFetch(
+      feed('v0.1.3', 'v0.1.2'),
+      { 'v0.1.3': Response.json({ ...localRelease('0.1.3'), published_at: null }) },
+      [localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.2')
+  })
+
+  it('offers a release published as a GitHub pre-release to every install', async () => {
+    // Every alpha release is published as a pre-release; the flag must not hide it.
+    const fetch = feedFetch(feed('v0.1.3', 'v0.1.2'), {
+      'v0.1.3': Response.json({ ...localRelease('0.1.3'), prerelease: true }),
+    })
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    const flagged = { ...release('0.1.3', '2026-09-19T00:00:00Z'), prerelease: true }
+    const normal = { ...release('0.1.2', '2026-09-21T00:00:00Z'), prerelease: false }
+    expect(selectLatestRelease([normal, flagged]).tag_name).toBe('v0.1.3')
+  })
+
+  it('does not fall back to an older release when the newest one is incomplete', async () => {
+    const incomplete = { ...localRelease('0.1.3'), assets: [] }
+    const fetch = feedFetch(feed('v0.1.3', 'v0.1.2', 'v0.1.1'), {
+      'v0.1.3': Response.json(incomplete),
+      'v0.1.2': Response.json(localRelease('0.1.2')),
+    })
+    await expect(providerWith(fetch, '0.1.1').getLatestVersion()).rejects.toThrow(/missing/)
+  })
+
+  it('reads every page when newer tags pushed the installed version out of the feed', async () => {
+    const fetch = vi
+      .fn<ReleaseFetch>()
       .mockResolvedValueOnce(
-        JSON.stringify(
+        new Response(feed(...Array.from({ length: 10 }, (_, n) => `linux-preview-${n}`))),
+      )
+      .mockResolvedValueOnce(
+        Response.json(
           Array.from({ length: 100 }, () => release('0.1.0-beta.7', '2026-09-19T00:00:00Z')),
         ),
       )
-      .mockResolvedValueOnce(JSON.stringify([newest]))
-    const provider = new GitHubReleaseProvider(
-      {},
-      {} as AppUpdater,
-      {
-        platform: 'darwin',
-        isUseMultipleRangeRequest: false,
-        executor: { request },
-      } as unknown as ProviderRuntimeOptions,
-    )
+      .mockResolvedValueOnce(Response.json([localRelease()]))
+    const provider = providerWith(fetch, '0.1.0-beta.7')
     const result = await provider.getLatestVersion()
     expect(result.version).toBe('0.1.0-beta.8')
-    expect(request).toHaveBeenCalledTimes(2)
-    expect(request.mock.calls[1]![0]).toMatchObject({
-      hostname: 'api.github.com',
-      path: '/repos/Leonxlnx/tastecode/releases?per_page=100&page=2',
-    })
-    expect(JSON.stringify(request.mock.calls)).not.toMatch(/authorization|\.yml/i)
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(fetch.mock.calls[2]![0]).toBe(
+      'https://api.github.com/repos/Leonxlnx/tastecode/releases?per_page=100&page=2',
+    )
     expect(() => provider.resolveFiles()).toThrow(/verified/)
   })
+
+  it('looks beyond a full feed of older releases for a hidden newer version', async () => {
+    const fetch = feedFetch(
+      feed(...Array.from({ length: 10 }, (_, index) => `v0.0.${index}`)),
+      {},
+      [localRelease('0.1.3'), localRelease('0.1.2')],
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+    expect(fetch.mock.calls.map(([url]) => url.split('/').pop())).toEqual([
+      'releases.atom',
+      'releases?per_page=100&page=1',
+    ])
+  })
+
+  it('spends no API request on a full feed that still lists the installed release', async () => {
+    const fetch = feedFetch(
+      feed('v0.1.2', ...Array.from({ length: 9 }, (_, index) => `v0.0.${index}`)),
+    )
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.2')
+    expect(fetch).toHaveBeenCalledOnce()
+  })
+
+  it('reads the release list when a feed entry has no readable tag', async () => {
+    const atom = feed('v0.1.2').replace(
+      '</feed>',
+      '  <entry>\n    <link rel="alternate" href="https://github.com/Leonxlnx/tastecode/releases/tag/%E0%A4%A"/>\n  </entry>\n</feed>',
+    )
+    const fetch = feedFetch(atom, {}, [localRelease('0.1.3'), localRelease('0.1.2')])
+    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.3')
+  })
+
+  it('defers a rate-limited lookup until GitHub resets the limit', async () => {
+    const reset = Math.floor(Date.now() / 1000) + 25 * 60
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
+      'v0.1.2': new Response('{"message":"API rate limit exceeded"}', {
+        status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) },
+      }),
+    })
+    const lookup = providerWith(fetch, '0.1.1').getLatestVersion()
+    await expect(lookup).rejects.toBeInstanceOf(UpdateCheckDeferredError)
+    await expect(lookup).rejects.toMatchObject({ retryAt: reset * 1000 })
+    await expect(lookup).rejects.toThrow(/about 25 minutes/)
+  })
+
+  it('falls back to the release list when the feed answers with an HTML error page', async () => {
+    const fetch = vi
+      .fn<ReleaseFetch>()
+      .mockResolvedValueOnce(new Response('<!DOCTYPE html><title>Unicorn!</title>'))
+      .mockResolvedValueOnce(Response.json([localRelease('0.1.2')]))
+    expect((await providerWith(fetch, '0.1.1').getLatestVersion()).version).toBe('0.1.2')
+  })
+
+  it.each([
+    ['the feed', 'releases.atom', 502],
+    ['the release lookup', 'tags/v0.1.2', 500],
+  ])('reports a server error from %s', async (_label, failing, status) => {
+    const fetch = vi.fn<ReleaseFetch>(async (url) =>
+      url.endsWith(failing)
+        ? new Response('', { status })
+        : url.endsWith('.atom')
+          ? new Response(feed('v0.1.2', 'v0.1.1'))
+          : Response.json(localRelease('0.1.2')),
+    )
+    await expect(providerWith(fetch, '0.1.1').getLatestVersion()).rejects.toThrow(`HTTP ${status}`)
+  })
+
+  it('rejects a release lookup that is not a release', async () => {
+    const fetch = feedFetch(feed('v0.1.2', 'v0.1.1'), {
+      'v0.1.2': Response.json({ message: 'Moved Permanently' }),
+    })
+    await expect(providerWith(fetch, '0.1.1').getLatestVersion()).rejects.toThrow()
+  })
+
+  it.each([
+    ['a beta install', '0.1.0-beta.9', '0.1.1'],
+    ['an install newer than every release', '0.1.3', '0.1.3'],
+    ['an install of the newest release', '0.1.1', '0.1.1'],
+  ])('handles %s', async (_label, installed, offered) => {
+    const fetch = feedFetch(feed('linux-preview-e9ac0a03', 'v0.1.1', 'v0.1.0-beta.9'), {
+      'v0.1.1': Response.json(localRelease('0.1.1')),
+    })
+    expect((await providerWith(fetch, installed).getLatestVersion()).version).toBe(offered)
+  })
+
+  it.each([
+    [429, { 'retry-after': '120' }, 120_000],
+    [403, { 'retry-after': '30' }, 30_000],
+    [429, {}, 60_000],
+  ])('reads when a %i answer may be retried from %j', (status, headers, delay) => {
+    const now = Date.parse('2026-10-03T10:00:00Z')
+    expect(deferredUntil(new Response(null, { status, headers }), now)).toBe(now + delay)
+  })
+
+  it.each([
+    ['a day behind', '2026-10-02T10:00:00Z'],
+    ['a day ahead', '2026-10-04T10:00:00Z'],
+    ['correct', '2026-10-03T10:00:00Z'],
+  ])("waits for the reset by GitHub's clock when the local clock is %s", (_label, local) => {
+    const now = Date.parse(local)
+    const github = Date.parse('2026-10-03T10:00:00Z')
+    const response = new Response(null, {
+      status: 403,
+      headers: {
+        date: new Date(github).toUTCString(),
+        'x-ratelimit-remaining': '0',
+        'x-ratelimit-reset': String((github + 20 * 60 * 1000) / 1000),
+      },
+    })
+    expect(deferredUntil(response, now)).toBe(now + 20 * 60 * 1000)
+  })
+
+  it('never waits longer than an hour, whatever GitHub answers', () => {
+    const now = Date.parse('2026-10-03T10:00:00Z')
+    const response = new Response(null, { status: 429, headers: { 'retry-after': '86400' } })
+    expect(deferredUntil(response, now)).toBe(now + 60 * 60 * 1000)
+  })
+
+  it('reports other GitHub failures without treating them as a rate limit', async () => {
+    const forbidden = vi.fn<ReleaseFetch>().mockResolvedValue(new Response('', { status: 403 }))
+    await expect(providerWith(forbidden).getLatestVersion()).rejects.toThrow(/HTTP 403/)
+    const offline = vi.fn<ReleaseFetch>().mockRejectedValue(new TypeError('fetch failed'))
+    await expect(providerWith(offline).getLatestVersion()).rejects.toThrow(
+      /could not be reached .*fetch failed/,
+    )
+  })
 })
+
+function feed(...tags: string[]) {
+  const entries = tags.map(
+    (tag) => `  <entry>
+    <id>tag:github.com,2008:Repository/1314983809/${tag}</id>
+    <link rel="alternate" type="text/html" href="https://github.com/Leonxlnx/tastecode/releases/tag/${tag}"/>
+  </entry>`,
+  )
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <link type="text/html" rel="alternate" href="https://github.com/Leonxlnx/tastecode/releases"/>
+${entries.join('\n')}
+</feed>`
+}
+
+function feedFetch(atom: string, releases: Record<string, Response> = {}, list?: unknown[]) {
+  return vi.fn<ReleaseFetch>(async (url) => {
+    if (url.endsWith('/releases.atom')) return new Response(atom)
+    if (list && url.endsWith('/releases?per_page=100&page=1')) return Response.json(list)
+    const tag = /\/releases\/tags\/(.+)$/.exec(url)?.[1]
+    const answer = tag === undefined ? undefined : releases[decodeURIComponent(tag)]
+    if (!answer) throw new Error(`Unexpected request: ${url}`)
+    return answer
+  })
+}
+
+function localRelease(version?: string) {
+  const newest = release(version)
+  newest.assets = newest.assets.map((asset) => ({
+    ...asset,
+    name: asset.name.replace('mac-arm64', `mac-${process.arch}`),
+    browser_download_url: asset.browser_download_url.replace('mac-arm64', `mac-${process.arch}`),
+  }))
+  return newest
+}
+
+function providerWith(fetch: ReleaseFetch, installed = '0.1.0') {
+  return new GitHubReleaseProvider(
+    { provider: 'custom', fetch },
+    { currentVersion: new SemVer(installed) } as AppUpdater,
+    { platform: 'darwin', isUseMultipleRangeRequest: false } as unknown as ProviderRuntimeOptions,
+  )
+}

@@ -9,13 +9,20 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { RowIssue } from './RowIssue.js'
+import { surfaceLoadFailed } from '../surface-load-error.js'
 import { AppearanceColorPicker } from './AppearanceColorPicker.js'
-import { accentColor, backdropColor, backdropColorScheme } from '../theme-colors.js'
+import {
+  accentColor,
+  backdropColor,
+  backdropColorScheme,
+  colorForeground,
+} from '../theme-colors.js'
 import {
   getFastModeOffValue,
   getFastServiceTier,
@@ -27,11 +34,11 @@ import { BackgroundModelSettingsSchema } from '@harness/contracts'
 import '../styles/settings.css'
 import type {
   Account,
+  ApprovalMode,
   BackgroundModelSettings as BackgroundModelSettingsState,
   BackgroundModelSource,
   BackgroundModelTarget,
   DataOf,
-  ModelConnection,
   ProviderId,
   ProviderStatus,
   ResultOf,
@@ -56,6 +63,19 @@ import {
   IconUser as UserRound,
 } from '@tabler/icons-react'
 import { isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import {
+  pinnableModels,
+  pinnedModelChoice,
+  providerApprovalDefault,
+  type ProviderDefault,
+  type ProviderDefaults,
+} from '../provider-defaults.js'
+import {
+  ProviderTuning,
+  ProviderTuningSkeleton,
+  useProviderContextSettings,
+} from './ProviderTuning.js'
+import { Skeleton, SkeletonCode, SkeletonStatus } from './Skeleton.js'
 import { listInstalledFontFamilies, readInstalledFontFamilies } from '../local-fonts.js'
 import {
   appUpdateState,
@@ -66,8 +86,15 @@ import {
   onAppUpdateState,
   openLocalDiagnostics,
   setLocalDiagnosticsEnabled,
+  simulateAppUpdate,
   type AppUpdateState,
 } from '../bridge.js'
+import {
+  onSimulatedAppUpdate,
+  simulatedAppUpdate,
+  stopAppUpdateSimulation,
+  type AppUpdateSimulation,
+} from '../app-update-simulation.js'
 import {
   beginInstall,
   beginLogin,
@@ -85,6 +112,7 @@ import {
 import type { Transport } from '../transport.js'
 import {
   fontFamilyFromPreference,
+  fontFamilyStack,
   fontPreferenceForFamily,
   type AccentPreference,
   type AppearancePreference,
@@ -95,28 +123,17 @@ import {
   type ThemeColorScheme,
 } from '../theme.js'
 import {
-  readModelPickerLayout,
-  subscribeModelPickerLayout,
-  writeModelPickerLayout,
-} from '../model-picker-layout.js'
-import {
   performAppHaptic,
   prepareAppHaptics,
   readAppHaptics,
   subscribeAppHaptics,
   writeAppHaptics,
 } from '../haptics.js'
-import {
-  readTerminalPlacement,
-  subscribeTerminalPlacement,
-  writeTerminalPlacement,
-  type TerminalPlacement,
-} from '../terminal-placement.js'
-import { AppSelect } from './AppSelect.js'
+import { AppSelect, type AppSelectOption } from './AppSelect.js'
 import { McpSettings } from './McpSettings.js'
 import { groupModelsBySource } from './model-selector-utils.js'
 import { SkillsSettings } from './SkillsSettings.js'
-import { ProviderRow, type ProviderAction } from './ProviderRow.js'
+import { ProviderRow, ProviderRowSkeleton, type ProviderAction } from './ProviderRow.js'
 import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
@@ -129,10 +146,14 @@ import {
   type Shortcut,
 } from '../shortcuts.js'
 import { KeybindSettings } from './KeybindSettings.js'
+import { GeneralSettings } from './GeneralSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
+import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
 
 const InstallTerminal = lazy(() =>
-  import('./InstallTerminal.js').then((module) => ({ default: module.InstallTerminal })),
+  import('./InstallTerminal.js')
+    .then((module) => ({ default: module.InstallTerminal }))
+    .catch(surfaceLoadFailed),
 )
 
 export type SettingsSection =
@@ -218,11 +239,6 @@ const BACKDROP_OPTIONS = [
   { value: 'plum', label: 'Plum' },
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
 
-const TERMINAL_PLACEMENT_OPTIONS = [
-  { value: 'bottom', label: 'Bottom panel' },
-  { value: 'workspace', label: 'Right sidebar' },
-] as const satisfies ReadonlyArray<{ value: TerminalPlacement; label: string }>
-
 const MCP_PROVIDER_OPTIONS = [
   { provider: 'codex', providerName: 'Codex' },
   { provider: 'claude-code', providerName: 'Claude Code' },
@@ -246,16 +262,20 @@ function SettingsComponent(props: {
   projectPath: string | undefined
   projectName: string | undefined
   account: Account | undefined
+  accountLoading?: boolean | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
-  acpAgents: ResultOf<'acp.agents'>['agents']
-  modelConnections: ModelConnection[]
+  /** The provider list has not arrived yet. */
+  providersLoading?: boolean | undefined
   models: ModelChoice[]
+  modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   projectCount: number
+  projectsLoading?: boolean | undefined
   sidebarSettings: SidebarSettings
   onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
   themePreference: ThemePreference
@@ -284,12 +304,12 @@ function SettingsComponent(props: {
   onProviderLoginTerminalOpen?: ((target: ProviderLoginTerminalTarget) => void) | undefined
 }) {
   const [selectedSection, setSection] = useState<SettingsSection>(
-    props.initialSection ?? 'providers',
+    props.initialSection ?? 'workflows',
   )
-  const section = selectedSection === 'debug' && !props.showDebug ? 'providers' : selectedSection
+  const section = selectedSection === 'debug' && !props.showDebug ? 'workflows' : selectedSection
 
   useEffect(() => {
-    setSection(props.initialSection ?? 'providers')
+    setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection])
 
   const panel = useRef<HTMLDivElement>(null)
@@ -422,12 +442,11 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main">
-        <div
-          className={`settings__content${section === 'profile' ? ' settings__content--profile' : ''}`}
-        >
+        <div className="settings__content">
           {section === 'profile' ? (
             <ProfileSettings
               account={props.account}
+              accountLoading={props.accountLoading}
               providerName={props.providerName}
               identity={props.profileIdentity}
               onIdentityChange={props.onProfileIdentityChange}
@@ -437,7 +456,7 @@ function SettingsComponent(props: {
           {section === 'models' ? <ModelSettings {...props} /> : null}
           {section === 'mcp' ? <McpSettings {...props} providers={MCP_PROVIDER_OPTIONS} /> : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
-          {section === 'workflows' ? <WorkflowSettings {...props} /> : null}
+          {section === 'workflows' ? <GeneralSettings {...props} /> : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
@@ -459,6 +478,8 @@ function SettingsComponent(props: {
                   Force onboarding
                 </button>
               </SettingsRow>
+              <AppUpdateSimulationRow />
+              <ProviderUpdateSimulationRow transport={props.transport} />
               <SettingsRow
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
@@ -474,79 +495,78 @@ function SettingsComponent(props: {
   )
 }
 
-function WorkflowSettings(props: {
-  sidebarSettings: SidebarSettings
-  onSidebarSettingsChange: (settings: Partial<SidebarSettings>) => void
-}) {
-  const inbox = props.sidebarSettings.mode === 'inbox'
-  const autoSettle = props.sidebarSettings.autoSettleDays !== null
+const UPDATE_SIMULATIONS = [
+  { scenario: 'update', label: 'Update' },
+  { scenario: 'failure', label: 'Failure' },
+  { scenario: 'current', label: 'Up to date' },
+] as const satisfies ReadonlyArray<{ scenario: AppUpdateSimulation; label: string }>
+
+function AppUpdateSimulationRow() {
+  const [running, setRunning] = useState(() => simulatedAppUpdate() !== undefined)
+  useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
 
   return (
-    <SettingsPanel title="General">
-      <SettingsRow title="Sidebar version">
-        <div className="settings__sidebar-switcher" role="radiogroup" aria-label="Sidebar version">
-          <button
-            className={!inbox ? 'is-selected' : ''}
-            type="button"
-            role="radio"
-            aria-checked={!inbox}
-            onClick={() => props.onSidebarSettingsChange({ mode: 'classic' })}
-          >
-            V1 Classic
-          </button>
-          <button
-            className={inbox ? 'is-selected' : ''}
-            type="button"
-            role="radio"
-            aria-checked={inbox}
-            onClick={() => props.onSidebarSettingsChange({ mode: 'inbox' })}
-          >
-            V2 Inbox
-          </button>
-        </div>
-      </SettingsRow>
-      <SettingsRow title="Settle inactive threads">
-        <div className="settings__inline-controls">
-          <input
-            className="settings__number"
-            type="number"
-            aria-label="Auto-settle days"
-            min={1}
-            max={90}
-            disabled={!autoSettle}
-            value={props.sidebarSettings.autoSettleDays ?? 3}
-            onChange={(event) => {
-              const days = event.currentTarget.valueAsNumber
-              if (Number.isInteger(days) && days >= 1 && days <= 90) {
-                props.onSidebarSettingsChange({ autoSettleDays: days })
-              }
-            }}
-          />
-          <button
-            className={`switch${autoSettle ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-label="Automatic settling"
-            aria-checked={autoSettle}
-            onClick={() => props.onSidebarSettingsChange({ autoSettleDays: autoSettle ? null : 3 })}
-          >
-            <span className="switch__thumb" />
-          </button>
-        </div>
-      </SettingsRow>
-      <SettingsRow
-        title="Model picker"
-        note="Show providers in a compact rail instead of a single list."
+    <SettingsRow
+      title="Simulate app update"
+      note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
+      className="settings__row--roomy"
+    >
+      {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
+        <button
+          key={scenario}
+          className="settings__action"
+          type="button"
+          onClick={() => void simulateAppUpdate(scenario)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="settings__action"
+        type="button"
+        disabled={!running}
+        onClick={stopAppUpdateSimulation}
       >
-        <ModelPickerLayoutToggle />
-      </SettingsRow>
-      <SettingsRow
-        title="Default terminal"
-        note="Used by the Toggle terminal shortcut and command."
+        Stop
+      </button>
+    </SettingsRow>
+  )
+}
+
+const PROVIDER_UPDATE_SIMULATIONS = [
+  { scenario: 'one', label: 'One release' },
+  { scenario: 'several', label: 'Three releases' },
+  { scenario: 'failure', label: 'Failing update' },
+] as const satisfies ReadonlyArray<{ scenario: ProviderUpdateSimulation; label: string }>
+
+function ProviderUpdateSimulationRow(props: { transport: Transport }) {
+  const { store, state } = useProviderUpdates(props.transport)
+  return (
+    <SettingsRow
+      title="Simulate provider updates"
+      note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
+      className="settings__row--roomy"
+    >
+      {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
+        <button
+          key={scenario}
+          className="settings__action"
+          type="button"
+          onClick={() => store.simulate(scenario)}
+        >
+          {label}
+        </button>
+      ))}
+      <button
+        className="settings__action"
+        type="button"
+        aria-label="Stop provider update simulation"
+        disabled={!state.simulation}
+        onClick={store.stopSimulation}
       >
-        <TerminalPlacementSelect />
-      </SettingsRow>
-    </SettingsPanel>
+        Stop
+      </button>
+    </SettingsRow>
   )
 }
 
@@ -571,12 +591,28 @@ function SettingsNavItem(props: {
 
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
+// main ships exactly the three subscription plans the server lists (Codex,
+// Claude Code, Grok). Every other provider lives on nightly — see AGENTS.md.
+const PROVIDER_ROSTER: readonly ProviderId[] = ['codex', 'claude-code', 'grok']
+
+/** What a new chat on each provider starts with. The app shell owns it. */
+export type ProviderDefaultsControls = {
+  pins: ProviderDefaults
+  onPinChange: (provider: ProviderId, pin: ProviderDefault | undefined) => void
+  access: ProviderMap<ApprovalMode>
+  onAccessChange: (provider: ProviderId, mode: ApprovalMode) => void
+}
+
 export function ProviderSettings(props: {
   provider: ProviderId
   account: Account | undefined
   providerStatuses: ProviderStatus[]
+  providersLoading?: boolean | undefined
   projectPath?: string | undefined
   transport: Transport
+  models?: ModelChoice[] | undefined
+  hiddenModels?: Set<string> | undefined
+  providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
@@ -606,6 +642,8 @@ export function ProviderSettings(props: {
   >({})
   const currentTransport = useRef(props.transport)
   currentTransport.current = props.transport
+  const providerDefaults = props.providerDefaults
+  const context = useProviderContextSettings(props.transport, providerDefaults !== undefined)
 
   const updateOperation = useCallback((provider: ProviderId, operation?: AuthOperation) => {
     operations.current = { ...operations.current, [provider]: operation }
@@ -627,6 +665,16 @@ export function ProviderSettings(props: {
     setAuthErrors((current) => ({ ...current, [provider]: undefined }))
     return operation
   }
+
+  useEffect(() => {
+    const account = props.account
+    if (!account) return
+    delete statusRequests.current[props.provider]
+    setAuthStates((current) => ({
+      ...current,
+      [props.provider]: { phase: 'ready', account },
+    }))
+  }, [props.provider, props.account])
 
   const refreshAccount = useCallback(
     async (provider: ProviderId, forceLoading = false) => {
@@ -668,7 +716,7 @@ export function ProviderSettings(props: {
   )
 
   const authProviderIds = props.providerStatuses
-    .filter((status) => status.installed && status.id !== 'acp')
+    .filter((status) => status.installed)
     .map((status) => status.id)
   const authProviderKey = authProviderIds.join('|')
 
@@ -747,8 +795,13 @@ export function ProviderSettings(props: {
     try {
       await props.transport.request('auth.signOut', { provider })
       if (!operationIsCurrent(provider, operation)) return
+      delete statusRequests.current[provider]
       const account = { signedIn: false }
-      localStorage.removeItem(providerEmailKey(provider))
+      try {
+        localStorage.removeItem(providerEmailKey(provider))
+      } catch {
+        // An optional display cache must not turn a successful sign-out into a failure.
+      }
       setAuthStates((current) => ({
         ...current,
         [provider]: { phase: 'ready', account },
@@ -836,6 +889,7 @@ export function ProviderSettings(props: {
         key={status.id}
         provider={status}
         status={operationStatus}
+        link={account?.signedIn ? 'connected' : 'open'}
         live={operation !== undefined}
         issue={
           authError
@@ -849,49 +903,84 @@ export function ProviderSettings(props: {
         }
         primary={
           account?.signedIn
-            ? undefined
-            : {
-                label: operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in',
-                disabled: operation !== undefined,
-                onClick: () => void signIn(status.id),
-              }
-        }
-        secondary={
-          account?.signedIn
             ? {
                 label: operation?.kind === 'sign-out' ? 'Signing out…' : 'Sign out',
                 disabled: operation !== undefined,
                 danger: true,
                 onClick: () => void signOut(status.id),
               }
-            : undefined
+            : {
+                label: operation?.kind === 'sign-in' ? 'Signing in…' : 'Sign in',
+                disabled: operation !== undefined,
+                onClick: () => void signIn(status.id),
+              }
         }
       />
     )
   }
 
-  // Public beta scope: exactly the three subscription plans the server lists
-  // (Codex, Claude Code, Grok). The ACP agents, Cursor, OpenCode, Antigravity
-  // and API-connection surfaces are parked, not deleted — see AGENTS.md.
-  const direct = props.providerStatuses.filter((status) => status.id !== 'acp')
-  const byId = (id: ProviderId) => direct.filter((status) => status.id === id)
+  const byId = (id: ProviderId) => props.providerStatuses.filter((status) => status.id === id)
+  const signedIn = (status: ProviderStatus) => {
+    const authState = authStates[status.id]
+    if (authState) return authState.phase === 'ready' && authState.account.signedIn
+    return status.id === props.provider && props.account?.signedIn === true
+  }
+  const checkingAccount = (status: ProviderStatus) => {
+    const authState = authStates[status.id]
+    if (authState) return authState.phase === 'loading'
+    return !(status.id === props.provider && props.account)
+  }
+  const renderTuning = (status: ProviderStatus) => {
+    if (!providerDefaults) return null
+    // A provider that may well be signed in keeps the place of its defaults
+    // while the account is checked, so the roster does not jump when it answers.
+    const pending = status.installed && status.auth !== 'unauthenticated' && checkingAccount(status)
+    if (!pending && !signedIn(status)) return null
+    const pin = providerDefaults.pins[status.id]
+    const pinnedName = pinnedModelChoice(props.models ?? [], status.id, pin)?.model.displayName
+    return (
+      <ProviderTuning
+        provider={status}
+        models={pinnableModels(props.models ?? [], status.id, props.hiddenModels)}
+        pinned={pin}
+        pinnedName={pinnedName}
+        onPinnedChange={(next) => providerDefaults.onPinChange(status.id, next)}
+        access={providerApprovalDefault(
+          providerDefaults.access[status.id],
+          status.capabilities?.autoReview === true,
+        )}
+        onAccessChange={(mode) => providerDefaults.onAccessChange(status.id, mode)}
+        context={context.state}
+        contextError={context.errors[status.id]}
+        onContextChange={(settings) => context.update(status.id, settings)}
+        pending={pending}
+      />
+    )
+  }
   const renderProviderRow = (status: ProviderStatus) => (
     <div className="provider-settings__entry" key={status.id}>
       {renderAccountRow(status)}
+      {renderTuning(status)}
     </div>
   )
 
   return (
-    <SettingsPanel title="Providers" groupClassName="settings__group--providers">
-      <header className="provider-settings__header">
-        <h2>Accounts</h2>
-      </header>
-      {byId('codex').map(renderProviderRow)}
-      {byId('claude-code').map(renderProviderRow)}
-      {byId('grok').map(renderProviderRow)}
-      {direct
-        .filter((status) => !['codex', 'claude-code', 'grok'].includes(status.id))
-        .map(renderProviderRow)}
+    <SettingsPanel
+      title="Providers"
+      groupClassName="settings__group--plain settings__group--providers"
+    >
+      {props.providersLoading && props.providerStatuses.length === 0 ? (
+        <SkeletonStatus label="Loading providers…">
+          {PROVIDER_ROSTER.map((id, index) => (
+            <div className="provider-settings__entry" key={id}>
+              <ProviderRowSkeleton index={index} />
+              {providerDefaults ? <ProviderTuningSkeleton /> : null}
+            </div>
+          ))}
+        </SkeletonStatus>
+      ) : (
+        PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
+      )}
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPanel>
   )
@@ -900,6 +989,7 @@ export function ProviderSettings(props: {
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
+  modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
 }) {
@@ -923,6 +1013,8 @@ function ModelSettings(props: {
             />
           ))}
         </div>
+      ) : props.modelsLoading ? (
+        <ModelSourcesSkeleton />
       ) : (
         <div className="model-settings__empty">
           <Boxes size={18} aria-hidden />
@@ -930,6 +1022,56 @@ function ModelSettings(props: {
         </div>
       )}
     </SettingsPanel>
+  )
+}
+
+const MODEL_SKELETON_WIDTHS = [132, 176, 108, 152] as const
+
+function ModelSourcesSkeleton() {
+  return (
+    <SkeletonStatus label="Loading models…" className="model-settings__sources">
+      {[4, 3].map((rows, index) => (
+        <section className="model-visibility" key={index} aria-hidden>
+          <header className="model-visibility__source">
+            <h3>
+              <span className="source-identity source-identity--regular">
+                <span className="source-identity__mark">
+                  <Skeleton className="skeleton--icon" width={15} height={15} />
+                </span>
+                <Skeleton width={index === 0 ? 64 : 92} height={9} />
+              </span>
+            </h3>
+            <div className="model-visibility__bulk-actions">
+              <button type="button" disabled>
+                All
+              </button>
+              <button type="button" disabled>
+                None
+              </button>
+            </div>
+          </header>
+          <div className="model-visibility__models">
+            <div>
+              {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
+                <SettingsRow
+                  key={row}
+                  className="model-visibility__model"
+                  title={
+                    <span className="settings-value-skeleton">
+                      <Skeleton width={width} height={9} />
+                    </span>
+                  }
+                >
+                  <span className="settings__switch-skeleton">
+                    <Skeleton width={36} height={22} />
+                  </span>
+                </SettingsRow>
+              ))}
+            </div>
+          </div>
+        </section>
+      ))}
+    </SkeletonStatus>
   )
 }
 
@@ -1008,6 +1150,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const selectedSpeed = isFastModeEnabled(selected?.model, manual?.serviceTier)
     ? 'fast'
     : 'standard'
+  const loading = state === undefined && !error
 
   return (
     <section className="background-model-settings" aria-label="Background work">
@@ -1020,51 +1163,66 @@ function BackgroundModelSettings(props: { transport: Transport }) {
         </p>
       </header>
       <div className="settings__group">
-        <SettingsRow title="Model" note={automaticNote}>
-          <AppSelect
-            className="settings__select settings__select--model"
-            ariaLabel="Background model"
-            align="right"
-            value={selectedValue}
-            options={modelOptions}
-            disabled={!state || busy}
-            onChange={(value) => {
-              if (value === 'automatic') {
-                void update({ mode: 'automatic' })
-                return
-              }
-              const choice = backgroundModelFromValue(state?.sources ?? [], value)
-              if (!choice) return
-              const serviceTier = getNextServiceTierForModel({
-                nextModel: choice.model,
-                currentModel: selected?.model,
-                currentServiceTier: manual?.serviceTier,
-              })
-              void update({
-                mode: 'manual',
-                target: {
-                  provider: choice.source.provider,
-                  ...(choice.source.connectionId
-                    ? {
-                        connectionId: choice.source.connectionId,
-                      }
-                    : {}),
-                  ...(choice.source.agent
-                    ? {
-                        agent: choice.source.agent,
-                      }
-                    : {}),
-                  model: choice.model.id,
-                  ...(serviceTier ? { serviceTier } : {}),
-                  ...(choice.model.reasoningEfforts[0]
-                    ? {
-                        effort: choice.model.reasoningEfforts[0],
-                      }
-                    : {}),
-                },
-              })
-            }}
-          />
+        <SettingsRow
+          title="Model"
+          note={
+            loading ? (
+              <SettingsValueSkeleton label="Loading background model details…" width={240} />
+            ) : state ? (
+              automaticNote
+            ) : undefined
+          }
+        >
+          {loading ? (
+            <SkeletonStatus
+              label="Loading background model…"
+              className="settings__select settings__select--model"
+            >
+              <Skeleton className="skeleton--block" width="100%" height={28} />
+            </SkeletonStatus>
+          ) : !state ? (
+            <SettingsMeta>Unavailable</SettingsMeta>
+          ) : (
+            <AppSelect
+              className="settings__select settings__select--model"
+              ariaLabel="Background model"
+              align="right"
+              value={selectedValue}
+              options={modelOptions}
+              disabled={!state || busy}
+              onChange={(value) => {
+                if (value === 'automatic') {
+                  void update({ mode: 'automatic' })
+                  return
+                }
+                const choice = backgroundModelFromValue(state?.sources ?? [], value)
+                if (!choice) return
+                const serviceTier = getNextServiceTierForModel({
+                  nextModel: choice.model,
+                  currentModel: selected?.model,
+                  currentServiceTier: manual?.serviceTier,
+                })
+                void update({
+                  mode: 'manual',
+                  target: {
+                    provider: choice.source.provider,
+                    ...(choice.source.agent
+                      ? {
+                          agent: choice.source.agent,
+                        }
+                      : {}),
+                    model: choice.model.id,
+                    ...(serviceTier ? { serviceTier } : {}),
+                    ...(choice.model.reasoningEfforts[0]
+                      ? {
+                          effort: choice.model.reasoningEfforts[0],
+                        }
+                      : {}),
+                  },
+                })
+              }}
+            />
+          )}
         </SettingsRow>
         {manual && selected && effortOptions.length > 0 ? (
           <SettingsRow
@@ -1125,10 +1283,7 @@ function isBackgroundModelSettingsState(
 
 function findBackgroundModel(sources: BackgroundModelSource[], target: BackgroundModelTarget) {
   const source = sources.find(
-    (candidate) =>
-      candidate.provider === target.provider &&
-      candidate.connectionId === target.connectionId &&
-      candidate.agent === target.agent,
+    (candidate) => candidate.provider === target.provider && candidate.agent === target.agent,
   )
   const model = source?.models.find((candidate) => candidate.id === target.model)
   return source && model ? { source, model } : undefined
@@ -1244,14 +1399,17 @@ function AppearanceSettings(props: {
   showMacOSHaptics?: boolean | undefined
 }) {
   return (
-    <SettingsPanel title="Appearance" groupClassName="settings__group--plain">
-      <section className="appearance-theme" aria-labelledby="appearance-theme-heading">
-        <h2 className="settings__group-title" id="appearance-theme-heading">
+    <SettingsPanel title="Appearance" groupClassName="settings__group--plain appearance">
+      <section className="appearance-section" aria-labelledby="appearance-theme-heading">
+        <h2 className="appearance-section__heading" id="appearance-theme-heading">
           Theme
         </h2>
-        <ThemePicker value={props.themePreference} onChange={props.onThemePreferenceChange} />
+        <ThemePicker
+          value={props.themePreference}
+          preferences={props.appearancePreferences}
+          onChange={props.onThemePreferenceChange}
+        />
       </section>
-      <AppearanceCodePreview />
       {(['light', 'dark'] as const).map((mode) => (
         <AppearanceEditor
           key={mode}
@@ -1261,10 +1419,10 @@ function AppearanceSettings(props: {
         />
       ))}
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
-        <section className="appearance-editor" aria-label="Shared appearance controls">
+        <section className="appearance-section" aria-label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <SettingsRow className="appearance-editor__row" title="Font smoothing">
+            <AppearanceRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1275,11 +1433,27 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </SettingsRow>
+            </AppearanceRow>
           ) : null}
         </section>
       ) : null}
     </SettingsPanel>
+  )
+}
+
+/**
+ * One appearance setting, laid out like a provider in the roster: the name,
+ * a dotted leader that lights while the row is hovered, and the value at the
+ * far edge. Nothing behind it is painted.
+ */
+function AppearanceRow(props: { name: string; note?: string; children: ReactNode }) {
+  return (
+    <div className="appearance-row">
+      <p className="appearance-row__name">{props.name}</p>
+      <span className="appearance-row__leader" aria-hidden />
+      <div className="appearance-row__value">{props.children}</div>
+      {props.note ? <p className="appearance-row__note">{props.note}</p> : null}
+    </div>
   )
 }
 
@@ -1292,25 +1466,37 @@ function AppearanceEditor(props: {
   const requestInstalledFontFamilies = useCallback(() => {
     void listInstalledFontFamilies().then(setInstalledFontFamilies)
   }, [])
+  // Built-in fonts lead, System default first, so the list opens where most
+  // choices are; installed families follow alphabetically. Each option carries
+  // a sample set in its own face.
   const fontOptions = useMemo(() => {
-    const optionsByLabel = new Map<string, { value: FontPreference; label: string }>()
+    const builtIn: AppSelectOption<FontPreference>[] = [
+      FONT_OPTIONS[3],
+      ...FONT_OPTIONS.slice(0, 3),
+    ].map((option) => ({ ...option }))
+    const legacy = legacyFontLabel(props.preference.font)
+    if (legacy) builtIn.push({ value: props.preference.font, label: legacy })
+    const taken = new Set(builtIn.map((option) => fontOptionKey(option.label)))
+    const installed = new Map<string, AppSelectOption<FontPreference>>()
     for (const family of installedFontFamilies ?? []) {
       const value = fontPreferenceForFamily(family)
-      if (!value) continue
-      optionsByLabel.set(fontOptionKey(family), { value, label: family })
+      const key = fontOptionKey(family)
+      if (value && !taken.has(key)) installed.set(key, { value, label: family })
     }
-    for (const option of FONT_OPTIONS) {
-      optionsByLabel.set(fontOptionKey(option.label), option)
-    }
-
     const selectedFamily = fontFamilyFromPreference(props.preference.font)
-    const options = [...optionsByLabel.values()]
-    if (!options.some((option) => option.value === props.preference.font)) {
-      const label = selectedFamily ?? legacyFontLabel(props.preference.font)
-      if (label) optionsByLabel.set(fontOptionKey(label), { value: props.preference.font, label })
+    if (selectedFamily && !installed.has(fontOptionKey(selectedFamily))) {
+      installed.set(fontOptionKey(selectedFamily), {
+        value: props.preference.font,
+        label: selectedFamily,
+      })
     }
-
-    return [...optionsByLabel.values()].sort(compareFontOptions)
+    const grouped = installed.size > 0
+    return [
+      ...builtIn.map((option) => ({ ...option, group: grouped ? 'Built in' : undefined })),
+      ...[...installed.values()]
+        .sort(compareFontOptions)
+        .map((option) => ({ ...option, group: 'Installed' })),
+    ].map((option) => ({ ...option, sampleFont: fontFamilyStack(option.value) }))
   }, [installedFontFamilies, props.preference.font])
   const selectedGlass = GLASS_OPTIONS.reduce((best, candidate) =>
     Math.abs(candidate.value - props.preference.glass) <
@@ -1321,21 +1507,24 @@ function AppearanceEditor(props: {
   const light = (backdropColorScheme(props.preference.backdrop) ?? props.mode) === 'light'
   const title = props.mode === 'light' ? 'Light mode' : 'Dark mode'
 
+  const defaultColors =
+    props.preference.accent === 'neutral' && props.preference.backdrop === 'default'
+
   return (
-    <section className="appearance-editor" aria-label={title}>
-      <h2 className="appearance-editor__heading">{title}</h2>
-      <SettingsRow className="appearance-editor__row" title="Theme">
-        <AppSelect
-          className="settings__select appearance-control__select"
-          ariaLabel={`${title} theme`}
-          align="right"
-          value="default"
-          options={[{ value: 'default', label: 'Default' }]}
-          allowReselect
-          onChange={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
-        />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Accent palette">
+    <section className="appearance-section" aria-label={title}>
+      <div className="appearance-section__head">
+        <h2 className="appearance-section__heading">{title}</h2>
+        {defaultColors ? null : (
+          <button
+            className="appearance-section__reset"
+            type="button"
+            onClick={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
+          >
+            Reset colors
+          </button>
+        )}
+      </div>
+      <AppearanceRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -1346,8 +1535,8 @@ function AppearanceEditor(props: {
           }))}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Background">
+      </AppearanceRow>
+      <AppearanceRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -1358,42 +1547,30 @@ function AppearanceEditor(props: {
           }))}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Interface font">
-        <div className="appearance-control">
-          <span className="appearance-control__type" aria-hidden>
-            Aa
-          </span>
-          <AppSelect
-            className="settings__select appearance-control__select"
-            ariaLabel="Interface font"
-            align="right"
-            value={props.preference.font}
-            options={fontOptions}
-            onOpen={requestInstalledFontFamilies}
-            loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
-            search={FONT_SEARCH}
-            onChange={(font) => props.onChange({ font })}
-          />
-        </div>
-      </SettingsRow>
-      <SettingsRow className="appearance-editor__row" title="Sidebar translucency">
-        <div className="appearance-control">
-          <span
-            className="appearance-control__swatch appearance-choice__swatch"
-            data-glass-preview={selectedGlass.value}
-            aria-hidden
-          />
-          <AppSelect
-            className="settings__select appearance-control__select"
-            ariaLabel="Sidebar translucency"
-            align="right"
-            value={String(selectedGlass.value)}
-            options={GLASS_SELECT_OPTIONS}
-            onChange={(value) => props.onChange({ glass: Number(value) })}
-          />
-        </div>
-      </SettingsRow>
+      </AppearanceRow>
+      <AppearanceRow name="Interface font">
+        <AppSelect
+          className="appearance-select"
+          ariaLabel="Interface font"
+          align="right"
+          value={props.preference.font}
+          options={fontOptions}
+          onOpen={requestInstalledFontFamilies}
+          loadingMessage={installedFontFamilies === undefined ? 'Loading fonts…' : undefined}
+          search={FONT_SEARCH}
+          onChange={(font) => props.onChange({ font })}
+        />
+      </AppearanceRow>
+      <AppearanceRow name="Sidebar translucency">
+        <AppSelect
+          className="appearance-select"
+          ariaLabel="Sidebar translucency"
+          align="right"
+          value={String(selectedGlass.value)}
+          options={GLASS_SELECT_OPTIONS}
+          onChange={(value) => props.onChange({ glass: Number(value) })}
+        />
+      </AppearanceRow>
     </section>
   )
 }
@@ -1401,9 +1578,8 @@ function AppearanceEditor(props: {
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <SettingsRow
-      className="appearance-editor__row"
-      title="Trackpad haptics"
+    <AppearanceRow
+      name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
       <button
@@ -1423,142 +1599,13 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </SettingsRow>
-  )
-}
-
-/** Self-contained: Settings and the open picker subscribe to the same layout
- *  preference, including its in-memory fallback when storage is unavailable. */
-function ModelPickerLayoutToggle() {
-  const layout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
-  const railOn = layout === 'rail'
-  return (
-    <button
-      className={`switch${railOn ? ' is-on' : ''}`}
-      type="button"
-      role="switch"
-      aria-label="Provider rail layout"
-      aria-checked={railOn}
-      onClick={() => writeModelPickerLayout(railOn ? 'list' : 'rail')}
-    >
-      <span className="switch__thumb" />
-    </button>
-  )
-}
-
-function TerminalPlacementSelect() {
-  const placement = useSyncExternalStore(
-    subscribeTerminalPlacement,
-    readTerminalPlacement,
-    readTerminalPlacement,
-  )
-  return (
-    <AppSelect
-      className="settings__select"
-      ariaLabel="Default terminal location"
-      align="right"
-      value={placement}
-      options={TERMINAL_PLACEMENT_OPTIONS}
-      onChange={writeTerminalPlacement}
-    />
-  )
-}
-
-function AppearanceCodePreview() {
-  return (
-    <div
-      className="appearance-code-preview"
-      role="img"
-      aria-label="TasteCode thread.start code preview changing approval from ask to auto-review"
-    >
-      <div className="appearance-code-preview__pane" aria-hidden>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">1</span>
-          <code>
-            <span className="appearance-code-preview__keyword">await</span> transport.request(
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            {'  '}
-            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            {'    '}provider:{' '}
-            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">4</span>
-          <code>{'    '}workspacePath: projectPath,</code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="removed">
-          <span className="appearance-code-preview__number">5</span>
-          <code>
-            {'    '}approval:{' '}
-            <span className="appearance-code-preview__string">&quot;ask&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">6</span>
-          <code>{'  }'},</code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">7</span>
-          <code>);</code>
-        </span>
-      </div>
-      <div className="appearance-code-preview__pane" aria-hidden>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">1</span>
-          <code>
-            <span className="appearance-code-preview__keyword">await</span> transport.request(
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">2</span>
-          <code>
-            {'  '}
-            <span className="appearance-code-preview__string">&quot;thread.start&quot;</span>, {'{'}
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">3</span>
-          <code>
-            {'    '}provider:{' '}
-            <span className="appearance-code-preview__string">&quot;codex&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">4</span>
-          <code>{'    '}workspacePath: projectPath,</code>
-        </span>
-        <span className="appearance-code-preview__line" data-change="added">
-          <span className="appearance-code-preview__number">5</span>
-          <code>
-            {'    '}approval:{' '}
-            <span className="appearance-code-preview__string">&quot;auto-review&quot;</span>,
-          </code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">6</span>
-          <code>{'  }'},</code>
-        </span>
-        <span className="appearance-code-preview__line">
-          <span className="appearance-code-preview__number">7</span>
-          <code>);</code>
-        </span>
-      </div>
-    </div>
+    </AppearanceRow>
   )
 }
 
 function ThemePicker(props: {
   value: ThemePreference
+  preferences: AppearancePreferences
   onChange: (theme: ThemePreference) => void
 }) {
   return (
@@ -1577,18 +1624,12 @@ function ThemePicker(props: {
               onChange={() => props.onChange(option.value)}
             />
             <span className={`theme-preview theme-preview--${option.value}`} aria-hidden>
-              <span className="theme-preview__header" />
-              <span className="theme-preview__subhead" />
-              <span className="theme-preview__panel">
-                <span className="theme-preview__row">
-                  <span className="theme-preview__row-title" />
-                  <span className="theme-preview__row-copy" />
-                </span>
-                <span className="theme-preview__row">
-                  <span className="theme-preview__row-title" />
-                  <span className="theme-preview__row-copy" />
-                </span>
-              </span>
+              {option.value === 'dark' ? null : (
+                <ThemeWindow mode="light" preference={props.preferences.light} />
+              )}
+              {option.value === 'light' ? null : (
+                <ThemeWindow mode="dark" preference={props.preferences.dark} />
+              )}
             </span>
             <span className="theme-option__label">{option.label}</span>
           </label>
@@ -1598,14 +1639,70 @@ function ThemePicker(props: {
   )
 }
 
-function DataSettings(props: { projectCount: number; onReset: () => void }) {
+type ThemeWindowStyle = CSSProperties & {
+  '--window-paper': string
+  '--window-ink': string
+  '--window-accent': string
+}
+
+/**
+ * A TasteCode window in miniature, painted in that mode's own background and
+ * accent: the sidebar, a reply under your message, and the prompt bar with its
+ * send button. System shows the light window and the dark one split down the middle.
+ */
+function ThemeWindow(props: { mode: ThemeColorScheme; preference: AppearancePreference }) {
+  const light = (backdropColorScheme(props.preference.backdrop) ?? props.mode) === 'light'
+  const paper = backdropColor(props.preference.backdrop, light)
+  const style: ThemeWindowStyle = {
+    '--window-paper': paper,
+    '--window-ink': colorForeground(paper) === '#171717' ? '#27272a' : '#ededed',
+    '--window-accent': accentColor(props.preference.accent, light),
+  }
+  return (
+    <span className="theme-window" data-mode={props.mode} style={style}>
+      <span className="theme-window__rail">
+        <i />
+        <i data-active />
+        <i />
+        <i />
+      </span>
+      <span className="theme-window__chat">
+        <i data-you />
+        <i />
+        <i />
+        <i />
+        <span className="theme-window__prompt">
+          <b />
+        </span>
+      </span>
+    </span>
+  )
+}
+
+function DataSettings(props: {
+  projectCount: number
+  projectsLoading?: boolean | undefined
+  onReset: () => void
+}) {
   const [confirming, setConfirming] = useState(false)
-  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState(false)
+  const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
   const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
 
   useEffect(() => {
-    void localDiagnosticsEnabled().then(setDiagnosticsEnabled)
+    let cancelled = false
+    void localDiagnosticsEnabled()
+      .then((enabled) => {
+        if (!cancelled) setDiagnosticsEnabled(enabled)
+      })
+      .catch((cause) => {
+        if (!cancelled) {
+          setDiagnosticsError(cause instanceof Error ? cause.message : String(cause))
+        }
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const toggleDiagnostics = async () => {
@@ -1635,20 +1732,37 @@ function DataSettings(props: { projectCount: number; onReset: () => void }) {
               Open folder
             </button>
           ) : null}
-          <button
-            className={`switch${diagnosticsEnabled ? ' is-on' : ''}`}
-            type="button"
-            role="switch"
-            aria-label="Local diagnostics"
-            aria-checked={diagnosticsEnabled}
-            onClick={() => void toggleDiagnostics()}
-          >
-            <span className="switch__thumb" />
-          </button>
+          {diagnosticsEnabled === undefined ? (
+            diagnosticsError ? null : (
+              <SkeletonStatus
+                label="Loading local diagnostics…"
+                className="settings__switch-skeleton"
+              >
+                <Skeleton width={36} height={22} />
+              </SkeletonStatus>
+            )
+          ) : (
+            <button
+              className={`switch${diagnosticsEnabled ? ' is-on' : ''}`}
+              type="button"
+              role="switch"
+              aria-label="Local diagnostics"
+              aria-checked={diagnosticsEnabled}
+              onClick={() => void toggleDiagnostics()}
+            >
+              <span className="switch__thumb" />
+            </button>
+          )}
         </SettingsRow>
       ) : null}
       <SettingsRow
-        title={projectLabel}
+        title={
+          props.projectsLoading ? (
+            <SettingsValueSkeleton label="Loading project count…" width={176} />
+          ) : (
+            projectLabel
+          )
+        }
         note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
         className="settings__row--roomy"
       >
@@ -1788,6 +1902,7 @@ function AboutSettings(props: { transport: Transport }) {
   const short = (sha: string) => sha.slice(0, 7)
   const nativeChecking = nativeUpdate?.status === 'checking'
   const nativeDownloading = nativeUpdate?.status === 'downloading'
+  const nativePreparing = nativeUpdate?.status === 'preparing'
   const nativeReady = nativeUpdate?.status === 'ready'
   // Verdicts stay on the row's one line; a failure goes behind the red dot.
   const updateStatus = !result
@@ -1813,18 +1928,27 @@ function AboutSettings(props: { transport: Transport }) {
             state: 'checking' as const,
             detail: `Downloading${nativeUpdate.version ? ` ${nativeUpdate.version}` : ''}${nativeUpdate.progress === undefined ? '' : ` · ${nativeUpdate.progress}%`}`,
           }
-        : nativeReady
+        : nativePreparing
           ? {
-              state: 'ready' as const,
-              detail: `${nativeUpdate.version ?? 'Update'} ready`,
+              state: 'checking' as const,
+              detail: `Preparing ${nativeUpdate.version ?? 'update'}`,
             }
-          : undefined
+          : nativeReady
+            ? {
+                state: 'ready' as const,
+                detail: `${nativeUpdate.version ?? 'Update'} ready`,
+              }
+            : undefined
 
   return (
     <SettingsPanel title="About">
       <SettingsRow title="TasteCode">
         <SettingsMeta>
-          {`${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate && nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`}
+          {nativeUpdate === undefined ? (
+            <SettingsValueSkeleton label="Loading app version…" width={132} />
+          ) : (
+            `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
+          )}
         </SettingsMeta>
       </SettingsRow>
       <SettingsRow title="Updates">
@@ -1837,6 +1961,11 @@ function AboutSettings(props: { transport: Transport }) {
           <RowIssue message={result.error} tip="Check your network or GitHub access, then retry." />
         ) : null}
         {checking || nativeChecking ? <StateLabel state="checking" live /> : null}
+        {!checking && nativeUpdate === undefined ? (
+          <SettingsMeta>
+            <SettingsValueSkeleton label="Loading update status…" width={112} />
+          </SettingsMeta>
+        ) : null}
         {!checking && !nativeChecking && nativeStatus ? (
           <StateLabel {...nativeStatus} live />
         ) : null}
@@ -1846,7 +1975,7 @@ function AboutSettings(props: { transport: Transport }) {
         <button
           className="settings__action"
           type="button"
-          disabled={checking || nativeChecking || nativeDownloading}
+          disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
           onClick={() => void (nativeReady ? installAppUpdate() : check())}
         >
           <RotateCcw size={13} aria-hidden />
@@ -1854,9 +1983,11 @@ function AboutSettings(props: { transport: Transport }) {
             ? 'Restart to update'
             : nativeDownloading
               ? 'Downloading…'
-              : checking || nativeChecking
-                ? 'Checking…'
-                : 'Check for updates'}
+              : nativePreparing
+                ? 'Preparing…'
+                : checking || nativeChecking
+                  ? 'Checking…'
+                  : 'Check for updates'}
         </button>
       </SettingsRow>
       <SettingsRow title="Source">
@@ -2003,6 +2134,7 @@ function InstallableRow(props: {
       <ProviderRow
         provider={props.provider}
         status={status}
+        link="none"
         live={install?.phase === 'running' || install?.phase === 'succeeded'}
         issue={issue}
         primary={primary}
@@ -2048,7 +2180,12 @@ function CliSignInRow(props: {
   const notifiedLogin = useRef(false)
   const confirmedEmail = signedInEmail(login?.log ?? '')
   useEffect(() => {
-    if (confirmedEmail) localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+    if (!confirmedEmail) return
+    try {
+      localStorage.setItem(providerEmailKey(props.provider.id), confirmedEmail)
+    } catch {
+      // Sign-in still completes when storage is full or blocked.
+    }
   }, [confirmedEmail, props.provider.id])
 
   useEffect(() => {
@@ -2210,7 +2347,13 @@ function CliSignInRow(props: {
 
 function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
-    <Suspense fallback={<div className="install-terminal" aria-label="Install terminal" />}>
+    <Suspense
+      fallback={
+        <SkeletonStatus label="Opening terminal…" className="install-terminal">
+          <SkeletonCode lines={9} />
+        </SkeletonStatus>
+      }
+    >
       <InstallTerminal transport={props.transport} installKey={props.installKey} />
     </Suspense>
   )
@@ -2226,7 +2369,13 @@ function providerEmailKey(provider: ProviderId): string {
 }
 
 function AccountIdentity(props: { provider: ProviderId; account: Account }) {
-  const [savedEmail] = useState(() => localStorage.getItem(providerEmailKey(props.provider)))
+  const [savedEmail] = useState(() => {
+    try {
+      return localStorage.getItem(providerEmailKey(props.provider))
+    } catch {
+      return null
+    }
+  })
   const email = props.account.email ?? savedEmail
 
   return (
@@ -2278,9 +2427,18 @@ function AccountEmail(props: { email: string }) {
   )
 }
 
+function SettingsValueSkeleton(props: { label: string; width: number }) {
+  return (
+    <span className="settings-value-skeleton skeleton-group" role="status" aria-busy="true">
+      <span className="visually-hidden">{props.label}</span>
+      <Skeleton width={props.width} height={9} />
+    </span>
+  )
+}
+
 function SettingsRow(props: {
-  title: string
-  note?: string | undefined
+  title: ReactNode
+  note?: ReactNode
   className?: string
   children?: ReactNode
 }) {

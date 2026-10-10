@@ -1,0 +1,653 @@
+/* Profile is one coin. Its two faces are the two pictures — the seal struck
+   from your name and your photo — and turning it over is how the picture
+   changes. Under it, only the name, one line of facts and one of actions. */
+
+.profile__stage {
+  --seal: 160px;
+  display: grid;
+  justify-items: center;
+  padding-top: 64px;
+}
+
+/* The name is written in place, as wide as what is typed. */
+.profile__name {
+  field-sizing: content;
+  min-width: 4ch;
+  max-width: 100%;
+  margin: 36px 0 0;
+  padding: 0 2px 5px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  caret-color: var(--text);
+  font-family: inherit;
+  font-size: var(--t-xl);
+  font-weight: 500;
+  letter-spacing: -0.018em;
+  line-height: 1.25;
+  text-align: center;
+  outline: none;
+}
+
+.profile__name::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.profile__facts,
+.profile__actions {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  margin: 0;
+  font-size: var(--t-sm);
+  line-height: 1.4;
+}
+
+.profile__facts {
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.profile__error {
+  color: var(--error);
+}
+
+.profile__actions {
+  gap: 2px;
+  margin-top: 14px;
+}
+
+.profile__actions button {
+  padding: 3px 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.profile__actions button:hover {
+  color: var(--text);
+}
+
+.profile__actions button:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 0;
+}
+
+/* Trying a word on the seal: the facts line becomes "Struck from ___",
+   with a die beside the word for one picked at random. */
+.profile__facts--trying {
+  align-items: center;
+  gap: 8px;
+}
+
+.profile__word {
+  field-sizing: content;
+  min-width: 6ch;
+  max-width: 24ch;
+  margin: 0;
+  padding: 0 2px 3px;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  caret-color: var(--text);
+  font: inherit;
+  text-align: center;
+  outline: none;
+}
+
+.profile__word::placeholder {
+  color: var(--text-3);
+  opacity: 1;
+}
+
+.profile__roll {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  margin-right: -24px;
+  padding: 0;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.profile__roll:hover {
+  color: var(--text);
+}
+
+.profile__roll:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 0;
+}
+
+.profile__actions .profile__keep {
+  color: var(--text);
+}
+
+/* ---------- coin ---------- */
+
+.profile-coin {
+  --thickness: 11px;
+  position: relative;
+  width: var(--seal);
+  aspect-ratio: 1;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  cursor: pointer;
+  perspective: 1100px;
+}
+
+.profile-coin__tilt,
+.profile-coin__body {
+  position: absolute;
+  inset: 0;
+  display: block;
+  transform-style: preserve-3d;
+}
+
+/* Only seen mid-turn, while the coin is off the page. */
+.profile-coin__shadow {
+  position: absolute;
+  inset: -6px;
+  border-radius: var(--r-circle);
+  background: radial-gradient(closest-side, rgb(0 0 0 / 34%), rgb(0 0 0 / 14%) 62%, transparent);
+  filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* A brush of the cursor nudges the coin; the swing comes from a spring in
+   ProfileCoin. It has its own layer so it never fights a turn. */
+.profile-coin__tilt {
+  --nudge-x: 0;
+  --nudge-y: 0;
+  transform: rotateX(calc(var(--nudge-x) * 1deg)) rotateY(calc(var(--nudge-y) * 1deg));
+}
+
+/* A larger reach than the coin itself, so a brush past its edge still counts. */
+.profile-coin::after {
+  position: absolute;
+  inset: -28px;
+  border-radius: var(--r-circle);
+  content: '';
+}
+
+.profile-coin[data-side='photo'] .profile-coin__body {
+  transform: rotateY(180deg);
+}
+
+/* Each face is the whole coin out to the rim, sitting half the coin's
+   thickness in front of (or behind) the middle. */
+.profile-coin__face,
+.profile-coin__edge {
+  position: absolute;
+  inset: -10px;
+  display: block;
+  border-radius: var(--r-circle);
+}
+
+.profile-coin__face {
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  backface-visibility: hidden;
+  transform: translateZ(calc(var(--thickness) / 2));
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.profile-coin__face--photo {
+  transform: rotateY(180deg) translateZ(calc(var(--thickness) / 2));
+}
+
+.profile-coin__edge {
+  background: color-mix(in srgb, var(--text-2) var(--sheen), var(--bg));
+  transform: translateZ(calc(var(--depth) * (var(--thickness) - 1.5px)));
+}
+
+/* Darkens a face as it turns away from the light; driven by the turn. */
+.profile-coin__shade {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: rgb(0 0 0 / 70%);
+  border-radius: var(--r-circle);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.profile-coin:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 16px;
+}
+
+.profile-coin__beads {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: calc(var(--seal) * 1.2);
+  height: calc(var(--seal) * 1.2);
+  overflow: visible;
+  translate: -50% -50%;
+  fill: var(--line-strong);
+  transition: fill var(--dur-fast) var(--ease-out);
+}
+
+.profile-coin:hover .profile-coin__face {
+  border-color: var(--text-3);
+}
+
+.profile-coin:hover .profile-coin__beads {
+  fill: var(--text-3);
+}
+
+.profile-coin__picture {
+  position: absolute;
+  inset: 10px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--surface);
+  border-radius: var(--r-circle);
+}
+
+.profile-coin__picture img,
+.profile-coin__picture svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The photo face before a photo is on it: an empty die. */
+.profile-coin__picture:has(.profile-coin__blank) {
+  background: none;
+  border: 1px dashed var(--line-strong);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.profile-coin[data-dropping] .profile-coin__picture:has(.profile-coin__blank) {
+  border-color: var(--text-2);
+}
+
+.profile-coin__blank {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.profile-coin[data-dropping] .profile-coin__blank {
+  color: var(--text-2);
+}
+
+/* A photo settles onto its face instead of popping in. */
+.profile-coin__picture img {
+  animation: profile-photo-in 420ms var(--ease-out) both;
+}
+
+@keyframes profile-photo-in {
+  from {
+    opacity: 0;
+    scale: 1.08;
+  }
+}
+
+/* A new name strikes from the centre out: the core first, the outer ring last. */
+.profile-coin__ground {
+  transition: fill 420ms var(--ease-out);
+}
+
+.profile-coin__tile {
+  transition:
+    fill 300ms var(--ease-out),
+    opacity 300ms var(--ease-out);
+}
+
+.profile-coin__tile[data-ground] {
+  opacity: 0;
+}
+
+.profile-coin__tile[data-ring='2'] {
+  transition-delay: 50ms;
+}
+
+.profile-coin__tile[data-ring='1'] {
+  transition-delay: 100ms;
+}
+
+.profile-coin__tile[data-ring='0'] {
+  transition-delay: 150ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .profile-coin *,
+  .profile-coin *::before,
+  .profile__stage * {
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    animation: none !important;
+  }
+}
+
+/* ---------- seal guide ---------- */
+
+/* While a word is tried, a small coin with a "?" sits in the corner. Over
+   it, the coin explains itself: letters on the tiles of the slice that
+   repeats, and four notes tied to its rim by hairlines. */
+.profile {
+  position: relative;
+}
+
+.seal-guide {
+  position: absolute;
+  z-index: 5;
+  top: 3px;
+  right: 0;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-2);
+  cursor: help;
+  animation: seal-guide-in var(--dur-slow) var(--ease-out);
+}
+
+@keyframes seal-guide-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.seal-guide svg {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.seal-guide__rim {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  transition: stroke var(--dur-fast) var(--ease-out);
+}
+
+.seal-guide__bead {
+  fill: var(--line-strong);
+  transition: fill var(--dur-fast) var(--ease-out);
+}
+
+.seal-guide__mark {
+  grid-area: 1 / 1;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  line-height: 1;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.seal-guide:hover,
+.seal-guide[data-open] {
+  color: var(--text);
+}
+
+.seal-guide:hover .seal-guide__rim,
+.seal-guide[data-open] .seal-guide__rim {
+  stroke: var(--text-3);
+}
+
+.seal-guide:hover .seal-guide__bead,
+.seal-guide[data-open] .seal-guide__bead {
+  fill: var(--text-3);
+}
+
+.seal-guide[aria-pressed='true'] .seal-guide__rim {
+  stroke: var(--text-2);
+}
+
+.seal-guide:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}
+
+/* The coin's own box, which the notes are placed around. */
+.profile__coin {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+
+/* Centred on the coin; each note's hairline ends on the rim. */
+.seal-notes {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+}
+
+.seal-note {
+  --gap: 22px;
+  position: absolute;
+  top: calc(var(--dy) - 9px);
+  width: 176px;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+  animation: seal-note-in var(--dur-slow) var(--ease-out) both;
+}
+
+.seal-note p {
+  margin: 0;
+}
+
+.seal-note > p:first-child,
+p.seal-note {
+  color: var(--text-2);
+}
+
+.seal-note[data-side='left'] {
+  --from: 6px;
+  right: calc(var(--reach) + var(--gap));
+  text-align: right;
+}
+
+.seal-note[data-side='right'] {
+  --from: -6px;
+  left: calc(var(--reach) + var(--gap));
+}
+
+/* The hairline, and the point where it meets the rim. */
+.seal-note::before,
+.seal-note::after {
+  position: absolute;
+  content: '';
+}
+
+.seal-note::before {
+  top: 9px;
+  width: var(--gap);
+  height: 1px;
+  background: var(--line-strong);
+}
+
+.seal-note::after {
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  background: var(--text-3);
+  border-radius: var(--r-circle);
+}
+
+.seal-note[data-side='left']::before {
+  right: calc(var(--gap) * -1);
+}
+
+.seal-note[data-side='left']::after {
+  right: calc(var(--gap) * -1 - 2.5px);
+}
+
+.seal-note[data-side='right']::before {
+  left: calc(var(--gap) * -1);
+}
+
+.seal-note[data-side='right']::after {
+  left: calc(var(--gap) * -1 - 2.5px);
+}
+
+@keyframes seal-note-in {
+  from {
+    opacity: 0;
+    translate: var(--from) 0;
+  }
+}
+
+.seal-note__value {
+  color: var(--text);
+}
+
+.seal-note__cases {
+  display: grid;
+}
+
+.seal-note__cases [data-current] {
+  color: var(--text-2);
+}
+
+.seal-note__wheel {
+  position: relative;
+  display: block;
+  width: 124px;
+  height: 20px;
+  margin: 7px 0 0 auto;
+}
+
+.seal-note__strip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 5px;
+  border-radius: var(--r-xs);
+}
+
+.seal-note__pin {
+  position: absolute;
+  top: -3px;
+  left: calc(var(--at) * 100%);
+  width: 2px;
+  height: 11px;
+  translate: -1px 0;
+  background: var(--text);
+  border-radius: var(--r-xs);
+}
+
+.seal-note__tick {
+  position: absolute;
+  top: 9px;
+  left: calc(var(--at) * 100%);
+  translate: -50% 0;
+  line-height: 1.2;
+}
+
+.seal-note__key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin-top: 3px !important;
+}
+
+.seal-note__key span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.seal-note__key i {
+  width: 9px;
+  height: 9px;
+  background: var(--ink, var(--text-3));
+  border-radius: var(--r-xs);
+}
+
+.seal-note__key i[data-gap] {
+  background: none;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+/* On the coin: the slice that repeats stays, the rest steps back, and each
+   tile shows the character that laid it. */
+.profile-coin[data-explaining] .profile-coin__tile[data-repeat]:not([data-ground]) {
+  opacity: 0.24;
+}
+
+.profile-coin__letters {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.profile-coin[data-explaining] .profile-coin__letters {
+  opacity: 1;
+}
+
+.profile-coin__letters text {
+  font-family: var(--font-ui);
+  font-size: 6.2px;
+  font-weight: 600;
+  dominant-baseline: central;
+  text-anchor: middle;
+}
+
+.profile-coin__letters text[data-gap] {
+  font-weight: 500;
+  opacity: 0.75;
+}
+
+@container settings-content (max-width: 620px) {
+  .seal-notes {
+    position: static;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px 24px;
+    width: 100%;
+    height: auto;
+    margin-top: 22px;
+  }
+
+  .seal-note {
+    position: static;
+    width: auto;
+  }
+
+  .seal-note[data-side='left'] {
+    text-align: left;
+  }
+
+  .seal-note::before,
+  .seal-note::after {
+    display: none;
+  }
+
+  .seal-note__wheel {
+    margin-left: 0;
+  }
+}

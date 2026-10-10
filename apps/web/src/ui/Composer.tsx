@@ -22,21 +22,17 @@ import {
   IconGripVertical as GripVertical,
   IconPhoto as ImageIcon,
   IconDeviceLaptop as Laptop,
-  IconLockOpen as LockOpen,
   IconPalette as Palette,
   IconPencil as Pencil,
   IconPlayerPlay as Play,
   IconPlus as Plus,
-  IconScanEye as ScanEye,
   IconServer as Server,
-  IconShieldCheck as ShieldCheck,
-  IconShieldQuestion as ShieldQuestion,
   IconSquare as Square,
   IconTrash as Trash2,
-  type TablerIcon,
   IconVideo as Video,
   IconX as X,
 } from '@tabler/icons-react'
+import { APPROVAL_MODES } from './approval-modes.js'
 import {
   pickFiles,
   previewViewedImage,
@@ -62,6 +58,8 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { preloadThread } from './LazyThread.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ComposerErrors, useComposerError, type ComposerError } from './ComposerErrors.js'
+import { Skeleton, SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import { droppedFilePath } from './composer-dropped-file.js'
 
 const ComposerResourcePicker = lazy(() =>
   import('./ComposerResourcePicker.js').then((module) => ({
@@ -77,11 +75,46 @@ const ComposerVoiceControl = lazy(() =>
   })),
 )
 const DRAFT_HAS_CONTENT = /\S/u
+const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
-declare global {
-  interface File {
-    readonly path?: string
-  }
+function ModelTriggerSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading model"
+      className="menutrigger menutrigger--model-selector composer-skeleton-model"
+    >
+      <Skeleton className="skeleton--icon" />
+      <Skeleton width={88} height={9} />
+    </SkeletonStatus>
+  )
+}
+
+function VoiceControlSkeleton() {
+  return (
+    <SkeletonStatus
+      label="Loading voice"
+      className="composer-skeleton-slot composer-skeleton-voice"
+    >
+      <Skeleton className="skeleton--circle" width="100%" height="100%" />
+    </SkeletonStatus>
+  )
+}
+
+function ResourcePickerSkeleton() {
+  return (
+    <div className="composer-skeleton-picker">
+      <div
+        id={COMPOSER_RESOURCE_LIST_ID}
+        className="composer-skeleton-picker__list"
+        role="listbox"
+        aria-label="Skills and MCP servers"
+      >
+        <SkeletonStatus label="Loading skills and MCP servers…">
+          <SkeletonRows rows={4} icon widths={RESOURCE_SKELETON_WIDTHS} />
+        </SkeletonStatus>
+      </div>
+    </div>
+  )
 }
 
 type ContextUsageStyle = CSSProperties & { '--context-used': number }
@@ -116,43 +149,6 @@ export type WorkspaceInfo = {
   removed: number
   dirtyFiles: number
 }
-
-export const APPROVAL_MODES: {
-  id: ApprovalMode
-  title: string
-  short: string
-  detail: string
-  icon: TablerIcon
-}[] = [
-  {
-    id: 'ask',
-    title: 'Ask first',
-    short: 'Ask first',
-    detail: 'Approve each edit and command',
-    icon: ShieldQuestion,
-  },
-  {
-    id: 'auto',
-    title: 'Auto-approve',
-    short: 'Auto',
-    detail: 'Edits and commands in this folder',
-    icon: ShieldCheck,
-  },
-  {
-    id: 'auto-review',
-    title: 'Auto-review',
-    short: 'Auto-review',
-    detail: 'Codex reviews elevated actions',
-    icon: ScanEye,
-  },
-  {
-    id: 'full',
-    title: 'Full access',
-    short: 'Full access',
-    detail: 'No sandbox, prompts, or undo',
-    icon: LockOpen,
-  },
-]
 
 const IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
 const PREVIEWABLE_IMAGE_RE = /\.(apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
@@ -456,8 +452,10 @@ function ComposerComponent(props: {
   projects: ReadonlyArray<ProjectChoice>
   projectPath: string | undefined
   projectName: string | undefined
+  projectsLoading?: boolean
   branch: string | undefined
   branches: string[]
+  branchesLoading?: boolean
   models: ModelChoice[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
@@ -469,7 +467,9 @@ function ComposerComponent(props: {
   approvalLoading?: boolean | undefined
   autoReviewSupported: boolean
   attachmentsSupported: boolean
+  attachmentsLoading?: boolean
   voiceAvailable: boolean
+  voiceLoading?: boolean
   disabled: boolean
   sendAvailability: SendAvailability
   providerSignInRequired?: boolean
@@ -492,6 +492,12 @@ function ComposerComponent(props: {
     | undefined
   onDraftChange?: ((text: string) => void) | undefined
   onAttachmentsChange?: ((attachments: string[]) => void) | undefined
+  /**
+   * Register a pending save with the current draft's owner before it can change.
+   * Resolves with the saved path only when this composer no longer shows that
+   * draft, so the owner must keep the file itself.
+   */
+  onPendingAttachment?: ((savedPath: Promise<string | undefined>) => void) | undefined
   onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
@@ -514,7 +520,7 @@ function ComposerComponent(props: {
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
-  onDeleteQueuedTurn: (id: string) => void
+  onDeleteQueuedTurn: (id: string) => void | Promise<boolean | void>
   onMoveQueuedTurn: (id: string, direction: 'up' | 'down') => void | Promise<boolean | void>
   onSteerQueuedTurn: (id: string) => void
 }) {
@@ -533,6 +539,8 @@ function ComposerComponent(props: {
   }>()
   const [voiceState, setVoiceState] = useState<ComposerVoiceState>('idle')
   const [voiceError, setVoiceError] = useComposerError()
+  const [queueError, setQueueError] = useComposerError()
+  const editingQueue = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [draggedQueueId, setDraggedQueueId] = useState<string>()
   const [queueDropTarget, setQueueDropTarget] = useState<{
@@ -568,6 +576,8 @@ function ComposerComponent(props: {
   const attachmentsChangeReady = useRef(false)
   const attachmentsEdited = useRef(false)
   const resourcesChangeReady = useRef(false)
+  const resourcesEdited = useRef(false)
+  const pendingAttachments = useRef(new Set<string>())
   const onReady = useRef(props.onReady)
   onReady.current = props.onReady
   const draftRequestRef = useRef(props.draftRequest)
@@ -903,8 +913,7 @@ function ComposerComponent(props: {
     setResourceTrigger(undefined)
   }, [props.provider, props.projectPath])
 
-  // A provider that cannot enumerate models shows nothing. Sitting on
-  // "Loading models…" forever is the UI lying about what it is doing.
+  // A provider that cannot enumerate models shows nothing once discovery finishes.
   const showModelPlaceholder = props.models.length === 0 && !props.modelsLoaded
   const approval = APPROVAL_MODES.find((m) => m.id === props.approval) ?? APPROVAL_MODES[0]!
 
@@ -985,6 +994,7 @@ function ComposerComponent(props: {
       }
     }
     if (props.draftRequest.resources !== undefined) {
+      resourcesEdited.current = false
       setSelectedResources(props.draftRequest.resources)
     }
   }, [props.draftRequest?.request])
@@ -1051,6 +1061,7 @@ function ComposerComponent(props: {
   }
 
   const addPastedFiles = (files: File[]) => {
+    const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
       if (file.size > MAX_PASTED_FILE_BYTES) {
@@ -1061,6 +1072,7 @@ function ComposerComponent(props: {
       const previewUrl = mediaType ? URL.createObjectURL(file) : undefined
       if (previewUrl) previewUrls.current.add(previewUrl)
       const id = previewUrl ?? `pasted:${crypto.randomUUID()}`
+      pendingAttachments.current.add(id)
       setAttachments((current) => [
         ...current,
         {
@@ -1071,13 +1083,14 @@ function ComposerComponent(props: {
         },
       ])
 
-      void savePastedFile(file)
+      const savedPath = savePastedFile(file)
         .then((saved) => {
-          if (!mounted.current) return
+          if (!pendingAttachments.current.delete(id)) return undefined
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
           if (!saved) {
             removeAttachment(id, previewUrl)
             setAttachmentError('Pasting files is available in the desktop app.')
-            return
+            return undefined
           }
           const picked = saved
           setAttachments((current) =>
@@ -1095,14 +1108,18 @@ function ComposerComponent(props: {
                 : attachment,
             ),
           )
+          return undefined
         })
         .catch(() => {
-          if (!mounted.current) return
+          pendingAttachments.current.delete(id)
+          if (!mounted.current || draftRequestRef.current?.request !== owner) return undefined
           removeAttachment(id, previewUrl)
           setAttachmentError(
             `Couldn’t attach “${file.name || 'that file'}”. Use the file picker instead.`,
           )
+          return undefined
         })
+      props.onPendingAttachment?.(savedPath)
     }
   }
 
@@ -1112,6 +1129,7 @@ function ComposerComponent(props: {
   }
 
   const removeAttachment = (id: string, previewUrl?: string) => {
+    pendingAttachments.current.delete(id)
     // Side effects stay outside the updater — updaters run during render and
     // replay under StrictMode. Only renderer-created blob previews are revoked;
     // signed native-picker URLs remain owned by the desktop protocol.
@@ -1138,7 +1156,7 @@ function ComposerComponent(props: {
     const picked: PickedAttachment[] = []
     const materialized: File[] = []
     for (const file of files) {
-      const filePath = file.path
+      const filePath = droppedFilePath(file)
       if (!filePath) {
         materialized.push(file)
         continue
@@ -1180,7 +1198,13 @@ function ComposerComponent(props: {
       return
     }
     const hydrated = draftRequestRef.current?.resources
-    if (hydrated !== undefined && sameDraftResources(selectedResources, hydrated)) return
+    if (
+      !resourcesEdited.current &&
+      hydrated !== undefined &&
+      sameDraftResources(selectedResources, hydrated)
+    )
+      return
+    resourcesEdited.current = true
     props.onResourcesChange?.(selectedResources)
   }, [selectedResources, props.onResourcesChange])
 
@@ -1227,13 +1251,46 @@ function ComposerComponent(props: {
     sendContent(textRef.current, submission)
   }
 
-  const editQueuedTurn = (queuedTurn: QueuedTurn) => {
-    // Never overwrite words the user is mid-way through typing — prepend the
-    // queued text so both survive the edit.
-    const draft = textRef.current.trim()
-    setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
-    addFiles(queuedTurn.attachments)
-    props.onDeleteQueuedTurn(queuedTurn.id)
+  const editQueuedTurn = async (queuedTurn: QueuedTurn) => {
+    if (editingQueue.current.has(queuedTurn.id)) return
+    editingQueue.current.add(queuedTurn.id)
+    const owner = draftRequestRef.current?.request
+    setQueueError(undefined)
+    try {
+      const removed = await props.onDeleteQueuedTurn(queuedTurn.id)
+      if (!mounted.current || draftRequestRef.current?.request !== owner) return
+      if (removed !== true) {
+        setQueueError(
+          'Could not remove the queued prompt. It may have already started; no copy was added.',
+        )
+        return
+      }
+      // Preserve text typed while the deletion was in flight.
+      const draft = textRef.current.trim()
+      setValue(draft === '' ? queuedTurn.text : `${queuedTurn.text}\n\n${draft}`)
+      addFiles(queuedTurn.attachments)
+    } catch (error) {
+      if (mounted.current && draftRequestRef.current?.request === owner) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    } finally {
+      editingQueue.current.delete(queuedTurn.id)
+    }
+  }
+
+  const removeQueuedTurn = async (queuedTurnId: string) => {
+    setQueueError(undefined)
+    try {
+      await props.onDeleteQueuedTurn(queuedTurnId)
+    } catch (error) {
+      if (mounted.current) {
+        setQueueError(
+          error instanceof Error ? error.message : 'Could not remove the queued prompt.',
+        )
+      }
+    }
   }
 
   const insertTranscript = (
@@ -1305,6 +1362,7 @@ function ComposerComponent(props: {
         : undefined),
     unsupportedAttachmentIssue ?? attachmentError,
     voiceError,
+    queueError,
   ].filter((error): error is ComposerError => error !== undefined)
 
   const selectResource = (resource: ComposerResource) => {
@@ -1359,7 +1417,11 @@ function ComposerComponent(props: {
                 trigger={() => (
                   <span className="shelf-control__content">
                     <Folder size={15} aria-hidden />
-                    <span>{props.projectName ?? 'Choose project'}</span>
+                    {props.projectName === undefined && props.projectsLoading ? (
+                      <Skeleton className="skeleton-group" width={56} height={9} />
+                    ) : (
+                      <span>{props.projectName ?? 'Choose project'}</span>
+                    )}
                   </span>
                 )}
               >
@@ -1448,6 +1510,16 @@ function ComposerComponent(props: {
                     />
                   )}
                 </Menu>
+              ) : props.branchesLoading ? (
+                <SkeletonStatus
+                  label="Loading branches"
+                  className="menutrigger shelf-control shelf-control--branch composer-skeleton-branch"
+                >
+                  <span className="shelf-control__content">
+                    <Skeleton className="skeleton--icon" />
+                    <Skeleton width={64} height={9} />
+                  </span>
+                </SkeletonStatus>
               ) : null}
             </div>
           ) : null}
@@ -1545,7 +1617,7 @@ function ComposerComponent(props: {
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => editQueuedTurn(queuedTurn)}
+                    onClick={() => void editQueuedTurn(queuedTurn)}
                     title="Edit prompt"
                     aria-label={`Edit ${queuedTurn.text}`}
                   >
@@ -1554,7 +1626,7 @@ function ComposerComponent(props: {
                   <button
                     type="button"
                     className="queue-row__action"
-                    onClick={() => props.onDeleteQueuedTurn(queuedTurn.id)}
+                    onClick={() => void removeQueuedTurn(queuedTurn.id)}
                     title="Remove from queue"
                     aria-label={`Remove ${queuedTurn.text} from queue`}
                   >
@@ -1566,7 +1638,7 @@ function ComposerComponent(props: {
           ) : null}
 
           {resourcePickerMounted ? (
-            <Suspense fallback={null}>
+            <Suspense fallback={resourceTrigger ? <ResourcePickerSkeleton /> : null}>
               <ComposerResourcePicker
                 ref={resourcePicker}
                 transport={props.transport}
@@ -1777,13 +1849,16 @@ function ComposerComponent(props: {
                   onBlur={() => setResourceTrigger(undefined)}
                   onPaste={(e) => {
                     const files = Array.from(e.clipboardData.files)
-                    const paths = files
-                      .filter((file) => previewMediaType(file.type, file.name) === undefined)
-                      .map((file) => file.path)
-                      .filter((path): path is string => path !== undefined && path !== '')
-                    const materialized = files.filter(
-                      (file) => previewMediaType(file.type, file.name) !== undefined || !file.path,
-                    )
+                    const paths: string[] = []
+                    const materialized: File[] = []
+                    for (const file of files) {
+                      const filePath =
+                        previewMediaType(file.type, file.name) === undefined
+                          ? droppedFilePath(file)
+                          : undefined
+                      if (filePath) paths.push(filePath)
+                      else materialized.push(file)
+                    }
                     if (materialized.length > 0 || paths.length > 0) {
                       e.preventDefault()
                       if (!props.attachmentsSupported) {
@@ -1811,6 +1886,13 @@ function ComposerComponent(props: {
                       <Plus size={15} aria-hidden />
                     </span>
                   </button>
+                ) : props.attachmentsLoading ? (
+                  <SkeletonStatus
+                    label="Loading attachments"
+                    className="composer-skeleton-slot composer-skeleton-attachment"
+                  >
+                    <Skeleton width="100%" height="100%" />
+                  </SkeletonStatus>
                 ) : null}
 
                 <div
@@ -1826,18 +1908,33 @@ function ComposerComponent(props: {
                         disabled={Boolean(props.approvalLoading)}
                         triggerClassName="composer__permission"
                         panelClassName="menu--compact menu--permissions"
-                        trigger={() => (
-                          <span
-                            className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
-                          >
-                            <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
-                              {APPROVAL_MODES.map((mode) => (
-                                <mode.icon key={mode.id} size={13} aria-hidden />
-                              ))}
-                            </IconMorph>
-                            <span>{props.approvalLoading ? 'Loading…' : approval.short}</span>
-                          </span>
-                        )}
+                        trigger={() =>
+                          props.approvalLoading ? (
+                            <SkeletonStatus
+                              label="Loading permissions"
+                              className="tool composer-skeleton-permission"
+                            >
+                              <div className="composer-skeleton-permission__icon">
+                                <Skeleton className="skeleton--icon" />
+                              </div>
+                              <span className="composer-skeleton-permission__label" aria-hidden>
+                                <span>{approval.short}</span>
+                                <Skeleton height={9} />
+                              </span>
+                            </SkeletonStatus>
+                          ) : (
+                            <span
+                              className={`tool${props.approval === 'auto-review' ? ' tool--review' : ''}${props.approval === 'full' ? ' tool--danger' : ''}`}
+                            >
+                              <IconMorph active={APPROVAL_MODES.indexOf(approval)}>
+                                {APPROVAL_MODES.map((mode) => (
+                                  <mode.icon key={mode.id} size={13} aria-hidden />
+                                ))}
+                              </IconMorph>
+                              <span>{approval.short}</span>
+                            </span>
+                          )
+                        }
                       >
                         {(close) => (
                           <>
@@ -1894,7 +1991,7 @@ function ComposerComponent(props: {
                 ) : null}
 
                 {voiceState === 'idle' && props.models.length > 0 ? (
-                  <Suspense fallback={<span className="tool tool--quiet">Loading model…</span>}>
+                  <Suspense fallback={<ModelTriggerSkeleton />}>
                     <ModelSelector
                       models={props.models}
                       modelId={props.modelId}
@@ -1910,12 +2007,13 @@ function ComposerComponent(props: {
                     />
                   </Suspense>
                 ) : voiceState === 'idle' && showModelPlaceholder ? (
-                  <span className="tool tool--quiet">Loading models…</span>
+                  <ModelTriggerSkeleton />
                 ) : null}
 
                 {props.voiceAvailable ? (
-                  <Suspense fallback={null}>
+                  <Suspense fallback={props.running ? null : <VoiceControlSkeleton />}>
                     <ComposerVoiceControl
+                      contextKey={`${props.provider}:${props.projectPath ?? ''}:${props.draftRequest?.request ?? ''}`}
                       disabled={props.disabled}
                       running={props.running}
                       getCursor={() => area.current?.selectionStart ?? textRef.current.length}
@@ -1935,6 +2033,8 @@ function ComposerComponent(props: {
                       }}
                     />
                   </Suspense>
+                ) : props.voiceLoading && !props.running ? (
+                  <VoiceControlSkeleton />
                 ) : null}
 
                 {voiceState === 'idle' ? (

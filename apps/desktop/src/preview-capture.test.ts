@@ -1,8 +1,10 @@
 import path from 'node:path'
-import type { BrowserWindow } from 'electron'
+import { EventEmitter } from 'node:events'
+import type { BrowserWindow, WebContents } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT } from './preview-settle.js'
+import { configureRendererLifecycle } from './renderer-lifecycle.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -87,6 +89,37 @@ afterEach(() => {
 })
 
 describe('desktop preview capture ownership', () => {
+  it('releases a slow abandoned capture on renderer reload so its retry can run', async () => {
+    vi.useFakeTimers()
+    const test = fixture()
+    const abandoned = deferred<never>()
+    test.contents.debugger.sendCommand.mockReturnValueOnce(abandoned.promise)
+    const renderer = Object.assign(new EventEmitter(), {
+      reload: vi.fn(),
+      isDestroyed: () => false,
+    })
+    configureRendererLifecycle(renderer as unknown as WebContents, {
+      cancelCaptures: () => test.owner.cancelAll(),
+      isQuitting: () => false,
+      onRepeatedCrash: vi.fn(),
+    })
+    const first = test.owner.capture(request())
+    await vi.advanceTimersByTimeAsync(0)
+    renderer.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    const retry = test.owner.capture(request(2))
+    await expect(first).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Preview capture cancelled',
+    })
+    await expect(retry).resolves.toMatchObject({ status: 'completed' })
+    expect(test.createWindow).toHaveBeenCalledTimes(2)
+    expect(test.windows[0]!.destroy).toHaveBeenCalledOnce()
+    abandoned.resolve(undefined as never)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.files.writeFile).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('cancels validation from the closed window epoch before a job is registered', async () => {
     const test = fixture()
     const validation = deferred<() => ReturnType<typeof request>>()
@@ -245,7 +278,11 @@ describe('desktop preview capture ownership', () => {
 
   it('measures only in an isolated world and caps native allocation in the main process', async () => {
     const test = fixture()
-    await expect(test.owner.capture(request())).resolves.toMatchObject({ status: 'completed' })
+    await expect(test.owner.capture(request())).resolves.toMatchObject({
+      status: 'completed',
+      // The capped capture says how much of the page it left out.
+      screenshots: [{ documentHeight: 100_000_000, capturedHeight: 12_000 }],
+    })
     expect(test.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(3)
     for (const [world] of test.contents.executeJavaScriptInIsolatedWorld.mock.calls)
       expect(world).toBe(1001)

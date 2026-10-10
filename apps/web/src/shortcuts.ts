@@ -92,8 +92,8 @@ export const KEYBINDING_DEFINITIONS = [
   {
     id: 'archiveSession',
     group: 'Chats',
-    label: 'Archive current chat',
-    description: 'Archive the current chat after any required safety check.',
+    label: 'Delete current chat',
+    description: 'Delete the current chat after any required safety check and the Undo window.',
     defaultShortcut: null,
   },
   {
@@ -178,6 +178,28 @@ export function createDefaultKeybindings(): Keybindings {
 }
 
 export const DEFAULT_KEYBINDINGS = createDefaultKeybindings()
+
+export type ShortcutSurface = {
+  settingsOpen: boolean
+  onboardingPreview: boolean
+  /** The palette, rollback or a confirmation owns the keyboard. */
+  modalOpen: boolean
+}
+
+/**
+ * What an app shortcut does on the current surface. Window key presses and
+ * native menu accelerators share this, so neither bypasses an open sheet.
+ */
+export function shortcutRoute(
+  action: KeybindingId,
+  surface: ShortcutSurface,
+): 'run' | 'closeSettings' | 'showKeybinds' | 'ignore' {
+  if (surface.settingsOpen) {
+    if (action === 'settings') return 'closeSettings'
+    return action === 'keybindings' ? 'showKeybinds' : 'ignore'
+  }
+  return surface.onboardingPreview || surface.modalOpen ? 'ignore' : 'run'
+}
 
 export const WORKSPACE_TOOL_SHORTCUTS = [
   { kind: 'review', shortcut: { key: 'g', primary: true, shift: true } },

@@ -1,32 +1,42 @@
 import type { ProviderId, ProviderStatus } from '@harness/contracts'
 import {
   IconArrowLeft as ArrowLeft,
+  IconCheck as Check,
   IconCornerDownLeft as CornerDownLeft,
   IconFolderOpen as FolderOpen,
+  IconLock as Lock,
 } from '@tabler/icons-react'
 import {
+  type CSSProperties,
+  Fragment,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
 } from 'react'
+import { flushSync } from 'react-dom'
 import '../styles/onboarding.css'
+import { isDesktop, setDesktopTheme } from '../bridge.js'
 import { providerMark } from '../model-catalog.js'
-import type { ThemePreference } from '../theme.js'
+import { DARK_THEME_QUERY, type ThemePreference } from '../theme.js'
 import { GeneratedAvatar } from './GeneratedAvatar.js'
+import { OnboardingPreview, type PreviewAgent, type PreviewHint } from './OnboardingPreview.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { useDialogFocus } from './dialog-focus.js'
+import { catchIn, fly, flyText, morphInto, prefersReducedMotion } from './onboarding-motion.js'
 
 const STEPS = [
-  { id: 'welcome', label: 'Welcome' },
-  { id: 'name', label: 'Your name' },
-  { id: 'appearance', label: 'Appearance' },
-  { id: 'providers', label: 'Coding agents' },
-  { id: 'project', label: 'First project' },
-] as const
+  { id: 'welcome', label: 'Welcome', hint: undefined },
+  { id: 'name', label: 'Your name', hint: 'profile' },
+  { id: 'appearance', label: 'Appearance', hint: undefined },
+  { id: 'providers', label: 'Coding agents', hint: 'model' },
+  { id: 'project', label: 'First project', hint: undefined },
+] as const satisfies ReadonlyArray<{ id: string; label: string; hint: PreviewHint | undefined }>
 type StepId = (typeof STEPS)[number]['id']
+const PROVIDERS_STEP = STEPS.findIndex((entry) => entry.id === 'providers')
 
 const BETA_PLANS = [
   { id: 'codex', name: 'Codex', vendor: 'OpenAI' },
@@ -35,10 +45,16 @@ const BETA_PLANS = [
 ] as const satisfies ReadonlyArray<{ id: ProviderId; name: string; vendor: string }>
 
 const THEME_CHOICES = [
-  { value: 'system', label: 'System', note: 'Follows the OS setting' },
+  { value: 'system', label: 'System', note: 'Matches your OS' },
   { value: 'light', label: 'Light', note: 'Bright, high contrast' },
   { value: 'dark', label: 'Dark', note: 'Dimmed, low glare' },
 ] as const satisfies ReadonlyArray<{ value: ThemePreference; label: string; note: string }>
+
+// A detected agent waits for its row to arrive and draw its check before it
+// flies into the preview; several leave one after another, not as a volley.
+const AGENT_FLIGHT_DELAY = 950
+const AGENT_FLIGHT_GAP = 240
+const PREVIEW = '.onboarding__preview'
 
 type Readiness = { label: string; tone: 'ready' | 'pending' | 'checking' }
 
@@ -51,10 +67,44 @@ export function providerReadiness(status: ProviderStatus | undefined): Readiness
   return { label: status.auth === 'authenticated' ? 'Ready' : 'Installed', tone: 'ready' }
 }
 
+const prefersDark = () => window.matchMedia?.(DARK_THEME_QUERY).matches ?? false
+
+/** Settles on the next change of the OS colour-scheme query, or after `timeout`. */
+function schemeChange(timeout: number): Promise<void> {
+  return new Promise((resolve) => {
+    const media = window.matchMedia?.(DARK_THEME_QUERY)
+    const finish = () => {
+      media?.removeEventListener('change', finish)
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const timer = window.setTimeout(finish, timeout)
+    media?.addEventListener('change', finish)
+  })
+}
+
+/** Settles once the page's theme attribute leaves `before`, or after `timeout`. */
+function themeChange(root: HTMLElement, before: string | undefined, timeout: number) {
+  return new Promise<void>((resolve) => {
+    const finish = () => {
+      observer.disconnect()
+      window.clearTimeout(timer)
+      resolve()
+    }
+    const observer = new MutationObserver(() => {
+      if (root.dataset.theme !== before) finish()
+    })
+    const timer = window.setTimeout(finish, timeout)
+    observer.observe(root, { attributes: true, attributeFilter: ['data-theme'] })
+  })
+}
+
 /**
  * First-run setup. Full-window and paged on purpose: each step asks one
  * question, applies its answer immediately (name, theme) and never blocks —
  * every page can be skipped and everything here is reachable again in Settings.
+ * Beside the pages sits the app itself, drawn small; answers travel into it,
+ * and when setup ends it opens up into the real thing.
  */
 export function Onboarding(props: {
   displayName?: string | undefined
@@ -67,20 +117,46 @@ export function Onboarding(props: {
   onDismiss: () => void
   /** Kept mounted but hidden while Settings sits on top, so the page survives the round trip. */
   hidden?: boolean | undefined
+  /** Setup is no longer needed — a project arrived — so the page plays its way out. */
+  finished?: boolean | undefined
 }) {
   const [index, setIndex] = useState(0)
+  // The furthest page visited: the progress dots let the user jump back to
+  // any page already seen.
+  const [reached, setReached] = useState(0)
   // The page the user asked for while the current one is still animating out.
   // The swap happens when that animation ends, so the old page leaves before
   // the new one arrives instead of both fighting over the same frame.
   const [pending, setPending] = useState<number>()
   const [direction, setDirection] = useState<'forward' | 'back'>('forward')
   const [closing, setClosing] = useState(false)
+  // How the page leaves: the preview morphing into the app, or a plain fade
+  // where that cannot play (preview hidden, reduced motion).
+  const [exit, setExit] = useState<'morph' | 'fade'>()
   const [enterHeld, setEnterHeld] = useState(false)
+  // What the preview has been handed so far: the name as of the last time the
+  // name page was left, and the agents that have flown into its model picker.
+  const [shownName, setShownName] = useState(props.displayName ?? '')
+  const [receivingName, setReceivingName] = useState(false)
+  const [landed, setLanded] = useState<readonly ProviderId[]>([])
+  const [arriving, setArriving] = useState<readonly ProviderId[]>([])
+  // The theme card just chosen, shown selected while the desktop shell is
+  // still letting go of its pinned scheme.
+  const [themeChoice, setThemeChoice] = useState<ThemePreference>()
+  // The pointer or focus is on Choose a folder: the preview's waiting project
+  // row reacts before anything is chosen.
+  const [pointingFolder, setPointingFolder] = useState(false)
   const step: StepId = STEPS[index]?.id ?? 'welcome'
   const leaving = pending !== undefined
   const titleId = useId()
   const nameId = useId()
   const stepRef = useRef<HTMLElement>(null)
+  const revealFrom = useRef<{ x: number; y: number }>(undefined)
+  const themeRequest = useRef(0)
+  const landedRef = useRef(landed)
+  landedRef.current = landed
+  const inFlight = useRef(new Set<ProviderId>())
+  const agentsShownAt = useRef(0)
   const onDismiss = useRef(props.onDismiss)
   onDismiss.current = props.onDismiss
   const dismiss = () => setClosing(true)
@@ -92,29 +168,56 @@ export function Onboarding(props: {
     focusTarget.current = node
   }
 
+  const readiness = BETA_PLANS.map((plan) => ({
+    plan,
+    ...providerReadiness(props.providerStatuses.find((entry) => entry.id === plan.id)),
+  }))
+  const readyIds: readonly ProviderId[] = readiness
+    .filter((entry) => entry.tone === 'ready')
+    .map(({ plan }) => plan.id)
+  const readyKey = readyIds.join(' ')
+  const readyCount = readyIds.length
+  const checking = readiness.some((entry) => entry.tone === 'checking')
+  const profileName = props.displayName?.trim() || 'Local profile'
+  const selectedTheme = themeChoice ?? props.themePreference
+
   useEffect(() => {
     focusTarget.current?.focus({ preventScroll: true })
   }, [step])
+
+  useEffect(() => {
+    if (props.finished) setClosing(true)
+  }, [props.finished])
+
+  const settle = (next: number) => {
+    setIndex(next)
+    setReached((furthest) => Math.max(furthest, next))
+    setPending(undefined)
+  }
 
   // Without a running exit animation (reduced motion that removed it, a
   // hidden page, a test DOM) the swap must not wait for an event that never
   // comes; with one, a timer still guards against a lost animationend.
   useEffect(() => {
     if (pending === undefined) return
-    const settle = () => {
-      setIndex(pending)
-      setPending(undefined)
-    }
     if (!stepRef.current?.getAnimations?.().length) {
-      settle()
+      settle(pending)
       return
     }
-    const timer = window.setTimeout(settle, 400)
+    const timer = window.setTimeout(() => settle(pending), 400)
     return () => window.clearTimeout(timer)
   }, [pending])
 
-  useEffect(() => {
+  // Chosen before paint, so the page never starts one exit and switches to
+  // the other.
+  useLayoutEffect(() => {
     if (!closing) return
+    const morph = morphInto(dialog.panel.current, () => flushSync(() => onDismiss.current()))
+    setExit(morph ? 'morph' : 'fade')
+  }, [closing, dialog.panel])
+
+  useEffect(() => {
+    if (exit !== 'fade') return
     const node = dialog.panel.current
     if (!node?.getAnimations?.().length) {
       onDismiss.current()
@@ -132,7 +235,7 @@ export function Onboarding(props: {
       window.clearTimeout(timer)
       node.removeEventListener('animationend', finish)
     }
-  }, [closing, dialog.panel])
+  }, [exit, dialog.panel])
 
   useEffect(() => {
     if (!enterHeld) return
@@ -140,9 +243,93 @@ export function Onboarding(props: {
     return () => window.clearTimeout(timer)
   }, [enterHeld])
 
+  useEffect(() => {
+    agentsShownAt.current = step === 'providers' ? performance.now() : 0
+  }, [step])
+
+  // Each detected agent leaves its row for the preview's model picker. An
+  // agent found later, while the page is open, follows on its own.
+  useEffect(() => {
+    if (step !== 'providers' || leaving) return
+    const queue = readyIds.filter(
+      (id) => !landedRef.current.includes(id) && !inFlight.current.has(id),
+    )
+    const start = Math.max(0, agentsShownAt.current + AGENT_FLIGHT_DELAY - performance.now())
+    const timers = queue.map((id, position) =>
+      window.setTimeout(() => sendAgent(id), start + position * AGENT_FLIGHT_GAP),
+    )
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
+  }, [step, leaving, readyKey])
+
+  // Once the agents page is behind the user, anything still waiting simply
+  // arrives: there is no row left on screen to fly from.
+  useEffect(() => {
+    if (step === 'providers' || reached < PROVIDERS_STEP) return
+    const waiting = readyIds.filter(
+      (id) => !landedRef.current.includes(id) && !inFlight.current.has(id),
+    )
+    if (waiting.length) setLanded((list) => [...list, ...waiting])
+  }, [step, reached, readyKey])
+
+  const sendAgent = (id: ProviderId) => {
+    const root = dialog.panel.current
+    inFlight.current.add(id)
+    // The picker makes room first, so the flight has a place to aim for.
+    flushSync(() => setArriving((list) => [...list, id]))
+    void fly(
+      root?.querySelector(
+        `.onboarding__provider[data-plan="${id}"] .onboarding__provider-mark svg`,
+      ),
+      root?.querySelector(`${PREVIEW} [data-land="agent-${id}"] svg`),
+      root,
+      { duration: 820 },
+    ).then(() => {
+      inFlight.current.delete(id)
+      setArriving((list) => list.filter((entry) => entry !== id))
+      setLanded((list) => (list.includes(id) ? list : [...list, id]))
+      catchIn(root?.querySelector(`${PREVIEW} [data-land="model"]`))
+    })
+  }
+
+  // Leaving the name page forward hands the answer over: the picture and the
+  // typed name travel into the preview's profile row, which lets go of the
+  // old ones as they come.
+  const handOverName = (forward: boolean) => {
+    const value = props.displayName ?? ''
+    const root = dialog.panel.current
+    const preview = root?.querySelector(PREVIEW)
+    if (!forward || !root || !preview) {
+      setShownName(value)
+      return
+    }
+    setReceivingName(true)
+    void Promise.all([
+      fly(
+        root.querySelector('.onboarding__avatar'),
+        preview.querySelector('[data-land="avatar"]'),
+        root,
+        {
+          duration: 820,
+        },
+      ),
+      flyText(
+        value.trim(),
+        root.querySelector<HTMLInputElement>('.onboarding__field input'),
+        preview.querySelector('[data-land="name"]'),
+        root,
+      ),
+    ]).then(() => {
+      setShownName(value)
+      setReceivingName(false)
+      catchIn(preview.querySelector('[data-land="profile"]'))
+    })
+  }
+
   const go = (next: number) => {
     const clamped = Math.min(STEPS.length - 1, Math.max(0, next))
     if (clamped === index || leaving || closing) return
+    if (step === 'name') handOverName(clamped > index)
+    setPointingFolder(false)
     setDirection(clamped > index ? 'forward' : 'back')
     setPending(clamped)
   }
@@ -150,6 +337,67 @@ export function Onboarding(props: {
     if (leaving || closing) return
     if (step === 'project') props.onAddProject()
     else go(index + 1)
+  }
+
+  // The new theme spreads out from the card that chose it, as a circle over
+  // a snapshot of the old one. Skipped where it would show nothing: no View
+  // Transitions, reduced motion, or a choice that lands on the same scheme.
+  const chooseTheme = async (value: ThemePreference, anchor: HTMLElement) => {
+    const origin = revealFrom.current
+    revealFrom.current = undefined
+    if (value === selectedTheme) return
+    const request = ++themeRequest.current
+    const root = document.documentElement
+    const animate = typeof document.startViewTransition === 'function' && !prefersReducedMotion()
+    const apply = () => {
+      props.onThemePreferenceChange(value)
+      setThemeChoice(undefined)
+    }
+    // In the desktop shell a pinned Light or Dark also pins what the page is
+    // told the OS prefers, so where System lands is unknown until the shell
+    // lets go. Let go first; the reveal then shows whatever the OS shows.
+    if (value === 'system' && isDesktop && animate) {
+      setThemeChoice(value)
+      const settled = schemeChange(180)
+      await setDesktopTheme('system').catch(() => undefined)
+      await settled
+      if (request !== themeRequest.current) return
+    }
+    const before = root.dataset.theme
+    const resolved = value === 'system' ? (prefersDark() ? 'dark' : 'light') : value
+    if (!animate || before === resolved) {
+      apply()
+      return
+    }
+    const rect = anchor.getBoundingClientRect()
+    const width = window.innerWidth
+    const height = window.innerHeight
+    const x = origin?.x ?? rect.left + rect.width / 2
+    const y = origin?.y ?? rect.top + rect.height / 2
+    const radius = Math.hypot(Math.max(x, width - x), Math.max(y, height - y))
+    // Percentages of the snapshot, not pixels: on a high-density display
+    // Chromium can lay the snapshot out in device pixels and scale it down,
+    // which halves a pixel origin. A circle's percentage radius resolves
+    // against the box diagonal divided by √2.
+    root.style.setProperty('--theme-reveal-x', `${(x / width) * 100}%`)
+    root.style.setProperty('--theme-reveal-y', `${(y / height) * 100}%`)
+    root.style.setProperty(
+      '--theme-reveal-r',
+      `${(radius / (Math.hypot(width, height) / Math.SQRT2)) * 100}%`,
+    )
+    root.dataset.themeReveal = ''
+    const transition = document.startViewTransition(() => {
+      flushSync(apply)
+      // The attribute is written in a layout effect; should the app take a
+      // beat longer, hold the snapshot until it has.
+      return root.dataset.theme === before ? themeChange(root, before, 200) : undefined
+    })
+    void transition.finished.finally(() => {
+      delete root.dataset.themeReveal
+      root.style.removeProperty('--theme-reveal-x')
+      root.style.removeProperty('--theme-reveal-y')
+      root.style.removeProperty('--theme-reveal-r')
+    })
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -169,13 +417,14 @@ export function Onboarding(props: {
     advance()
   }
 
-  const readiness = BETA_PLANS.map((plan) => ({
-    plan,
-    ...providerReadiness(props.providerStatuses.find((entry) => entry.id === plan.id)),
-  }))
-  const readyCount = readiness.filter((entry) => entry.tone === 'ready').length
-  const checking = readiness.some((entry) => entry.tone === 'checking')
-  const profileName = props.displayName?.trim() || 'Local profile'
+  const planName = (id: ProviderId) => BETA_PLANS.find((plan) => plan.id === id)?.name ?? id
+  const previewAgents: PreviewAgent[] = [
+    ...landed.filter((id) => readyIds.includes(id)).map((id) => ({ id, name: planName(id) })),
+    ...arriving
+      .filter((id) => !landed.includes(id))
+      .map((id) => ({ id, name: planName(id), arriving: true })),
+  ]
+  const preview = { name: shownName, agents: previewAgents }
 
   return (
     <div
@@ -185,6 +434,7 @@ export function Onboarding(props: {
       aria-labelledby={titleId}
       data-step={step}
       data-closing={closing || undefined}
+      data-exit={exit}
       hidden={props.hidden}
       ref={dialog.panel}
       tabIndex={-1}
@@ -198,15 +448,25 @@ export function Onboarding(props: {
           <span>TasteCode</span>
         </div>
         <ol className="onboarding__progress" aria-label="Setup progress">
-          {STEPS.map((entry, position) => (
-            <li
-              key={entry.id}
-              className={position <= index ? 'is-done' : undefined}
-              aria-current={position === index ? 'step' : undefined}
-            >
-              <span className="visually-hidden">{entry.label}</span>
-            </li>
-          ))}
+          {STEPS.map((entry, position) => {
+            const current = position === index
+            const label = <span className="visually-hidden">{entry.label}</span>
+            return (
+              <li
+                key={entry.id}
+                className={position <= index ? 'is-done' : undefined}
+                aria-current={current ? 'step' : undefined}
+              >
+                {!current && position <= reached ? (
+                  <button type="button" data-label={entry.label} onClick={() => go(position)}>
+                    {label}
+                  </button>
+                ) : (
+                  label
+                )}
+              </li>
+            )
+          })}
         </ol>
         <div className="onboarding__bar-end">
           {step !== 'project' ? (
@@ -218,178 +478,263 @@ export function Onboarding(props: {
       </header>
 
       <div className="onboarding__body">
-        <section
-          className="onboarding__step"
-          key={step}
-          ref={stepRef}
-          data-direction={direction}
-          data-phase={leaving ? 'leaving' : 'entering'}
-          onAnimationEnd={(event) => {
-            if (event.target !== event.currentTarget || pending === undefined) return
-            setIndex(pending)
-            setPending(undefined)
-          }}
-        >
-          {step === 'welcome' ? (
-            <div className="onboarding__cover">
-              <div className="onboarding__cover-copy">
-                <TasteCodeMark className="onboarding__mark" size={36} />
+        <div className="onboarding__layout">
+          <section
+            className="onboarding__step"
+            key={step}
+            ref={stepRef}
+            data-direction={direction}
+            data-phase={leaving ? 'leaving' : 'entering'}
+            onAnimationEnd={(event) => {
+              if (event.target !== event.currentTarget || pending === undefined) return
+              settle(pending)
+            }}
+          >
+            {step === 'welcome' ? (
+              <>
+                <TasteCodeMark className="onboarding__mark" size={40} />
                 <h1
                   className="onboarding__title onboarding__title--display"
                   id={titleId}
                   ref={setFocusTarget}
                   tabIndex={-1}
                 >
-                  Welcome to TasteCode
+                  <Words text="Welcome to TasteCode" />
                 </h1>
                 <p className="onboarding__lead">
-                  One window for the coding agents already on this machine. Four quick choices and
+                  One window for the coding agents already on this machine. A few quick choices and
                   you&rsquo;re in.
                 </p>
                 <footer className="onboarding__actions">
                   <PrimaryButton onClick={advance} pressed={enterHeld}>
-                    Begin setup
+                    Get started
                   </PrimaryButton>
                 </footer>
-              </div>
-              <AppMiniature className="onboarding__hero" animate />
-            </div>
-          ) : null}
+              </>
+            ) : null}
 
-          {step === 'name' ? (
-            <>
-              <div className="onboarding__avatar" aria-hidden>
-                <span className="onboarding__avatar-art" key={profileName}>
-                  <GeneratedAvatar name={profileName} />
-                </span>
-              </div>
-              <h1 className="onboarding__title" id={titleId}>
-                What should we call you?
-              </h1>
-              <p className="onboarding__lead">
-                Shown in your profile and used with every provider. You can leave it empty.
-              </p>
-              <div className="onboarding__field">
-                <label htmlFor={nameId}>Your name</label>
-                <input
-                  id={nameId}
-                  ref={setFocusTarget}
-                  autoComplete="nickname"
-                  maxLength={64}
-                  value={props.displayName ?? ''}
-                  onChange={(event) => props.onDisplayNameChange?.(event.target.value)}
-                  placeholder="Ada Lovelace"
-                />
-              </div>
-              <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
-            </>
-          ) : null}
-
-          {step === 'appearance' ? (
-            <>
-              <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
-                Pick your look
-              </h1>
-              <p className="onboarding__lead">
-                Applied as you choose. Fonts, accents and backdrops wait in Settings › Appearance.
-              </p>
-              <fieldset className="onboarding__themes">
-                <legend className="visually-hidden">Theme</legend>
-                {THEME_CHOICES.map((choice) => {
-                  const selected = props.themePreference === choice.value
-                  return (
-                    <label
-                      className={`onboarding__theme${selected ? ' is-selected' : ''}`}
-                      key={choice.value}
-                    >
-                      <input
-                        type="radio"
-                        name="onboarding-theme"
-                        value={choice.value}
-                        checked={selected}
-                        onChange={() => props.onThemePreferenceChange(choice.value)}
-                      />
-                      <AppMiniature scheme={choice.value} className="onboarding__theme-preview" />
-                      <span className="onboarding__theme-label">{choice.label}</span>
-                      <span className="onboarding__theme-note">{choice.note}</span>
-                    </label>
-                  )
-                })}
-              </fieldset>
-              <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
-            </>
-          ) : null}
-
-          {step === 'providers' ? (
-            <>
-              <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
-                Your coding agents
-              </h1>
-              <p className="onboarding__lead" role="status">
-                {checking
-                  ? 'Looking for the coding agents installed on this machine…'
-                  : readyCount === BETA_PLANS.length
-                    ? 'All three beta plans are ready. Nothing else to do here.'
-                    : `${readyCount} of ${BETA_PLANS.length} beta plans ready. Set up the rest now, or later in Settings.`}
-              </p>
-              <ul className="onboarding__providers" aria-label="Supported beta plans">
-                {readiness.map(({ plan, label, tone }) => (
-                  <li className="onboarding__provider" data-tone={tone} key={plan.id}>
-                    <span className="onboarding__provider-mark">
-                      <ProviderIcon mark={providerMark(plan.id)} size={18} />
-                    </span>
-                    <span className="onboarding__provider-name">
-                      {plan.name}
-                      <small>{plan.vendor}</small>
-                    </span>
-                    <span className="onboarding__provider-status">{label}</span>
-                    {tone === 'pending' ? (
-                      <button
-                        className="onboarding__provider-action"
-                        type="button"
-                        aria-label={`Set up ${plan.name}`}
-                        onClick={props.onOpenProviders}
-                      >
-                        Set up
-                      </button>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
-            </>
-          ) : null}
-
-          {step === 'project' ? (
-            <>
-              <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
-                Open your first project
-              </h1>
-              <p className="onboarding__lead">
-                Pick the folder you&rsquo;re working in &mdash; a git repository or any plain
-                directory. Projects and chats stay on this machine; sign-in stays with each
-                provider.
-              </p>
-              <footer className="onboarding__actions onboarding__actions--split">
-                <BackButton onClick={() => go(index - 1)} />
-                <div className="onboarding__actions-end">
-                  <button className="ghost onboarding__ghost" type="button" onClick={dismiss}>
-                    Skip for now
-                  </button>
-                  <PrimaryButton
-                    onClick={props.onAddProject}
-                    icon={<FolderOpen size={15} aria-hidden />}
-                    pressed={enterHeld}
-                  >
-                    Choose a folder
-                  </PrimaryButton>
+            {step === 'name' ? (
+              <>
+                <AvatarMorph name={profileName} />
+                <h1 className="onboarding__title" id={titleId}>
+                  What should we call you?
+                </h1>
+                <p className="onboarding__lead">
+                  Shown on your profile, with every provider. You can leave it empty.
+                </p>
+                <div className="onboarding__field">
+                  <label className="visually-hidden" htmlFor={nameId}>
+                    Your name
+                  </label>
+                  <input
+                    id={nameId}
+                    ref={setFocusTarget}
+                    autoComplete="nickname"
+                    spellCheck={false}
+                    maxLength={64}
+                    value={props.displayName ?? ''}
+                    onChange={(event) => props.onDisplayNameChange?.(event.target.value)}
+                    placeholder="Ada Lovelace"
+                  />
                 </div>
-              </footer>
-            </>
-          ) : null}
-        </section>
+                <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
+              </>
+            ) : null}
+
+            {step === 'appearance' ? (
+              <>
+                <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
+                  Choose your look
+                </h1>
+                <p className="onboarding__lead">
+                  Applied as you choose. Fonts, accents and backdrops wait in Settings › Appearance.
+                </p>
+                <fieldset className="onboarding__themes">
+                  <legend className="visually-hidden">Theme</legend>
+                  {THEME_CHOICES.map((choice) => {
+                    const selected = selectedTheme === choice.value
+                    return (
+                      <label
+                        className={`onboarding__theme${selected ? ' is-selected' : ''}`}
+                        key={choice.value}
+                        onPointerDown={(event) => {
+                          revealFrom.current = { x: event.clientX, y: event.clientY }
+                        }}
+                      >
+                        <input
+                          type="radio"
+                          name="onboarding-theme"
+                          value={choice.value}
+                          checked={selected}
+                          onChange={(event) =>
+                            void chooseTheme(
+                              choice.value,
+                              event.currentTarget.closest('label') ?? event.currentTarget,
+                            )
+                          }
+                        />
+                        <span className="onboarding__theme-frame">
+                          {choice.value === 'system' ? (
+                            <>
+                              <OnboardingPreview {...preview} scheme="light" still />
+                              <span className="onboarding__theme-half">
+                                <OnboardingPreview {...preview} scheme="dark" still />
+                              </span>
+                            </>
+                          ) : (
+                            <OnboardingPreview {...preview} scheme={choice.value} still />
+                          )}
+                          <span className="onboarding__theme-check">
+                            <Check size={11} stroke={3} />
+                          </span>
+                        </span>
+                        <span className="onboarding__theme-label">{choice.label}</span>
+                        <span className="onboarding__theme-note">{choice.note}</span>
+                      </label>
+                    )
+                  })}
+                </fieldset>
+                <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
+              </>
+            ) : null}
+
+            {step === 'providers' ? (
+              <>
+                <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
+                  Your coding agents
+                </h1>
+                <p className="onboarding__lead" role="status">
+                  {checking
+                    ? 'Looking for the coding agents installed on this machine…'
+                    : readyCount === BETA_PLANS.length
+                      ? 'All three beta plans are ready. Nothing else to do here.'
+                      : `${readyCount} of ${BETA_PLANS.length} beta plans ready. Set up the rest now, or later in Settings.`}
+                </p>
+                <ul className="onboarding__providers" aria-label="Supported beta plans">
+                  {readiness.map(({ plan, label, tone }) => (
+                    <li
+                      className="onboarding__provider"
+                      data-tone={tone}
+                      data-plan={plan.id}
+                      key={plan.id}
+                    >
+                      <span className="onboarding__provider-mark">
+                        <ProviderIcon mark={providerMark(plan.id)} size={18} />
+                      </span>
+                      <span className="onboarding__provider-name">
+                        {plan.name}
+                        <small>{plan.vendor}</small>
+                      </span>
+                      <span className="onboarding__provider-status">
+                        <StatusGlyph tone={tone} />
+                        {label}
+                      </span>
+                      {tone === 'pending' ? (
+                        <button
+                          className="onboarding__provider-action"
+                          type="button"
+                          aria-label={`Set up ${plan.name}`}
+                          onClick={props.onOpenProviders}
+                        >
+                          Set up
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+                <StepActions onBack={() => go(index - 1)} onNext={advance} pressed={enterHeld} />
+              </>
+            ) : null}
+
+            {step === 'project' ? (
+              <>
+                <h1 className="onboarding__title" id={titleId} ref={setFocusTarget} tabIndex={-1}>
+                  Open your first project
+                </h1>
+                <p className="onboarding__lead">
+                  Pick the folder you&rsquo;re working in &mdash; a git repository or any plain
+                  directory.
+                </p>
+                <p className="onboarding__note">
+                  <Lock size={15} aria-hidden />
+                  <span>
+                    Projects and chats stay on this machine. Sign-in stays with each provider.
+                  </span>
+                </p>
+                <footer className="onboarding__actions onboarding__actions--split">
+                  <BackButton onClick={() => go(index - 1)} />
+                  <div className="onboarding__actions-end">
+                    <button className="ghost onboarding__ghost" type="button" onClick={dismiss}>
+                      Skip for now
+                    </button>
+                    <PrimaryButton
+                      onClick={props.onAddProject}
+                      onPoint={setPointingFolder}
+                      icon={<FolderOpen size={15} aria-hidden />}
+                      pressed={enterHeld}
+                    >
+                      Choose a folder
+                    </PrimaryButton>
+                  </div>
+                </footer>
+              </>
+            ) : null}
+          </section>
+
+          <div className="onboarding__preview" data-receiving={receivingName || undefined}>
+            <OnboardingPreview
+              {...preview}
+              hint={STEPS[index]?.hint}
+              newProject={step === 'project' ? (pointingFolder ? 'ready' : 'open') : undefined}
+            />
+          </div>
+        </div>
       </div>
     </div>
+  )
+}
+
+/** Words arrive one by one, each sharpening out of a blur as it settles. */
+function Words(props: { text: string }) {
+  return props.text.split(' ').map((word, position) => (
+    <Fragment key={position}>
+      {position > 0 ? ' ' : null}
+      <span className="onboarding__word" style={{ '--word': position } as CSSProperties}>
+        {word}
+      </span>
+    </Fragment>
+  ))
+}
+
+/**
+ * The identicon redraws as the name is typed. The new picture resolves over
+ * the previous one instead of replacing it, so fast typing reads as one image
+ * shifting rather than a string of flashes.
+ */
+function AvatarMorph(props: { name: string }) {
+  const [layers, setLayers] = useState(() => [{ id: 0, name: props.name }])
+  const top = layers[layers.length - 1]!
+  if (top.name !== props.name) setLayers([top, { id: top.id + 1, name: props.name }])
+  return (
+    <div className="onboarding__avatar" aria-hidden>
+      {layers.map((layer) => (
+        <span className="onboarding__avatar-art" key={layer.id}>
+          <GeneratedAvatar name={layer.name} />
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/** Ready draws a check, checking spins, pending leaves the row to its action. */
+function StatusGlyph(props: { tone: Readiness['tone'] }) {
+  if (props.tone === 'checking') return <span className="onboarding__spinner" aria-hidden />
+  if (props.tone !== 'ready') return null
+  return (
+    <svg className="onboarding__check" width="16" height="16" viewBox="0 0 16 16" aria-hidden>
+      <circle cx="8" cy="8" r="7" pathLength={1} />
+      <path d="M5 8.2l2 2 4-4.2" pathLength={1} />
+    </svg>
   )
 }
 
@@ -415,69 +760,28 @@ function BackButton(props: { onClick: () => void }) {
 
 function PrimaryButton(props: {
   onClick: () => void
+  /** Told when the pointer or keyboard focus arrives on the button and leaves it. */
+  onPoint?: ((pointing: boolean) => void) | undefined
   icon?: ReactNode
   pressed?: boolean | undefined
   children: string
 }) {
   return (
-    <button className="btn onboarding__primary" type="button" onClick={props.onClick}>
+    <button
+      className="btn onboarding__primary"
+      type="button"
+      onClick={props.onClick}
+      onPointerEnter={() => props.onPoint?.(true)}
+      onPointerLeave={() => props.onPoint?.(false)}
+      onFocus={() => props.onPoint?.(true)}
+      onBlur={() => props.onPoint?.(false)}
+    >
       {props.icon}
       {props.children}
       <kbd aria-hidden data-pressed={props.pressed || undefined}>
         <CornerDownLeft size={12} />
       </kbd>
     </button>
-  )
-}
-
-/**
- * The app drawn at thumbnail scale: rail, a short exchange, the composer.
- * Without a scheme it inherits the live theme tokens, so the cover always
- * previews what the user will actually get; the theme cards pin one scheme.
- */
-function AppMiniature(props: {
-  scheme?: 'light' | 'dark' | 'system' | undefined
-  className?: string | undefined
-  animate?: boolean | undefined
-}) {
-  const className = props.className ? ` ${props.className}` : ''
-  if (props.scheme === 'system') {
-    return (
-      <span className={`mini-split${className}`} aria-hidden>
-        <AppMiniature scheme="light" />
-        <AppMiniature scheme="dark" className="mini--half" />
-      </span>
-    )
-  }
-  return (
-    <span
-      className={`mini${className}`}
-      data-scheme={props.scheme}
-      data-animate={props.animate || undefined}
-      aria-hidden
-    >
-      <span className="mini__rail">
-        <span className="mini__rail-head" />
-        <span className="mini__nav is-active" />
-        <span className="mini__nav" />
-        <span className="mini__nav" />
-        <span className="mini__nav" />
-        <span className="mini__nav" />
-      </span>
-      <span className="mini__stage">
-        <span className="mini__turn mini__turn--user" />
-        <span className="mini__turn mini__turn--agent">
-          <span />
-          <span />
-          <span />
-        </span>
-        <span className="mini__turn mini__turn--user mini__turn--short" />
-        <span className="mini__composer">
-          <span className="mini__caret" />
-          <span className="mini__orb" />
-        </span>
-      </span>
-    </span>
   )
 }
 

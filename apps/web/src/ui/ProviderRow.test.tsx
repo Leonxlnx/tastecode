@@ -58,11 +58,11 @@ describe('provider row grammar', () => {
       <ProviderRow
         provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
         status="Signed in"
-        secondary={{ label: 'Sign out', danger: true }}
+        primary={{ label: 'Sign out', danger: true }}
       />,
     )
     const signOut = screen.getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-secondary')
+    expect(signOut.className).toContain('is-primary')
     expect(signOut.className).toContain('is-danger')
     expect(signOut.className).not.toContain('is-quiet')
   })
@@ -80,5 +80,36 @@ describe('provider row grammar', () => {
       'Details',
       'Install',
     ])
+  })
+
+  it('states how the provider is wired to an account', () => {
+    const provider = { id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' } as const
+    const { container, rerender } = render(<ProviderRow provider={provider} status="Signed in" />)
+    const row = () => container.querySelector<HTMLElement>('.provider-row')!
+    // A provider waits for an account unless the caller says otherwise.
+    expect(row().dataset['link']).toBe('open')
+    expect(row().dataset['live']).toBeUndefined()
+    expect(row().dataset['fault']).toBeUndefined()
+
+    rerender(<ProviderRow provider={provider} status="Signed in" link="connected" />)
+    expect(row().dataset['link']).toBe('connected')
+
+    rerender(<ProviderRow provider={provider} status="Installing…" link="none" live />)
+    expect(row().dataset['link']).toBe('none')
+    expect(row().dataset['live']).toBe('true')
+
+    // Only an announced failure breaks the wire; a standing note does not.
+    rerender(
+      <ProviderRow provider={provider} status="Not signed in" issue={{ message: 'Update me' }} />,
+    )
+    expect(row().dataset['fault']).toBeUndefined()
+    rerender(
+      <ProviderRow
+        provider={provider}
+        status="Sign-in failed"
+        issue={{ message: 'The CLI exited.', announce: true }}
+      />,
+    )
+    expect(row().dataset['fault']).toBe('true')
   })
 })

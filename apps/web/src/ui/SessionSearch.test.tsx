@@ -38,10 +38,9 @@ const PROJECTS = [
         createdAt: 43,
       },
       {
-        id: 'gemini-thread',
-        title: 'Gemini roadmap',
-        provider: 'acp' as const,
-        agent: 'gemini',
+        id: 'claude-thread',
+        title: 'Claude roadmap',
+        provider: 'claude-code' as const,
         createdAt: 42,
       },
     ],
@@ -73,6 +72,35 @@ describe('cross-session search', () => {
 
     fireEvent.keyDown(agent, { key: 'Tab' })
     expect(document.activeElement).toBe(search)
+  })
+
+  it('does not keep old content results when the next query fails', async () => {
+    vi.useFakeTimers()
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [RESULT], nextCursor: 'next' })
+      .mockRejectedValueOnce(new Error('Search unavailable'))
+    const onSelect = vi.fn()
+    render(
+      <SessionSearch
+        transport={new TestTransport((method, params) => request(method, params))}
+        projects={PROJECTS}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+    const input = screen.getByLabelText('Search every chat')
+    fireEvent.change(input, { target: { value: 'regression' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: 'unmatched query' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByText('Search unavailable')).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Fix regression/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Load more results' })).toBeNull()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSelect).not.toHaveBeenCalled()
   })
 
   it('finds titles immediately, searches quickly, and supports keyboard navigation', async () => {
@@ -287,10 +315,15 @@ describe('cross-session search', () => {
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
   })
 
-  it('shows ACP title and content matches with their source product name', async () => {
+  it('shows title and content matches with their source product name', async () => {
     const transport = new TestTransport(async () => ({
       results: [
-        { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
+        {
+          ...RESULT,
+          threadId: 'claude-thread',
+          threadTitle: 'Claude roadmap',
+          provider: 'claude-code',
+        },
       ],
       nextCursor: null,
     }))
@@ -303,15 +336,15 @@ describe('cross-session search', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'gemini' } })
+    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'roadmap' } })
     await waitFor(() => {
-      expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
+      expect(screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })).toHaveLength(2)
     })
-    for (const option of screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })) {
+    for (const option of screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })) {
       const identity = option.querySelector('.source-identity')
-      expect(identity?.getAttribute('title')).toBe('Gemini CLI')
+      expect(identity?.getAttribute('title')).toBe('Claude Code')
       expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
-      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M11.04 19.32')
+      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M17.3041 3.541')
     }
   })
 

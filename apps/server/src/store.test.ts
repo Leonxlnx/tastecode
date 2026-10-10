@@ -1102,15 +1102,15 @@ describe('threads', () => {
     store.addProject('/repo')
   })
 
-  it('keeps the ACP agent, because the provider alone cannot start the session', () => {
+  it('keeps the custom harness id, because the provider alone cannot start the session', () => {
     store.addThread({
       id: 't1',
       projectPath: '/repo',
-      provider: 'acp',
-      agent: 'gemini',
+      provider: 'codex',
+      agent: 'codex-fork',
       title: 'One',
     })
-    expect(store.thread('t1')?.agent).toBe('gemini')
+    expect(store.thread('t1')?.agent).toBe('codex-fork')
   })
 
   it('leaves the agent unset for providers that are a single engine', () => {
@@ -1365,6 +1365,55 @@ describe('threads', () => {
     expect(Object.isFrozen(manual)).toBe(true)
     expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
+
+  it('keeps provider context settings across a restart and forgets a cleared provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    const persistent = new Store(file)
+    expect(persistent.providerContextSettings()).toEqual({})
+    persistent.updateProviderContextSettings('claude-code', { window: 1_000_000, compactAt: 'off' })
+    const saved = persistent.updateProviderContextSettings('grok', { compactAt: 70 })
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerContextSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+        grok: { compactAt: 70 },
+      })
+      expect(reopened.updateProviderContextSettings('grok', {})).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+      })
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to engine defaults when stored context settings are unreadable', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    new Store(file).close()
+    const db = new DatabaseSync(file)
+    db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(
+      'provider-context',
+      JSON.stringify({ codex: { compactAt: 4 } }),
+    )
+    db.close()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({})
+      expect(warn).toHaveBeenCalledOnce()
+    } finally {
+      reopened.close()
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('events', () => {
@@ -1403,6 +1452,35 @@ describe('events', () => {
     store.saveReplaySnapshot('t1', 1, snapshot)
     store.applyRestoreUndo('t1', token)
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
+  })
+
+  it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-chronological-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('kept'))
+      seeded.saveReplaySnapshot('t1', seq, [{ seq, event: message('stale order') }])
+      seeded.close()
+      const raw = new DatabaseSync(file)
+      raw
+        .prepare('DELETE FROM schema_migrations WHERE name = ?')
+        .run('chronological_replay_snapshots_v1')
+      raw.close()
+
+      const migrated = new Store(file)
+      expect(migrated.replaySnapshotBase('t1')).toBeUndefined()
+      expect(migrated.history('t1')).toHaveLength(1)
+      migrated.saveReplaySnapshot('t1', seq, [{ seq, event: message('kept') }])
+      migrated.close()
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotBase('t1')?.seq).toBe(seq)
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('drops the saved replay of a closed thread and keeps only recent replays on disk', () => {

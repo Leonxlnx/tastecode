@@ -4,9 +4,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProviderUpdate } from '@harness/contracts'
 import { TestTransport } from '../test-transport.js'
 import { resetInstalls } from '../provider-install.js'
+import { providerUpdatesStore } from '../provider-updates.js'
 import { ProviderUpdateCheck, ProviderUpdateNotice } from './ProviderUpdates.js'
 
-vi.mock('./InstallTerminal.js', () => ({ InstallTerminal: () => <div>Update output</div> }))
+const terminalLoading = vi.hoisted(() => ({ pending: undefined as Promise<void> | undefined }))
+
+vi.mock('./InstallTerminal.js', () => ({
+  InstallTerminal: () => {
+    if (terminalLoading.pending) throw terminalLoading.pending
+    return <div>Update output</div>
+  },
+}))
 
 const available: ProviderUpdate = {
   provider: 'codex',
@@ -21,6 +29,7 @@ afterEach(() => {
   cleanup()
   resetInstalls()
   localStorage.clear()
+  terminalLoading.pending = undefined
 })
 
 function finishNoticeExit(container: HTMLElement) {
@@ -31,6 +40,33 @@ function finishNoticeExit(container: HTMLElement) {
 }
 
 describe('provider update toast', () => {
+  it('fills lazy update details with terminal lines until output is ready', async () => {
+    let finish!: () => void
+    terminalLoading.pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const transport = new TestTransport((method) =>
+      method === 'providers.update' ? { terminalId: 'loading-update' } : { updates: [available] },
+    )
+    render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Details' }))
+    const loading = (await screen.findByText('Opening details…')).closest('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.closest('.update-slip__terminal')).toBeTruthy()
+    expect(loading.classList.contains('install-terminal')).toBe(true)
+    expect(loading.querySelectorAll('.skeleton-code__line')).toHaveLength(5)
+    expect(loading.querySelector('.skeleton-code__gutter')).toBeNull()
+    expect(screen.queryByText('Update output')).toBeNull()
+
+    await act(async () => {
+      terminalLoading.pending = undefined
+      finish()
+    })
+    expect(await screen.findByText('Update output')).toBeTruthy()
+    expect(screen.queryByText('Opening details…')).toBeNull()
+  })
+
   it('starts, tracks and verifies an update entirely within the toast', async () => {
     let updated = false
     const onUpdated = vi.fn()
@@ -45,7 +81,7 @@ describe('provider update toast', () => {
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     const notice = within(view.container.querySelector('.notice') ?? view.container)
     fireEvent.click(await notice.findByRole('button', { name: 'Update' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.filter((request) => request.method === 'providers.update'),
     ).toHaveLength(1)
@@ -79,7 +115,7 @@ describe('provider update toast', () => {
     )
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
     expect(view.container.querySelector('.notice')).toBeNull()
@@ -95,7 +131,7 @@ describe('provider update toast', () => {
     )
     const view = render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
     expect(view.container.querySelector('.notice')).toBeNull()
@@ -129,12 +165,12 @@ describe('provider update toast', () => {
       </>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
     finishNoticeExit(view.container)
-    expect(screen.queryByText('Updating…')).toBeNull()
+    expect(screen.queryByText('Updating to 0.11.0…')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Update in progress' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     updated = true
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Updated to 0.11.0')).toBeTruthy()
@@ -163,13 +199,13 @@ describe('provider update toast', () => {
       </>,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     view.rerender(
       <>
         <ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />
       </>,
     )
-    expect(screen.getByText('Updating…')).toBeTruthy()
+    expect(screen.getByText('Updating to 0.11.0…')).toBeTruthy()
     updated = true
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Updated to 0.11.0')).toBeTruthy()
@@ -181,7 +217,7 @@ describe('provider update toast', () => {
     )
     render(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 1 }))
     expect(await screen.findByRole('alert')).toHaveProperty(
       'textContent',
@@ -190,7 +226,7 @@ describe('provider update toast', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Details' }))
     expect(await screen.findByText('Update output')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByText('Updating…')).toBeTruthy()
+    expect(await screen.findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.filter((request) => request.method === 'providers.update'),
     ).toHaveLength(2)
@@ -203,7 +239,7 @@ describe('provider update toast', () => {
     )
     render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
     fireEvent.click(await screen.findByRole('button', { name: 'Update' }))
-    await screen.findByText('Updating…')
+    await screen.findByText('Updating to 0.11.0…')
     act(() => transport.emit('terminal.exit', { terminalId: 'update', exitCode: 0 }))
     expect(await screen.findByText('Update failed')).toBeTruthy()
     expect(onUpdated).not.toHaveBeenCalled()
@@ -237,7 +273,7 @@ describe('provider update toast', () => {
     expect(document.querySelectorAll('.notice--provider-update')).toHaveLength(1)
     expect(screen.getAllByRole('button', { name: 'Update' })).toHaveLength(2)
     fireEvent.click(within(grok).getByRole('button', { name: 'Update' }))
-    expect(await within(grok).findByText('Updating…')).toBeTruthy()
+    expect(await within(grok).findByText('Updating to 0.11.0…')).toBeTruthy()
     expect(
       transport.requests.find((request) => request.method === 'providers.update')?.params,
     ).toMatchObject({ provider: 'grok' })
@@ -284,6 +320,26 @@ describe('provider update toast', () => {
     expect(screen.queryByRole('button', { name: 'Update' })).toBeNull()
     view.rerender(<ProviderUpdateNotice transport={transport} onUpdated={() => {}} />)
     expect(await screen.findByRole('button', { name: 'Update' })).toBeTruthy()
+  })
+
+  it('pops simulated releases past remembered dismissals and forgets them on dismiss', async () => {
+    localStorage.setItem('harness.providerUpdates.dismissed', JSON.stringify({ codex: '0.11.0' }))
+    const transport = new TestTransport(() => ({ updates: [available] }))
+    const onUpdated = vi.fn()
+    const view = render(<ProviderUpdateNotice transport={transport} onUpdated={onUpdated} />)
+    await act(async () => {})
+    expect(view.container.querySelector('.notice')).toBeNull()
+
+    act(() => providerUpdatesStore(transport).simulate('one'))
+    expect(await screen.findByText('0.9.0 → 0.10.0')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss provider updates' }))
+    finishNoticeExit(view.container)
+    expect(view.container.querySelector('.notice')).toBeNull()
+    expect(providerUpdatesStore(transport).snapshot().simulation).toBeUndefined()
+    expect(localStorage.getItem('harness.providerUpdates.dismissed')).toBe(
+      JSON.stringify({ codex: '0.11.0' }),
+    )
+    expect(onUpdated).not.toHaveBeenCalled()
   })
 
   it('reports update check errors without a false up-to-date label', async () => {

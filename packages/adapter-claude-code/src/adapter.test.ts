@@ -128,6 +128,76 @@ function harness(models: ModelInfo[] = []) {
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 describe('Claude Agent SDK session', () => {
+  it.each([false, true])('detaches after an unexpected stream end (active: %s)', async (active) => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const disconnected = vi.fn(() => events.slice())
+    adapter.onDisconnected(disconnected)
+    const thread = await adapter.startThread('/repo')
+    if (active) await adapter.sendTurn(thread.id, 'Work')
+    fake.queries[0]!.close()
+    await tick()
+    expect(disconnected).toHaveBeenCalledOnce()
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(active ? 1 : 0)
+    expect(disconnected.mock.results[0]!.value).toEqual(events)
+    await adapter.dispose()
+    expect(disconnected).toHaveBeenCalledOnce()
+  })
+
+  it('includes a bounded tool name and argument summary for generic approvals', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Work')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'mcp__mail__send',
+      { to: 'person@example.test', body: 'x'.repeat(5_000) },
+      { signal: new AbortController().signal, toolUseID: 'mail' },
+    )
+    const event = events.find((entry) => entry.type === 'approval.requested')
+    if (event?.type !== 'approval.requested') throw new Error('missing approval')
+    expect(event.request.reason).toContain('mcp__mail__send')
+    expect(event.request.reason).toContain('person@example.test')
+    expect(event.request.reason!.length).toBeLessThanOrEqual(2_000)
+    adapter.respondToApproval(event.request.id, 'deny')
+    await pending
+    await adapter.dispose()
+  })
+
+  it('preserves multi-select and stringifies all selected labels for Claude', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Choose')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'AskUserQuestion',
+      {
+        questions: [
+          {
+            question: 'constructor',
+            multiSelect: true,
+            options: [{ label: 'React' }, { label: 'Vue' }],
+          },
+        ],
+      },
+      { signal: new AbortController().signal, toolUseID: 'ask' },
+    )
+    const event = events.find((entry) => entry.type === 'user_input.requested')
+    if (event?.type !== 'user_input.requested') throw new Error('missing question')
+    expect(event.request.questions[0]).toMatchObject({ id: 'constructor', multiSelect: true })
+    adapter.respondToUserInput(event.request.id, { constructor: ['React', 'Vue', 'Other choice'] })
+    await expect(pending).resolves.toMatchObject({
+      updatedInput: { answers: { constructor: 'React, Vue, Other choice' } },
+    })
+    await adapter.dispose()
+  })
+
   it.each([false, true])('passes project MCP safely on open (resume: %s)', async (resume) => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -911,6 +981,68 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('logs a redacted approval abort failure without ending the active turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    const secret = `canary-${crypto.randomUUID()}`
+    adapter.on('event', (event) => events.push(event))
+    adapter.on('log', (line) => logs.push(line))
+    try {
+      const thread = await adapter.startThread('/repo', {
+        approval: 'ask',
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              headers: { Authorization: { source: 'credential', credentialRef: 'token' } },
+            },
+          },
+        ],
+        mcpCredentials: { token: secret },
+      })
+      const turnId = await adapter.sendTurn(thread.id, 'Run it')
+      const interrupt = vi
+        .spyOn(fake.queries[0]!, 'interrupt')
+        .mockRejectedValueOnce(new Error(`cannot stop: ${secret}`))
+      const pending = fake.inputs[0]!.options.canUseTool!(
+        'Bash',
+        { command: 'npm test' },
+        { signal: new AbortController().signal, toolUseID: 'abort-failure' },
+      )
+      const request = events.find((event) => event.type === 'approval.requested')
+      if (request?.type !== 'approval.requested') throw new Error('approval request missing')
+
+      adapter.respondToApproval(request.request.id, 'abort')
+      await expect(pending).resolves.toMatchObject({ behavior: 'deny', interrupt: true })
+      await tick()
+
+      expect(interrupt).toHaveBeenCalledTimes(1)
+      expect(logs).toContain('Could not stop Claude: cannot stop: [REDACTED]')
+      expect(JSON.stringify({ events, logs })).not.toContain(secret)
+      expect(events.filter((event) => event.type === 'approval.resolved')).toEqual([
+        { type: 'approval.resolved', id: request.request.id },
+      ])
+      expect(
+        events.filter((event) => event.type === 'thread.error' || event.type === 'turn.completed'),
+      ).toEqual([])
+      await expect(adapter.sendTurn(thread.id, 'Too soon')).rejects.toThrow('running turn')
+
+      fake.queries[0]!.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        expect.objectContaining({ turnId }),
+      ])
+      await expect(adapter.sendTurn(thread.id, 'Next turn')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('round-trips AskUserQuestion answers using the question text as Claude expects', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -1015,16 +1147,16 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
-      { id: 'claude-fable-5-1[1m]', displayName: 'Claude Fable 5.1', isDefault: false },
-      { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
-      { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
-      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
-      { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
-      { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7', isDefault: false },
-      { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Claude Opus 4.5', isDefault: false },
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', isDefault: false },
+      { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'opus[1m]', displayName: 'Opus 5', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Fable 5', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
     expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
@@ -1060,10 +1192,10 @@ describe('Claude Agent SDK session', () => {
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
     expect(models.slice(0, 4).map((model) => model.displayName)).toEqual([
-      'Claude Fable 5.1',
-      'Claude Opus 5.5',
-      'Claude Opus 5',
-      'Claude Sonnet 5',
+      'Fable 5.1',
+      'Opus 5.5',
+      'Opus 5',
+      'Sonnet 5',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('opus')
     adapter.dispose()

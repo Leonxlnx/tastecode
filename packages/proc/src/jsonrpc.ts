@@ -71,6 +71,7 @@ export type ServerRequestHandler = (
   method: string,
   params: JsonRpcResult,
   respond: (result: JsonRpcValue) => void,
+  requestId?: JsonRpcId,
 ) => void
 
 export class JsonRpcError extends Error {
@@ -104,6 +105,7 @@ export class StdioJsonRpc {
   #failure: Error | undefined
   #label: string
   readonly #onProtocolError: ((error: Error) => void) | undefined
+  readonly #onFailure: ((error: Error) => void) | undefined
 
   #onNotification: (method: string, params: JsonRpcResult) => void = () => {}
   #onServerRequest: ServerRequestHandler = (_m, _p, respond) => respond(null)
@@ -113,29 +115,33 @@ export class StdioJsonRpc {
   constructor(
     child: StdioJsonRpcProcess,
     label = 'agent',
-    options: { maxFrameBytes?: number; onProtocolError?: (error: Error) => void } = {},
+    options: {
+      maxFrameBytes?: number
+      onProtocolError?: (error: Error) => void
+      /** Fires once for an unexpected terminal failure, never for dispose(). */
+      onFailure?: (error: Error) => void
+    } = {},
   ) {
     this.#child = child
     this.#label = label
     this.#buffer = new LineBuffer(options.maxFrameBytes)
     this.#onProtocolError = options.onProtocolError
+    this.#onFailure = options.onFailure
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.#onStderr(chunk))
     child.on('close', (code) => {
       this.#exited = true
-      this.#failure ??= new Error(`${this.#label} exited (code ${code})`)
-      this.#failAll(this.#failure)
+      this.#fail(new Error(`${this.#label} exited (code ${code})`))
     })
     child.on('error', (error) => {
       this.#exited = true
-      this.#failure ??= error
-      this.#failAll(error)
+      this.#fail(error)
     })
     // A write after the peer died raises EPIPE as a stream 'error' event;
     // without a listener that crashes the process instead of failing a call.
-    child.stdin.on('error', (error) => this.#onStderr(`stdin: ${String(error)}`))
+    child.stdin.on('error', (error) => this.#failInput(error))
   }
 
   onNotification(handler: (method: string, params: JsonRpcResult) => void): void {
@@ -166,6 +172,11 @@ export class StdioJsonRpc {
     // forever — the session stayed at "Working" with no error and no way out.
     if (this.#failure) return Promise.reject(this.#failure)
     if (this.#disposed) return Promise.reject(new Error('transport disposed'))
+    // Existing replies may still drain from stdout after exit, but no new
+    // request can reach that process while we wait for its pipes to close.
+    if (this.#child.exitCode != null || this.#child.signalCode != null) {
+      return Promise.reject(new Error(`${this.#label} has exited`))
+    }
     const id = this.#nextId++
     const promise = new Promise<JsonRpcResult>((resolve, reject) => {
       const call: PendingCall = { resolve, reject }
@@ -197,8 +208,54 @@ export class StdioJsonRpc {
   }
 
   #write(message: unknown): void {
-    if (this.#exited || !this.#child.stdin.writable) return
-    this.#child.stdin.write(JSON.stringify(message) + '\n')
+    if (
+      this.#exited ||
+      this.#disposed ||
+      this.#failure ||
+      this.#child.exitCode != null ||
+      this.#child.signalCode != null
+    ) {
+      return
+    }
+    if (!this.#child.stdin.writable) {
+      this.#failInput(new Error(`${this.#label} input stream is not writable`))
+      return
+    }
+    const frame = JSON.stringify(message) + '\n'
+    try {
+      this.#child.stdin.write(frame, (error) => {
+        if (error) this.#failInput(error)
+      })
+    } catch (error) {
+      this.#failInput(error instanceof Error ? error : new Error(String(error)))
+    }
+  }
+
+  #failInput(error: Error): void {
+    if (!this.#fail(error)) return
+    this.#logFailure(`stdin: ${String(error)}`)
+    void this.dispose().catch(() => undefined)
+  }
+
+  #fail(error: Error): boolean {
+    if (this.#failure || this.#disposed) return false
+    this.#failure = error
+    this.#buffer.clear()
+    this.#failAll(error)
+    try {
+      this.#onFailure?.(error)
+    } catch (handlerError) {
+      this.#logFailure(`failure handler failed: ${String(handlerError)}`)
+    }
+    return true
+  }
+
+  #logFailure(message: string): void {
+    try {
+      this.#onStderr(message)
+    } catch {
+      // A failed observer or logger must never interrupt transport cleanup.
+    }
   }
 
   #ingest(chunk: string): void {
@@ -208,16 +265,20 @@ export class StdioJsonRpc {
         if (line.trim()) this.#handleLine(line.trim())
       })
     } catch (error) {
-      this.#failure = error instanceof Error ? error : new Error('Provider stream failed')
-      this.#buffer.clear()
-      this.#failAll(this.#failure)
-      this.#onStderr(this.#failure.message)
-      this.dispose()
-      this.#onProtocolError?.(this.#failure)
+      const failure = error instanceof Error ? error : new Error('Provider stream failed')
+      if (!this.#fail(failure)) return
+      this.#logFailure(failure.message)
+      void this.dispose().catch(() => undefined)
+      try {
+        this.#onProtocolError?.(failure)
+      } catch (handlerError) {
+        this.#logFailure(`protocol error handler failed: ${String(handlerError)}`)
+      }
     }
   }
 
   #handleLine(line: string): void {
+    if (this.#failure || this.#disposed) return
     let parsed: unknown
     try {
       parsed = parseJsonValue(line)
@@ -250,9 +311,14 @@ export class StdioJsonRpc {
     try {
       if (id !== undefined && method !== undefined) {
         // A request from the agent — approvals and file access arrive this way.
-        this.#onServerRequest(method, message.params, (result) => {
-          this.#write({ jsonrpc: '2.0', id, result })
-        })
+        this.#onServerRequest(
+          method,
+          message.params,
+          (result) => {
+            this.#write({ jsonrpc: '2.0', id, result })
+          },
+          id,
+        )
         return
       }
 

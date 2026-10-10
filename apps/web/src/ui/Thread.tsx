@@ -56,6 +56,7 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSkeleton } from './Skeleton.js'
+import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -140,6 +141,8 @@ export interface ThreadProps {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
+  /** Keep agent questions inside this thread instead of the main composer. */
+  inlineUserInput?: boolean | undefined
 }
 
 export const Thread = memo(function Thread(props: ThreadProps) {
@@ -436,7 +439,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     <RowMeasureContext.Provider value={measureRow}>
       <div className="thread-shell">
         {finding ? (
-          <Suspense fallback={null}>
+          <Suspense fallback={<FindBarSkeleton />}>
             <ThreadSearch
               items={thread.items}
               liveItems={liveItems}
@@ -530,6 +533,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               <UserInput
                 key={request.id}
                 request={request}
+                inline={props.inlineUserInput}
                 onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
               />
             ))}
@@ -956,7 +960,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         finalResponse={responseLead}
         settling={settling}
         onEditMessage={onEditMessage}
-        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex)}
+        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex, items)}
         onRevertCheckpoint={onRevertCheckpoint}
       />
     </div>

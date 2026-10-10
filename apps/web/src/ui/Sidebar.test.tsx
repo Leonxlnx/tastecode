@@ -64,10 +64,12 @@ function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
   usageStates?: AccountLimitsState[],
+  projectsLoading?: boolean,
 ) {
-  const content = (active: string | undefined) => (
+  const content = (active: string | undefined, loading = projectsLoading) => (
     <Sidebar
       projects={projects}
+      projectsLoading={loading}
       activeProjectPath={active}
       activeSessionId={undefined}
       account={undefined}
@@ -92,7 +94,11 @@ function renderProjectCatalog(
     />
   )
   const view = render(content(active))
-  return { ...view, navigate: (active?: string) => view.rerender(content(active)) }
+  return {
+    ...view,
+    navigate: (active?: string) => view.rerender(content(active)),
+    finishLoading: () => view.rerender(content(active, false)),
+  }
 }
 
 function controlledIdleCallbacks() {
@@ -106,6 +112,62 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('shows placeholder projects instead of an empty list while projects load', () => {
+    const view = renderProjectCatalog([], undefined, undefined, true)
+
+    expect(screen.getByRole('status').textContent).toBe('Loading projects…')
+    expect(screen.queryByText('Nothing here yet.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
+
+    view.finishLoading()
+    expect(screen.queryByText('Loading projects…')).toBeNull()
+    expect(screen.getByText('Nothing here yet.')).toBeTruthy()
+  })
+
+  it('holds the inbox rail in place while its module loads', async () => {
+    render(
+      <Sidebar
+        projects={[]}
+        projectsLoading
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        mode="inbox"
+        inbox={{
+          onSettle: vi.fn(),
+          onUnsettle: vi.fn(),
+          onSnooze: vi.fn(),
+          onUnsnooze: vi.fn(),
+          onKeepActive: vi.fn(),
+        }}
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).not.toBeNull()
+
+    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).toBeNull()
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+  })
+
   it('hides unavailable plan limits while the account component is loading', () => {
     const usage = {
       inputTokens: 0,
@@ -539,7 +601,7 @@ describe('Sidebar chat actions', () => {
     expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
-    const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
+    const archive = screen.getByRole('button', { name: 'Delete Polish the sidebar' })
     expect(rename.querySelector('svg')).not.toBeNull()
     expect(archive.querySelector('svg')).not.toBeNull()
 
@@ -552,11 +614,11 @@ describe('Sidebar chat actions', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Polish the sidebar' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
-  it('confirms bulk archive and sidebar removal before acting', () => {
+  it('confirms bulk archive and sidebar removal before acting', async () => {
     const onArchiveProject = vi.fn()
     const onRemoveProject = vi.fn()
     render(
@@ -597,7 +659,7 @@ describe('Sidebar chat actions', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: 'TasteCode' }))
     const pinItem = screen.getByRole('menuitem', { name: 'Pin to top' })
     const editItem = screen.getByRole('menuitem', { name: 'Edit name' })
-    const archiveItem = screen.getByRole('menuitem', { name: 'Archive chats' })
+    const archiveItem = screen.getByRole('menuitem', { name: 'Delete chats' })
     const removeItem = screen.getByRole('menuitem', { name: 'Remove from sidebar' })
     for (const item of [pinItem, editItem, archiveItem, removeItem]) {
       expect(item.querySelector('svg')).not.toBeNull()
@@ -605,21 +667,29 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    fireEvent.click(screen.getByRole('button', { name: 'Archive chats' }))
+    const deleteDialog = await screen.findByRole('alertdialog', {
+      name: 'Delete 2 chats in TasteCode?',
+    })
+    expect(deleteDialog.textContent).toContain('/work/harness')
+    const deleteButton = screen.getByRole('button', { name: 'Delete 2 chats' })
+    expect(deleteButton.classList.contains('is-destructive')).toBe(true)
+    fireEvent.click(deleteButton)
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
+    const removeDialog = await screen.findByRole('alertdialog', {
+      name: 'Remove TasteCode from the sidebar?',
+    })
+    expect(removeDialog.closest('.sheet')?.parentElement).toBe(document.body)
     expect(
       screen.getByText(
-        'This only removes the project from the sidebar. Its folder and chats stay untouched.',
+        'The folder and its 2 chats stay where they are. Add the folder again to bring them back.',
       ),
     ).toBeTruthy()
-    const removeButton = screen.getByRole('button', { name: 'Remove project' })
-    expect(screen.getByRole('dialog', { name: 'Remove project?' }).parentElement).toBe(
-      document.body,
-    )
-    expect(removeButton.classList.contains('btn--danger')).toBe(true)
+    const removeButton = screen.getByRole('button', { name: 'Remove' })
+    // Only the sidebar entry goes, so removal is not dressed as destructive.
+    expect(removeButton.classList.contains('is-destructive')).toBe(false)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')

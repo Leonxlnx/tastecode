@@ -287,15 +287,31 @@
         <nav>
           <a href="#scope">Scope</a>
           <a href="#ready">Checklist</a>
-          <a href="#parked">Parked</a>
+          <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-09-27 main 20bf4dad · 0.1.2 source preparation</span>
+        <span class="meta">2026-10-04 main e29c3382 · checkpoint identity correction</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
+          Windows long paths and 8.3 aliases share one Git common-directory identity, preserving
+          linked worktrees' combined checkpoint refs during history cleanup. A real alias regression
+          and all 36 checkpoint/audit tests passed locally; the fix is also covered by
+          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+            >Windows integration verification</a
+          >.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
+            >Windows cleanup verification (#1394)</a
+          >: child-process cleanup waits for Node to observe exit after taskkill succeeds. Updater
+          tests inject EBUSY and EACCES to verify locked leftovers and denied writes without relying
+          on platform-specific directory permissions.
+        </p>
         <p>
           Chat details open and close with matched transform motion. Scroll position follows the
           settled layout and avoids false jump controls.
@@ -359,7 +375,10 @@
           fixed on main were closed after checking the code: preview cleanup failures (#1001),
           single-writer draft releases with an exact manifest (#954), and raw crash-dump retention
           (#1011). On nightly, ACP turns whose prompt request rejects now settle their items and
-          approvals in draft PR #1311 (#1008), pending a real Grok+MCP check.
+          approvals (#1008, PR #1311), checked against a real Grok+MCP turn. A refused
+          API-connection list now reaches the composer with its reason and Retry instead of silently
+          dropping the models it paid for, and a connection-backed model needs setup rather than
+          dead-ending as unavailable (#1275, PRs #1277 and #1357).
         </p>
         <p>
           Startup, refresh and history reads repeat less work (PRs #1314 to #1319, #1322, #1323).
@@ -519,11 +538,12 @@
           >.
         </p>
         <p class="sub">
-          Fresh checkouts include the Design library: 172 compositions, 24 heroes and 316 original
-          desktop/mobile images. Packaged references remain real files outside the ASAR archive,
-          preserving file-integrity checks. Media permissions require explicit audio-only requests
-          from the owning renderer's main frame. Persisted unknown or malformed rows no longer abort
-          readable history or startup recovery; imported-history filters remain intact.
+          Fresh checkouts include the Design library: 172 compositions, 24 heroes and 316
+          desktop/mobile images, stored as WebP (35 MB instead of 413 MB of PNG). Packaged
+          references remain real files outside the ASAR archive, preserving file-integrity checks.
+          Media permissions require explicit audio-only requests from the owning renderer's main
+          frame. Persisted unknown or malformed rows no longer abort readable history or startup
+          recovery; imported-history filters remain intact.
           <a href="./verification/portable-beta-2026-09-16/README.md"
             >Verification and release limits</a
           >. The user's running app was not restarted; visual website acceptance and release
@@ -655,7 +675,7 @@
         <p class="sub">
           The first release ships three subscription plans and nothing else: Codex, Claude Code, and
           Grok. Everything below either exists and is checked, is being worked on, or must happen
-          before the beta goes out. Parked features stay built in the repo and return afterwards.
+          before the beta goes out. Every other provider lives only on the nightly branch.
         </p>
         <div class="hero">
           <div class="kpi">
@@ -686,7 +706,9 @@
         <p class="sub">
           All 19 audit findings and 9 prevention items are fixed on main. Local checks and macOS
           runtime checks passed. Windows release checks remain required. See
-          <a href="./AUDIT-FIXES.md">the fixes and merged PRs</a>.
+          <a href="./AUDIT-FIXES.md">the fixes and merged PRs</a>. The 3 October audit findings are
+          fixed locally but not yet committed; see
+          <a href="./audit-triage-2026-10-03.md#resolution-status">the triage status</a>.
         </p>
       </section>
 
@@ -752,8 +774,8 @@
                     chips follow each source's declared capability; file-only prompts send and name
                     new sessions from their attachments; permission and Design actions compact
                     before a narrow toolbar can overlap; plus an in-pane session header with shared
-                    rename, pin, archive, checkpoint, Workspace, and Terminal actions; the idle
-                    voice control stays flat; Stop immediately restores the idle presentation while
+                    rename, pin, delete, checkpoint, Workspace, and Terminal actions; the idle voice
+                    control stays flat; Stop immediately restores the idle presentation while
                     provider interruption finishes in the background</span
                   >
                 </span>
@@ -875,9 +897,11 @@
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout, current Codex
-                    and exact Claude defaults are prioritized, Grok 4.5 and 4.6 remain discoverable,
-                    provider readiness stays silent during new-chat source changes, and saved custom
-                    ids remain usable while their management UI is parked</span
+                    and exact Claude defaults are prioritized; superseded GPT and Claude versions
+                    start hidden, Claude account labels include the available Max multiplier, and
+                    Grok 4.5 and 4.6 remain discoverable, provider readiness stays silent during
+                    new-chat source changes, and saved custom ids remain usable while their
+                    management UI is parked</span
                   >
                 </span>
               </li>
@@ -886,9 +910,9 @@
                 <span
                   >Custom harness sources (parked)
                   <span class="d"
-                    >the server retains protocol-compatible executable support for future/nightly
-                    work, while the public-beta Providers screen exposes only Codex, Claude Code,
-                    and Grok</span
+                    >the server keeps Codex-, Claude Code- and Grok-compatible executables; the
+                    Providers screen does not offer them yet, and harnesses saved by nightly for
+                    another provider stay in the file untouched</span
                   >
                 </span>
               </li>
@@ -1244,15 +1268,16 @@
       </section>
 
       <section id="parked">
-        <h2>Parked until after the beta</h2>
+        <h2>Nightly only</h2>
         <p class="sub">
-          Built and tested, deliberately out of the first release. All of it runs unhidden on the
-          nightly branch; returning any of these to the beta is a roster change, not a rebuild.
+          Built and tested, and absent from main's code since 2026-10-03. All of it runs on the
+          nightly branch; bringing one back to main is a port from nightly, not a roster switch.
         </p>
         <div class="parked">
           <span>Cursor adapter</span>
           <span>OpenCode adapter</span>
           <span>Antigravity adapter</span>
+          <span>Pi over RPC</span>
           <span>Kimi CLI over ACP</span>
           <span>API connections, 6 presets</span>
           <span>GLM and Z.ai coding plans</span>

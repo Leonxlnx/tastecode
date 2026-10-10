@@ -61,6 +61,7 @@ describe('Codex long-history resume', () => {
     const adapter = longHistoryAdapter()
     try {
       await adapter.start()
+      await adapter.resumeThread('long-thread', process.cwd())
       await expect(adapter.reloadMcpServers('long-thread', [], {})).resolves.toBeUndefined()
       await expect(adapter.sendTurn('long-thread', 'Continue')).resolves.toBe('next-turn')
     } finally {

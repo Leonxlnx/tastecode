@@ -10,7 +10,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App } from './App.js'
+import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -65,6 +65,7 @@ const shellRenders = vi.hoisted(() => ({
   composer: vi.fn(),
   sidebar: vi.fn(),
   stageHeader: vi.fn(),
+  threadFrame: vi.fn(),
 }))
 
 const utilityRenders = vi.hoisted(() => ({
@@ -84,10 +85,12 @@ const nativeMenu = vi.hoisted(() => ({
 }))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
 interface ThreadCallbacks {
+  decideApproval: ThreadProps['onDecide'] | undefined
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
   undoChanges: ThreadProps['onUndoChanges'] | undefined
 }
 const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
+  decideApproval: undefined,
   answerUserInput: undefined,
   undoChanges: undefined,
 }))
@@ -161,11 +164,13 @@ vi.mock('./ui/Thread.js', async () => {
         props.frameStore.getSnapshot,
       )
       const { items, liveItems } = frame
+      shellRenders.threadFrame(frame)
       return (
         <div
           data-testid="thread"
           data-started-at={frame.activeTurn?.startedAt}
           ref={() => {
+            threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
           }}
@@ -188,7 +193,7 @@ vi.mock('./ui/Sidebar.js', async (importOriginal) => {
   return {
     ...original,
     Sidebar: memo((props: ComponentProps<typeof original.Sidebar>) => {
-      shellRenders.sidebar()
+      shellRenders.sidebar(props)
       return <original.Sidebar {...props} />
     }),
   }
@@ -212,7 +217,7 @@ vi.mock('./ui/StageHeader.js', async (importOriginal) => {
   return {
     ...original,
     StageHeader: memo((props: ComponentProps<typeof original.StageHeader>) => {
-      shellRenders.stageHeader()
+      shellRenders.stageHeader(props)
       return <original.StageHeader {...props} />
     }),
   }
@@ -369,6 +374,7 @@ beforeEach(() => {
   shellRenders.composer.mockClear()
   shellRenders.sidebar.mockClear()
   shellRenders.stageHeader.mockClear()
+  shellRenders.threadFrame.mockClear()
   utilityRenders.commandPalette.mockClear()
   utilityRenders.sessionSearch.mockClear()
   utilityRenders.settings.mockClear()
@@ -377,6 +383,7 @@ beforeEach(() => {
   transport.stateListeners.clear()
   transport.sequenceGapListeners.clear()
   transport.urls.length = 0
+  threadCallbacks.decideApproval = undefined
   threadCallbacks.answerUserInput = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
@@ -599,14 +606,20 @@ function openSettings() {
   fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
 }
 
+async function openProviderSettings() {
+  openSettings()
+  const settings = await screen.findByRole('dialog', { name: 'Settings' })
+  fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
+}
+
 function cachedCodexChoice(): ModelChoice {
   return {
-    key: 'codex:gpt-5.6-sol',
+    key: 'codex:gpt-6.1-sol',
     provider: 'codex',
     sourceName: 'Codex',
     mark: 'openai',
     model: {
-      id: 'gpt-5.6-sol',
+      id: 'gpt-6.1-sol',
       displayName: 'GPT-5.6 Sol',
       isDefault: true,
       reasoningEfforts: ['low', 'high'],
@@ -696,7 +709,519 @@ function setConnectionState(state: ConnectionState): void {
   for (const listener of transport.stateListeners) listener(state)
 }
 
+function composerProps() {
+  return shellRenders.composer.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/Composer.js').Composer
+  >
+}
+
+function sidebarProps() {
+  return shellRenders.sidebar.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/Sidebar.js').Sidebar
+  >
+}
+
+async function openCheckpointHistory() {
+  const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+    typeof import('./ui/StageHeader.js').StageHeader
+  >
+  act(() => header.onOpenRollback())
+  fireEvent.click(await screen.findByRole('button', { name: /Before “Fix the parser”/ }))
+  await screen.findByRole('button', { name: 'Restore checkpoint' })
+}
+
 describe('web client', () => {
+  it('publishes a healthy source while another model catalog remains pending', async () => {
+    serverProviders.push({ ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list') {
+        return methods[method].params.parse(params).provider === 'claude-code'
+          ? new Promise(() => undefined)
+          : Promise.resolve({ models: [cachedCodexChoice().model] })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
+    )
+    const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
+    expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
+      'codex',
+    ])
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
+    expect(composerProps().modelsLoaded).toBe(true)
+  })
+
+  it('does not renew an unresolved source cache when another provider completes', async () => {
+    serverProviders.push({ ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' })
+    const stale = {
+      ...cachedCodexChoice(),
+      key: 'claude-code:old',
+      provider: 'claude-code' as const,
+      sourceName: 'Claude Code',
+      mark: 'anthropic' as const,
+      model: { ...cachedCodexChoice().model, id: 'old' },
+    }
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([stale], { validatedAt: Date.now() - 600_000 }),
+    )
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'models.list')
+        return methods[method].params.parse(params).provider === 'claude-code'
+          ? new Promise((_, fail) => {
+              reject = fail
+            })
+          : Promise.resolve({ models: [cachedCodexChoice().model] })
+      return request(method, params)
+    })
+    render(<App />)
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
+    )
+    await act(async () => reject(new Error('catalog unavailable')))
+    const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
+    expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
+      'codex',
+    ])
+    expect(cache.models.map((choice: { key: string }) => choice.key)).toContain(stale.key)
+  })
+
+  it('retains a legacy project list through an unacknowledged outage', async () => {
+    const legacy = [{ path: '/legacy', name: 'Important name' }]
+    localStorage.setItem('harness.projects', JSON.stringify(legacy))
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'projects.add'
+        ? new Promise((_, fail) => {
+            reject = fail
+          })
+        : request(method, params),
+    )
+    const view = render(<App />)
+    await waitFor(() => expect(rpcCount('projects.add')).toBe(1))
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+    await act(async () => reject(new IndeterminateRequestError('request expired during outage')))
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+    view.unmount()
+    expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual(legacy)
+  })
+
+  it('migrates only acknowledged legacy projects across a restart', async () => {
+    const legacy = [
+      { path: '/one', name: 'One' },
+      { path: '/two', name: 'Two' },
+      { path: '/three', name: 'Three' },
+    ]
+    localStorage.setItem('harness.projects', JSON.stringify(legacy))
+    const request = transport.request.getMockImplementation()!
+    let fail = true
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.add' && methods[method].params.parse(params).path === '/two' && fail)
+        return Promise.reject(new Error('offline'))
+      return request(method, params)
+    })
+    const first = render(<App />)
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('harness.projects')!)).toEqual([legacy[1]]),
+    )
+    first.unmount()
+    fail = false
+    transport.request.mockClear()
+    render(<App />)
+    await waitFor(() => expect(localStorage.getItem('harness.projects')).toBeNull())
+    expect(transport.request.mock.calls.filter(([method]) => method === 'projects.add')).toEqual([
+      ['projects.add', legacy[1]],
+    ])
+  })
+
+  it.each([false, true])(
+    'recovers an indeterminate question reply on an open socket (resolved: %s)',
+    async (resolved) => {
+      const question: Extract<DomainEvent, { type: 'user_input.requested' }> = {
+        type: 'user_input.requested',
+        request: {
+          id: 'question-1',
+          turnId: 'turn-1',
+          createdAt: 1,
+          autoResolutionMs: null,
+          questions: [
+            {
+              id: 'choice',
+              header: 'Choice',
+              question: 'Which option?',
+              allowOther: true,
+              secret: false,
+              options: null,
+            },
+          ],
+        },
+      }
+      const request = transport.request.getMockImplementation()!
+      let replied = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'thread.respondToUserInput') {
+          replied = true
+          return Promise.reject(new IndeterminateRequestError('malformed reply'))
+        }
+        if (method === 'thread.history')
+          return Promise.resolve({
+            events: [
+              { seq: 1, event: question },
+              ...(replied && resolved
+                ? [{ seq: 2, event: { type: 'user_input.resolved', id: 'question-1' } }]
+                : []),
+            ],
+            running: true,
+            approval: 'ask',
+          })
+        return request(method, params)
+      })
+      await openNewSession()
+      await waitFor(() =>
+        expect(shellRenders.threadFrame.mock.lastCall![0].userInputs).toHaveLength(1),
+      )
+      const original = shellRenders.threadFrame.mock.lastCall![0].userInputs[0]
+      transport.request.mockClear()
+      await act(async () => {
+        await expect(
+          threadCallbacks.answerUserInput!('question-1', { choice: ['A'] }),
+        ).rejects.toThrow('malformed reply')
+      })
+      expect(transport.state).toBe('open')
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'untouched-thread',
+      })
+      const requests = shellRenders.threadFrame.mock.lastCall![0].userInputs
+      expect(requests).toHaveLength(resolved ? 0 : 1)
+      if (!resolved) {
+        expect(requests[0]).toEqual(original)
+        expect(requests[0]).not.toBe(original)
+      }
+    },
+  )
+
+  it.each([true, false])('uses the latest account sign-in result (%s)', (signedIn) => {
+    const providers = contractValidServerProviders().map((status) => ({
+      ...status,
+      auth: signedIn ? ('unauthenticated' as const) : ('authenticated' as const),
+    }))
+    expect(
+      resolveSendAvailability({
+        catalog: 'ready',
+        activeProvider: 'codex',
+        providerStatuses: providers,
+        accountCheck: { provider: 'codex', state: 'ready', account: { signedIn } },
+      }),
+    ).toBe(signedIn ? 'ready' : 'setup-required')
+  })
+
+  it.each([false, true])(
+    'preserves the next draft through startup (switch away: %s)',
+    async (switchAway) => {
+      const request = transport.request.getMockImplementation()!
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      transport.request.mockImplementation(async (method, params) => {
+        if (method === 'thread.start') await gate
+        return request(method, params)
+      })
+      render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      submitTurn('First prompt')
+      await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+      const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      fireEvent.change(composer, { target: { value: 'Next unsent prompt' } })
+      act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+      if (switchAway) fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+      await act(async () => release())
+      await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+      if (!switchAway) {
+        expect(composer.value).toBe('Next unsent prompt')
+        fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+      }
+      fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Next unsent prompt',
+      )
+      expect(composerProps().draftRequest?.attachments).toEqual(['/work/later.png'])
+    },
+  )
+
+  it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.start'
+        ? new Promise((_, fail) => {
+            reject = fail
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    act(() => composerProps().onSend('Failed first prompt', ['/work/first.png']))
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Later draft' },
+    })
+    act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Other chat draft' },
+    })
+    await act(async () => reject(new Error('start refused')))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Other chat draft',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Later draft\n\nFailed first prompt',
+    )
+    expect(composerProps().draftRequest?.attachments).toEqual([
+      '/work/later.png',
+      '/work/first.png',
+    ])
+  })
+
+  it('keeps an acknowledged access mode when a change is rejected', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.history')
+        return Promise.resolve({ events: [], running: false, approval: 'full' })
+      if (method === 'thread.setApproval')
+        return new Promise((_, fail) => {
+          reject = fail
+        })
+      return request(method, params)
+    })
+    await openNewSession()
+    await waitFor(() => expect(composerProps().approval).toBe('full'))
+    act(() => composerProps().onApprovalChange('ask'))
+    expect(composerProps().approval).toBe('full')
+    await act(async () => reject(new Error('access refused')))
+    expect(composerProps().approval).toBe('full')
+    expect(await screen.findByText('access refused')).toBeTruthy()
+  })
+
+  it('serializes access edits and keeps the last successful mode', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.setApproval') {
+        const { approval } = methods['thread.setApproval'].params.parse(params)
+        return approval === 'full'
+          ? new Promise((resolve) => {
+              release = () => resolve({})
+            })
+          : Promise.reject(new Error('access refused'))
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    act(() => {
+      composerProps().onApprovalChange('full')
+      composerProps().onApprovalChange('ask')
+    })
+    expect(rpcCount('thread.setApproval')).toBe(1)
+    await act(async () => release())
+    expect(rpcCount('thread.setApproval')).toBe(2)
+    expect(composerProps().approval).toBe('full')
+  })
+
+  it.each(['thread.history', 'thread.checkpoints', 'workspace.info'])(
+    'retains restore Undo when %s refresh fails',
+    async (failedMethod) => {
+      const request = transport.request.getMockImplementation()!
+      let restored = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'thread.restore') restored = true
+        if (restored && method === failedMethod) return Promise.reject(new Error('refresh failed'))
+        return request(method, params)
+      })
+      await openNewSession()
+      await openCheckpointHistory()
+      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
+          threadId: 'untouched-thread',
+          undo: 'undo-token',
+        }),
+      )
+      expect(rpcCount('thread.restore')).toBe(1)
+      expect(screen.queryByRole('dialog', { name: 'Restore checkpoint' })).toBeNull()
+    },
+  )
+
+  it('does not offer the previous restore target while inspecting another checkpoint', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reject!: (error: Error) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.checkpoints')
+        return Promise.resolve({
+          checkpoints: [
+            { id: 7, seq: 1, label: 'Fix the parser', createdAt: 1 },
+            { id: 8, seq: 2, label: 'Fix the tests', createdAt: 2 },
+          ],
+        })
+      if (
+        method === 'thread.changedSince' &&
+        methods[method].params.parse(params).checkpointId === 8
+      )
+        return new Promise((_, fail) => {
+          reject = fail
+        })
+      return request(method, params)
+    })
+    await openNewSession()
+    await openCheckpointHistory()
+    fireEvent.click(screen.getByRole('button', { name: /Before “Fix the tests”/ }))
+    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    await act(async () => reject(new Error('inspection failed')))
+    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(rpcCount('thread.restore')).toBe(0)
+  })
+
+  it('clears the removed project chat and rejects its pending start completion', async () => {
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    let release!: (value: { threadId: string }) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.start')
+        return new Promise((resolve) => {
+          release = resolve
+        })
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('Pending removed project')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    expect(composerProps().newSession).toBe(true)
+    expect(screen.queryByTestId('thread')).toBeNull()
+    // Even a stale list must not resurrect a removed project.
+    serverProjects.push({
+      path: '/work/project',
+      name: 'project',
+      pinned: false,
+      createdAt: 0,
+      sessions: [],
+    })
+    await act(async () => release({ threadId: 'late-thread' }))
+    act(() => setConnectionState('open'))
+    await act(async () => Promise.resolve())
+    expect(sidebarProps().projects.map((project) => project.path)).toEqual(['/work/other'])
+    expect(rpcCount('thread.sendTurn')).toBe(0)
+    expect(transport.request).toHaveBeenCalledWith('thread.close', { threadId: 'late-thread' })
+  })
+
+  it.each(['select', 'send'] as const)('cancels a pending deletion on %s', async (activity) => {
+    await openNewSession()
+    const oldSend = composerProps().onSend
+    act(() => sidebarProps().onDeleteSession('untouched-thread'))
+    await screen.findByText('Chat deleted')
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull()
+    act(() => {
+      if (activity === 'select') sidebarProps().onSelectSession('untouched-thread')
+      else oldSend('Keep this chat', [])
+    })
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'untouched-thread',
+    })
+  })
+
+  it('cancels a deletion safety check when the chat is selected again', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: (work: typeof serverUnsavedWork) => void
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.unsavedWork'
+        ? new Promise((resolve) => {
+            release = resolve
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('untouched-thread'))
+    act(() => sidebarProps().onSelectSession('untouched-thread'))
+    await act(async () => release({ isolated: false, uncommitted: false }))
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(rpcCount('thread.delete')).toBe(0)
+    expect(screen.queryByText('Chat deleted')).toBeNull()
+  })
+
+  it('keeps populated histories and drafts even when titled New session', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.history'
+        ? Promise.resolve({
+            events: [completedHistoryEvent(1, 'saved-message', 'Saved history')],
+            running: false,
+            approval: 'ask',
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    await waitFor(() => expect(screen.getByTestId('thread').textContent).toContain('Saved history'))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Saved draft' },
+    })
+    act(() => composerProps().onAttachmentsChange?.(['/work/saved.png']))
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(rpcCount('thread.delete')).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(screen.getByTestId('thread').textContent).toContain('Saved history')
+    expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+      'Saved draft',
+    )
+    expect(composerProps().draftRequest?.attachments).toEqual(['/work/saved.png'])
+  })
+
+  it('clears an established chat when its active project is removed', async () => {
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    expect(composerProps().newSession).toBe(true)
+    expect(sidebarProps().activeSessionId).toBeUndefined()
+    expect(screen.queryByTestId('thread')).toBeNull()
+  })
+
   it('does not ask the code highlighter before a code block needs it', () => {
     render(<App />)
 
@@ -737,7 +1262,7 @@ describe('web client', () => {
         { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
         { ...cachedCodexChoice().model, id: 'new-model', displayName: 'New model' },
         {
-          id: 'gpt-5.6-sol',
+          id: 'gpt-6.1-sol',
           displayName: 'GPT-5.6 Sol',
           isDefault: true,
           reasoningEfforts: [],
@@ -836,7 +1361,7 @@ describe('web client', () => {
     )
 
     await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]'),
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]'),
     )
     releaseModels({
       models: [
@@ -852,11 +1377,11 @@ describe('web client', () => {
     })
 
     await waitFor(() => expect(screen.getByText('GPT-5.5')).toBeTruthy())
-    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.6-sol"]')
+    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
   })
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
-    const saved = '["codex:gpt-5.6-sol"]'
+    const saved = '["codex:gpt-6.1-sol"]'
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
@@ -866,7 +1391,7 @@ describe('web client', () => {
         ? Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: [],
@@ -945,7 +1470,9 @@ describe('web client', () => {
 
     render(<App />)
 
-    expect(screen.getByText('Loading projects…').closest('[role="status"]')).not.toBeNull()
+    expect(
+      within(screen.getByRole('main')).getByText('Loading projects…').closest('[role="status"]'),
+    ).not.toBeNull()
     await screen.findByRole('button', { name: 'Retry' })
     expect(screen.getByRole('heading').textContent).toContain('Projects could not be loaded')
 
@@ -981,7 +1508,8 @@ describe('web client', () => {
     render(<App />)
 
     expect(screen.getByRole('heading').textContent).toBe('What should we build in project?')
-    expect(screen.queryByText('Loading projects…')).toBeNull()
+    expect(within(screen.getByRole('main')).queryByText('Loading projects…')).toBeNull()
+    expect(within(screen.getByRole('navigation')).getByText('Loading projects…')).toBeTruthy()
 
     await waitFor(() => expect(listProjects).toBeDefined())
     act(() => listProjects?.())
@@ -1257,7 +1785,7 @@ describe('web client', () => {
     expect(screen.queryByText('From main chat')).toBeNull()
   })
 
-  it('discovers a custom Pi source and binds new sessions to its harness id', async () => {
+  it('discovers a custom harness source and binds new sessions to its harness id', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -1265,10 +1793,10 @@ describe('web client', () => {
         return Promise.resolve({
           harnesses: [
             {
-              id: 'deepseek-pi',
-              displayName: 'DeepSeek Pi',
-              provider: 'pi',
-              command: 'deepseek-pi',
+              id: 'codex-fork',
+              displayName: 'Codex Fork',
+              provider: 'codex',
+              command: 'codex-fork',
               args: [],
             },
           ],
@@ -1276,7 +1804,7 @@ describe('web client', () => {
       }
       if (
         method === 'models.list' &&
-        methods['models.list'].params.parse(params).agent === 'deepseek-pi'
+        methods['models.list'].params.parse(params).agent === 'codex-fork'
       ) {
         return Promise.resolve({
           models: [
@@ -1298,23 +1826,23 @@ describe('web client', () => {
 
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('models.list', {
-        provider: 'pi',
-        agent: 'deepseek-pi',
+        provider: 'codex',
+        agent: 'codex-fork',
       }),
     )
     expect(
       (await screen.findByRole('button', { name: 'Model and reasoning' })).textContent,
     ).toContain('DeepSeek V3.2')
     const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: 'Use my Pi fork' } })
+    fireEvent.change(composer, { target: { value: 'Use my Codex fork' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
         'thread.start',
         expect.objectContaining({
-          provider: 'pi',
-          agent: 'deepseek-pi',
+          provider: 'codex',
+          agent: 'codex-fork',
           model: 'openrouter/deepseek-v3.2',
           effort: 'high',
         }),
@@ -1544,12 +2072,12 @@ describe('web client', () => {
       return request(method, params)
     })
     // Older builds persisted a bare model id rather than the source-qualified key.
-    localStorage.setItem('harness.model', 'gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'high')
     localStorage.setItem('harness.serviceTier', 'priority')
     localStorage.setItem(
       'harness.modelBySource',
-      JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-sol', serviceTier: 'priority' } }),
+      JSON.stringify({ codex: { modelKey: 'codex:gpt-6.1-sol', serviceTier: 'priority' } }),
     )
 
     render(<App />)
@@ -1557,7 +2085,7 @@ describe('web client', () => {
     expect(screen.queryByText('Loading models…')).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
     expect(
-      await screen.findByRole('button', { name: 'Use gpt-5.6-sol through Codex' }),
+      await screen.findByRole('button', { name: 'Use gpt-6.1-sol through Codex' }),
     ).toBeTruthy()
     expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
       'Effort: High',
@@ -1623,7 +2151,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()], { validatedAt: 0 }),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
@@ -1650,7 +2178,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
@@ -1662,7 +2190,7 @@ describe('web client', () => {
       await failedDiscovery.catch(() => undefined)
     })
     await waitFor(() => {
-      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
+      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-6.1-sol')
       expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
         '5.6 Sol',
       )
@@ -1715,7 +2243,7 @@ describe('web client', () => {
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([cachedCodexChoice()]),
     )
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'ultra')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -1748,66 +2276,31 @@ describe('web client', () => {
         workspacePath: '/work/project',
         baseRef: 'main',
         approval: 'auto-review',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'high',
       })
       expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
         threadId: 'thread-1',
         text: 'Use what the UI shows',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'high',
       })
     })
   })
 
-  it('never fetches ACP agent models in the beta scope', async () => {
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'acp.agents') {
-        return Promise.resolve({
-          agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }],
-        })
-      }
-      return request(method, params)
-    })
-    render(<App />)
-
-    // The catalog settles once the direct providers answered.
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
-    })
-    expect(transport.request).not.toHaveBeenCalledWith(
-      'models.list',
-      expect.objectContaining({ provider: 'acp' }),
-    )
-  })
-
-  it('discovers models only for picker-eligible installed providers', async () => {
-    const installedDirectProviders = [
-      'codex',
-      'claude-code',
-      'grok',
-      'cursor',
-      'opencode',
-      'antigravity',
-      'pi',
-    ] as const
-    serverProviders = installedDirectProviders.map((id) => ({
+  it('discovers models for every installed provider', async () => {
+    const installedProviders = ['codex', 'claude-code', 'grok'] as const
+    serverProviders = installedProviders.map((id) => ({
       ...serverProviders[0]!,
       id,
       displayName: id,
     }))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
-    const parkedProviderRequest = new Promise<never>(() => {})
     transport.request.mockImplementation((method: string, params: unknown) => {
       if (method !== 'models.list') return request(method, params)
       const input = methods['models.list'].params.parse(params)
-      if (!['codex', 'claude-code', 'grok'].includes(input.provider)) {
-        return parkedProviderRequest
-      }
       return Promise.resolve({
         models: [
           {
@@ -1832,53 +2325,6 @@ describe('web client', () => {
       return input.agent === undefined ? [input.provider] : []
     })
     expect(directProviders).toEqual(['codex', 'claude-code', 'grok'])
-  })
-
-  it('publishes the model catalog without waiting for the connection store', async () => {
-    const request = transport.request.getMockImplementation()!
-    const pendingConnections = new Promise<never>(() => {})
-    transport.request.mockImplementation((method, params) => {
-      if (method === 'connections.list') return pendingConnections
-      if (method === 'models.list') {
-        return Promise.resolve({ models: [cachedCodexChoice().model] })
-      }
-      return request(method, params)
-    })
-
-    render(<App />)
-
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' })
-    })
-    await waitFor(() => {
-      expect(localStorage.getItem('harness.modelCatalog.v1')).toContain('gpt-5.6-sol')
-    })
-  })
-
-  it('defers ACP agent detection until Settings opens', async () => {
-    render(<App />)
-
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('providers.list', {})
-    })
-    expect(transport.request).not.toHaveBeenCalledWith('acp.agents', {})
-
-    openSettings()
-
-    await waitFor(() => {
-      expect(
-        transport.request.mock.calls.filter(([method]) => method === 'acp.agents'),
-      ).toHaveLength(1)
-    })
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Back to app' }))
-    openSettings()
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(transport.request.mock.calls.filter(([method]) => method === 'acp.agents')).toHaveLength(
-      1,
-    )
   })
 
   it('does not invent Automatic choices for empty agent model catalogs', async () => {
@@ -1906,15 +2352,8 @@ describe('web client', () => {
               capabilities,
             },
             {
-              id: 'cursor',
-              displayName: 'Cursor',
-              installed: true,
-              auth: 'authenticated',
-              capabilities,
-            },
-            {
-              id: 'opencode',
-              displayName: 'OpenCode',
+              id: 'grok',
+              displayName: 'Grok',
               installed: true,
               auth: 'authenticated',
               capabilities,
@@ -1948,8 +2387,7 @@ describe('web client', () => {
     expect(
       await screen.findByRole('button', { name: 'Use Fable through Claude Code' }),
     ).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Use Automatic through Cursor' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Use Automatic through OpenCode' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Use Automatic through Grok' })).toBeNull()
   })
 
   it('updates attachment availability when the selected source changes', async () => {
@@ -1979,7 +2417,7 @@ describe('web client', () => {
         return Promise.resolve({
           models: [
             {
-              id: provider === 'codex' ? 'gpt-5.6-sol' : 'sonnet',
+              id: provider === 'codex' ? 'gpt-6.1-sol' : 'sonnet',
               displayName: provider === 'codex' ? 'GPT-5.6 Sol' : 'Sonnet 5',
               isDefault: true,
               reasoningEfforts: [],
@@ -2023,39 +2461,7 @@ describe('web client', () => {
     expect(screen.queryByRole('button', { name: 'Record voice note' })).toBeNull()
   })
 
-  it('checks desktop voice status once after its connection catalog settles', async () => {
-    desktopShell.enabled = true
-    let resolveConnections!: (value: { connections: [] }) => void
-    const connections = new Promise<{ connections: [] }>((resolve) => {
-      resolveConnections = resolve
-    })
-    let resolveAccount!: (value: { signedIn: true }) => void
-    const account = new Promise<{ signedIn: true }>((resolve) => {
-      resolveAccount = resolve
-    })
-    const request = transport.request.getMockImplementation()!
-    transport.request.mockImplementation((method, params) => {
-      if (method === 'connections.list') return connections
-      if (method === 'auth.status') return account
-      if (method === 'voice.status') return Promise.resolve({ available: true })
-      return request(method, params)
-    })
-
-    render(<App />)
-    await act(async () => resolveAccount({ signedIn: true }))
-    expect(
-      transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
-    ).toHaveLength(0)
-
-    await act(async () => resolveConnections({ connections: [] }))
-    await waitFor(() => {
-      expect(
-        transport.request.mock.calls.filter(([method]) => method === 'voice.status'),
-      ).toHaveLength(1)
-    })
-  })
-
-  it('checks voice only for the fallback provider when connections win startup', async () => {
+  it('checks voice only for the fallback provider once the provider catalog settles', async () => {
     desktopShell.enabled = true
     localStorage.setItem('harness.provider', 'cursor')
     let resolveProviders!: (value: { providers: ServerProvider[] }) => void
@@ -2070,7 +2476,7 @@ describe('web client', () => {
     })
 
     render(<App />)
-    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('connections.list', {}))
+    await waitFor(() => expect(transport.request).toHaveBeenCalledWith('providers.list', {}))
     expect(transport.request).not.toHaveBeenCalledWith('voice.status', expect.anything())
 
     await act(async () => resolveProviders({ providers: contractValidServerProviders() }))
@@ -2145,6 +2551,46 @@ describe('new chats', () => {
     await waitFor(() => expect(draft()).toBe('Session one prompt'))
     expect(screen.getByRole('button', { name: 'Remove session-one.png' })).toBeTruthy()
   })
+
+  it.each(['while away', 'after returning'])(
+    'keeps a paste that finishes saving %s with the chat it was pasted into',
+    async (timing) => {
+      serverProjects = [
+        {
+          path: '/work/project',
+          name: 'project',
+          pinned: false,
+          createdAt: 0,
+          sessions: [
+            { id: 'thread-1', title: 'Existing work', running: false },
+            { id: 'thread-2', title: 'Background', running: false },
+          ],
+        },
+      ]
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+      let finish!: (path: string | undefined) => void
+      act(() =>
+        composerProps().onPendingAttachment!(
+          new Promise<string | undefined>((resolve) => (finish = resolve)),
+        ),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      if (timing === 'while away') {
+        await act(async () => finish('/work/pasted.png'))
+        expect(screen.queryByRole('button', { name: 'Remove pasted.png' })).toBeNull()
+        fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+      } else {
+        fireEvent.click(screen.getByRole('button', { name: /^Existing work,/ }))
+        await act(async () => finish('/work/pasted.png'))
+      }
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Remove pasted.png' })).toBeTruthy(),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      expect(screen.queryByRole('button', { name: 'Remove pasted.png' })).toBeNull()
+    },
+  )
 
   it('preloads plan limits under StrictMode and reuses them when Account opens', async () => {
     const request = transport.request.getMockImplementation()
@@ -2575,7 +3021,7 @@ describe('new chats', () => {
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Stay blocked' } })
-    openSettings()
+    await openProviderSettings()
     fireEvent.click(await screen.findByRole('button', { name: 'Sign out' }))
     await within(screen.getByRole('dialog', { name: 'Settings' })).findByRole('button', {
       name: 'Sign in',
@@ -2593,6 +3039,8 @@ describe('new chats', () => {
   it.each(['success', 'failure', 'cancel'] as const)(
     'restores Settings after Claude sign-in ends with %s',
     async (outcome) => {
+      desktopShell.enabled = true
+      serverProjects = []
       serverProviders = [
         ...serverProviders,
         {
@@ -2630,7 +3078,7 @@ describe('new chats', () => {
       )
 
       render(<App />)
-      openSettings()
+      await openProviderSettings()
       await screen.findByText('Claude Code')
       fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
 
@@ -2639,6 +3087,9 @@ describe('new chats', () => {
       expect(workspace.classList.contains('is-panel-open')).toBe(true)
       expect(workspace.classList.contains('is-panel-expanded')).toBe(true)
       expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+      await waitFor(() =>
+        expect(document.querySelector<HTMLElement>('.onboarding')?.hidden).toBe(true),
+      )
       expect(transport.request).toHaveBeenCalledWith('providers.launch', {
         provider: 'claude-code',
         columns: 320,
@@ -2691,7 +3142,7 @@ describe('new chats', () => {
     },
   )
 
-  it('preserves a parked custom model without blocking a catalogless beta source', async () => {
+  it('preserves a nightly-only custom model without blocking a catalogless source', async () => {
     const parked = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
     localStorage.setItem('harness.provider', 'cursor')
     localStorage.setItem('harness.model', 'custom:cursor:cursor-large')
@@ -3559,13 +4010,13 @@ describe('new chats', () => {
 
     await openNewSession()
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
-    expect(await screen.findByText('Archived chat')).toBeTruthy()
-    expect(screen.getByText('Archived chat').closest('.notice--archive')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Archive New session' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    expect(await screen.findByText('Chat deleted')).toBeTruthy()
+    expect(screen.getByText('Chat deleted').closest('.notice--archive')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Delete New session' })).toBeNull()
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     fireEvent.click(screen.getByRole('button', { name: 'Undo' }))
-    expect(await screen.findByRole('button', { name: 'Archive New session' })).toBeTruthy()
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
     await act(async () => new Promise((resolve) => nativeTimeout(resolve, 1_050)))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
   })
@@ -3582,7 +4033,7 @@ describe('new chats', () => {
     await openNewSession()
     startTurn('untouched-thread', 'active')
     transport.request.mockClear()
-    fireEvent.click(screen.getByRole('button', { name: 'Archive New session' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'untouched-thread',
@@ -4060,9 +4511,12 @@ describe('new chats', () => {
       emitQueue('untouched-thread', [queued])
       transport.request.mockClear()
       completeTurn('untouched-thread', 'active')
-      if (scenario === 'new chat cleanup')
+      if (scenario === 'new chat cleanup') {
         fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
-      else emitQueue('untouched-thread', [])
+        expect(rpcCount('thread.delete')).toBe(0)
+        expect(rpcCount('workspace.info')).toBe(0)
+      }
+      emitQueue('untouched-thread', [])
       return waitForWorkspace(1)
     }
     submitTurn('Reviewed queue')
@@ -4158,11 +4612,11 @@ describe('new chats', () => {
     serverUnsavedWork = { isolated: true, uncommitted: true }
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Archive Parallel work' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete Parallel work' }))
     expect(await screen.findByRole('dialog', { name: 'Discard isolated checkout' })).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('thread.discardWorktree', expect.anything())
 
-    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and archive' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.close', {
         threadId: 'isolated-thread',
@@ -4411,12 +4865,10 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => expect(inbox.getAttribute('aria-checked')).toBe('true'))
-    fireEvent.click(screen.getByRole('radio', { name: 'V1 Classic' }))
-    fireEvent.change(screen.getByRole('spinbutton', { name: 'Auto-settle days' }), {
-      target: { value: '7' },
-    })
+    fireEvent.keyDown(screen.getByRole('slider', { name: 'Settle idle chats' }), { key: 'PageUp' })
+    fireEvent.click(screen.getByRole('radio', { name: 'Classic' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
@@ -4445,8 +4897,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4484,8 +4936,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4531,8 +4983,8 @@ describe('new chats', () => {
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
 
-    const classic = screen.getByRole('radio', { name: 'V1 Classic' })
-    const inbox = screen.getByRole('radio', { name: 'V2 Inbox' })
+    const classic = screen.getByRole('radio', { name: 'Classic' })
+    const inbox = screen.getByRole('radio', { name: 'Inbox' })
     await waitFor(() => {
       expect(classic.getAttribute('aria-checked')).toBe('true')
     })
@@ -4550,9 +5002,9 @@ describe('new chats', () => {
       expect(inbox.getAttribute('aria-checked')).toBe('true')
     })
 
-    const days = screen.getByRole('spinbutton', { name: 'Auto-settle days' })
-    fireEvent.change(days, { target: { value: '7' } })
-    expect((days as HTMLInputElement).value).toBe('7')
+    const days = screen.getByRole('slider', { name: 'Settle idle chats' })
+    fireEvent.keyDown(days, { key: 'PageUp' })
+    expect(days.getAttribute('aria-valuenow')).toBe('7')
 
     // A second gap read must update the confirmed base without erasing the
     // still-pending local patch layered over it.
@@ -4570,7 +5022,7 @@ describe('new chats', () => {
     await act(async () => {
       await Promise.resolve()
     })
-    expect((days as HTMLInputElement).value).toBe('7')
+    expect(days.getAttribute('aria-valuenow')).toBe('7')
 
     await act(async () => {
       rejectSecondUpdate?.(new Error('Could not save inactivity setting'))
@@ -4578,7 +5030,7 @@ describe('new chats', () => {
     })
 
     expect(inbox.getAttribute('aria-checked')).toBe('true')
-    expect((days as HTMLInputElement).value).toBe('3')
+    expect(days.getAttribute('aria-valuenow')).toBe('3')
   })
 
   it('switches sidebar versions only from settings', async () => {
@@ -4588,15 +5040,13 @@ describe('new chats', () => {
     expect(screen.queryByRole('button', { name: /Switch to V[12].*sidebar/ })).toBeNull()
     openSettings()
     fireEvent.click(screen.getByRole('button', { name: 'General' }))
-    fireEvent.click(screen.getByRole('radio', { name: 'V2 Inbox' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Inbox' }))
 
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('sidebar.updateSettings', {
         mode: 'inbox',
       })
-      expect(screen.getByRole('radio', { name: 'V2 Inbox' }).getAttribute('aria-checked')).toBe(
-        'true',
-      )
+      expect(screen.getByRole('radio', { name: 'Inbox' }).getAttribute('aria-checked')).toBe('true')
     })
   })
 
@@ -4814,10 +5264,10 @@ describe('new chats', () => {
     expect(fontSelector.textContent).toContain('System default')
     fireEvent.click(fontSelector)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'System default',
       'Geist',
       'Geist Mono',
       'Inter',
-      'System default',
     ])
     fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
@@ -4867,11 +5317,11 @@ describe('new chats', () => {
       await act(async () => finishScan(records))
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-        'Atkinson Hyperlegible',
+        'System default',
         'Geist',
         'Geist Mono',
         'Inter',
-        'System default',
+        'Atkinson Hyperlegible',
         'Zilla Slab',
       ])
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search fonts' }), {
@@ -5031,7 +5481,7 @@ describe('new chats', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
 
     const permissions = screen.getByRole('button', { name: 'Permissions' })
-    expect(permissions.textContent).toContain('Loading…')
+    expect(within(permissions).getByRole('status').textContent).toContain('Loading permissions')
     expect(permissions.hasAttribute('disabled')).toBe(true)
 
     await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
@@ -5039,10 +5489,25 @@ describe('new chats', () => {
     expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
   })
 
-  it('keeps full access selected after the app restarts', () => {
+  it('waits for the provider list before showing the default access mode', async () => {
+    render(<App />)
+
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(within(permissions).getByRole('status').textContent).toContain('Loading permissions')
+    expect(permissions.querySelector('.tool--danger')).toBeNull()
+    expect(permissions.hasAttribute('disabled')).toBe(true)
+
+    await waitFor(() => expect(permissions.querySelector('.tool--review')).not.toBeNull())
+    expect(permissions.textContent).toContain('Auto-review')
+    expect(permissions.hasAttribute('disabled')).toBe(false)
+  })
+
+  it('keeps full access selected after the app restarts', async () => {
     const first = render(<App />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Permissions' }))
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    await waitFor(() => expect(permissions.hasAttribute('disabled')).toBe(false))
+    fireEvent.click(permissions)
     fireEvent.click(screen.getByRole('menuitem', { name: /Full access/ }))
 
     expect(localStorage.getItem('harness.approval')).toBe('full')
@@ -5250,7 +5715,7 @@ describe('new chats', () => {
     expect(screen.getByRole('heading').textContent).toBe('What should we build in TasteCode?')
   })
 
-  it('keeps an untouched session out of the sidebar until the first prompt', async () => {
+  it('keeps saved chats and only creates a new chat on the first prompt', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))
 
@@ -5259,12 +5724,8 @@ describe('new chats', () => {
     fireEvent.click(within(actions!).getByRole('button', { name: 'New chat' }))
 
     expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
-    // Deleted rather than closed: a session nobody typed into is bookkeeping,
-    // not history, and closing would leave it in the rail forever.
-    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
-      threadId: 'untouched-thread',
-    })
-    await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(0))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    expect(document.querySelectorAll('.sessrow')).toHaveLength(1)
 
     const composer = document.querySelector('textarea')
     expect(composer).not.toBeNull()
@@ -5293,7 +5754,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6-Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -5348,7 +5809,7 @@ describe('new chats', () => {
         workspacePath: '/work/project',
         baseRef: 'main',
         approval: 'auto-review',
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       })
@@ -5356,10 +5817,121 @@ describe('new chats', () => {
         threadId: 'thread-1',
         text: 'Use the fast lane',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'xhigh',
         serviceTier: 'priority',
       })
+    })
+  })
+
+  describe('provider defaults', () => {
+    beforeEach(() => {
+      localStorage.setItem('harness.modelVisibilityVersion', '4')
+      localStorage.setItem('harness.hiddenModels', '[]')
+      localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        return Promise.resolve({
+          models: [
+            {
+              id: 'gpt-6.1-sol',
+              displayName: 'GPT-6.1 Sol',
+              isDefault: true,
+              reasoningEfforts: ['low', 'medium', 'high'],
+              defaultReasoningEffort: 'medium',
+              serviceTiers: [],
+            },
+            {
+              id: 'gpt-5.6-mini',
+              displayName: 'GPT-5.6 Mini',
+              isDefault: false,
+              reasoningEfforts: ['low', 'medium', 'high'],
+              defaultReasoningEffort: 'low',
+              serviceTiers: [],
+            },
+          ],
+        })
+      })
+    })
+
+    async function waitForCatalog() {
+      fireEvent.click(await screen.findByRole('button', { name: 'Model and reasoning' }))
+      await screen.findByRole('button', { name: 'Use GPT-5.6 Mini through Codex' })
+      fireEvent.click(screen.getByRole('button', { name: 'Model and reasoning' }))
+    }
+
+    function send(text: string) {
+      const composer = screen.getByPlaceholderText('Do anything')
+      fireEvent.change(composer, { target: { value: text } })
+      fireEvent.keyDown(composer, { key: 'Enter' })
+    }
+
+    it('starts a new chat on the model and reasoning pinned for its provider', async () => {
+      localStorage.setItem(
+        'harness.providerDefaults',
+        JSON.stringify({ codex: { model: 'gpt-5.6-mini', effort: 'high' } }),
+      )
+      render(<App />)
+      await waitForCatalog()
+
+      const actions = document.querySelector<HTMLElement>('.rail__actions')!
+      fireEvent.click(within(actions).getByRole('button', { name: 'New chat' }))
+      send('Use the pinned model')
+
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.start',
+          expect.objectContaining({ provider: 'codex', model: 'gpt-5.6-mini', effort: 'high' }),
+        ),
+      )
+    })
+
+    it('applies defaults set in Settings to the new chat that is already open', async () => {
+      render(<App />)
+      await waitForCatalog()
+      const actions = document.querySelector<HTMLElement>('.rail__actions')!
+      fireEvent.click(within(actions).getByRole('button', { name: 'New chat' }))
+
+      await openProviderSettings()
+      const defaults = await within(
+        await screen.findByRole('dialog', { name: 'Settings' }),
+      ).findByRole('group', { name: 'Codex defaults' })
+      const model = within(defaults).getByRole('button', { name: /^Codex default model: / })
+      fireEvent.click(model)
+      fireEvent.click(
+        within(screen.getByRole('dialog', { name: 'Codex default model' })).getByRole('button', {
+          name: 'GPT-5.6 Mini',
+        }),
+      )
+      // A model with effort levels keeps its panel open for them.
+      fireEvent.click(model)
+      fireEvent.click(within(defaults).getByRole('button', { name: /^Codex default access: / }))
+      fireEvent.click(
+        within(screen.getByRole('menu', { name: 'Codex default access' })).getByRole(
+          'menuitemradio',
+          { name: /^Ask first/ },
+        ),
+      )
+      expect(JSON.parse(localStorage.getItem('harness.providerDefaults') ?? '{}')).toEqual({
+        codex: { model: 'gpt-5.6-mini' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Back to app' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+
+      send('Use the new defaults')
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.start',
+          expect.objectContaining({
+            provider: 'codex',
+            approval: 'ask',
+            model: 'gpt-5.6-mini',
+            effort: 'low',
+          }),
+        ),
+      )
     })
   })
 
@@ -5374,7 +5946,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'max', 'ultra'],
@@ -5536,7 +6108,7 @@ describe('new chats', () => {
           text: 'Use this chat setup',
           clientSubmissionId: expect.stringMatching(/^local:/),
           threadId: 'chat-a',
-          model: 'gpt-5.6-sol',
+          model: 'gpt-6.1-sol',
           effort: 'low',
         }),
       )
@@ -5574,7 +6146,7 @@ describe('new chats', () => {
   it('restores a chat setup after late discovery instead of the provider setup', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'low')
     const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
     localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
@@ -5658,7 +6230,7 @@ describe('new chats', () => {
     await act(async () => finishStart())
     await waitFor(() =>
       expect(JSON.parse(localStorage.getItem('harness.modelByThread:thread-1') ?? 'null')).toEqual({
-        modelKey: 'codex:gpt-5.6-sol',
+        modelKey: 'codex:gpt-6.1-sol',
         effort: 'high',
         designMode: true,
       }),
@@ -5714,7 +6286,7 @@ describe('new chats', () => {
           return Promise.resolve({
             models: [
               {
-                id: 'gpt-5.6-sol',
+                id: 'gpt-6.1-sol',
                 displayName: 'GPT-5.6 Sol',
                 isDefault: true,
                 reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -5932,7 +6504,7 @@ describe('new chats', () => {
             methods['models.list'].params.parse(params).provider === 'codex'
               ? [
                   {
-                    id: 'gpt-5.6-sol',
+                    id: 'gpt-6.1-sol',
                     displayName: 'GPT-5.6 Sol',
                     isDefault: true,
                     reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
@@ -5958,7 +6530,7 @@ describe('new chats', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'xhigh')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -6013,7 +6585,7 @@ describe('new chats', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'gpt-5.6-sol',
+              id: 'gpt-6.1-sol',
               displayName: 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -6025,7 +6597,7 @@ describe('new chats', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'high')
     localStorage.setItem('harness.serviceTier', 'priority')
 
@@ -6137,10 +6709,72 @@ describe('sidebar chat ordering', () => {
 
     await waitFor(() => {
       const order = SessionOrderSchema.parse(
-        JSON.parse(localStorage.getItem('harness.sessionOrder') ?? '{}'),
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
       )
       expect(order['/work/project']).toEqual(['thread-3', 'thread-1', 'thread-2'])
     })
+  })
+
+  it('keeps chats imported later from another provider in date order', async () => {
+    // Every project's order used to be saved automatically, freezing the order
+    // in which provider histories happened to arrive.
+    localStorage.setItem(
+      'harness.sessionOrder',
+      JSON.stringify({ '/work/project': ['claude-old', 'claude-new'] }),
+    )
+    const claudeNew = {
+      id: 'claude-new',
+      title: 'Newer Claude chat',
+      provider: 'claude-code' as const,
+      createdAt: 3,
+      running: false,
+    }
+    const claudeOld = {
+      id: 'claude-old',
+      title: 'Older Claude chat',
+      provider: 'claude-code' as const,
+      createdAt: 1,
+      running: false,
+    }
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [claudeNew, claudeOld],
+      },
+    ]
+    const titles = [
+      'Newest Codex chat',
+      'Newer Claude chat',
+      'Middle Codex chat',
+      'Older Claude chat',
+    ]
+    const sidebarOrder = () =>
+      screen
+        .getAllByRole('button', { name: / chat, / })
+        .map((button) => titles.find((title) => button.textContent?.includes(title)))
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Older Claude chat,/ })
+    expect(sidebarOrder()).toEqual(['Newer Claude chat', 'Older Claude chat'])
+    expect(localStorage.getItem('harness.sessionOrder')).toBeNull()
+
+    serverProjects[0]!.sessions = [
+      { id: 'codex-newest', title: 'Newest Codex chat', provider: 'codex', createdAt: 4 },
+      claudeNew,
+      { id: 'codex-middle', title: 'Middle Codex chat', provider: 'codex', createdAt: 2 },
+      claudeOld,
+    ]
+    act(() => {
+      transport.listeners.get('providerHistory.changed')?.({
+        threadIds: ['codex-newest', 'codex-middle'],
+      })
+    })
+
+    await waitFor(() => expect(sidebarOrder()).toEqual(titles))
   })
 })
 
@@ -6420,6 +7054,35 @@ describe('inbox lifecycle', () => {
 })
 
 describe('global shortcuts', () => {
+  it('keeps Debug unlocked across restarts until the shortcut locks it', async () => {
+    shortcutPlatform.macOS = true
+    localStorage.setItem('harness.onboarding.v1', 'done')
+    const debugShortcut = { key: 'Î', code: 'KeyD', metaKey: true, altKey: true, shiftKey: true }
+    const openSettings = async () => {
+      await screen.findByRole('button', { name: 'Account' })
+      fireEvent.keyDown(window, { key: ',', metaKey: true })
+      return screen.findByRole('dialog', { name: 'Settings' })
+    }
+
+    const first = render(<App />)
+    await screen.findByRole('button', { name: 'Account' })
+    fireEvent.keyDown(window, debugShortcut)
+    expect(localStorage.getItem('harness.debugSettings')).toBe('on')
+    first.unmount()
+
+    const second = render(<App />)
+    let settings = await openSettings()
+    expect(within(settings).getByRole('button', { name: 'Debug' })).toBeTruthy()
+    fireEvent.keyDown(window, debugShortcut)
+    expect(within(settings).queryByRole('button', { name: 'Debug' })).toBeNull()
+    expect(localStorage.getItem('harness.debugSettings')).toBeNull()
+    second.unmount()
+
+    render(<App />)
+    settings = await openSettings()
+    expect(within(settings).queryByRole('button', { name: 'Debug' })).toBeNull()
+  })
+
   it.each([true, false])('forces onboarding from Debug (macOS: %s)', async (macOS) => {
     shortcutPlatform.macOS = macOS
     localStorage.setItem('harness.onboarding.v1', 'done')
@@ -6441,7 +7104,7 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(window, debugShortcut)
     fireEvent.click(await screen.findByRole('button', { name: 'Force onboarding' }))
     await screen.findByRole('heading', { name: 'Welcome to TasteCode' })
-    fireEvent.click(screen.getByRole('button', { name: /^Begin setup/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Get started/ }))
     fireEvent.change(screen.getByRole('textbox', { name: 'Your name' }), {
       target: { value: 'Blue Emi' },
     })
@@ -6452,7 +7115,7 @@ describe('global shortcuts', () => {
     expect(localStorage.getItem('harness.theme')).toBe('dark')
     expect(document.documentElement.dataset['theme']).toBe('dark')
     fireEvent.click(screen.getByRole('button', { name: 'Skip setup' }))
-    expect(screen.queryByRole('dialog', { name: 'Pick your look' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Choose your look' })).toBeNull()
     expect(localStorage.getItem('harness.onboarding.v1')).toBe('done')
   })
 
@@ -6636,9 +7299,8 @@ describe('global shortcuts', () => {
     })
 
     fireEvent.keyDown(window, { key: 'g', metaKey: true })
-    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
-      threadId: 'untouched-thread',
-    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
+    expect(composerProps().newSession).toBe(true)
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {
@@ -6697,6 +7359,7 @@ describe('global shortcuts', () => {
   })
 
   it('toggles the terminal from the composer without changing its draft', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -6717,6 +7380,7 @@ describe('global shortcuts', () => {
   })
 
   it('routes the terminal shortcut to the selected right sidebar terminal', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
@@ -6724,8 +7388,7 @@ describe('global shortcuts', () => {
 
     fireEvent.keyDown(window, { key: ',', metaKey: true })
     fireEvent.click(await screen.findByRole('button', { name: 'General' }))
-    fireEvent.click(screen.getByRole('combobox', { name: 'Default terminal location' }))
-    fireEvent.click(screen.getByRole('option', { name: 'Right sidebar' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Right' }))
     expect(localStorage.getItem(TERMINAL_PLACEMENT_KEY)).toBe('workspace')
     fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
 
@@ -6756,6 +7419,7 @@ describe('global shortcuts', () => {
   })
 
   it('opens the bottom terminal before a chat starts', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     render(<App />)
 
     await screen.findByRole('button', { name: /^New session,/ })
@@ -7948,8 +8612,20 @@ describe('live sessions', () => {
 
 function dropFile(composer: HTMLElement, path: string) {
   const file = new File(['test'], path.split('/').at(-1) ?? 'attachment')
-  Object.defineProperty(file, 'path', { value: path })
-  fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'harness')
+  Object.defineProperty(window, 'harness', {
+    configurable: true,
+    value: {
+      ...window.harness,
+      droppedFilePath: (candidate: File) => (candidate === file ? path : undefined),
+    },
+  })
+  try {
+    fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+  } finally {
+    if (descriptor) Object.defineProperty(window, 'harness', descriptor)
+    else Reflect.deleteProperty(window, 'harness')
+  }
 }
 
 function finishQueueAnimations() {
@@ -8143,7 +8819,7 @@ describe('reopening a session', () => {
         return Promise.resolve({
           models: [
             {
-              id: 'gpt-5.6-sol',
+              id: 'gpt-6.1-sol',
               displayName: 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -8197,80 +8873,22 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
         text: 'Keep this model',
         clientSubmissionId: expect.stringMatching(/^local:/),
-        model: 'gpt-5.6-sol',
+        model: 'gpt-6.1-sol',
         effort: 'low',
       })
     })
   })
 
-  it('keeps a server-bound API session active while beta discovery is pending', async () => {
-    serverProjects = [
-      {
-        path: '/work/project',
-        name: 'project',
-        pinned: false,
-        createdAt: 0,
-        sessions: [
-          {
-            id: 'api-thread',
-            title: 'API thread',
-            provider: 'api',
-            createdAt: 0,
-            running: false,
-          },
-        ],
-      },
-    ]
-    let releaseModels!: () => void
-    const modelsGate = new Promise<void>((resolve) => {
-      releaseModels = resolve
-    })
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method === 'providers.list') {
-        return modelsGate.then(() => ({ providers: serverProviders }))
-      }
-      return request(method, params)
-    })
-
-    render(<App />)
-
-    fireEvent.click(await screen.findByRole('button', { name: 'API thread, API connection' }))
-    await waitFor(() => {
-      expect(localStorage.getItem('harness.provider')).toBe('api')
-      expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
-    })
-
-    const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: 'Use the session provider' } })
-    fireEvent.keyDown(composer, { key: 'Enter' })
-
-    await waitFor(() => {
-      const optimistic = screen.getByText('Use the session provider').getAttribute('data-item-id')
-      expect(optimistic).toMatch(/^local:/)
-      expect(transport.request).toHaveBeenCalledWith('thread.sendTurn', {
-        threadId: 'api-thread',
-        text: 'Use the session provider',
-        clientSubmissionId: optimistic,
-      })
-    })
-    await act(async () => {
-      releaseModels()
-      await modelsGate
-    })
-  })
-
-  it('preserves exact parked ACP memory without offering its loaded source', async () => {
+  it('preserves exact memory of an unavailable source without offering it', async () => {
     serverProjects = [
       {
         ...serverProjects[0]!,
         sessions: [
           {
-            id: 'acp-thread',
-            title: 'ACP thread',
-            provider: 'acp',
-            agent: 'kimi',
+            id: 'grok-thread',
+            title: 'Grok thread',
+            provider: 'grok',
+            agent: 'work-grok',
             createdAt: 0,
             running: false,
           },
@@ -8280,17 +8898,17 @@ describe('reopening a session', () => {
     localStorage.setItem(
       'harness.modelBySource',
       JSON.stringify({
-        'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+        'grok:work-grok': { modelKey: 'grok:work-grok:model-x', effort: 'high' },
       }),
     )
 
     render(<App />)
 
-    fireEvent.click(await screen.findByRole('button', { name: 'ACP thread, Kimi CLI' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Grok thread, Grok' }))
     await screen.findByText('Provider unavailable')
     expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
     expect(JSON.parse(localStorage.getItem('harness.modelBySource') ?? '{}')).toMatchObject({
-      'acp:kimi': { modelKey: 'acp:kimi:model-x', effort: 'high' },
+      'grok:work-grok': { modelKey: 'grok:work-grok:model-x', effort: 'high' },
     })
 
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
@@ -8320,7 +8938,7 @@ describe('reopening a session', () => {
         return Promise.resolve({
           models: [
             {
-              id: claude ? 'opus' : 'gpt-5.6-sol',
+              id: claude ? 'opus' : 'gpt-6.1-sol',
               displayName: claude ? 'Opus 5' : 'GPT-5.6 Sol',
               isDefault: true,
               reasoningEfforts: ['low', 'high'],
@@ -8332,7 +8950,7 @@ describe('reopening a session', () => {
       }
       return request(method, params)
     })
-    localStorage.setItem('harness.model', 'codex:gpt-5.6-sol')
+    localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
 
     render(<App />)
 
@@ -8817,5 +9435,152 @@ describe('reopening a session', () => {
     expect(text).toContain('Live during reconnect')
     expect(text).not.toContain('Older history')
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull()
+  })
+})
+
+describe('connection recovery regressions', () => {
+  it.each(['push gap', 'reconnect'] as const)(
+    'recovers an idle cached background chat after %s',
+    async (reason) => {
+      serverProjects[0]!.sessions = [
+        { id: 'a', title: 'Foreground', running: false },
+        { id: 'b', title: 'Background', running: false },
+      ]
+      const request = transport.request.getMockImplementation()!
+      let lost = false
+      transport.request.mockImplementation((method, params) => {
+        if (method !== 'thread.history') return request(method, params)
+        const { threadId, afterSeq } = methods['thread.history'].params.parse(params)
+        const events =
+          threadId === 'a'
+            ? [completedHistoryEvent(1, 'a-base', 'Foreground base')]
+            : [
+                completedHistoryEvent(1, 'b-base', 'Background base'),
+                ...(lost
+                  ? [
+                      completedHistoryEvent(2, 'missing', 'Recovered background message'),
+                      completedHistoryEvent(3, 'live', 'Background live message'),
+                    ]
+                  : []),
+              ]
+        return Promise.resolve({
+          events: events.filter(({ seq }) => seq > (afterSeq ?? 0)),
+          running: false,
+        })
+      })
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: /^Background,/ }))
+      await screen.findByText('Background base')
+      fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
+      await screen.findByText('Foreground base')
+      transport.request.mockClear()
+      lost = true
+      act(() => {
+        if (reason === 'push gap') {
+          for (const listener of transport.sequenceGapListeners) listener(2, 3)
+        } else {
+          setConnectionState('reconnecting')
+          setConnectionState('open')
+        }
+      })
+      emitThreadEvent('b', completedHistoryEvent(3, 'live', 'Background live message').event, 3)
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('thread.history', {
+          threadId: 'b',
+          afterSeq: 1,
+        }),
+      )
+      fireEvent.click(screen.getByRole('button', { name: /^Background,/ }))
+      expect(await screen.findByText('Recovered background message')).toBeTruthy()
+      expect(screen.getAllByText('Background live message')).toHaveLength(1)
+    },
+  )
+
+  it('retries a failed account check on reconnect and allows a new chat', async () => {
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+    const request = transport.request.getMockImplementation()!
+    let online = false
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'auth.status')
+        return online
+          ? Promise.resolve({ signedIn: true })
+          : Promise.reject(new Error('Connection lost'))
+      return request(method, params)
+    })
+    render(<App />)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Send after reconnect' } })
+    await screen.findByText('Could not check this account. Connection lost')
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    online = true
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ text: 'Send after reconnect' }),
+      ),
+    )
+  })
+
+  it('ignores an old failed account reply after the reconnect check succeeds', async () => {
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+    const request = transport.request.getMockImplementation()!
+    let rejectOld!: (error: Error) => void
+    let reads = 0
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'auth.status')
+        return ++reads === 1
+          ? new Promise((_, reject) => {
+              rejectOld = reject
+            })
+          : Promise.resolve({ signedIn: true })
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Keep ready' },
+    })
+    await waitFor(() => expect(reads).toBe(1))
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    )
+    expect(reads).toBe(2)
+    await act(async () => rejectOld(new Error('Old connection failed')))
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText(/Old connection failed/)).toBeNull()
+  })
+
+  it('shows a notice when an approval reply cannot be sent', async () => {
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.respondToApproval'
+        ? Promise.reject(new Error('Connection lost'))
+        : request(method, params),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(threadCallbacks.decideApproval).toBeTypeOf('function'))
+    act(() => threadCallbacks.decideApproval!('approval-1', 'approve'))
+    expect(await screen.findByText('Could not send the approval. Connection lost')).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('thread.respondToApproval', {
+      threadId: 'untouched-thread',
+      approvalId: 'approval-1',
+      decision: 'approve',
+    })
   })
 })

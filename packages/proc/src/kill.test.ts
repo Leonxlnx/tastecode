@@ -57,6 +57,7 @@ describe('owned process tree termination', () => {
     try {
       await waitForFile(file)
       await killTree(child)
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
       const stopped = readFileSync(file, 'utf8')
       await sleep(150)
       expect(readFileSync(file, 'utf8')).toBe(stopped)

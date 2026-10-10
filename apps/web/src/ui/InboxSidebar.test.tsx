@@ -60,6 +60,84 @@ function props(projects: Project[]) {
 }
 
 describe('InboxSidebar', () => {
+  it('retains only project metadata in incremental entries', () => {
+    const classify = createInboxEntryClassifier()
+    let projects: Project[] = [
+      {
+        path: '/alpha',
+        name: 'Alpha',
+        sessions: [active('a', 'A', 2), active('b', 'B', 1)],
+      },
+    ]
+    const initial = classify(projects, '', '')
+    const retained = initial.active[1]
+    for (let index = 0; index < 10; index += 1) {
+      projects = updateSession(projects, 'a', (session) => ({
+        ...session,
+        status: index % 2 ? 'idle' : 'working',
+      }))
+      const next = classify(projects, '', '')
+      expect(next.active[1]).toBe(retained)
+      for (const entry of next.ordered) {
+        expect(entry.project).toEqual({ path: '/alpha', name: 'Alpha' })
+        expect(entry.project).not.toHaveProperty('sessions')
+      }
+    }
+  })
+
+  it('range-selects only mounted rows across collapsed and paginated sections', () => {
+    vi.stubGlobal(
+      'requestIdleCallback',
+      vi.fn(() => 1),
+    )
+    vi.stubGlobal('cancelIdleCallback', vi.fn())
+    const sessions: Session[] = [
+      ...Array.from({ length: 30 }, (_, index) =>
+        active(`a-${index}`, `Active ${index}`, 100 - index),
+      ),
+      {
+        ...active('snoozed', 'Hidden snoozed', 0),
+        lifecycle: { state: 'snoozed', snoozedAt: 1, wakeAt: 2 },
+      },
+      {
+        ...active('settled', 'Visible settled', 0),
+        lifecycle: { state: 'settled', settledAt: 1, reason: 'manual' },
+      },
+    ]
+    const onArchiveSessions = vi.fn()
+    render(
+      <InboxSidebar
+        {...props([{ path: '/alpha', sessions }])}
+        onArchiveSessions={onArchiveSessions}
+      />,
+    )
+    const first = screen.getByText('Active 0').closest('button')!
+    const last = screen.getByText('Visible settled').closest('button')!
+    expect(screen.queryByText('Hidden snoozed')).toBeNull()
+    expect(screen.queryByText('Active 12')).toBeNull()
+    fireEvent.click(first)
+    fireEvent.click(last, { shiftKey: true })
+    expect(screen.getByText('13 threads selected')).toBeTruthy()
+    fireEvent.contextMenu(last)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete 13 threads' }))
+    expect(onArchiveSessions).toHaveBeenCalledWith([
+      ...Array.from({ length: 12 }, (_, index) => `a-${index}`),
+      'settled',
+    ])
+  })
+
+  it('shows placeholder threads until the project list arrives', () => {
+    const view = render(<InboxSidebar {...props([])} loading />)
+
+    expect(screen.getByRole('status').textContent).toBe('Loading threads…')
+    expect(screen.queryByText('No active threads in this project.')).toBeNull()
+    expect(screen.getByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+
+    view.rerender(<InboxSidebar {...props([])} loading={false} />)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByText('No active threads in this project.')).toBeTruthy()
+  })
+
   it('moves only changed rows in retained many-thread groups', () => {
     const projects: Project[] = Array.from({ length: 10 }, (_, projectIndex) => ({
       path: `/project-${projectIndex}`,
@@ -718,16 +796,15 @@ describe('InboxSidebar', () => {
     expect(actions.onSettle).not.toHaveBeenCalled()
   })
 
-  it('uses canonical provider and ACP source names in thread metadata', () => {
+  it('uses canonical provider names in thread metadata', () => {
     const sessions: Session[] = [
-      { ...active('claude', 'Claude task', 4), provider: 'claude-code' },
-      { ...active('grok', 'Grok task', 3), provider: 'grok' },
-      { ...active('gemini', 'Gemini task', 2), provider: 'acp', agent: 'gemini' },
-      { ...active('api', 'API task', 1), provider: 'api' },
+      { ...active('claude', 'Claude task', 3), provider: 'claude-code' },
+      { ...active('grok', 'Grok task', 2), provider: 'grok' },
+      { ...active('codex', 'Codex task', 1), provider: 'codex', agent: 'work-codex' },
     ]
     render(<InboxSidebar {...props([{ path: '/alpha', sessions }])} />)
 
-    for (const label of ['Claude Code', 'Grok', 'Gemini CLI', 'API connection']) {
+    for (const label of ['Claude Code', 'Grok', 'Codex']) {
       const identity = screen.getByText(label).closest('.source-identity')
       expect(identity?.classList.contains('source-identity--compact')).toBe(true)
       expect(identity?.querySelector('svg')).toBeTruthy()

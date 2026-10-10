@@ -1,10 +1,5 @@
 import { z } from 'zod'
 import {
-  ModelConnectionListSchema,
-  ModelConnectionModelsSchema,
-  ModelConnectionSchema,
-} from './connections.js'
-import {
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
@@ -14,8 +9,8 @@ import {
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderContextSettingsSchema,
   ProviderIdSchema,
-  ProviderSetupSchema,
   ProviderStatusSchema,
   ProviderUpdateSchema,
   UsageSchema,
@@ -153,6 +148,8 @@ export const PreviewInteractiveTargetViolationSchema = z
     label: z.string().max(200),
     width: z.number().finite().nonnegative(),
     height: z.number().finite().nonnegative(),
+    /** An ancestor's overflow hides part of the target. */
+    partiallyClipped: z.boolean().optional(),
   })
   .refine(({ width, height }) => width < 44 || height < 44, {
     message: 'interactive target violations must be smaller than 44 CSS px',
@@ -164,12 +161,20 @@ export type PreviewInteractiveTargetViolation = z.infer<
 export const PreviewDomAuditSchema = z.object({
   h1Count: z.number().int().nonnegative().max(10_000),
   interactiveTargetViolations: z.array(PreviewInteractiveTargetViolationSchema).max(200),
+  /**
+   * `partial` when the bounded DOM walk stopped early or content may sit in closed
+   * shadow roots; counts are then lower bounds.
+   */
+  coverage: z.enum(['complete', 'partial']).optional(),
 })
 export type PreviewDomAudit = z.infer<typeof PreviewDomAuditSchema>
 
 export const PreviewScreenshotSchema = PreviewViewportSchema.extend({
   path: z.string().min(1),
   domAudit: PreviewDomAuditSchema.optional(),
+  /** Full document height; larger than `capturedHeight` when the bitmap cap cut the page. */
+  documentHeight: z.number().int().positive().optional(),
+  capturedHeight: z.number().int().positive().optional(),
 })
 export type PreviewScreenshot = z.infer<typeof PreviewScreenshotSchema>
 
@@ -404,6 +409,12 @@ export const ThreadLifecycleSchema = z.discriminatedUnion('state', [
 ])
 export type ThreadLifecycle = z.infer<typeof ThreadLifecycleSchema>
 
+export const ProviderContextSettingsMapSchema = z.partialRecord(
+  ProviderIdSchema,
+  ProviderContextSettingsSchema,
+)
+export type ProviderContextSettingsMap = z.infer<typeof ProviderContextSettingsMapSchema>
+
 export const SidebarSettingsSchema = z.object({
   mode: z.enum(['classic', 'inbox']),
   autoSettleDays: z.number().int().min(1).max(90).nullable(),
@@ -597,6 +608,19 @@ export const methods = {
     params: z.object({}),
     result: z.object({ providers: z.array(ProviderStatusSchema) }),
   },
+  /** Context settings applied when a session launches or resumes. */
+  'providers.contextSettings': {
+    params: z.object({}),
+    result: ProviderContextSettingsMapSchema,
+  },
+  /** Replaces one provider's settings; sessions already running keep theirs. */
+  'providers.updateContextSettings': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      settings: ProviderContextSettingsSchema,
+    }),
+    result: ProviderContextSettingsMapSchema,
+  },
   /** Cached background release checks, separate from startup provider detection. */
   'providers.updates': {
     params: z.object({ refresh: z.boolean().optional() }),
@@ -639,7 +663,6 @@ export const methods = {
   'providers.install': {
     params: z.object({
       provider: ProviderIdSchema,
-      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
@@ -657,34 +680,9 @@ export const methods = {
   'providers.launch': {
     params: z.object({
       provider: ProviderIdSchema,
-      agent: z.string().min(1).optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
-  },
-  'connections.list': {
-    params: z.object({}),
-    result: ModelConnectionListSchema,
-  },
-  'connections.upsert': {
-    params: ModelConnectionSchema.omit({
-      credentialConfigured: true,
-      capabilities: true,
-      problem: true,
-    }),
-    result: z.object({ connection: ModelConnectionSchema }),
-  },
-  'connections.setCredential': {
-    params: z.object({ connectionId: z.string().min(1), apiKey: z.string().min(1) }),
-    result: z.object({ credentialConfigured: z.literal(true) }),
-  },
-  'connections.remove': {
-    params: z.object({ connectionId: z.string().min(1) }),
-    result: z.object({}),
-  },
-  'connections.models': {
-    params: z.object({ connectionId: z.string().min(1) }),
-    result: ModelConnectionModelsSchema,
   },
   'mcp.list': {
     params: z.object({ provider: ProviderIdSchema, projectPath: z.string().min(1) }),
@@ -804,6 +802,8 @@ export const methods = {
     params: z.object({
       repository: GitHubRepositoryNameSchema,
       number: z.number().int().positive(),
+      expectedHeadOid: z.string().min(1),
+      expectedBaseOid: z.string().min(1),
       page: z.number().int().min(1).max(100).optional(),
       refresh: z.boolean().optional(),
     }),
@@ -916,6 +916,33 @@ export const methods = {
       ),
     }),
   },
+  /**
+   * Find files and folders by name anywhere in a registered project or a session's isolated
+   * checkout, including folders the client has not opened yet. Follows the same visibility
+   * rules as `workspace.listDirectory`.
+   */
+  'workspace.searchFiles': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      query: z.string().trim().min(1).max(256),
+      limit: z.number().int().min(1).max(500).optional(),
+    }),
+    result: z.object({
+      entries: z.array(
+        z.object({
+          name: z.string().min(1),
+          path: z.string(),
+          kind: z.enum(['directory', 'file']),
+          size: z.number().nonnegative(),
+          modifiedAt: z.number().nonnegative(),
+          restricted: z.boolean(),
+        }),
+      ),
+      /** More matches exist than were returned, or the walk stopped at its bound. */
+      truncated: z.boolean(),
+    }),
+  },
   /** Read a bounded public text file without exposing renderer filesystem access. */
   'workspace.readFile': {
     params: z.object({
@@ -992,32 +1019,6 @@ export const methods = {
   'voice.cancel': {
     params: z.object({ requestId: z.string().uuid() }),
     result: z.object({}),
-  },
-  /**
-   * Agents reachable over ACP, and whether each one is actually on this
-   * machine. The list is the server's to answer because only it can look.
-   */
-  'acp.agents': {
-    params: z.object({}),
-    result: z.object({
-      agents: z.array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-          installed: z.boolean(),
-          /** True when we captured and read this agent's frames ourselves. */
-          verified: z.boolean(),
-          install: z.string().optional(),
-          setup: ProviderSetupSchema,
-          /**
-           * Why sign-in or use is impaired right now, in language we can show
-           * the user directly — e.g. a vendor discontinuing a login path.
-           * Mirrors `ProviderStatus.problem`.
-           */
-          problem: z.string().optional(),
-        }),
-      ),
-    }),
   },
   /**
    * Projects and sessions the server knows about. These replace what the
@@ -1178,7 +1179,21 @@ export const methods = {
    * which is what a client that fell behind needs.
    */
   'thread.history': {
-    params: z.object({ threadId: z.string(), afterSeq: z.number().optional() }),
+    params: z
+      .object({
+        threadId: z.string(),
+        afterSeq: z.number().optional(),
+        /** Opt in to complete-turn pages. Omit before for the newest page. */
+        page: z
+          .object({
+            before: z.string().min(1).max(512).optional(),
+            turnLimit: z.number().int().min(1).max(100).optional(),
+          })
+          .optional(),
+      })
+      .refine((value) => value.page === undefined || value.afterSeq === undefined, {
+        message: 'Backward history pages cannot be combined with forward replay',
+      }),
     result: z.object({
       events: z.array(z.object({ seq: z.number(), event: DomainEventSchema })),
       running: z.boolean(),
@@ -1186,6 +1201,18 @@ export const methods = {
       reset: z.boolean().optional(),
       /** Effective access mode used when this task resumes. */
       approval: ApprovalModeSchema.optional(),
+      /** Absent on servers without paging. Cursors are opaque and thread-scoped.
+       * Pages contain whole turn lifecycles and assistant/tool pairs; a single
+       * oversized turn may exceed the normal page size. A rewrite invalidates
+       * cursors and returns reset instead of silently mixing history revisions.
+       */
+      page: z
+        .object({
+          olderCursor: z.string().min(1).max(512).nullable(),
+          /** Stable upper bound used to reconcile live events during paging. */
+          snapshotSeq: z.number().int().nonnegative(),
+        })
+        .optional(),
     }),
   },
   'thread.diff': {
@@ -1260,40 +1287,24 @@ export const methods = {
     result: z.object({}),
   },
   'thread.start': {
-    params: z
-      .object({
-        provider: ProviderIdSchema,
-        /**
-         * Which ACP agent to launch, when `provider` is `acp`. ACP is one
-         * integration serving many agents, so the provider alone does not say
-         * which binary to spawn.
-         */
-        agent: z.string().optional(),
-        /** Server-owned model connection selected when `provider` is `api`. */
-        connectionId: z.string().min(1).optional(),
-        workspacePath: z.string(),
-        model: z.string().optional(),
-        serviceTier: z.string().optional(),
-        effort: z.string().optional(),
-        approval: ApprovalModeSchema.optional(),
-        /**
-         * Give this session a private git worktree instead of the project folder
-         * itself. Two agents in one directory overwrite each other, and the
-         * second to write wins silently.
-         */
-        isolate: z.boolean().optional(),
-        /** Local branch used atomically for a shared or isolated checkout. */
-        baseRef: z.string().min(1).max(1024).optional(),
-      })
-      .superRefine((request, context) => {
-        if ((request.provider === 'api') !== Boolean(request.connectionId)) {
-          context.addIssue({
-            code: 'custom',
-            path: ['connectionId'],
-            message: 'connectionId is required only for api sessions',
-          })
-        }
-      }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      /** Custom harness to launch instead of the provider's own CLI. */
+      agent: z.string().optional(),
+      workspacePath: z.string(),
+      model: z.string().optional(),
+      serviceTier: z.string().optional(),
+      effort: z.string().optional(),
+      approval: ApprovalModeSchema.optional(),
+      /**
+       * Give this session a private git worktree instead of the project folder
+       * itself. Two agents in one directory overwrite each other, and the
+       * second to write wins silently.
+       */
+      isolate: z.boolean().optional(),
+      /** Local branch used atomically for a shared or isolated checkout. */
+      baseRef: z.string().min(1).max(1024).optional(),
+    }),
     result: z.object({ threadId: z.string() }),
   },
   /**
