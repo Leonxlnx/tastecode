@@ -958,36 +958,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return response.effectiveEnabled
   }
 
-  async reloadMcpServers(
-    threadId: string,
-    servers: McpServerConfig[],
-    credentials: Record<string, string>,
-  ): Promise<void> {
-    const prepared = prepareMcpConfig(servers, credentials)
-    for (const [name, value] of Object.entries(prepared.environment)) {
-      if (this.#mcpEnvironment[name] !== value) {
-        throw new Error('start a new session to apply new MCP credentials')
-      }
-    }
-    try {
-      await this.#call('thread/resume', {
-        threadId,
-        excludeTurns: true,
-        config: { mcp_servers: prepared.servers },
-      })
-    } catch {
-      throw new Error('Codex could not hot-reload MCP config; start a new session to apply it')
-    }
-    await this.#call('config/mcpServer/reload', undefined)
-    // Only after the process actually reloaded: assigning earlier left the
-    // in-memory config disagreeing with the running Codex on failure. The
-    // inventory cache describes the pre-reload world, so it goes too.
-    this.#mcpServers = prepared.servers
-    this.#mcpInventory.delete(threadId)
-    this.#mcpInventoryLoads.delete(threadId)
-    this.emit('mcpChanged', { threadId })
-  }
-
   async startMcpOAuth(
     serverId: string,
     threadId: string,
