@@ -4256,6 +4256,8 @@ export function App() {
         if (!pending.threadId) return
         id = pending.threadId
       }
+      // A provisional chat whose start failed has no thread to rename.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:title`,
         () => transport.request('thread.rename', { threadId: id, title }),
