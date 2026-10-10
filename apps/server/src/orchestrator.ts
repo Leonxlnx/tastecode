@@ -1543,8 +1543,10 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // A failed change leaves the session on its last applied mode, which is
+    // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
@@ -1732,7 +1734,7 @@ export class Orchestrator {
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     await this.#ensureThread(threadId)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -2971,7 +2973,11 @@ export class Orchestrator {
             // Force-stop the runtime only. Stop all is not the user closing the chat.
             // A runtime that replaced it meanwhile was not the one that hung.
             if (this.#threads.get(threadId) === entry) {
-              await this.#disposeThreadRuntime(threadId, 'disconnect')
+              const disposed = this.#disposeThreadRuntime(threadId, 'disconnect')
+              // The detached runtime's own cleanup events are dropped, so settle
+              // its turn and requests here, before anything can start another.
+              this.#settleInterruptedLifecycles(threadId)
+              await disposed
             }
             return {
               threadId,
@@ -2988,6 +2994,17 @@ export class Orchestrator {
       return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
+    }
+  }
+
+  /** Record what restart recovery would for a runtime that is gone. */
+  #settleInterruptedLifecycles(threadId: string): void {
+    try {
+      for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        this.#record(threadId, event)
+      }
+    } catch (error) {
+      this.#onLog(`Could not settle the force-stopped turn: ${errorMessage(error)}`)
     }
   }
 
@@ -3014,6 +3031,30 @@ export class Orchestrator {
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
     this.#onLifecycleScheduleChanged()
+    await Promise.all([
+      sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
+      runtimeDisposed,
+    ])
+  }
+
+  /**
+   * Ends a chat's agent process without archiving the chat, so the next
+   * message resumes it. Removing a project uses this: the project can be added
+   * back, and its chats must still accept messages then.
+   */
+  async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      await this.closeSideThread(threadId)
+      return
+    }
+    // A prompt claimed for dispatch or steering has not been accepted yet, and
+    // its drain gives up once the runtime is gone. Return it to the queue, as
+    // a disconnect does, or it stays hidden until a restart runs it.
+    const draining = this.#drainingQueues.get(threadId)
+    if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
+    const sideThreadId = this.#sideThreads.get(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,

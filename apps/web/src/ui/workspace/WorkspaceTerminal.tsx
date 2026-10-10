@@ -9,11 +9,13 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   transport: Transport
   threadId?: string | undefined
   projectPath?: string | undefined
-  theme: 'light' | 'dark'
   onClose: () => void
 }) {
-  const target = props.threadId
-    ? { threadId: props.threadId }
+  // The server does not know a chat's provisional id while its first message
+  // creates it; stay in the project checkout until the real id arrives.
+  const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
+  const target = threadId
+    ? { threadId }
     : props.projectPath
       ? { projectPath: props.projectPath }
       : undefined
@@ -32,7 +34,6 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
         terminalKey={props.terminalKey}
         transport={props.transport}
         {...target}
-        theme={props.theme}
         mode="workspace"
         active={props.active}
         onClose={props.onClose}

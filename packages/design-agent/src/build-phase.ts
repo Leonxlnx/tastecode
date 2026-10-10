@@ -245,8 +245,18 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
           break
         const normalized = normalizeWorkspaceFile(file[1]!)
         if (!normalized) break
-        files.push(normalized)
         clause = clause.slice(file[0].length)
+        // "Next.js components" or "Three.js code" names a library, not a file.
+        if (
+          libraryName(normalized) ||
+          /^\s+(?:[\w-]+\s+)?(?:apps?|code|components?|framework|libraries|library|pages?|projects?|scenes?|setup|site|stack|version|website)(?![\w.-])/i.test(
+            clause,
+          )
+        ) {
+          files.length = 0
+          break
+        }
+        files.push(normalized)
         const separator = /^(?:\s*,\s*(?:and\s+)?|\s+and\s+|\s+)/i.exec(clause)
         if (!separator) break
         clause = clause.slice(separator[0].length)
@@ -255,6 +265,30 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
     }
   }
   return undefined
+}
+
+const LIBRARY_STEMS = new Set([
+  'alpine',
+  'angular',
+  'anime',
+  'babylon',
+  'chart',
+  'd3',
+  'ember',
+  'express',
+  'next',
+  'node',
+  'nuxt',
+  'p5',
+  'react',
+  'solid',
+  'three',
+  'vue',
+])
+
+function libraryName(file: string): boolean {
+  const match = /^([\w-]+)\.(?:js|ts)$/i.exec(file)
+  return !!match && LIBRARY_STEMS.has(match[1]!.toLowerCase())
 }
 
 function workspaceFiles(workspacePath: string): string[] {

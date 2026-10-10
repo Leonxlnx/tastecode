@@ -1811,11 +1811,7 @@ function mergeReviewers(
   for (const review of reviews) {
     const key = review.author.login.toLowerCase()
     const existing = byLogin.get(key)
-    if (
-      !existing ||
-      existing.submittedAt === undefined ||
-      Date.parse(review.submittedAt) >= Date.parse(existing.submittedAt)
-    ) {
+    if (!existing || supersedes(review, existing)) {
       byLogin.set(key, {
         actor: review.author,
         state: review.state,
@@ -1829,6 +1825,27 @@ function mergeReviewers(
     byLogin.set(actorValue.login.toLowerCase(), { actor: actorValue, state: 'REQUESTED' })
   }
   return [...byLogin.values()]
+}
+
+/**
+ * Whether a review replaces the one already shown for its author.
+ *
+ * GitHub keeps a reviewer's latest opinion: a comment-only review (every reply
+ * to a review thread is one) does not cancel an approval or a change request,
+ * so it only wins over another comment.
+ */
+function supersedes(review: PullRequestReview, existing: PullRequestReviewer): boolean {
+  const opinionated = isOpinionatedReview(review.state)
+  const existingOpinionated = isOpinionatedReview(existing.state)
+  if (opinionated !== existingOpinionated) return opinionated
+  return (
+    existing.submittedAt === undefined ||
+    Date.parse(review.submittedAt) >= Date.parse(existing.submittedAt)
+  )
+}
+
+function isOpinionatedReview(state: PullRequestReviewer['state']): boolean {
+  return state !== 'COMMENTED' && state !== 'PENDING'
 }
 
 function normalizeAutoMerge(

@@ -190,6 +190,17 @@ export class ProviderHistory {
               ) {
                 this.store.renameThread(threadId, session.title)
               }
+              // An archived chat is imported closed, because its provider will
+              // not resume it. Once unarchived there, it can be continued again.
+              if (
+                existing?.closedAt !== undefined &&
+                threadId === duplicateId &&
+                previous?.threadId === threadId &&
+                previous.session.archived &&
+                !session.archived
+              ) {
+                this.store.reopenThread(threadId)
+              }
               const entry = {
                 provider,
                 threadId,

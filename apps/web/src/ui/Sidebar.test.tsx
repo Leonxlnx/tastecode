@@ -611,6 +611,8 @@ describe('Sidebar chat actions', () => {
     expect(input.getAttribute('aria-label')).toBe('Rename Polish the sidebar')
     expect(input.closest('.sessrow')?.classList.contains('is-active')).toBe(true)
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 

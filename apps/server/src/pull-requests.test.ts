@@ -148,6 +148,43 @@ describe('PullRequestService', () => {
               state: 'APPROVED',
               submittedAt: '2026-08-09T11:00:00Z',
             },
+            // Replying to a review thread submits a comment-only review. It
+            // must not hide the approval GitHub still counts.
+            {
+              id: 'PRR_2',
+              author: { login: 'reviewer' },
+              body: '',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T11:30:00Z',
+            },
+            {
+              id: 'PRR_3',
+              author: { login: 'second-reviewer' },
+              body: 'Needs a test',
+              state: 'CHANGES_REQUESTED',
+              submittedAt: '2026-08-09T09:00:00Z',
+            },
+            {
+              id: 'PRR_4',
+              author: { login: 'second-reviewer' },
+              body: 'Thanks',
+              state: 'APPROVED',
+              submittedAt: '2026-08-09T12:00:00Z',
+            },
+            {
+              id: 'PRR_5',
+              author: { login: 'commenter' },
+              body: 'First note',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T09:00:00Z',
+            },
+            {
+              id: 'PRR_6',
+              author: { login: 'commenter' },
+              body: 'Second note',
+              state: 'COMMENTED',
+              submittedAt: '2026-08-09T10:00:00Z',
+            },
           ],
         })
       }
@@ -222,6 +259,16 @@ describe('PullRequestService', () => {
         expect.objectContaining({
           actor: expect.objectContaining({ login: 'reviewer' }),
           state: 'APPROVED',
+          submittedAt: '2026-08-09T11:00:00Z',
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ login: 'second-reviewer' }),
+          state: 'APPROVED',
+        }),
+        expect.objectContaining({
+          actor: expect.objectContaining({ login: 'commenter' }),
+          state: 'COMMENTED',
+          submittedAt: '2026-08-09T10:00:00Z',
         }),
         expect.objectContaining({
           actor: expect.objectContaining({ login: 'pending-reviewer' }),

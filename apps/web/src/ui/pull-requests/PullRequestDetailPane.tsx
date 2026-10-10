@@ -59,6 +59,7 @@ import { PullRequestFiles } from './PullRequestFiles.js'
 import { PullRequestImages } from './PullRequestImages.js'
 import { comparePullRequestText, countLabel } from './pull-request-text.js'
 import { errorMessage as messageOf } from '../../boundary.js'
+import { isConfirmEnter } from '../../shortcuts.js'
 
 type DetailTab = 'summary' | 'files'
 type ComposerMode = 'comment' | 'approve' | 'request_changes'
@@ -939,7 +940,7 @@ function PullRequestTitleEditor(props: {
       onBlur={save}
       onChange={(event) => setTitle(event.target.value)}
       onKeyDown={(event) => {
-        if (event.key === 'Enter' && !props.busy) {
+        if (isConfirmEnter(event) && !props.busy) {
           event.preventDefault()
           event.currentTarget.blur()
           return

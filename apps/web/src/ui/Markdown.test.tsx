@@ -34,6 +34,18 @@ describe('Markdown plain fast path', () => {
     expect(full.container.querySelector('a, code, em, strong, blockquote, table')).toBeNull()
     expect(fast.container.querySelector('a, code, em, strong, blockquote, table')).toBeNull()
   })
+  it.each([
+    'Docs are at www.example.com now.',
+    'Write to someone@example.com today.',
+    'This is ~struck~ text.',
+  ])('keeps GFM autolinks and strikethrough for %s', async (text) => {
+    const full = render(<CompletedMarkdown text={text} />)
+    const fast = render(<Markdown text={text} />)
+    const element = (container: HTMLElement) => container.querySelector('a, del')?.outerHTML
+
+    await waitFor(() => expect(element(fast.container)).toBeDefined())
+    expect(element(fast.container)).toBe(element(full.container))
+  })
 })
 
 describe('Markdown inline references', () => {
@@ -159,6 +171,19 @@ describe('Markdown inline references', () => {
       project,
     )
     expect(screen.queryByText('This file is outside the selected project')).toBeNull()
+  })
+
+  it.each([
+    ['file:///C:/src/C%23App/Program.cs', 'C:/src', 'C:\\src\\C#App\\Program.cs', 'C:/src'],
+    ['file:///home/u/C%23App/Program.cs', '/home/u', '/home/u/C#App/Program.cs', '/home/u'],
+    ['/home/u/proj/issue%231.md', '/home/u/proj', '/home/u/proj/issue#1.md', '/home/u/proj'],
+    ['file:///home/u/proj/a.ts#L10', '/home/u/proj', '/home/u/proj/a.ts', '/home/u/proj'],
+  ])('reveals %s with an encoded # kept in the file name', async (href, project, path) => {
+    vi.mocked(revealProjectFile).mockClear()
+    render(<Markdown text={`See [the file](${href}).`} projectPath={project} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'the file' }))
+    expect(revealProjectFile).toHaveBeenCalledWith(path, project)
   })
 
   it('shows a retryable error when the native reveal request fails', async () => {

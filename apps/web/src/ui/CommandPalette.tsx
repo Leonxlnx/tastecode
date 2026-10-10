@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { IconSearch as Search } from '@tabler/icons-react'
 import '../styles/command-palette.css'
+import { isConfirmEnter } from '../shortcuts.js'
 import { useDialogFocus } from './dialog-focus.js'
 
 export type CommandScope = 'all' | 'projects' | 'new-thread'
@@ -164,7 +165,7 @@ function CommandPaletteComponent(props: {
                 setSelected((current) => (current + direction + commands.length) % commands.length)
                 return
               }
-              if (event.key === 'Enter') {
+              if (isConfirmEnter(event)) {
                 event.preventDefault()
                 choose(commands[selected])
               }

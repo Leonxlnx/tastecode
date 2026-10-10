@@ -841,6 +841,49 @@ describe('idle thread runtime retention', () => {
     }
   })
 
+  it('keeps chats resumable after their project is removed and added back', async () => {
+    const store = new Store(':memory:')
+    const { orchestrator, sessions, resumedIds } = harness(undefined, store)
+    const project = process.cwd()
+    try {
+      store.addProject(project)
+      const thread = await orchestrator.startThread('codex', project)
+
+      // What projects.remove does.
+      await Promise.all(store.threads(project).map((t) => orchestrator.stopThread(t.id)))
+      orchestrator.forgetProject(project)
+      store.removeProject(project)
+      expect(sessions[0]?.disposed).toBe(true)
+      expect(orchestrator.isRunning(thread.id)).toBe(false)
+
+      store.addProject(project)
+      expect(store.sidebarThreads().map((t) => t.id)).toContain(thread.id)
+      await orchestrator.submitTurn(thread.id, 'continue')
+
+      expect(resumedIds).toEqual([thread.id])
+      expect(sessions[1]?.sent).toEqual(['continue'])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('stops a Side chat with its parent without archiving the parent', async () => {
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const parent = await orchestrator.startThread('claude-code', process.cwd())
+      store.append(parent.id, userMessage('parent-user', 'Explain this failure.', 'parent-turn'))
+      await orchestrator.startSideThread(parent.id)
+
+      await orchestrator.stopThread(parent.id)
+
+      expect(sessions.every((session) => session.disposed)).toBe(true)
+      expect(store.threads().filter((thread) => thread.ephemeral)).toEqual([])
+      expect(store.thread(parent.id)?.closedAt).toBeUndefined()
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('resumes an evicted runtime on the next submission', async () => {
     const { orchestrator, sessions, resumedIds } = harness(undefined, new Store(':memory:'), 1)
     const first = await orchestrator.startThread('codex', process.cwd())
@@ -1140,6 +1183,54 @@ describe('live access level', () => {
     await orchestrator.submitTurn(thread.id, 'next')
     expect(store.threadApproval(thread.id)).toBe('ask')
     expect(resumedOptions.at(-1)?.approval).toBe('ask')
+    await orchestrator.disposeAll()
+  })
+
+  it('still starts the queued prompt when an access change fails as the turn ends', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo', { approval: 'ask' })
+    const session = sessions[0]!
+    let reject!: (error: Error) => void
+    const apply = vi
+      .spyOn(session, 'setApproval')
+      .mockImplementationOnce(() => new Promise<void>((_resolve, fail) => (reject = fail)))
+    session.turnIds = ['turn-1', 'turn-2']
+    await orchestrator.submitTurn(thread.id, 'first')
+    session.emit(turnStarted(thread.id, 'turn-1'))
+    await expect(orchestrator.submitTurn(thread.id, 'second')).resolves.toMatchObject({
+      queued: true,
+    })
+    const changing = orchestrator.setThreadApproval(thread.id, 'full')
+    const failure = expect(changing).rejects.toThrow('permission mode change failed')
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+    session.emit({ type: 'turn.completed', turnId: 'turn-1', status: 'completed' })
+    reject(new Error('permission mode change failed'))
+    await failure
+
+    await vi.waitFor(() => expect(session.sent).toEqual(['first', 'second']))
+    expect(orchestrator.queue(thread.id).items).toEqual([])
+    expect(store.threadApproval(thread.id)).toBe('ask')
+    await orchestrator.disposeAll()
+  })
+
+  it('sends a prompt submitted while an access change fails', async () => {
+    const { orchestrator, sessions, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo', { approval: 'ask' })
+    const session = sessions[0]!
+    let reject!: (error: Error) => void
+    const apply = vi
+      .spyOn(session, 'setApproval')
+      .mockImplementationOnce(() => new Promise<void>((_resolve, fail) => (reject = fail)))
+    const changing = orchestrator.setThreadApproval(thread.id, 'full')
+    const failure = expect(changing).rejects.toThrow('permission mode change failed')
+    await vi.waitFor(() => expect(apply).toHaveBeenCalledTimes(1))
+    const sending = orchestrator.submitTurn(thread.id, 'hello')
+    reject(new Error('permission mode change failed'))
+    await failure
+
+    await expect(sending).resolves.toMatchObject({ queued: false })
+    expect(session.sent).toEqual(['hello'])
+    expect(store.threadApproval(thread.id)).toBe('ask')
     await orchestrator.disposeAll()
   })
 
@@ -6263,6 +6354,62 @@ describe('several sessions at once', () => {
       vi.useRealTimers()
     }
   })
+
+  it('closes the open turn and its requests when Stop all force-stops an agent', async () => {
+    vi.useFakeTimers()
+    try {
+      const { sessions, orchestrator, store, received } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      const session = sessions[0]!
+      await orchestrator.submitTurn(thread.id, 'work')
+      session.emit(turnStarted(thread.id, 'turn-1'))
+      session.emit({
+        type: 'item.started',
+        item: {
+          id: 'cmd-1',
+          turnId: 'turn-1',
+          type: 'command',
+          status: 'started',
+          text: 'npm test',
+          createdAt: 1,
+        },
+      })
+      session.emit({
+        type: 'approval.requested',
+        request: { id: 'approval-1', kind: 'command', createdAt: 1 },
+      })
+      expect(orchestrator.inboxStatus(thread.id)).toBe('approval')
+      session.interruptBarrier = new Promise(() => {})
+      // The adapter's own cleanup arrives after the runtime is detached.
+      session.dispose = () => {
+        session.disposed = true
+        session.emit({ type: 'approval.resolved', id: 'approval-1' })
+      }
+
+      const stopping = orchestrator.panicStop()
+      await vi.advanceTimersByTimeAsync(5_000)
+      await stopping
+
+      const types = store.history(thread.id).map(({ event }) => event.type)
+      expect(types.slice(-3)).toEqual(['item.completed', 'approval.resolved', 'turn.completed'])
+      expect(store.history(thread.id).at(-1)?.event).toMatchObject({
+        type: 'turn.completed',
+        turnId: 'turn-1',
+        status: 'interrupted',
+      })
+      expect(store.history(thread.id).at(-3)?.event).toMatchObject({
+        type: 'item.completed',
+        item: { id: 'cmd-1', status: 'failed' },
+      })
+      expect(received.at(-1)?.event).toMatchObject({ type: 'turn.completed' })
+      expect(orchestrator.isTurnRunning(thread.id)).toBe(false)
+      expect(orchestrator.inboxStatus(thread.id)).toBe('ready')
+      expect(() => orchestrator.settleThread(thread.id)).not.toThrow()
+      expect(store.recoverInterruptedThreads()).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('sidebar inbox lifecycle', () => {
@@ -7116,6 +7263,52 @@ describe('queued turns', () => {
     },
   )
 
+  it.each(['dispatched', 'steered'] as const)(
+    'hands back a prompt being %s when its project is removed',
+    async (claim) => {
+      const { orchestrator, sessions, store } = harness()
+      const project = '/repo'
+      try {
+        store.addProject(project)
+        const thread = await orchestrator.startThread('codex', project)
+        const session = sessions[0]!
+        await orchestrator.submitTurn(thread.id, 'running', [], {}, 'running')
+        session.emit(turnStarted(thread.id, 's1-turn'))
+        const queued = await orchestrator.submitTurn(thread.id, 'next', [], {}, 'next')
+        if (!queued.queued) throw new Error('expected the prompt to queue')
+        // Claim the prompt and hold it before the agent has accepted it.
+        let release = () => {}
+        let claimed: Promise<void>
+        if (claim === 'dispatched') {
+          session.release = () => {}
+          session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+          await vi.waitFor(() => expect(session.sent).toEqual(['running', 'next']))
+          release = () => session.release?.()
+          claimed = Promise.resolve()
+        } else {
+          session.steerBarriers.push(new Promise<void>((resolve) => (release = resolve)))
+          claimed = orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)
+          await vi.waitFor(() => expect(session.steered).toEqual(['next']))
+        }
+
+        // What projects.remove does.
+        await Promise.all(store.threads(project).map((t) => orchestrator.stopThread(t.id)))
+        orchestrator.forgetProject(project)
+        store.removeProject(project)
+        release()
+        await claimed
+        await new Promise<void>((resolve) => setImmediate(resolve))
+        store.addProject(project)
+
+        expect(orchestrator.queue(thread.id).items.map((item) => item.text)).toEqual(['next'])
+        expect(store.queuedThreadIds().has(thread.id)).toBe(true)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    },
+  )
+
   it('restores a failed steer from durable state after its empty queue cache was evicted', async () => {
     const { orchestrator, sessions, store } = harness()
     try {
@@ -7411,7 +7604,8 @@ describe('isolated sessions', () => {
     const { orchestrator } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo)
 
-    await expect(orchestrator.diff(thread.id)).rejects.toThrow(/isolated session/)
+    // The Edited files card matches this text to show the turn's patch instead.
+    await expect(orchestrator.diff(thread.id)).rejects.toThrow('requires an isolated session')
   })
 
   it('does not reject work while the agent turn is running', async () => {

@@ -262,6 +262,20 @@ describe('PullRequestDetailPane inline editing', () => {
     )
   })
 
+  it('keeps the title editor open for the Enter that confirms an IME conversion', async () => {
+    setup()
+
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit title' }))
+    const input = screen.getByRole('textbox', { name: 'Pull request title' })
+    input.focus()
+    fireEvent.change(input, { target: { value: 'にほんご' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(document.activeElement).toBe(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(document.activeElement).not.toBe(input)
+  })
+
   it('edits the description inside its section without opening a dialog', async () => {
     const { request } = setup({ ...detail, body: 'Original description' })
 

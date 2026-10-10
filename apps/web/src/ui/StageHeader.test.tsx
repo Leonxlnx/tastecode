@@ -64,6 +64,8 @@ describe('StageHeader', () => {
     const rename = screen.getByRole('textbox', { name: 'Rename chat' })
     expect(rename.classList.contains('rename--chat')).toBe(true)
     fireEvent.change(rename, { target: { value: 'Polished landing page' } })
+    fireEvent.keyDown(rename, { key: 'Enter', isComposing: true })
+    expect(stage.onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(rename, { key: 'Enter' })
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
   })
