@@ -107,6 +107,23 @@ describe('StageHeader', () => {
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-started', 'Landing page')
   })
 
+  it('saves a new chat rename there when a shortcut switches away before it starts', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="pending:new" title="Fix login" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Fix login' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename chat' }), {
+      target: { value: 'Login fix' },
+    })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-b" title="Chat B" />)
+
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('pending:new', 'Login fix')
+    expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
+  })
+
   it('keeps useful app options available on New chat', () => {
     const stage = props()
     render(
