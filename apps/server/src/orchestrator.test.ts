@@ -5798,6 +5798,22 @@ describe('MCP inventory', () => {
       }
     })
 
+    it('accepts the next save once no chat is running', async () => {
+      const { orchestrator, sessions, store } = harness()
+      try {
+        await orchestrator.startThread('codex', '/repo')
+        withoutReload(sessions[0]!)
+        sessions[0]!.emit({ type: 'turn.completed', turnId: 'turn-0', status: 'completed' })
+        await orchestrator.reloadMcpServers('codex', '/repo')
+        expect(sessions[0]!.disposed).toBe(true)
+
+        await expect(orchestrator.reloadMcpServers('codex', '/repo')).resolves.toBeUndefined()
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+      }
+    })
+
     it('says that a Temporary chat keeps its servers', async () => {
       const { orchestrator, sessions, store } = harness()
       try {

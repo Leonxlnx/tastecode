@@ -1090,9 +1090,8 @@ export class Orchestrator {
       const entry = this.#threads.get(threadId)
       if (entry) active.set(threadId, entry)
     }
-    if (active.size === 0) {
-      throw new Error('start a compatible session for this project before reloading MCP servers')
-    }
+    // A runtime that starts from here reads the saved servers.
+    if (active.size === 0) return
     const options = this.#mcpRuntimeOptions(provider, projectPath)
     const results = await Promise.allSettled(
       [...active].map(async ([threadId, entry]) => {
