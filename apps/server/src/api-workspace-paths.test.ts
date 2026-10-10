@@ -84,7 +84,7 @@ describe('direct API workspace path policy', () => {
     )
   })
 
-  it.each(['gcloud', '.docker', 'release.key'])(
+  it.each(['gcloud', 'docker', 'release.key'])(
     'allows a workspace that lives under a folder named %s',
     (parent) => {
       const root = workspaceDirectory(path.join(tmpdir(), 'harness-api-parent-'))
@@ -116,6 +116,20 @@ describe('direct API workspace path policy', () => {
       expect(() => writableWorkspacePath(workspace, 'new.txt')).toThrow(/credential/)
     },
   )
+
+  it.each([
+    ['.aws', 'cli', 'cache'],
+    ['.ssh', 'keys'],
+    ['.docker', 'contexts'],
+    ['.config', 'gcloud', 'legacy_credentials'],
+  ])('still rejects a workspace opened inside a credential folder (%s)', (...segments) => {
+    const root = workspaceDirectory(path.join(tmpdir(), 'harness-api-secret-home-'))
+    const workspace = path.join(root, ...segments)
+    mkdirSync(workspace, { recursive: true })
+    writeFileSync(path.join(workspace, 'token.json'), 'synthetic canary')
+    expect(() => existingWorkspacePath(workspace, 'token.json', false)).toThrow(/credential/)
+    expect(() => writableWorkspacePath(workspace, 'new.txt')).toThrow(/credential/)
+  })
 
   it('names the workspace by its resolved folder, not the last segment as written', () => {
     const aws = path.resolve(tmpdir(), '.aws')
