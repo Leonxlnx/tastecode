@@ -7,6 +7,7 @@ import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 let store: Store
@@ -782,6 +783,44 @@ describe('provider history integration', () => {
       closedAt: 8000,
       lastActiveAt: 8000,
     })
+  })
+  it('keeps chats archived in the provider out of the project list', async () => {
+    const { history } = setup([
+      metadata(),
+      { ...metadata('archived'), archived: true, updatedAt: 8000 },
+    ])
+    await history.refresh()
+    const list = createProjectListProjector()
+    const state: ProjectListState = {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    }
+    const listed = () =>
+      list(store.projects(), store.sidebarThreads(), store.queuedThreadIds(), state)
+        .projects.flatMap((project) => project.sessions)
+        .map((session) => session.id)
+
+    expect(listed()).toEqual(['external:codex:native'])
+    store.closeThread('external:codex:native')
+    expect(listed()).toEqual([])
+  })
+  it('lists a chat archived in the provider again once it is unarchived there', async () => {
+    const archived = { ...metadata('archived'), archived: true, updatedAt: 8000 }
+    const { history, source } = setup([archived])
+    await history.refresh()
+    expect(store.thread('external:codex:archived')?.closedAt).toBe(8000)
+
+    vi.mocked(source.list).mockResolvedValue([
+      { ...archived, archived: false, revision: '2', updatedAt: 9000 },
+    ])
+    await history.refresh()
+
+    expect(store.thread('external:codex:archived')?.closedAt).toBeUndefined()
+    expect(
+      store.sidebarThreads().find((thread) => thread.id === 'external:codex:archived'),
+    ).not.toHaveProperty('closedAt')
+    expect(store.thread('external:codex:archived')?.lastActiveAt).toBe(9000)
   })
   it('matches repeated prompts once and keeps a distinct outside turn', async () => {
     store.addProject(process.cwd())

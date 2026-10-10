@@ -142,6 +142,10 @@ export function createProjectListProjector(options: { includeDefaults?: boolean 
       ? new Map<string, ThreadProjectionLocation>()
       : previousThreadLocations
     for (const thread of threads) {
+      // A closed chat can no longer be continued or shelved, so it is not
+      // listed with the open ones. One that still owns an isolated checkout
+      // stays, because its row is the only way to discard that checkout.
+      if (thread.closedAt !== undefined && thread.worktreeBranch === undefined) continue
       const group = groups.get(thread.projectPath)
       if (!group) continue
       const projectIndex = rebuildThreadLocations

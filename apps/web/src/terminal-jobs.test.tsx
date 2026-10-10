@@ -42,6 +42,9 @@ vi.mock('@xterm/addon-fit', () => ({
 }))
 vi.mock('./ui/TerminalPane.js', () => ({
   copyTerminalSelection() {},
+  followTerminalTheme() {
+    return () => {}
+  },
   terminalCopyShortcut() {
     return false
   },

@@ -438,7 +438,6 @@ function WorkspaceToolSurface(props: {
         transport={props.transport}
         threadId={props.threadId}
         projectPath={props.projectPath}
-        theme={props.theme}
         onClose={props.onClose}
       />
     )

@@ -30,6 +30,7 @@ vi.mock('@harness/proc', async (importOriginal) => ({
 
 class FakeAcpRpc implements AcpRpc {
   #onServerRequest: ServerRequestHandler = (_method, _params, respond) => respond(null)
+  #onNotification: (method: string, params: JsonRpcValue | undefined) => void = () => {}
   #resolvePrompt: ((result: JsonRpcValue) => void) | undefined
   #rejectPrompt: ((error: Error) => void) | undefined
   failTransport: ((error: Error) => void) | undefined
@@ -39,7 +40,10 @@ class FakeAcpRpc implements AcpRpc {
   wire: string[] = []
 
   onStderr(): void {}
-  onNotification(): void {}
+
+  onNotification(handler: (method: string, params: JsonRpcValue | undefined) => void): void {
+    this.#onNotification = handler
+  }
 
   onServerRequest(handler: ServerRequestHandler): void {
     this.#onServerRequest = handler
@@ -89,13 +93,20 @@ class FakeAcpRpc implements AcpRpc {
   }
   dispose(): void {}
 
-  requestPermission(kind: ToolKind): Promise<JsonRpcValue> {
+  sessionUpdate(update: { [key: string]: JsonRpcValue }): void {
+    this.#onNotification('session/update', { sessionId: 'sess-1', update })
+  }
+
+  requestPermission(
+    kind: ToolKind,
+    toolCall: { [key: string]: JsonRpcValue } = {},
+  ): Promise<JsonRpcValue> {
     return new Promise((resolve) => {
       this.#onServerRequest(
         'session/request_permission',
         {
           sessionId: 'sess-1',
-          toolCall: { toolCallId: 'tc-1', title: 'do something', kind },
+          toolCall: { toolCallId: 'tc-1', title: 'do something', kind, ...toolCall },
           options: [
             { optionId: 'allow', kind: 'allow_once', name: 'Allow' },
             { optionId: 'always', kind: 'allow_always', name: 'Always' },
@@ -260,6 +271,94 @@ describe('ACP approval lifecycle', () => {
     }
     const asked = events.filter((event) => event.type === 'approval.requested')
     expect(asked).toHaveLength(5)
+  })
+})
+
+describe('ACP spec-valid null fields', () => {
+  it('asks about a permission request whose optional tool fields are null', async () => {
+    const { adapter, events } = await startedAdapter('ask')
+    let answer: JsonRpcValue | 'unanswered' = 'unanswered'
+    void activeRpc()
+      .requestPermission('execute', {
+        title: 'rm -rf build',
+        status: null,
+        content: null,
+        locations: null,
+        rawInput: null,
+      })
+      .then((result) => (answer = result))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(answer).toBe('unanswered')
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'approval.requested',
+        request: expect.objectContaining({ id: 'tc-1', kind: 'command', command: 'rm -rf build' }),
+      }),
+    )
+    await adapter.dispose()
+  })
+
+  it('answers a switch_mode permission request under full access', async () => {
+    const { adapter } = await startedAdapter('full')
+    await expect(activeRpc().requestPermission('switch_mode')).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'allow' },
+    })
+    await adapter.dispose()
+  })
+
+  it('completes a tool call whose updates carry null fields', async () => {
+    const { adapter, events, turnId } = await startedAdapter('ask')
+    const remote = activeRpc()
+    remote.sessionUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-2',
+      title: 'Edit notes.txt',
+      kind: 'edit',
+      status: 'pending',
+      locations: [{ path: 'notes.txt', line: null }],
+      rawInput: null,
+    })
+    remote.sessionUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-2',
+      title: null,
+      status: null,
+      content: [{ type: 'diff', path: 'notes.txt', oldText: 'old\n', newText: 'new\n' }],
+    })
+    remote.sessionUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-2',
+      kind: null,
+      status: 'completed',
+      content: [
+        {
+          type: 'content',
+          content: {
+            type: 'resource_link',
+            uri: 'file:///notes.txt',
+            name: 'notes.txt',
+            mimeType: null,
+          },
+        },
+      ],
+      locations: null,
+    })
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'item.completed',
+        item: expect.objectContaining({ id: 'tc-2', type: 'file_change', status: 'completed' }),
+      }),
+    )
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'diff.updated',
+        turnId,
+        diff: expect.stringContaining('-old\n+new\n'),
+      }),
+    )
+    await adapter.dispose()
   })
 })
 

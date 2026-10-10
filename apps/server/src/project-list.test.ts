@@ -71,6 +71,25 @@ describe('projects.list projector', () => {
     })
   })
 
+  it('leaves out closed chats unless they still own a checkout', () => {
+    const closing = [
+      ...threads,
+      { ...threads[0]!, id: 'archived', closedAt: 5 },
+      { ...threads[0]!, id: 'isolated', closedAt: 6, worktreeBranch: 'tastecode/isolated' },
+    ]
+    const result = createProjectListProjector()(projects, closing, new Set(), {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    })
+
+    expect(result.projects[0]?.sessions.map((session) => session.id)).toEqual(['a', 'isolated'])
+    expect(result.projects[0]?.sessions[1]).toMatchObject({
+      closedAt: 6,
+      worktreeBranch: 'tastecode/isolated',
+    })
+  })
+
   it('reuses unchanged rows and replaces only changed status or metadata', () => {
     const statuses = new Map<string, ThreadInboxStatus>([
       ['a', 'idle'],

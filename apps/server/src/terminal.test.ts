@@ -182,6 +182,35 @@ describe('TerminalManager', () => {
     for (const id of [bottom, right, second]) expect(manager.status(id).status).toBe('exited')
   })
 
+  it('refuses to start a shell in a folder that no longer exists', () => {
+    const spawn = vi.fn(() => controlledPty())
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: spawn },
+    )
+    const missing = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-missing-'))
+    removeTemporaryDirectory(missing)
+
+    expect(() => manager.open('thread-gone', missing, 80, 24)).toThrow(
+      'The folder for this terminal no longer exists.',
+    )
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('reattaches to a running shell after its folder is removed', () => {
+    const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-removed-'))
+    const spawn = vi.fn(() => controlledPty())
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      { spawnPty: spawn },
+    )
+    const terminalId = manager.open('thread-1', cwd, 80, 24)
+    removeTemporaryDirectory(cwd)
+
+    expect(manager.open('thread-1', cwd, 100, 30)).toBe(terminalId)
+    expect(spawn).toHaveBeenCalledOnce()
+  })
+
   it('bounds shutdown when a PTY never reports its exit', async () => {
     const pty = controlledPty()
     const manager = new TerminalManager(
