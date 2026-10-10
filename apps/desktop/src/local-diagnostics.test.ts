@@ -65,6 +65,22 @@ describe('local diagnostics', () => {
     expect(scrub('Bearer abcdef1234567890')).toBe('Bearer [redacted]')
   })
 
+  it('scrubs keyed secrets whose key carries a prefix', () => {
+    expect(scrub('GET https://example.com/cb?access_token=abc123def456 failed')).toBe(
+      'GET https://example.com/cb?access_token=[redacted] failed',
+    )
+    expect(scrub('refresh_token=abc123def456 rejected')).toBe('refresh_token=[redacted] rejected')
+    expect(scrub('client_secret=abc123def456 rejected')).toBe('client_secret=[redacted] rejected')
+    expect(scrub('GITHUB_TOKEN=abc123def456 missing scope')).toBe(
+      'GITHUB_TOKEN=[redacted] missing scope',
+    )
+    expect(scrub('ANTHROPIC_API_KEY=abc123def456 invalid')).toBe(
+      'ANTHROPIC_API_KEY=[redacted] invalid',
+    )
+    expect(scrub('{"access_token":"abc123def456"}')).toBe('{"access_token":"[redacted]"}')
+    expect(scrub('x-api-key: abc123def456')).toBe('x-api-key: [redacted]')
+  })
+
   it('leaves prose that mentions credential vocabulary untouched', () => {
     expect(scrub('the token expired before the tokenizer finished')).toBe(
       'the token expired before the tokenizer finished',
@@ -73,6 +89,9 @@ describe('local diagnostics', () => {
       'password reset instructions were emailed',
     )
     expect(scrub('a basic connectivity check failed')).toBe('a basic connectivity check failed')
+    expect(scrub('token_type=bearer-like next_tokenizer=on')).toBe(
+      'token_type=bearer-like next_tokenizer=on',
+    )
   })
 
   it('stays off by default and scrubs sensitive error details when enabled', async () => {
