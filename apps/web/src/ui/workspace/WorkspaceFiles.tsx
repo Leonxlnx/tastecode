@@ -110,8 +110,8 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   )
 
   const loadDirectory = useCallback(
-    async (directory: string) => {
-      if (!props.projectPath) return
+    async (directory: string): Promise<Entry[] | undefined> => {
+      if (!props.projectPath) return undefined
       const mine = directoryGeneration.current
       const request = (directoryRequests.current.get(directory) ?? 0) + 1
       directoryRequests.current.set(directory, request)
@@ -125,6 +125,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         })
         if (isCurrent()) {
           setDirectories((current) => new Map(current).set(directory, result.entries))
+          return result.entries
         }
       } catch (cause) {
         if (isCurrent()) {
@@ -139,6 +140,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
           })
         }
       }
+      return undefined
     },
     [context, props.projectPath, props.transport],
   )
@@ -274,7 +276,39 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
 
   const refreshDirectories = useCallback(() => {
     setError(undefined)
-    for (const directory of expandedRef.current) void loadDirectory(directory)
+    // A folder left open inside a collapsed one still refreshes, so its ancestors do too.
+    const open = new Set([''])
+    for (const directory of expandedRef.current)
+      for (let end = directory.length; end > 0; end = directory.lastIndexOf('/', end - 1))
+        open.add(directory.slice(0, end))
+    const generation = directoryGeneration.current
+    // Parents refresh before their children. A folder missing from its parent's new
+    // listing was deleted or replaced: it is closed rather than requested, since
+    // listing it would only fail and keep reporting the error on every refresh.
+    const refresh = async (directory: string) => {
+      const entries = await loadDirectory(directory)
+      if (!entries || directoryGeneration.current !== generation) return
+      const folders = new Set<string>()
+      for (const entry of entries)
+        if (entry.kind === 'directory' && !entry.restricted) folders.add(entry.path)
+      const prefix = directory ? `${directory}/` : ''
+      const gone = new Set<string>()
+      for (const path of open) {
+        if (path === directory || !path.startsWith(prefix)) continue
+        const end = path.indexOf('/', prefix.length)
+        if (!folders.has(end < 0 ? path : path.slice(0, end))) gone.add(path)
+      }
+      if (gone.size > 0) {
+        setExpanded((current) => new Set([...current].filter((path) => !gone.has(path))))
+        setDirectories((current) => {
+          const next = new Map(current)
+          for (const path of gone) next.delete(path)
+          return next
+        })
+      }
+      for (const folder of folders) if (open.has(folder)) void refresh(folder)
+    }
+    void refresh('')
     if (selectedPathRef.current) void readFile(selectedPathRef.current)
     setSearchRevision((current) => current + 1)
   }, [loadDirectory, readFile])

@@ -80,6 +80,39 @@ describe('workspace file refresh', () => {
     expect(screen.queryByText('14 B')).toBeNull()
     expect(screen.getByText('3 B')).toBeTruthy()
   })
+  it('closes a folder the agent deleted instead of reporting it missing on every refresh', async () => {
+    const folder = (path: string) => ({ ...entry(path), kind: 'directory' as const })
+    let deleted = false
+    const transport = new TestTransport((method, params) => {
+      if (method !== 'workspace.listDirectory') throw new Error(`Unexpected ${method}`)
+      const directory = (params as { directory?: string }).directory ?? ''
+      if (!directory)
+        return {
+          path: '',
+          entries: deleted ? [entry('file.ts')] : [folder('tmp'), entry('file.ts')],
+        }
+      if (deleted) throw new Error("ENOENT: no such file or directory, realpath '/project/tmp'")
+      return { path: directory, entries: [entry('tmp/log.txt')] }
+    })
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.click(await screen.findByTitle('tmp'))
+    expect(await screen.findByTitle('tmp/log.txt')).toBeTruthy()
+
+    deleted = true
+    for (let refresh = 0; refresh < 2; refresh += 1) {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+      await settle()
+      expect(screen.queryByTitle('tmp')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    }
+
+    deleted = false
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await settle()
+    expect(screen.getByTitle('tmp').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTitle('tmp/log.txt')).toBeNull()
+  })
 })
 
 describe('workspace file search', () => {
