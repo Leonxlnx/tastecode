@@ -34,6 +34,8 @@ describe('WorkspaceFiles', () => {
     fireEvent.click(button)
     fireEvent.click(button)
     fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    // The folder refreshes once the root listing confirms it still exists.
+    await waitFor(() => expect(pending).toHaveLength(3))
     await act(async () => pending[2]!({ path: 'src', entries: [file('new.ts', 'src/new.ts')] }))
     await act(async () => pending[1]!({ path: 'src', entries: [file('stale.ts', 'src/stale.ts')] }))
     expect(screen.getByTitle('src/new.ts')).toBeTruthy()

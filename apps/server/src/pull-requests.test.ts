@@ -729,6 +729,73 @@ describe('PullRequestService', () => {
     expect(filesCalls).toBe(4)
   })
 
+  it('keeps cached and in-flight file pages when fresh detail observes the same comparison', async () => {
+    let finishPage!: () => void
+    let filesCalls = 0
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          ...comparison,
+        })
+      if (args[1]?.includes('/files?')) {
+        filesCalls += 1
+        if (filesCalls === 2)
+          return new Promise<string>((resolve) => {
+            finishPage = () => resolve('[]')
+          })
+        return '[]'
+      }
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    await service.detail('Blueemi/harness', 7, [])
+    await service.files('Blueemi/harness', 7, comparison)
+    const page2 = service.files('Blueemi/harness', 7, comparison, 2)
+    await vi.waitFor(() => expect(filesCalls).toBe(2))
+    expect((await service.detail('Blueemi/harness', 7, [], true)).headRefOid).toBe(
+      comparison.headRefOid,
+    )
+    finishPage()
+    await expect(page2).resolves.toMatchObject({ page: 2 })
+    await service.files('Blueemi/harness', 7, comparison)
+    expect(filesCalls).toBe(2)
+  })
+
+  it('never reports a check with a conclusion as still in progress', async () => {
+    const run = vi.fn<GhRunner>(async (args) => {
+      if (args[1] === 'user') return JSON.stringify({ login: 'Blueemi' })
+      if (args[1] === 'view')
+        return JSON.stringify({
+          ...authored,
+          comments: [],
+          createdAt: authored.updatedAt,
+          ...comparison,
+          statusCheckRollup: [
+            {
+              __typename: 'CheckRun',
+              name: 'yaml',
+              status: 'COMPLETED',
+              conclusion: 'STARTUP_FAILURE',
+            },
+            { __typename: 'CheckRun', name: 'future', status: 'COMPLETED', conclusion: 'NEW_KIND' },
+            { __typename: 'CheckRun', name: 'running', status: 'IN_PROGRESS', conclusion: null },
+          ],
+        })
+      return '{}'
+    })
+    const service = new PullRequestService({ run, installed: async () => true })
+    const detail = await service.detail('Blueemi/harness', 7, [])
+    expect(detail.checks.map((check) => [check.name, check.state])).toEqual([
+      ['yaml', 'failure'],
+      ['future', 'neutral'],
+      ['running', 'pending'],
+    ])
+  })
+
   it('starts a fresh detail read after a change instead of joining or caching an older one', async () => {
     let title = 'Old title'
     let finishOld!: () => void

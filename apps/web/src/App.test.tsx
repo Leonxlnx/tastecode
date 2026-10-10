@@ -955,6 +955,33 @@ describe('web client', () => {
     },
   )
 
+  it('keeps a rejected side prompt in the chat that is still starting', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    submitTurn('/side what is this?')
+    await screen.findByText('Start the main chat before opening a side chat.')
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    expect(composer().value).toBe('/side what is this?')
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    expect(composer().value).toBe('/side what is this?')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(composer().value).toBe('')
+    fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+    expect(composer().value).toBe('/side what is this?')
+  })
+
   it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -7400,6 +7427,43 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(window, { key: 'g', metaKey: true })
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     expect(composerProps().newSession).toBe(true)
+  })
+
+  it('runs a keybind saved on a number key instead of opening a recent chat', async () => {
+    localStorage.setItem(
+      'harness.keybindings.v1',
+      JSON.stringify({ version: 1, bindings: { newChat: { key: '1', primary: true } } }),
+    )
+    await openNewSession()
+    expect(composerProps().newSession).toBe(false)
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() => expect(composerProps().newSession).toBe(true))
+  })
+
+  it('refuses a number key in the keybind recorder and keeps it opening recent chats', async () => {
+    serverProjects[0]!.sessions.push({ id: 'recent-thread', title: 'Recent chat', createdAt: 5 })
+    await openNewSession()
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.getByRole('alert').textContent).toBe('Already used by Open recent chat.')
+    expect(localStorage.getItem('harness.keybindings.v1')).toBeNull()
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-thread' }),
+      ),
+    )
+    expect(composerProps().newSession).toBe(false)
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {

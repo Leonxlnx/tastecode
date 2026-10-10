@@ -11,12 +11,23 @@ import { AcpTurnTokenUsageSchema } from './usage.js'
 
 export const PROTOCOL_VERSION = 1
 
+/**
+ * ACP types many optional fields as `T | null`, and a null means the same as
+ * an absent field. Decode it as absent; rejecting it would drop the whole frame.
+ */
+function nullish<T extends z.ZodType>(schema: T) {
+  return schema
+    .nullish()
+    .transform((value) => value ?? undefined)
+    .optional()
+}
+
 export const ContentBlockSchema = z.object({
   type: z.string().optional(),
   text: z.string().optional(),
   data: z.string().optional(),
-  mimeType: z.string().optional(),
-  uri: z.string().optional(),
+  mimeType: nullish(z.string()),
+  uri: nullish(z.string()),
 })
 
 export const InitializeResultSchema = z.object({
@@ -96,6 +107,7 @@ export const ToolKindSchema = z.enum([
   'execute',
   'think',
   'fetch',
+  'switch_mode',
   'other',
 ])
 
@@ -114,14 +126,12 @@ export const ToolCallContentSchema = z.discriminatedUnion('type', [
 
 const ToolCallFields = {
   toolCallId: z.string().optional(),
-  title: z.string().optional(),
-  kind: ToolKindSchema.optional(),
-  status: ToolCallStatusSchema.optional(),
-  content: z.array(ToolCallContentSchema).optional(),
-  locations: z
-    .array(z.object({ path: z.string().optional(), line: z.number().optional() }))
-    .optional(),
-  rawInput: z.record(z.string(), z.json()).optional(),
+  title: nullish(z.string()),
+  kind: nullish(ToolKindSchema),
+  status: nullish(ToolCallStatusSchema),
+  content: nullish(z.array(ToolCallContentSchema)),
+  locations: nullish(z.array(z.object({ path: z.string().optional(), line: nullish(z.number()) }))),
+  rawInput: z.json().optional(),
 }
 
 export const ToolCallFieldsSchema = z.object(ToolCallFields)
@@ -129,7 +139,7 @@ export const ToolCallFieldsSchema = z.object(ToolCallFields)
 export const SessionUpdateSchema = z.object({
   ...ToolCallFields,
   sessionUpdate: z.string().optional(),
-  content: z.union([ContentBlockSchema, z.array(ToolCallContentSchema)]).optional(),
+  content: nullish(z.union([ContentBlockSchema, z.array(ToolCallContentSchema)])),
   entries: z
     .array(
       z.object({
