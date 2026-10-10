@@ -332,6 +332,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
+  /** The SDK's `total_cost_usd` is a running total for the current query. */
+  #queryCostUsd = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
@@ -702,6 +704,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           const generation = ++this.#queryGeneration
           this.#promptQueue = promptQueue
           this.#query = query
+          this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
           if (bootstrap)
@@ -862,7 +865,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const turnId = this.#activeTurnId
       if (!turnId) return
       this.#resumeOnRestart = true
-      const usage = toUsage(message.usage, message.total_cost_usd)
+      // Usage tokens are per turn, but the cost is the query's running total: report only
+      // this turn's share so the store can sum turns. A drop means the SDK started over.
+      const total = message.total_cost_usd
+      const costUsd = total < this.#queryCostUsd ? total : total - this.#queryCostUsd
+      this.#queryCostUsd = total
+      const usage = toUsage(message.usage, costUsd)
       if (usage) {
         this.emit('event', {
           type: 'usage.updated',
