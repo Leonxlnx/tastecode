@@ -1,4 +1,5 @@
 import { Component, Suspense, type KeyboardEvent, type ReactNode } from 'react'
+import { IconAlertTriangle, IconRefresh } from '@tabler/icons-react'
 import { reportRendererError } from '../bridge.js'
 import { SurfaceLoadError } from '../surface-load-error.js'
 import '../styles/renderer-recovery.css'
@@ -71,36 +72,46 @@ export class SurfaceErrorBoundary extends Component<Props, State> {
         aria-labelledby="surface-recovery-title"
         onKeyDown={this.#onKeyDown}
       >
-        <section>
-          <h1 id="surface-recovery-title">
+        <section className="renderer-recovery__card">
+          <span className="renderer-recovery__mark" aria-hidden="true">
+            <IconAlertTriangle size={18} stroke={1.75} />
+          </span>
+          <h1 id="surface-recovery-title" className="renderer-recovery__title">
             {failure === 'load' ? `${name} couldn’t load` : `${name} ran into a problem`}
           </h1>
-          <p>
+          <p className="renderer-recovery__body">
             {failure === 'load'
               ? 'Reload the window to try again.'
               : 'The rest of TasteCode is still running.'}
           </p>
           <div className="renderer-recovery-actions">
+            <button
+              type="button"
+              className="renderer-recovery__secondary"
+              onClick={this.props.onClose}
+            >
+              Back to app
+            </button>
             {failure === 'load' ? (
               <button
                 type="button"
+                className="renderer-recovery__primary"
                 ref={this.#focusPrimary}
                 onClick={() => (this.props.reload ?? (() => window.location.reload()))()}
               >
+                <IconRefresh size={15} stroke={2} aria-hidden="true" />
                 Reload window
               </button>
             ) : (
               <button
                 type="button"
+                className="renderer-recovery__primary"
                 ref={this.#focusPrimary}
                 onClick={() => this.setState({ failure: 'none' })}
               >
                 Try again
               </button>
             )}
-            <button type="button" onClick={this.props.onClose}>
-              Back to app
-            </button>
           </div>
         </section>
       </div>
