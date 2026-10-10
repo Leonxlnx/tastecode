@@ -1,9 +1,11 @@
 // @vitest-environment happy-dom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { DiffDecision, DiffHunk, SessionDiff } from '@harness/contracts'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
 import { DiffReview } from './DiffReview.js'
+
+afterEach(cleanup)
 
 function hunk(id: string, header: string, decision?: DiffDecision): DiffHunk {
   return {
@@ -84,5 +86,55 @@ describe('inline diff review', () => {
       hunkId: 'two',
       decision: 'reject',
     })
+  })
+})
+
+describe('changed-word highlights', () => {
+  function rendered(before: string, after: string) {
+    const diff: SessionDiff = {
+      threadId: 'thread-1',
+      version: 'v1',
+      files: [
+        {
+          path: 'src/app.ts',
+          status: 'modified',
+          binary: false,
+          hunks: [
+            {
+              ...hunk('one', '@@ -1 +1 @@'),
+              lines: [
+                { kind: 'deletion', oldLine: 1, text: before },
+                { kind: 'addition', newLine: 1, text: after },
+              ],
+            },
+          ],
+        },
+      ],
+    }
+    const request = vi.fn().mockResolvedValue(diff)
+    return render(
+      <DiffReview transport={{ request } as unknown as Transport} threadId="thread-1" />,
+    )
+  }
+
+  it.each([
+    ['foo()', 'await foo()', 'await '],
+    ['  return x', 'return x', '  '],
+    ['x = 1', 'const x = 1', 'const '],
+    ['await foo()', 'foo()', 'await '],
+  ])('shows %j → %j without repeating unchanged words', async (before, after, changed) => {
+    const { container } = rendered(before, after)
+    await screen.findByText('1 files in current snapshot')
+
+    const codes = [...container.querySelectorAll('.diff-line code')].map((code) =>
+      [...code.childNodes]
+        .filter((node) => node.nodeName !== 'I')
+        .map((node) => node.textContent)
+        .join(''),
+    )
+    expect(codes).toEqual([before, after])
+    expect(
+      [...container.querySelectorAll('.diff-line mark')].map((mark) => mark.textContent),
+    ).toEqual([changed])
   })
 })

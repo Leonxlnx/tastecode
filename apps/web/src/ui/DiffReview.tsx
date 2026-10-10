@@ -209,15 +209,18 @@ function changedWords(before: string, after: string): [ReactNode, ReactNode] {
     oldWords.at(-1 - suffix) === newWords.at(-1 - suffix)
   )
     suffix += 1
-  const render = (words: string[], kind: 'old' | 'new') => (
-    <>
-      {words.slice(0, prefix).join('')}
-      <mark className={`is-${kind}`}>
-        {words.slice(prefix, words.length - suffix || undefined).join('')}
-      </mark>
-      {suffix ? words.slice(-suffix).join('') : ''}
-    </>
-  )
+  const render = (words: string[], kind: 'old' | 'new') => {
+    // The suffix can cover a whole side (`foo()` → `await foo()`), so the
+    // changed run may be empty; it must never fall back to the rest of the line.
+    const changed = words.slice(prefix, words.length - suffix).join('')
+    return (
+      <>
+        {words.slice(0, prefix).join('')}
+        {changed ? <mark className={`is-${kind}`}>{changed}</mark> : null}
+        {suffix ? words.slice(-suffix).join('') : ''}
+      </>
+    )
+  }
   return [render(oldWords, 'old'), render(newWords, 'new')]
 }
 
