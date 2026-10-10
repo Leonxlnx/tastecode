@@ -30,6 +30,7 @@ import {
 } from '@harness/proc'
 import { z, ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import type { McpServerElicitationAction } from './generated/v2/McpServerElicitationAction.js'
 import type { RequestId } from './generated/RequestId.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
@@ -58,6 +59,7 @@ import {
   McpServerOauthLoginCompletedNotificationSchema,
   McpServerOauthLoginResponseSchema,
   McpServerStatusUpdatedNotificationSchema,
+  McpToolApprovalParamsSchema,
   ModelListResponseSchema,
   PermissionsRequestApprovalParamsSchema,
   SkillsConfigWriteResponseSchema,
@@ -80,6 +82,7 @@ import {
   type ErrorNotification,
   type GuardianReviewAction,
   type GuardianReviewNotification,
+  type McpToolApprovalParams,
   type RequestPermissionProfile,
   type PermissionsRequestApprovalParams,
   type ThreadTokenUsageUpdatedNotification,
@@ -453,6 +456,43 @@ type CodexApprovalResponse =
       scope: 'session' | 'turn'
     }
 
+/**
+ * MCP tool approvals are elicitations, answered with an action. `cancel` only
+ * skips the tool in Codex, so aborting also interrupts the turn.
+ */
+const MCP_TOOL_ACTION = {
+  approve: 'accept',
+  'approve-session': 'accept',
+  deny: 'decline',
+  abort: 'cancel',
+} satisfies Record<ApprovalDecision, McpServerElicitationAction>
+
+export function mapMcpToolApprovalResponse(
+  decision: ApprovalDecision,
+  rememberForSession: boolean,
+): { action: McpServerElicitationAction; content: null; _meta: { persist: 'session' } | null } {
+  return {
+    action: MCP_TOOL_ACTION[decision],
+    content: null,
+    _meta: decision === 'approve-session' && rememberForSession ? { persist: 'session' } : null,
+  }
+}
+
+export function mapMcpToolApprovalRequest(params: McpToolApprovalParams): ApprovalRequest {
+  const toolParams = params._meta.tool_params
+  const shownParams =
+    toolParams === undefined || JSON.stringify(toolParams) === '{}'
+      ? ''
+      : `\n${JSON.stringify(toolParams, null, 2)}`
+  return {
+    id: crypto.randomUUID(),
+    kind: 'permissions',
+    ...(params._meta.tool_description ? { reason: params._meta.tool_description } : {}),
+    command: `${params.message}${shownParams}`,
+    createdAt: Date.now(),
+  }
+}
+
 type PendingApproval = {
   kind: ApprovalRequest['kind']
   respond: (result: JsonRpcValue) => void
@@ -460,9 +500,14 @@ type PendingApproval = {
   permissions?: RequestPermissionProfile
   threadId?: string
   turnId?: string
+  /** Present when Codex asked through an MCP elicitation. */
+  mcpTool?: { rememberForSession: boolean }
 }
 
 function approvalReply(pending: PendingApproval, decision: ApprovalDecision): JsonRpcValue {
+  if (pending.mcpTool) {
+    return mapMcpToolApprovalResponse(decision, pending.mcpTool.rememberForSession)
+  }
   return mapApprovalResponse(pending.kind, decision, pending.permissions)
 }
 
@@ -1278,6 +1323,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       return
     }
 
+    if (method === 'mcpServer/elicitation/request') {
+      this.#onMcpElicitation(params, respond, rpcId)
+      return
+    }
+
     const kind = APPROVAL_KIND.get(method)
     if (!kind) {
       this.emit('log', `declined unhandled server request: ${method}`)
@@ -1315,6 +1365,38 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(permission ? { turnId: permission.turnId } : {}),
     })
 
+    this.emit('event', { type: 'approval.requested', request })
+  }
+
+  /**
+   * Codex asks before an MCP tool call with an elicitation marked as an
+   * approval. Forms an MCP server starts itself have no card yet; they are
+   * declined in the elicitation shape, since Codex rejects any other reply.
+   */
+  #onMcpElicitation(
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+    rpcId?: RequestId,
+  ): void {
+    const parsed = McpToolApprovalParamsSchema.safeParse(params)
+    if (!parsed.success) {
+      this.emit('log', 'declined unhandled server request: mcpServer/elicitation/request')
+      respond(mapMcpToolApprovalResponse('deny', false))
+      return
+    }
+    const { threadId, _meta: meta } = parsed.data
+    const turnId = parsed.data.turnId ?? this.#activeTurns.get(threadId)
+    const request = mapMcpToolApprovalRequest(parsed.data)
+    this.#approvals.set(request.id, {
+      kind: request.kind,
+      respond,
+      rpcId,
+      threadId,
+      ...(turnId ? { turnId } : {}),
+      mcpTool: {
+        rememberForSession: [meta.persist ?? []].flat().includes('session'),
+      },
+    })
     this.emit('event', { type: 'approval.requested', request })
   }
 
