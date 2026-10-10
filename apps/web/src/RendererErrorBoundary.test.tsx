@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { RendererErrorBoundary } from './RendererErrorBoundary.js'
-import { launchCrashAgent, reportRendererError, writeClipboardText } from './bridge.js'
+import { crashAgents, launchCrashAgent, reportRendererError, writeClipboardText } from './bridge.js'
 
 vi.mock('./bridge.js', () => ({
   isDesktop: true,
@@ -139,5 +139,23 @@ describe('renderer recovery', () => {
     expect(screen.getByRole('status').dataset['tone']).toBe('error')
     fireEvent.keyDown(screen.getByRole('button', { name: /Claude Code/ }), { key: 'Escape' })
     expect(screen.getByRole('heading').textContent).toContain('couldn’t display')
+  })
+
+  it('moves focus off an agent that turns out to be missing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(crashAgents).mockResolvedValueOnce([
+      { id: 'claude-code', installed: false },
+      { id: 'codex', installed: true },
+      { id: 'grok', installed: true },
+    ])
+    render(
+      <RendererErrorBoundary>
+        <Broken />
+      </RendererErrorBoundary>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Ask an agent/ }))
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: /Codex/ })),
+    )
   })
 })
