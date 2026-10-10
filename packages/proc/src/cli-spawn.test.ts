@@ -50,7 +50,7 @@ describe('Windows CLI dispatch', () => {
       }
       return { isFile: () => true } as ReturnType<typeof statSync>
     })
-    spawnCli('git', ['status'], { ...options, env: { ...options.env, Path: ';C:\\tools' } })
+    spawnCli('git', ['status'], { ...options, env: { ...options.env, Path: ';"";C:\\tools' } })
     expect(spawnOwned).toHaveBeenCalledWith('C:\\tools\\git.EXE', ['status'], expect.anything())
   })
 

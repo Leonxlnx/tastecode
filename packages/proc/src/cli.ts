@@ -95,14 +95,13 @@ function resolveWindowsExecutable(
   // Empty PATH entries are skipped because they would resolve to cwd as well.
   const directories = /[\\/]/.test(command)
     ? [cwd]
-    : (envValue('PATH') ?? '').split(';').filter(Boolean)
+    : (envValue('PATH') ?? '')
+        .split(';')
+        .map((directory) => directory.replace(/^"|"$/g, ''))
+        .filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
-      const candidate = path.win32.resolve(
-        cwd,
-        directory.replace(/^"|"$/g, ''),
-        command + extension,
-      )
+      const candidate = path.win32.resolve(cwd, directory, command + extension)
       try {
         if (statSync(candidate).isFile()) return candidate
       } catch {
