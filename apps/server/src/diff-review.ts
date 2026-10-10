@@ -136,7 +136,7 @@ async function parseDiff(
       path: file.path,
       ...(file.previousPath ? { previousPath: file.previousPath } : {}),
       status: file.status,
-      binary: patch.includes('GIT binary patch') || patch.includes('Binary files '),
+      binary: isBinaryPatch(patch),
       hunks: hunks.map((hunk) => {
         const decision = store.diffDecision(threadId, hunkTarget(hunk.value.id))
         return { ...hunk.value, ...(decision ? { decision } : {}) }
@@ -150,6 +150,14 @@ async function parseDiff(
     value: { threadId, version, files: parsed.map((file) => file.value) },
     files: parsed,
   }
+}
+
+/** Only the header can say a file is binary; its own text may quote these markers. */
+function isBinaryPatch(patch: string): boolean {
+  const firstHunk = patch.indexOf('\n@@ ')
+  return (firstHunk < 0 ? patch : patch.slice(0, firstHunk))
+    .split('\n')
+    .some((line) => line === 'GIT binary patch' || line.startsWith('Binary files '))
 }
 
 async function changedFiles(
