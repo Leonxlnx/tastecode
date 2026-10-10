@@ -340,6 +340,21 @@ describe('Composer draft state', () => {
     expect(onSend).toHaveBeenCalledWith('Keep this native draft', [])
     expect(composer.value).toBe('')
   })
+
+  it('clears the saved draft before handing the text over', () => {
+    const events: string[] = []
+    renderComposer((text) => events.push(`send ${text}`), {
+      onDraftChange: (text) => events.push(`draft ${text}`),
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: 'Keep this' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    // A parent that rejects the send on the spot saves the words again, so a
+    // clear after the hand-over would wipe them.
+    expect(events).toEqual(['draft Keep this', 'draft ', 'send Keep this'])
+  })
 })
 
 describe('Composer docking motion', () => {
