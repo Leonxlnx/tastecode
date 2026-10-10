@@ -388,6 +388,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#streamer = undefined
     this.#activeTurn = undefined
     for (const event of streamer?.finish() ?? []) this.emit('event', event)
+    this.#cancelPendingApprovals()
+  }
+
+  #cancelPendingApprovals(): void {
+    // Anything still waiting is now unanswerable. The agent is still blocked on
+    // its request, so it must hear "cancelled", not silence; the UI must hear
+    // "resolved".
     for (const [id, respond] of this.#pendingApprovals) {
       respond({ outcome: { outcome: 'cancelled' } })
       this.emit('event', { type: 'approval.resolved', id })
