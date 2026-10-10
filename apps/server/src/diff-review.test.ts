@@ -367,6 +367,31 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
   })
 
+  it('deletes a created file when an imported Codex patch has no mode lines', async () => {
+    writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
+    rmSync(path.join(repo, 'staged.txt'))
+    const root = repo.replaceAll('\\', '/')
+    const patch = [
+      `diff --git a/${root}/new.txt b/${root}/new.txt`,
+      '--- /dev/null',
+      `+++ b/${root}/new.txt`,
+      '@@ -0,0 +1,1 @@',
+      '+fresh',
+      `diff --git a/${root}/staged.txt b/${root}/staged.txt`,
+      `--- a/${root}/staged.txt`,
+      '+++ /dev/null',
+      '@@ -1,1 +0,0 @@',
+      '-original',
+      '',
+    ].join('\n')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
+    expect(existsSync(path.join(repo, 'dev'))).toBe(false)
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
   it('does not partially reverse a patch after one of its files changed again', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
     writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
