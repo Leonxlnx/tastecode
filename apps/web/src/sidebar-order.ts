@@ -1,3 +1,4 @@
+import { classifyInboxEntries } from './inbox-order.js'
 import type { Project, Session } from './ui/Sidebar.js'
 
 export type SessionOrder = Record<string, string[]>
@@ -137,6 +138,18 @@ export function sidebarRail(projects: Project[]): {
     orderedProjects: [...pinnedProjects, ...unpinnedProjects],
     pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
   }
+}
+
+/** Every chat in the order the sidebar lists it, from the top. */
+export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'): Session[] {
+  if (mode === 'inbox') {
+    return classifyInboxEntries(projects, '', '').ordered.map(({ session }) => session)
+  }
+  const { orderedProjects, pinnedSessions } = sidebarRail(projects)
+  return [
+    ...pinnedSessions.map(({ session }) => session),
+    ...orderedProjects.flatMap((project) => project.sessions),
+  ]
 }
 
 /**
