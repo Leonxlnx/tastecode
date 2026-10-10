@@ -183,6 +183,26 @@ describe('keybind settings', () => {
     expect(onChange).not.toHaveBeenCalled()
   })
 
+  it('keeps a saved keybind on a reserved chord when it is pressed again', () => {
+    const onChange = vi.fn()
+    render(
+      <KeybindSettings
+        keybindings={{ ...createDefaultKeybindings(), newChat: { key: '1', primary: true } }}
+        macOS
+        onChange={onChange}
+        onReset={() => {}}
+      />,
+    )
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(onChange).toHaveBeenCalledWith('newChat', { key: '1', primary: true })
+    expect(recorder.getAttribute('aria-pressed')).toBe('false')
+  })
+
   it('moves a taken shortcut to the action being recorded', () => {
     render(<StatefulKeybindSettings />)
     const newChat = screen.getByRole('button', { name: 'Change New chat keybind' })
