@@ -138,7 +138,10 @@ export function sidebarRail(projects: Project[]): SidebarRail {
   }
 }
 
-/** Every chat in the order the sidebar lists it, from the top. */
+/**
+ * Every chat in the order the sidebar lists it, from the top. The inbox's
+ * project filter and search box are not applied, so every chat is reachable.
+ */
 export function sidebarSessions(projects: Project[], mode: 'classic' | 'inbox'): Session[] {
   if (mode === 'inbox') {
     return classifyInboxEntries(projects, '', '').ordered.map(({ session }) => session)
