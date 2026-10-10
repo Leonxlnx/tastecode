@@ -25,6 +25,7 @@ import {
   type ReviewTreeNode,
   type ReviewTreeRow,
 } from './review-file-tree.js'
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 import {
   workspaceDiffCollection,
   workspaceDiffItemId,
@@ -183,6 +184,8 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       generation.current += 1
     }
   }, [props.projectPath, props.threadId, refresh])
+
+  useWorkspaceRefresh(props.transport, props.threadId, refresh)
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
