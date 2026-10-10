@@ -18,6 +18,9 @@ describe('ACP reversible patches', () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'acp-patch-'))
     try {
       execFileSync('git', ['init', '--quiet', directory])
+      // Windows runners default to core.autocrlf=true, which would write the
+      // reversed file with CRLF and hide whether the patch itself is exact.
+      execFileSync('git', ['-C', directory, 'config', 'core.autocrlf', 'false'])
       const name = 'file with spaces.txt'
       const file = path.join(directory, name)
       writeFileSync(file, after!)
