@@ -506,6 +506,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   display: grid;
+  align-content: start;
   scrollbar-color: var(--surface-3) transparent;
 }
 
@@ -690,6 +691,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   display: grid;
+  align-content: start;
   scrollbar-color: var(--surface-3) transparent;
 }
 

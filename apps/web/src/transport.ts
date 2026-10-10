@@ -549,7 +549,13 @@ class WebSocketTransport implements Transport {
     // resync instead of only logging state divergence it cannot repair.
     if (this.#lastSequence !== 0 && sequence !== expected) {
       console.warn(`[transport] push gap: expected ${expected}, got ${sequence}`)
-      for (const listener of this.#sequenceGapListeners) listener(expected, sequence)
+      for (const listener of this.#sequenceGapListeners) {
+        try {
+          listener(expected, sequence)
+        } catch (error) {
+          console.error('[transport] sequence gap listener failed', error)
+        }
+      }
     }
     this.#lastSequence = sequence
 
@@ -619,7 +625,15 @@ class WebSocketTransport implements Transport {
     } catch {
       return
     }
-    for (const listener of listeners) listener(parsedData)
+    // One owner's bug must not starve the others, nor escape into the
+    // validator loader where it would fail every buffered reply.
+    for (const listener of listeners) {
+      try {
+        listener(parsedData)
+      } catch (error) {
+        console.error(`[transport] ${channel} listener failed`, error)
+      }
+    }
   }
 
   #loadValidation(): void {

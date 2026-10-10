@@ -23,7 +23,7 @@ const EMPTY: WorkspaceInfo = { added: 0, removed: 0, dirtyFiles: 0 }
  * Never throws: a folder that is not a repo is a normal case, not an error.
  */
 export async function readWorkspace(path: string): Promise<WorkspaceInfo> {
-  const branch = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const branch = await currentBranch(path)
   if (branch === undefined) return EMPTY
 
   const stat = await git(path, ['diff', '--numstat', 'HEAD'])
@@ -46,16 +46,21 @@ export async function readWorkspace(path: string): Promise<WorkspaceInfo> {
 
 /** Local branches available to start work from, with the checked-out branch first. */
 export async function listWorkspaceBranches(path: string): Promise<string[]> {
-  const current = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const current = await currentBranch(path)
+  // `%(refname:short)` turns a branch that shares its name with a tag into
+  // `heads/<name>`, which neither `git switch` nor `refs/heads/<name>` accepts.
   const output = await git(path, [
     'for-each-ref',
-    '--format=%(refname:short)',
+    '--format=%(refname)',
     '--sort=refname',
     'refs/heads',
   ])
   if (output === undefined) return []
 
-  const branches = output.split('\n').filter(Boolean)
+  const branches = output
+    .split('\n')
+    .filter((ref) => ref.startsWith(HEADS))
+    .map((ref) => ref.slice(HEADS.length))
   return current && branches.includes(current)
     ? [current, ...branches.filter((branch) => branch !== current)]
     : branches
@@ -79,6 +84,21 @@ export async function switchWorkspaceBranch(path: string, branch: string): Promi
   }
 
   return readWorkspace(path)
+}
+
+const HEADS = 'refs/heads/'
+
+/**
+ * The checked-out branch's exact name, or `HEAD` when detached.
+ *
+ * `rev-parse --abbrev-ref` disambiguates against tags the same way
+ * `%(refname:short)` does, so the full symbolic ref is read instead.
+ */
+async function currentBranch(path: string): Promise<string | undefined> {
+  const abbreviated = await git(path, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (abbreviated === undefined || abbreviated === 'HEAD') return abbreviated
+  const ref = await git(path, ['symbolic-ref', '-q', 'HEAD'])
+  return ref?.startsWith(HEADS) ? ref.slice(HEADS.length) : abbreviated
 }
 
 async function git(cwd: string, args: string[]): Promise<string | undefined> {

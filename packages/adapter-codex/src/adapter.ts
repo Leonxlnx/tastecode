@@ -30,6 +30,7 @@ import {
 } from '@harness/proc'
 import { z, ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import type { McpServerElicitationAction } from './generated/v2/McpServerElicitationAction.js'
 import type { RequestId } from './generated/RequestId.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
@@ -58,6 +59,7 @@ import {
   McpServerOauthLoginCompletedNotificationSchema,
   McpServerOauthLoginResponseSchema,
   McpServerStatusUpdatedNotificationSchema,
+  McpToolApprovalParamsSchema,
   ModelListResponseSchema,
   PermissionsRequestApprovalParamsSchema,
   SkillsConfigWriteResponseSchema,
@@ -80,6 +82,7 @@ import {
   type ErrorNotification,
   type GuardianReviewAction,
   type GuardianReviewNotification,
+  type McpToolApprovalParams,
   type RequestPermissionProfile,
   type PermissionsRequestApprovalParams,
   type ThreadTokenUsageUpdatedNotification,
@@ -453,6 +456,61 @@ type CodexApprovalResponse =
       scope: 'session' | 'turn'
     }
 
+/**
+ * MCP tool approvals are elicitations, answered with an action. `cancel` only
+ * skips the tool in Codex, so aborting also interrupts the turn.
+ */
+const MCP_TOOL_ACTION = {
+  approve: 'accept',
+  'approve-session': 'accept',
+  deny: 'decline',
+  abort: 'cancel',
+} satisfies Record<ApprovalDecision, McpServerElicitationAction>
+
+export function mapMcpToolApprovalResponse(
+  decision: ApprovalDecision,
+  rememberForSession: boolean,
+) {
+  return {
+    action: MCP_TOOL_ACTION[decision],
+    content: null,
+    _meta: decision === 'approve-session' && rememberForSession ? { persist: 'session' } : null,
+  }
+}
+
+export function mapMcpToolApprovalRequest(params: McpToolApprovalParams): ApprovalRequest {
+  const toolParams = params._meta.tool_params
+  const shownParams =
+    toolParams === undefined || toolParams === null || JSON.stringify(toolParams) === '{}'
+      ? ''
+      : `\n${JSON.stringify(toolParams, null, 2)}`
+  return {
+    id: crypto.randomUUID(),
+    kind: 'permissions',
+    ...(params._meta.tool_description ? { reason: params._meta.tool_description } : {}),
+    command: `${params.message}${shownParams}`,
+    createdAt: Date.now(),
+  }
+}
+
+type PendingApproval = {
+  kind: ApprovalRequest['kind']
+  respond: (result: JsonRpcValue) => void
+  rpcId?: RequestId | undefined
+  permissions?: RequestPermissionProfile
+  threadId?: string
+  turnId?: string
+  /** Present when Codex asked through an MCP elicitation. */
+  mcpTool?: { rememberForSession: boolean }
+}
+
+function approvalReply(pending: PendingApproval, decision: ApprovalDecision): JsonRpcValue {
+  if (pending.mcpTool) {
+    return mapMcpToolApprovalResponse(decision, pending.mcpTool.rememberForSession)
+  }
+  return mapApprovalResponse(pending.kind, decision, pending.permissions)
+}
+
 type ParsedApprovalRequest =
   | { kind: 'permissions'; params: PermissionsRequestApprovalParams }
   | { kind: 'command' | 'file_change'; params: ApprovalParams }
@@ -524,17 +582,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
    * responder because Codex is blocked on that specific request id.
    */
-  #approvals = new Map<
-    string,
-    {
-      kind: ApprovalRequest['kind']
-      respond: (result: JsonRpcValue) => void
-      rpcId?: RequestId | undefined
-      permissions?: RequestPermissionProfile
-      threadId?: string
-      turnId?: string
-    }
-  >()
+  #approvals = new Map<string, PendingApproval>()
   #threadApprovals = new Map<string, ApprovalMode>()
   #userInputs = new Map<
     string,
@@ -910,36 +958,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return response.effectiveEnabled
   }
 
-  async reloadMcpServers(
-    threadId: string,
-    servers: McpServerConfig[],
-    credentials: Record<string, string>,
-  ): Promise<void> {
-    const prepared = prepareMcpConfig(servers, credentials)
-    for (const [name, value] of Object.entries(prepared.environment)) {
-      if (this.#mcpEnvironment[name] !== value) {
-        throw new Error('start a new session to apply new MCP credentials')
-      }
-    }
-    try {
-      await this.#call('thread/resume', {
-        threadId,
-        excludeTurns: true,
-        config: { mcp_servers: prepared.servers },
-      })
-    } catch {
-      throw new Error('Codex could not hot-reload MCP config; start a new session to apply it')
-    }
-    await this.#call('config/mcpServer/reload', undefined)
-    // Only after the process actually reloaded: assigning earlier left the
-    // in-memory config disagreeing with the running Codex on failure. The
-    // inventory cache describes the pre-reload world, so it goes too.
-    this.#mcpServers = prepared.servers
-    this.#mcpInventory.delete(threadId)
-    this.#mcpInventoryLoads.delete(threadId)
-    this.emit('mcpChanged', { threadId })
-  }
-
   async startMcpOAuth(
     serverId: string,
     threadId: string,
@@ -1155,7 +1173,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const pending = this.#approvals.get(approvalId)
     if (!pending) return
     this.#approvals.delete(approvalId)
-    pending.respond(mapApprovalResponse(pending.kind, decision, pending.permissions))
+    pending.respond(approvalReply(pending, decision))
     this.emit('event', { type: 'approval.resolved', id: approvalId })
     if (
       pending.kind === 'permissions' &&
@@ -1275,6 +1293,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       return
     }
 
+    if (method === 'mcpServer/elicitation/request') {
+      this.#onMcpElicitation(params, respond, rpcId)
+      return
+    }
+
     const kind = APPROVAL_KIND.get(method)
     if (!kind) {
       this.emit('log', `declined unhandled server request: ${method}`)
@@ -1294,7 +1317,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // drop the earlier responder and leave Codex blocked on it forever.
     const previous = this.#approvals.get(id)
     if (previous) {
-      previous.respond(mapApprovalResponse(previous.kind, 'deny', previous.permissions))
+      previous.respond(approvalReply(previous, 'deny'))
       this.emit('event', { type: 'approval.resolved', id })
     }
     this.#approvals.set(id, {
@@ -1312,6 +1335,38 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(permission ? { turnId: permission.turnId } : {}),
     })
 
+    this.emit('event', { type: 'approval.requested', request })
+  }
+
+  /**
+   * Codex asks before an MCP tool call with an elicitation marked as an
+   * approval. Forms an MCP server starts itself have no card yet; they are
+   * declined in the elicitation shape, since Codex rejects any other reply.
+   */
+  #onMcpElicitation(
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+    rpcId?: RequestId,
+  ): void {
+    const parsed = McpToolApprovalParamsSchema.safeParse(params)
+    if (!parsed.success) {
+      this.emit('log', 'declined unhandled server request: mcpServer/elicitation/request')
+      respond(mapMcpToolApprovalResponse('deny', false))
+      return
+    }
+    const { threadId, _meta: meta } = parsed.data
+    const turnId = parsed.data.turnId ?? this.#activeTurns.get(threadId)
+    const request = mapMcpToolApprovalRequest(parsed.data)
+    this.#approvals.set(request.id, {
+      kind: request.kind,
+      respond,
+      rpcId,
+      threadId,
+      ...(turnId ? { turnId } : {}),
+      mcpTool: {
+        rememberForSession: [meta.persist ?? []].flat().includes('session'),
+      },
+    })
     this.emit('event', { type: 'approval.requested', request })
   }
 
@@ -1390,7 +1445,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           )
             continue
           this.#approvals.delete(id)
-          pending.respond(mapApprovalResponse(pending.kind, 'deny', pending.permissions))
+          pending.respond(approvalReply(pending, 'deny'))
           emit({ type: 'approval.resolved', id })
         }
         for (const [id, pending] of this.#userInputs) {

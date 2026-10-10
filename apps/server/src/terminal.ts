@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
@@ -183,6 +184,9 @@ export class TerminalManager {
       this.resize(currentId, columns, rows)
       return currentId
     }
+    // A shell started in a missing folder prints a chdir error and exits at
+    // once, which closes its pane before anyone can read why.
+    if (!isFolder(cwd)) throw new Error('The folder for this terminal no longer exists.')
 
     const terminalId = randomUUID()
     this.#pruneStatuses()
@@ -388,6 +392,10 @@ async function settleAll(waiters: Iterable<Promise<void>>, message: string): Pro
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map((result) => result.reason)
   if (errors.length > 0) throw new AggregateError(errors, message)
+}
+
+function isFolder(folder: string): boolean {
+  return statSync(folder, { throwIfNoEntry: false })?.isDirectory() ?? false
 }
 
 export function platformShell(

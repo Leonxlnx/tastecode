@@ -332,6 +332,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
+  /** The SDK's `total_cost_usd` is a running total for the current query. */
+  #queryCostUsd = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
@@ -454,6 +456,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       await query.interrupt()
     } catch (error) {
+      // The turn keeps running, so a later error result is real and must still surface.
+      if (this.#query === query) this.#interruptRequested = false
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
     }
   }
@@ -702,6 +706,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           const generation = ++this.#queryGeneration
           this.#promptQueue = promptQueue
           this.#query = query
+          this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
           if (bootstrap)
@@ -818,6 +823,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.emit('log', 'ignored Claude assistant replay outside an active turn')
         return
       }
+      // Subagent (Task) snapshots belong to the sidechain. Saved history leaves them out, so
+      // the live transcript must too, and they must not touch the main plan or model label.
+      if (message.parent_tool_use_id) return
       if (message.error) this.#log(`Claude assistant error: ${message.error}`)
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
@@ -845,7 +853,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'user') {
-      if (!this.#activeTurnId) return
+      if (!this.#activeTurnId || message.parent_tool_use_id) return
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
@@ -859,7 +867,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const turnId = this.#activeTurnId
       if (!turnId) return
       this.#resumeOnRestart = true
-      const usage = toUsage(message.usage, message.total_cost_usd)
+      // Usage tokens are per turn, but the cost is the query's running total: report only
+      // this turn's share so the store can sum turns. A drop means the SDK started over.
+      const total = message.total_cost_usd
+      const costUsd = total < this.#queryCostUsd ? total : total - this.#queryCostUsd
+      this.#queryCostUsd = total
+      const usage = toUsage(message.usage, costUsd)
       if (usage) {
         this.emit('event', {
           type: 'usage.updated',
@@ -870,11 +883,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
-        this.emit('event', {
-          type: 'thread.error',
-          threadId: this.#threadId,
-          message: this.#redactor.redact(message.errors.join('\n')),
-        })
+        const errors = this.#redactor.redact(message.errors.join('\n'))
+        // A stopped turn ends as an error result carrying "[ede_diagnostic]" lines; that is
+        // the expected outcome of Stop, not something to show as an error.
+        if (this.#interruptRequested) this.#log(`Claude stopped turn: ${errors}`)
+        else this.emit('event', { type: 'thread.error', threadId: this.#threadId, message: errors })
       }
       const status = this.#interruptRequested
         ? 'interrupted'

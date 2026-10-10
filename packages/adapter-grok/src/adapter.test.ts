@@ -904,14 +904,62 @@ describe('Grok adapter', () => {
     adapter.dispose()
   })
 
+  it('counts edited lines that look like diff headers', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Update the schema')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+
+    const frames = [
+      {
+        type: 'tool_call',
+        toolCallId: 'tool-1',
+        toolName: 'search_replace',
+        title: 'search_replace',
+        rawInput: { file_path: 'C:\\repo\\schema.sql' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [
+          {
+            type: 'diff',
+            path: 'C:\\repo\\schema.sql',
+            oldText: '-- old note\nSELECT 1;\n',
+            newText: '++ counter\nSELECT 2;\n',
+          },
+        ],
+      },
+      { type: 'end', stopReason: 'end_turn', sessionId: 'session-1' },
+    ]
+    child.stdout.end(frames.map((frame) => JSON.stringify(frame)).join('\n'))
+    await completed
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'item.completed',
+        item: expect.objectContaining({ type: 'file_change', linesAdded: 2, linesRemoved: 2 }),
+      }),
+    )
+    adapter.dispose()
+  })
+
   it('renders an edit as a unified diff with line counts', () => {
     expect(
       grokDiff([
         { type: 'diff', path: 'C:\\repo\\one.txt', oldText: 'a\nb\n', newText: 'a\nc\n' },
         { type: 'content', content: { type: 'text', text: 'ignored' } },
       ]),
-    ).toBe(
-      [
+    ).toEqual({
+      text: [
         'diff --git a/C:\\repo\\one.txt b/C:\\repo\\one.txt',
         '--- a/C:\\repo\\one.txt',
         '+++ b/C:\\repo\\one.txt',
@@ -921,10 +969,12 @@ describe('Grok adapter', () => {
         '+a',
         '+c',
       ].join('\n'),
-    )
-    expect(grokDiff([{ type: 'diff', path: 'new.txt', oldText: '', newText: 'x' }])).toContain(
-      '--- /dev/null',
-    )
+      linesAdded: 2,
+      linesRemoved: 2,
+    })
+    expect(
+      grokDiff([{ type: 'diff', path: 'new.txt', oldText: '', newText: 'x' }])?.text,
+    ).toContain('--- /dev/null')
     expect(grokDiff([{ type: 'content', content: 'nothing' }])).toBeUndefined()
   })
 

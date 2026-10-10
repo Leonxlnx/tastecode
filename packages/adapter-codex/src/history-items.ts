@@ -1,6 +1,8 @@
 import type { Item } from '@harness/contracts'
 import { binaryPlaceholder, jsonWithoutBinary } from './binary-content.js'
 import { object } from './history-values.js'
+import { countDiffLines } from './map-item.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 type Value = Record<string, unknown>
 type Base = Pick<Item, 'id' | 'turnId' | 'createdAt' | 'status'>
@@ -139,17 +141,23 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
           change.type ?? object(change.kind).type ?? change.kind ?? 'update',
         ).toLowerCase()
         let body = text(change.unified_diff ?? change.diff ?? change.content)
-        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string') {
-          const lines = change.content.split('\n')
-          if (lines.at(-1) === '') lines.pop()
-          body =
-            kind === 'add'
-              ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`
-              : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}\n`
-        }
+        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string')
+          body = wholeFileHunk(kind, change.content)
+        // Without its mode line Git reads `/dev/null` as a path, and Undo would
+        // move a created file to `dev/null` instead of deleting it.
+        const mode =
+          kind === 'add'
+            ? 'new file mode 100644\n'
+            : kind === 'delete'
+              ? 'deleted file mode 100644\n'
+              : ''
+        const header = `diff --git a/${file} b/${file}\n${mode}`
+        // An empty created or deleted file has no hunk, only its header.
         const diff = body.startsWith('diff --git')
           ? body
-          : `diff --git a/${file} b/${file}\n--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+          : body
+            ? `${header}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+            : header
         return {
           item: {
             ...base,
@@ -157,14 +165,10 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
             type: 'file_change',
             path: file,
             text: body || `${kind} ${file}`,
-            linesAdded: body
-              .split('\n')
-              .filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-            linesRemoved: body
-              .split('\n')
-              .filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
+            linesAdded: countDiffLines(body, '+'),
+            linesRemoved: countDiffLines(body, '-'),
           },
-          ...(body ? { diff } : {}),
+          ...(body || mode ? { diff } : {}),
         }
       })
     }

@@ -38,4 +38,13 @@ describe('workspace panel layout', () => {
     expect(lastLauncherButton).toContain('grid-column: 1 / -1')
     expect(lastLauncherButton).toContain('justify-self: center')
   })
+
+  it('packs short Files and Review trees at the top instead of stretching their rows', () => {
+    for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
+      const body =
+        css.match(new RegExp(`\\.${list} \\{(?<body>[\\s\\S]*?)\\n\\}`))?.groups?.body ?? ''
+      expect(body).toContain('display: grid')
+      expect(body).toContain('align-content: start')
+    }
+  })
 })

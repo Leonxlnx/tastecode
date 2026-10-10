@@ -32,6 +32,17 @@ const lines = (replacements: Record<number, string> = {}) =>
 const git = (...args: string[]) =>
   execFileSync('git', args, { cwd: repo, encoding: 'utf8', windowsHide: true })
 
+/**
+ * The patch a provider sends with absolute paths. One pass over the header
+ * lines only, so a temp root that itself contains "b/" is never rewritten.
+ */
+const absolutePatch = (patch: string) => {
+  const root = repo.replaceAll('\\', '/')
+  return patch.replace(/^(?:diff --git |--- |\+\+\+ ).*$/gm, (line) =>
+    line.replace(/(^|[\s"])([ab])\//g, (_, lead, side) => `${lead}${side}/${root}/`),
+  )
+}
+
 beforeEach(() => {
   repo = mkdtempSync(path.join(os.tmpdir(), 'harness-diff-review-'))
   execFileSync('git', ['init', '-b', 'main', repo], { windowsHide: true })
@@ -318,13 +329,24 @@ describe('structured diff review', () => {
     expect(existsSync(path.join(repo, 'new-name.txt'))).toBe(false)
   })
 
+  it('keeps a text file whose lines mention binary patch markers as text', async () => {
+    const notes = (edit: string) =>
+      `When git says "Binary files a and b differ"\nGIT binary patch\n${edit}\n`
+    writeFileSync(path.join(repo, 'notes.md'), notes('before'))
+    git('add', '.')
+    git('commit', '-m', 'notes')
+    writeFileSync(path.join(repo, 'notes.md'), notes('after'))
+
+    const diff = await readWorkspaceDiff(repo)
+
+    expect(diff.files).toHaveLength(1)
+    expect(diff.files[0]).toMatchObject({ path: 'notes.md', binary: false })
+    expect(diff.files[0]?.hunks).toHaveLength(1)
+  })
+
   it('reverses an absolute provider patch without touching unrelated work', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
-    const relative = git('diff', '--binary', '--no-color', '--', 'file.txt')
-    const root = repo.replaceAll('\\', '/')
-    const absolute = relative
-      .replaceAll('a/file.txt', `a/${root}/file.txt`)
-      .replaceAll('b/file.txt', `b/${root}/file.txt`)
+    const absolute = absolutePatch(git('diff', '--binary', '--no-color', '--', 'file.txt'))
     writeFileSync(path.join(repo, 'unrelated.txt'), 'keep this\n')
 
     await reverseUnifiedDiff(repo, absolute)
@@ -340,14 +362,84 @@ describe('structured diff review', () => {
       git('add', '--', name)
       git('commit', '-m', 'named file')
       writeFileSync(path.join(repo, name), 'after\n')
-      const root = repo.replaceAll('\\', '/')
-      const patch = git('diff', '--binary', '--no-color', '--', name)
-        .replaceAll('a/', `a/${root}/`)
-        .replaceAll('b/', `b/${root}/`)
+      const patch = absolutePatch(git('diff', '--binary', '--no-color', '--', name))
       await reverseUnifiedDiff(repo, patch)
       expect(readFileSync(path.join(repo, name), 'utf8')).toBe('before\n')
     },
   )
+
+  it('reverses an imported Codex turn that joined its edits with blank lines', async () => {
+    writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'second edit' }))
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const root = repo.replaceAll('\\', '/')
+    const edit = (file: string, hunk: string) =>
+      `diff --git a/${root}/${file} b/${root}/${file}\n--- a/${root}/${file}\n+++ b/${root}/${file}\n${hunk}`
+    const patch = [
+      edit('file.txt', '@@ -1,3 +1,3 @@\n line 1\n-line 2\n+first edit\n line 3\n'),
+      edit('staged.txt', '@@ -1 +1 @@\n-original\n+agent change\n'),
+      edit('file.txt', '@@ -1,3 +1,3 @@\n line 1\n-first edit\n+second edit\n line 3\n'),
+    ].join('\n')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe(lines())
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
+  it('keeps the blank line that ends a binary patch before the next file', async () => {
+    writeFileSync(path.join(repo, 'asset.bin'), Buffer.from([0, 1, 2, 3]))
+    git('add', 'asset.bin')
+    git('commit', '-m', 'binary')
+    writeFileSync(path.join(repo, 'asset.bin'), Buffer.from([0, 9, 2, 3]))
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const patch = git('diff', '--binary', '--no-color')
+    expect(patch).toContain('\n\ndiff --git a/staged.txt')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'asset.bin'))).toEqual(Buffer.from([0, 1, 2, 3]))
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
+  it('keeps an empty context line that ends a hunk before the next file', async () => {
+    writeFileSync(path.join(repo, 'blank.txt'), 'x\ny\n\n')
+    git('add', 'blank.txt')
+    git('commit', '-m', 'blank line')
+    writeFileSync(path.join(repo, 'blank.txt'), 'x\nY\n\n')
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const patch = git('-c', 'diff.suppressBlankEmpty=true', 'diff', '--no-color')
+    expect(patch).toContain('+Y\n\ndiff --git a/staged.txt')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'blank.txt'), 'utf8')).toBe('x\ny\n\n')
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
+  it('deletes a created file when an imported Codex patch has no mode lines', async () => {
+    writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
+    rmSync(path.join(repo, 'staged.txt'))
+    const root = repo.replaceAll('\\', '/')
+    const patch = [
+      `diff --git a/${root}/new.txt b/${root}/new.txt`,
+      '--- /dev/null',
+      `+++ b/${root}/new.txt`,
+      '@@ -0,0 +1,1 @@',
+      '+fresh',
+      `diff --git a/${root}/staged.txt b/${root}/staged.txt`,
+      `--- a/${root}/staged.txt`,
+      '+++ /dev/null',
+      '@@ -1,1 +0,0 @@',
+      '-original',
+      '',
+    ].join('\n')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
+    expect(existsSync(path.join(repo, 'dev'))).toBe(false)
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
 
   it('does not partially reverse a patch after one of its files changed again', async () => {
     writeFileSync(path.join(repo, 'file.txt'), lines({ 2: 'agent change' }))
