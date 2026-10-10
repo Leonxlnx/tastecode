@@ -3047,6 +3047,11 @@ export class Orchestrator {
       await this.closeSideThread(threadId)
       return
     }
+    // A prompt claimed for dispatch or steering has not been accepted yet, and
+    // its drain gives up once the runtime is gone. Return it to the queue, as
+    // a disconnect does, or it stays hidden until a restart runs it.
+    const draining = this.#drainingQueues.get(threadId)
+    if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
     const sideThreadId = this.#sideThreads.get(threadId)
     const runtimeDisposed = this.#disposeThreadRuntime(threadId)
     this.#recordedDeltas.flush(threadId)

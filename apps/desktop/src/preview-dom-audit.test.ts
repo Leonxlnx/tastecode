@@ -22,6 +22,8 @@ type NodeFixture = {
   inert?: boolean
   defined?: boolean
   rect?: Partial<Rect>
+  /** Scroll metrics; the box defaults to its rect with no overflow. */
+  contentHeight?: number
   style?: Style
   children?: NodeFixture[]
   shadow?: NodeFixture[]
@@ -57,6 +59,10 @@ type FakeElement = {
   matches(selector: string): boolean
   getBoundingClientRect(): Rect & { right: number; bottom: number }
   checkVisibility(): boolean
+  clientWidth: number
+  clientHeight: number
+  offsetHeight: number
+  scrollHeight: number
 }
 
 type FakeDocument = {
@@ -122,6 +128,10 @@ function build(
       bottom: top + height,
     }),
     checkVisibility: () => !fixture.hidden,
+    clientWidth: width,
+    clientHeight: height,
+    offsetHeight: height,
+    scrollHeight: fixture.contentHeight ?? height,
   }
   element.children = (fixture.children ?? []).map((child) => build(child, element, root))
   if (fixture.shadow) {
@@ -263,6 +273,62 @@ describe('preview DOM audit', () => {
     expect(audit.interactiveTargetViolations).toEqual([
       { selector: '#cut', label: '', width: 20, height: 20, partiallyClipped: true },
     ])
+  })
+
+  it('audits controls below the first screen of a full-screen scroll container', () => {
+    // html, body { height: 100% } main { height: 100%; overflow-y: auto } with three sections.
+    const { audit } = runAudit([
+      {
+        tag: 'main',
+        style: { overflowX: 'hidden', overflowY: 'auto' },
+        rect: { width: 390, height: 844 },
+        contentHeight: 3 * 844,
+        children: [
+          small('second-section', { rect: { width: 10, height: 10, top: 900 } }),
+          // The scroller still clips sideways.
+          small('past-edge', { rect: { width: 20, height: 20, top: 1800, left: 380 } }),
+        ],
+      },
+    ])
+    expect(audit.interactiveTargetViolations).toEqual([
+      { selector: '#second-section', label: '', width: 10, height: 10 },
+      { selector: '#past-edge', label: '', width: 20, height: 20, partiallyClipped: true },
+    ])
+  })
+
+  it('does not clip a page scroller at the app-shell wrapper around it', () => {
+    // #root { height: 100vh; overflow: hidden; display: flex } > main { flex: 1; overflow-y: auto }
+    const { audit } = runAudit([
+      {
+        id: 'root',
+        style: { overflowX: 'hidden', overflowY: 'hidden' },
+        rect: { width: 390, height: 844 },
+        children: [
+          {
+            tag: 'main',
+            style: { overflowY: 'auto' },
+            rect: { width: 390, height: 780, top: 64 },
+            contentHeight: 3000,
+            children: [small('deep-link', { rect: { width: 10, height: 10, top: 2000 } })],
+          },
+        ],
+      },
+    ])
+    expect(audit.interactiveTargetViolations).toEqual([
+      { selector: '#deep-link', label: '', width: 10, height: 10 },
+    ])
+  })
+
+  it('still clips controls that a smaller scroll box hides', () => {
+    const { audit } = runAudit([
+      {
+        style: { overflowY: 'auto' },
+        rect: { width: 390, height: 200, top: 100 },
+        contentHeight: 900,
+        children: [small('in-code-block', { rect: { width: 20, height: 20, top: 500 } })],
+      },
+    ])
+    expect(audit.interactiveTargetViolations).toEqual([])
   })
 
   it('accepts a native control whose associated label is a large target', () => {
