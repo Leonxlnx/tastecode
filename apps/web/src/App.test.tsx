@@ -7429,6 +7429,37 @@ describe('global shortcuts', () => {
     expect(composerProps().newSession).toBe(true)
   })
 
+  it('runs a keybind saved on a number key instead of opening a recent chat', async () => {
+    localStorage.setItem(
+      'harness.keybindings.v1',
+      JSON.stringify({ version: 1, bindings: { newChat: { key: '1', primary: true } } }),
+    )
+    await openNewSession()
+    expect(composerProps().newSession).toBe(false)
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() => expect(composerProps().newSession).toBe(true))
+  })
+
+  it('refuses a number key in the keybind recorder and keeps it opening recent chats', async () => {
+    await openNewSession()
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.getByRole('alert').textContent).toBe('Already used by Open recent chat.')
+    expect(localStorage.getItem('harness.keybindings.v1')).toBeNull()
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await act(async () => Promise.resolve())
+    expect(composerProps().newSession).toBe(false)
+  })
+
   it('opens the project switcher directly without rendering a top project control', async () => {
     serverSidebarSettings.mode = 'classic'
     serverProjects = [
