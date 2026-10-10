@@ -102,4 +102,20 @@ describe('cmd argument quoting', () => {
       }
     },
   )
+  it.skipIf(process.platform !== 'win32')(
+    'runs the PATH command, not a same-named shim in the working directory',
+    async () => {
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-cwd-'))
+      try {
+        writeFileSync(path.join(workspace, 'node.cmd'), '@echo off\r\necho shadowed\r\n')
+        const result = await captureCli(
+          spawnCli('node', ['-e', 'process.stdout.write("real")'], { cwd: workspace }),
+        )
+        expect(result.code).toBe(0)
+        expect(result.stdout).toBe('real')
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    },
+  )
 })
