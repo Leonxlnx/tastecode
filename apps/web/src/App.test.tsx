@@ -4757,6 +4757,69 @@ describe('new chats', () => {
     })
   })
 
+  it('keeps deleting the other chats when several need a checkout confirmation', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    const isolated = (id: string, title: string) => ({
+      id,
+      title,
+      provider: 'codex' as const,
+      createdAt: 0,
+      running: false,
+      worktreeBranch: `harness/${id}`,
+    })
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          isolated('first-dirty', 'First dirty'),
+          { id: 'clean', title: 'Clean chat', provider: 'codex', createdAt: 0, running: false },
+          isolated('second-dirty', 'Second dirty'),
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.unsavedWork') return request(method, params)
+      const dirty = methods[method].params.parse(params).threadId !== 'clean'
+      return Promise.resolve({ isolated: dirty, uncommitted: dirty })
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: 'Delete Clean chat' })
+
+    act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
+
+    expect(await screen.findByText(/Deleting “First dirty” now/)).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'clean' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
+    expect(await screen.findByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Discard isolated checkout' }), {
+      key: 'Escape',
+    })
+
+    expect(screen.queryByRole('dialog', { name: 'Discard isolated checkout' })).toBeNull()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.discardWorktree', {
+        threadId: 'first-dirty',
+        force: true,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'first-dirty' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'second-dirty',
+    })
+  })
+
   it('persists chat pinning from the sidebar menu', async () => {
     serverProjects = [
       {
