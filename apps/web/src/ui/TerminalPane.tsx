@@ -83,6 +83,9 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       theme: terminalTheme(workspace ? 'workspace' : 'app'),
       ...(windows ? { windowsPty: { backend: 'conpty' as const } } : {}),
     })
+    const unfollowTheme = followTerminalTheme(instance, () =>
+      terminalTheme(workspace ? 'workspace' : 'app'),
+    )
     const fit = new FitAddon()
     instance.loadAddon(fit)
     const unicode = new Unicode11Addon()
@@ -382,6 +385,7 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
       refit.current = () => {}
       activate.current = () => {}
       observer.disconnect()
+      unfollowTheme()
       input.dispose()
       selection.dispose()
       offState()
@@ -402,12 +406,6 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
     refit.current()
     terminal.current?.focus()
   }, [active])
-
-  useLayoutEffect(() => {
-    if (terminal.current) {
-      terminal.current.options.theme = terminalTheme(workspace ? 'workspace' : 'app')
-    }
-  }, [props.theme, workspace])
 
   const beginResize = (event: PointerEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -581,6 +579,36 @@ export function terminalTheme(profile: TerminalProfile = 'app'): ITheme {
     // harsh pure-RGB defaults that clash with every accent.
     ...(dark ? DARK_ANSI : LIGHT_ANSI),
   }
+}
+
+/**
+ * Repaint a terminal whenever the app's theme or backdrop changes. App writes
+ * them onto the root in its own layout effect, which React runs after every
+ * child's, so a child reacting to the same render still reads the old tokens.
+ * Watching the root sees the write itself, and skipping an unchanged palette
+ * keeps unrelated root style changes from rebuilding the glyph atlas.
+ */
+export function followTerminalTheme(
+  instance: Pick<Terminal, 'options'>,
+  palette: () => ITheme,
+): () => void {
+  const observer = new MutationObserver(() => {
+    const next = palette()
+    if (!samePalette(instance.options.theme, next)) instance.options.theme = next
+  })
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme', 'data-backdrop', 'style'],
+  })
+  return () => observer.disconnect()
+}
+
+function samePalette(current: ITheme | undefined, next: ITheme): boolean {
+  if (!current) return false
+  const keys = Object.keys(next) as Array<keyof ITheme>
+  return (
+    keys.length === Object.keys(current).length && keys.every((key) => current[key] === next[key])
+  )
 }
 
 const GHOSTTY_DARK_THEME: ITheme = {
