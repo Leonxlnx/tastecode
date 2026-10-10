@@ -46,7 +46,11 @@ import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
-import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
+import {
+  allowsMicrophoneRequest,
+  allowsOwnRendererRequest,
+  isOwnRendererPermission,
+} from './media-permissions.js'
 import {
   parseNativeMenuShortcuts,
   type NativeMenuAction,
@@ -1195,7 +1199,7 @@ async function createAttachmentThumbnail(
   return bytes.byteLength > 0 ? bytes : undefined
 }
 
-/** Allow this app's own renderer to request audio and enumerate installed fonts. */
+/** Allow this app's own renderer audio, installed fonts and element fullscreen. */
 function configureRendererPermissions(): void {
   // Chromium's synchronous check path (navigator.permissions.query, device
   // enumeration) never consults the request handler below and defaults to
@@ -1219,7 +1223,7 @@ function configureRendererPermissions(): void {
         return
       }
       if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission))
+        callback(allowsOwnRendererRequest(permission))
         return
       }
       if (!allowsMicrophoneRequest(details)) {
