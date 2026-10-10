@@ -102,7 +102,9 @@ export function DiffReview({
     <div className="diff-review">
       <div className="diff-review__toolbar">
         <span>
-          {diff ? `${diff.files.length} files in current snapshot` : 'Review unavailable'}
+          {diff
+            ? `${diff.files.length} file${diff.files.length === 1 ? '' : 's'} in current snapshot`
+            : 'Review unavailable'}
         </span>
         <button
           className="diff__review"

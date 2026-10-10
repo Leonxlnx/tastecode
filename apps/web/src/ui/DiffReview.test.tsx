@@ -124,7 +124,7 @@ describe('changed-word highlights', () => {
     ['await foo()', 'foo()', 'await '],
   ])('shows %j → %j without repeating unchanged words', async (before, after, changed) => {
     const { container } = rendered(before, after)
-    await screen.findByText('1 files in current snapshot')
+    await screen.findByText('1 file in current snapshot')
 
     const codes = [...container.querySelectorAll('.diff-line code')].map((code) =>
       [...code.childNodes]
