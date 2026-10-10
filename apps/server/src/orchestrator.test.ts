@@ -7558,7 +7558,8 @@ describe('isolated sessions', () => {
     const { orchestrator } = harness(trees)
     const thread = await orchestrator.startThread('codex', repo)
 
-    await expect(orchestrator.diff(thread.id)).rejects.toThrow(/isolated session/)
+    // The Edited files card matches this text to show the turn's patch instead.
+    await expect(orchestrator.diff(thread.id)).rejects.toThrow('requires an isolated session')
   })
 
   it('does not reject work while the agent turn is running', async () => {
