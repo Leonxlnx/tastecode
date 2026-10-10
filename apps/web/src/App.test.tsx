@@ -6841,6 +6841,95 @@ describe('sidebar chat ordering', () => {
     })
   })
 
+  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'thread-b', title: 'B chat' },
+        { id: 'thread-c', title: 'C chat' },
+        { id: 'thread-a', title: 'A chat', status: 'ready', unread: true },
+      ]),
+    ]
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^C chat,/ })
+    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
+    dropChatRow('C chat', 'A chat', 'after')
+
+    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    await waitFor(() => {
+      const order = SessionOrderSchema.parse(
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
+      )
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+    })
+  })
+
+  it('moves to the previous and next chat in the order the rail shows', async () => {
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'one-a', title: 'One A' },
+        { id: 'one-pinned', title: 'One pinned', pinned: true },
+        { id: 'one-b', title: 'One B' },
+        { id: 'one-unread', title: 'One unread', status: 'ready', unread: true },
+      ]),
+      { ...serverProject('/work/two', 'Two', [{ id: 'two-a', title: 'Two A' }]), pinned: true },
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^One pinned,/ })
+    act(() => sidebarProps().onSelectSession('one-a'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
+    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-pinned')
+    await step('ArrowDown', 'two-a')
+    await step('ArrowUp', 'one-pinned')
+    await step('ArrowUp', 'one-b')
+  })
+
+  it('moves to the previous and next chat in the order the inbox shows', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    const active = { state: 'active', keepActive: false } as const
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'oldest', title: 'Oldest chat', createdAt: 1, lifecycle: active },
+        {
+          id: 'settled',
+          title: 'Settled chat',
+          createdAt: 5,
+          lifecycle: { state: 'settled', settledAt: 6, reason: 'manual' },
+        },
+        { id: 'newest', title: 'Newest chat', createdAt: 4, lifecycle: active },
+      ]),
+      serverProject('/work/two', 'Two', [
+        { id: 'older', title: 'Older chat', createdAt: 2, lifecycle: active },
+        { id: 'newer', title: 'Newer chat', createdAt: 3, lifecycle: active },
+      ]),
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Newest chat, One,/ })
+    act(() => sidebarProps().onSelectSession('newest'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('newest'))
+    // Active chats newest first, then settled ones.
+    await step('ArrowDown', 'newer')
+    await step('ArrowDown', 'older')
+    await step('ArrowDown', 'oldest')
+    await step('ArrowDown', 'settled')
+    await step('ArrowUp', 'oldest')
+  })
+
   it('keeps chats imported later from another provider in date order', async () => {
     // Every project's order used to be saved automatically, freezing the order
     // in which provider histories happened to arrive.
@@ -8834,6 +8923,20 @@ function emitQueue(
 
 function sessionTitles(): string[] {
   return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+}
+
+function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
+  const row = (title: string) =>
+    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const source = row(sourceTitle)
+  const target = row(targetTitle)
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
+  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+  const clientY = position === 'before' ? 65 : 85
+
+  fireEvent.dragStart(source, { dataTransfer })
+  fireEvent.dragOver(target, { clientY, dataTransfer })
+  fireEvent.drop(target, { clientY, dataTransfer })
 }
 
 describe('reopening a session', () => {

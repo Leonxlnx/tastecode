@@ -83,8 +83,10 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
@@ -4289,15 +4291,8 @@ export function App() {
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
-          if (sourceIndex < 0) return project
-
-          const sessions = [...project.sessions]
-          const [moved] = sessions.splice(sourceIndex, 1)
-          const targetIndex = sessions.findIndex((session) => session.id === targetId)
-          if (!moved || targetIndex < 0) return project
-          sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
-          return { ...project, sessions }
+          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
     },
@@ -4323,7 +4318,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = visibleProjectsRef.current.flatMap((project) => project.sessions)
+      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1

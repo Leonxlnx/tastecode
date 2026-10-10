@@ -59,6 +59,7 @@ import {
 } from '../haptics.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import { sidebarRail } from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
   isConfirmEnter,
@@ -153,8 +154,6 @@ export type Project = {
 
 type DropPosition = 'before' | 'after'
 type ProjectDropTarget = { path: string; position: DropPosition }
-type PinnedSession = { projectPath: string; session: Session }
-type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
 
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
@@ -536,21 +535,10 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions } = useMemo(() => {
-    const pinned: PinnedSession[] = []
-    const pinnedProjects: Project[] = []
-    const projects: Project[] = []
-    for (const source of props.projects) {
-      const projection = projectSidebarProjection(source)
-      pinned.push(...projection.pinnedSessions)
-      if (source.pinned) pinnedProjects.push(projection.project)
-      else projects.push(projection.project)
-    }
-    return {
-      orderedProjects: [...pinnedProjects, ...projects],
-      pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
-    }
-  }, [props.projects])
+  const { orderedProjects, pinnedSessions } = useMemo(
+    () => sidebarRail(props.projects),
+    [props.projects],
+  )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
   const [folderDropActive, setFolderDropActive] = useState(false)
   const folderDragDepth = useRef(0)
@@ -1924,57 +1912,6 @@ function virtualSessionRange(scrollTop: number, count: number) {
 
 function virtualSessionStyle(top: number | undefined): CSSProperties | undefined {
   return top === undefined ? undefined : { transform: `translateY(${top}px)` }
-}
-
-const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
-
-function projectSidebarProjection(source: Project): ProjectSidebarProjection {
-  const cached = projectSidebarProjections.get(source)
-  if (cached) return cached
-
-  const pinnedSessions: PinnedSession[] = []
-  const unpinnedSessions: Session[] = []
-  for (const session of source.sessions) {
-    if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
-    else unpinnedSessions.push(session)
-  }
-  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
-  const sessionsUnchanged =
-    pinnedSessions.length === 0 &&
-    sessions.length === source.sessions.length &&
-    sessions.every((session, index) => session === source.sessions[index])
-  const project = sessionsUnchanged ? source : { ...source, sessions }
-  const projection = { project, pinnedSessions }
-  projectSidebarProjections.set(source, projection)
-  return projection
-}
-
-function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const active: T[] = []
-  const unread: T[] = []
-  const rest: T[] = []
-  for (const value of sessions) {
-    const session = getSession(value)
-    if (isActiveStatus(session.status)) {
-      active.push(value)
-    } else if (session.unread) {
-      unread.push(value)
-    } else {
-      rest.push(value)
-    }
-  }
-  const ordered = [...active, ...unread, ...rest]
-  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
-}
-
-function isActiveStatus(status: Session['status']): boolean {
-  return (
-    status === 'starting' ||
-    status === 'working' ||
-    status === 'queued' ||
-    status === 'approval' ||
-    status === 'input'
-  )
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */
