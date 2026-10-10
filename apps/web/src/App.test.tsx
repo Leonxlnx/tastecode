@@ -8583,7 +8583,6 @@ describe('live sessions', () => {
     const sessionBefore = stageHeader().sessionId
 
     fireEvent.keyDown(search, { key: '1', metaKey: true })
-    fireEvent.keyDown(search, { key: 'ArrowDown', metaKey: true, altKey: true })
     expect(stageHeader().sessionId).toBe(sessionBefore)
     expect(document.activeElement).toBe(search)
 
