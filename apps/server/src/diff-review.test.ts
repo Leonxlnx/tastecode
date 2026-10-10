@@ -401,6 +401,21 @@ describe('structured diff review', () => {
     expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
   })
 
+  it('keeps an empty context line that ends a hunk before the next file', async () => {
+    writeFileSync(path.join(repo, 'blank.txt'), 'x\ny\n\n')
+    git('add', 'blank.txt')
+    git('commit', '-m', 'blank line')
+    writeFileSync(path.join(repo, 'blank.txt'), 'x\nY\n\n')
+    writeFileSync(path.join(repo, 'staged.txt'), 'agent change\n')
+    const patch = git('-c', 'diff.suppressBlankEmpty=true', 'diff', '--no-color')
+    expect(patch).toContain('+Y\n\ndiff --git a/staged.txt')
+
+    await reverseUnifiedDiff(repo, patch)
+
+    expect(readFileSync(path.join(repo, 'blank.txt'), 'utf8')).toBe('x\ny\n\n')
+    expect(readFileSync(path.join(repo, 'staged.txt'), 'utf8')).toBe('original\n')
+  })
+
   it('deletes a created file when an imported Codex patch has no mode lines', async () => {
     writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
     rmSync(path.join(repo, 'staged.txt'))
