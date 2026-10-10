@@ -152,6 +152,8 @@ describe('keybind settings', () => {
   it.each([
     ['a recent chat number', { key: '1', metaKey: true }, '⌘1', 'Open recent chat'],
     ['a workspace tool', { key: 't', metaKey: true }, '⌘T', 'Open Browser'],
+    ['find in chat', { key: 'f', metaKey: true }, '⌘F', 'Find in chat'],
+    ['turn navigation', { key: 'ArrowUp', altKey: true }, '⌥↑', 'Previous turn'],
     [
       'the debug chord',
       { key: 'Î', code: 'KeyD', metaKey: true, altKey: true, shiftKey: true },

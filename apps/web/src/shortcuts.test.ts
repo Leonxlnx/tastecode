@@ -92,12 +92,15 @@ describe('shortcuts', () => {
     expect(shortcutFromKeyboardEvent(new KeyboardEvent('keydown', { key: 'a' }))).toBeUndefined()
   })
 
-  it('names the owner of each chord the window key handler keeps for itself', () => {
+  it('names the owner of each chord the app keeps for itself', () => {
     expect(reservedShortcutLabel({ key: '1', primary: true })).toBe('Open recent chat')
     expect(reservedShortcutLabel({ key: '9', primary: true })).toBe('Open recent chat')
     expect(reservedShortcutLabel({ key: 'd', primary: true, alt: true, shift: true })).toBe(
       'Debug settings',
     )
+    expect(reservedShortcutLabel({ key: 'f', primary: true })).toBe('Find in chat')
+    expect(reservedShortcutLabel({ key: 'arrowup', alt: true })).toBe('Previous turn')
+    expect(reservedShortcutLabel({ key: 'arrowdown', alt: true })).toBe('Next turn')
     for (const tool of WORKSPACE_TOOL_SHORTCUTS) {
       expect(reservedShortcutLabel(tool.shortcut)).toBe(tool.label)
     }

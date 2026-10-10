@@ -209,6 +209,9 @@ export const DEBUG_SETTINGS_SHORTCUT = {
   shift: true,
 } as const satisfies Shortcut
 
+/** Opens find in the open chat; Thread's own key handler takes it. */
+export const FIND_IN_CHAT_SHORTCUT = { key: 'f', primary: true } as const satisfies Shortcut
+
 /** Move the open chat a turn at a time. */
 export const PREVIOUS_TURN_SHORTCUT = { key: 'arrowup', alt: true } as const satisfies Shortcut
 export const NEXT_TURN_SHORTCUT = { key: 'arrowdown', alt: true } as const satisfies Shortcut
@@ -225,14 +228,17 @@ export const WORKSPACE_TOOL_SHORTCUTS = [
 ] as const
 
 /**
- * Who owns a chord the window key handler keeps for itself. A keybind on one
- * of these either never runs or silently takes the built-in shortcut away.
+ * Who owns a chord the app's own key handlers keep for themselves. A keybind
+ * on one of these either never runs or silently takes the built-in away.
  */
 export function reservedShortcutLabel(shortcut: Shortcut): string | undefined {
   if (shortcut.primary && !shortcut.alt && !shortcut.shift && /^[1-9]$/.test(shortcut.key)) {
     return 'Open recent chat'
   }
   if (sameShortcut(shortcut, DEBUG_SETTINGS_SHORTCUT)) return 'Debug settings'
+  if (sameShortcut(shortcut, FIND_IN_CHAT_SHORTCUT)) return 'Find in chat'
+  if (sameShortcut(shortcut, PREVIOUS_TURN_SHORTCUT)) return 'Previous turn'
+  if (sameShortcut(shortcut, NEXT_TURN_SHORTCUT)) return 'Next turn'
   return WORKSPACE_TOOL_SHORTCUTS.find((tool) => sameShortcut(tool.shortcut, shortcut))?.label
 }
 
