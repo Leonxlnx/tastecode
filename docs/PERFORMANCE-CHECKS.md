@@ -101,8 +101,11 @@ node apps/desktop/scripts/run-native-binding-proof.js <app-or-exe>
 ```
 
 Keep the platform's terminal prebuilds: pruning by architecture also changes the inputs
-to universal Mac packaging. Keep Electron's GPU fallback, media, locale data and startup
-files. Installer compression changes download size, not installed size.
+to universal Mac packaging. Windows packages leave out node-pty's ConPTY copies that the
+prebuilt module never loads: the install-time `third_party` sources and the post-install
+copy in `build/Release/conpty`. Each prebuild keeps its own `conpty` folder. Keep
+Electron's GPU fallback, media, locale data and startup files. Installer compression
+changes download size, not installed size.
 ZIP files use maximum compression; DMGs keep the existing UDZO format so the size setting
 does not switch disk-image opening to bzip2 decompression.
 

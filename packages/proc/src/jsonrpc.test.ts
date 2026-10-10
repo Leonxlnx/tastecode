@@ -296,3 +296,59 @@ describe('JSON-RPC incoming request identity', () => {
     })
   })
 })
+
+describe('JSON-RPC incoming request handler failures', () => {
+  function request(id: number) {
+    return `${JSON.stringify({ jsonrpc: '2.0', id, method: 'approve', params: {} })}\n`
+  }
+
+  it('answers a request with an error when its handler throws', () => {
+    const process = child()
+    const rpc = transport(process)
+    const write = vi.spyOn(process.stdin, 'write')
+    rpc.onServerRequest(() => {
+      throw new Error('bad approval payload')
+    })
+
+    process.stdout.write(request(4))
+
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toEqual({
+      jsonrpc: '2.0',
+      id: 4,
+      error: { code: -32603, message: 'bad approval payload' },
+    })
+  })
+
+  it('does not answer twice when the handler responded before throwing', () => {
+    const process = child()
+    const rpc = transport(process)
+    const write = vi.spyOn(process.stdin, 'write')
+    rpc.onServerRequest((_method, _params, respond) => {
+      respond({ accepted: true })
+      throw new Error('observer failed after responding')
+    })
+
+    process.stdout.write(request(5))
+
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(write.mock.calls[0]?.[0]))).toEqual({
+      jsonrpc: '2.0',
+      id: 5,
+      result: { accepted: true },
+    })
+  })
+
+  it('does not answer a notification whose handler throws', () => {
+    const process = child()
+    const rpc = transport(process)
+    const write = vi.spyOn(process.stdin, 'write')
+    rpc.onNotification(() => {
+      throw new Error('bad notification payload')
+    })
+
+    process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'progress' })}\n`)
+
+    expect(write).not.toHaveBeenCalled()
+  })
+})
