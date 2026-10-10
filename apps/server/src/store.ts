@@ -719,6 +719,7 @@ export class Store {
   #settleRecoveryLifecycle: StatementSync
   #upsertRecoveryError: StatementSync
   #readInterruptedThreads: StatementSync
+  #readInterruptedThread: StatementSync
   #insertQueuedTurnEvent: StatementSync
   #listQueuedTurns: StatementSync
   #hasQueuedSubmission: StatementSync
@@ -902,8 +903,7 @@ export class Store {
       `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
     )
-    this.#readInterruptedThreads = this.#db.prepare(
-      `SELECT recovery.thread_id, recovery.payload,
+    const openRecoveryLifecycles = `SELECT recovery.thread_id, recovery.payload,
               CASE WHEN recovery.event_type = 'user_input.requested'
                 AND EXISTS (
                   SELECT 1 FROM design_runs
@@ -921,8 +921,12 @@ export class Store {
          AND recovery.terminal_seq IS NULL
          AND recovery.payload IS NOT NULL
          AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
-              OR errors.event_seq < recovery.started_seq)
-       ORDER BY recovery.started_seq`,
+              OR errors.event_seq < recovery.started_seq)`
+    this.#readInterruptedThreads = this.#db.prepare(
+      `${openRecoveryLifecycles} ORDER BY recovery.started_seq`,
+    )
+    this.#readInterruptedThread = this.#db.prepare(
+      `${openRecoveryLifecycles} AND recovery.thread_id = ? ORDER BY recovery.started_seq`,
     )
     this.#insertQueuedTurnEvent = this.#db.prepare(
       `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
@@ -2556,6 +2560,19 @@ export class Store {
       this.#searchRevision += 1
       throw error
     }
+  }
+
+  /**
+   * The terminal events for every lifecycle one thread's runtime left open.
+   *
+   * Restart recovery settles these for a dead process; a runtime force-stopped
+   * while the server keeps running needs the same, or its turn and requests
+   * stay open in the log until the next restart. The caller records them.
+   */
+  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+    const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
+    const state = this.#interruptedThreadStates(rows).get(threadId)
+    return state ? interruptedLifecycleEvents(state, Date.now()) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
