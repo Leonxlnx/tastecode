@@ -481,7 +481,7 @@ export function mapMcpToolApprovalResponse(
 export function mapMcpToolApprovalRequest(params: McpToolApprovalParams): ApprovalRequest {
   const toolParams = params._meta.tool_params
   const shownParams =
-    toolParams === undefined || JSON.stringify(toolParams) === '{}'
+    toolParams === undefined || toolParams === null || JSON.stringify(toolParams) === '{}'
       ? ''
       : `\n${JSON.stringify(toolParams, null, 2)}`
   return {

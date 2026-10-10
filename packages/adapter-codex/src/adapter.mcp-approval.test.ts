@@ -117,6 +117,22 @@ describe('Codex MCP tool approval', () => {
     await expect(answer).resolves.toEqual({ action: 'accept', content: null, _meta: null })
   })
 
+  it.each([
+    ['empty', { tool_params: {} }],
+    ['null', { tool_params: null }],
+    ['missing', {}],
+  ])('shows only the question when the tool arguments are %s', async (_label, toolParams) => {
+    const { adapter, requested, ask } = await adapterWithRequests()
+    open = adapter
+    void ask({
+      ...capturedToolApproval,
+      _meta: { codex_approval_kind: 'mcp_tool_call', ...toolParams },
+    })
+    await Promise.resolve()
+
+    expect(requested()[0]?.command).toBe(capturedToolApproval.message)
+  })
+
   it('stops the turn after Stop the turn, since Codex only skips the cancelled tool', async () => {
     const { adapter, rpc, requested, ask } = await adapterWithRequests()
     open = adapter
