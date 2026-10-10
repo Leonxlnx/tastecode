@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   methods,
+  type PullRequestComment,
   type PullRequestDetail,
   type PullRequestMetadataOptions,
 } from '@harness/contracts'
@@ -753,6 +754,58 @@ describe('PullRequestDetailPane review safety', () => {
       page: 1,
       refresh: true,
     })
+  })
+
+  it.each([
+    {
+      kind: 'conversation comment',
+      menu: 'Comment actions',
+      withComment: (comment: PullRequestComment): Partial<PullRequestDetail> => ({
+        comments: [comment],
+      }),
+    },
+    {
+      kind: 'review thread comment',
+      menu: 'Review comment actions',
+      withComment: (comment: PullRequestComment): Partial<PullRequestDetail> => ({
+        reviewThreads: [
+          {
+            id: 'thread',
+            path: 'src/example.ts',
+            resolved: false,
+            outdated: false,
+            comments: [comment],
+          },
+        ],
+      }),
+    },
+  ])('opens the $kind editor with the text a refresh brought in', async (scenario) => {
+    const comment = (body: string): PullRequestComment => ({
+      id: 'comment',
+      databaseId: 11,
+      author: detail.author,
+      body,
+      createdAt: detail.createdAt,
+      url: `${detail.url}#issuecomment-11`,
+      viewerDidAuthor: true,
+    })
+    renderScriptedDetail(
+      { ...detail, ...scenario.withComment(comment('first version')) },
+      { ...detail, ...scenario.withComment(comment('edited on GitHub')) },
+    )
+    await screen.findByText('first version')
+    fireEvent(window, new Event('focus'))
+    await screen.findByText('edited on GitHub')
+
+    fireEvent.click(screen.getByRole('button', { name: scenario.menu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit comment' }))
+    const editor = screen.getByDisplayValue('edited on GitHub')
+
+    // Choosing Edit again while the editor is open keeps the draft.
+    fireEvent.change(editor, { target: { value: 'my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: scenario.menu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit comment' }))
+    expect(screen.getByDisplayValue('my draft')).toBe(editor)
   })
 
   it('replies to the root review comment, not an existing reply', async () => {
