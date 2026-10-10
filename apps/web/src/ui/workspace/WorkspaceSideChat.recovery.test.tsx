@@ -268,8 +268,10 @@ describe('Side chat recovery', () => {
         request: 1,
       },
     })
-    expect((screen.getByLabelText('Message temporary chat') as HTMLTextAreaElement).value).toBe(
-      'Later message',
+    await waitFor(() =>
+      expect((screen.getByLabelText('Message temporary chat') as HTMLTextAreaElement).value).toBe(
+        'Later message',
+      ),
     )
     expect(screen.getByRole('list', { name: 'Attached files' }).textContent).toContain('later.png')
     app.emit({

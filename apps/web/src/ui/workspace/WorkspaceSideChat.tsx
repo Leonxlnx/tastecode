@@ -451,12 +451,17 @@ export function WorkspaceSideChat(props: {
     const request = props.promptRequest
     if (!request || request.parentThreadId !== props.parentThreadId) return
     if (deliveredPromptRequests.has(request)) return
-    deliveredPromptRequests.add(request)
-    if (!request.text.trim() && request.attachments.length === 0) {
-      requestAnimationFrame(() => textarea.current?.focus())
-      return
-    }
-    void sendPrompt(request.text, request.attachments)
+    // Like the start above, claim the request one frame later: React Strict
+    // Mode's probe would otherwise claim it with a send its cleanup abandons.
+    const frame = requestAnimationFrame(() => {
+      deliveredPromptRequests.add(request)
+      if (!request.text.trim() && request.attachments.length === 0) {
+        textarea.current?.focus()
+        return
+      }
+      void sendPrompt(request.text, request.attachments)
+    })
+    return () => cancelAnimationFrame(frame)
   }, [props.parentThreadId, props.promptRequest, sendPrompt])
 
   const submit = () => {
