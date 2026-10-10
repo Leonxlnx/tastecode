@@ -87,6 +87,7 @@ import {
   openLocalDiagnostics,
   setLocalDiagnosticsEnabled,
   simulateAppUpdate,
+  writeClipboardText,
   type AppUpdateState,
 } from '../bridge.js'
 import {
@@ -2315,7 +2316,10 @@ function CliSignInRow(props: {
                 className="settings__action"
                 type="button"
                 onClick={() => {
-                  void navigator.clipboard?.writeText(code).then(() => setCopied(true))
+                  void writeClipboardText(code).then(
+                    () => setCopied(true),
+                    () => undefined,
+                  )
                 }}
               >
                 {copied ? 'Copied' : 'Copy'}

@@ -14,6 +14,7 @@ import {
   IconSearch as Search,
   IconSparkles as Sparkles,
 } from '@tabler/icons-react'
+import { writeClipboardText } from '../../bridge.js'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
@@ -181,7 +182,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const copyCommitMessage = useCallback(async () => {
     if (!commitMessage) return
     try {
-      await navigator.clipboard.writeText(commitMessage)
+      await writeClipboardText(commitMessage)
       setCopiedCommit(true)
     } catch {
       setCommitError('Could not copy the commit message.')
