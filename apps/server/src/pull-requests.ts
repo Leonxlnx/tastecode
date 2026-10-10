@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 import type {
   JsonValue,
@@ -45,14 +46,49 @@ const PULL_REQUEST_TEXT_COLLATOR = new Intl.Collator(undefined, { sensitivity: '
 
 export type GitHubSetupAction = 'install' | 'login'
 
-/** Fixed server-owned commands keep PR setup interactive without exposing a shell RPC. */
+/** Fedora proper, plus derivatives whose os-release declares `ID_LIKE=fedora`. */
+export type LinuxDistribution = 'fedora' | 'other'
+
+const OS_RELEASE_FIELD = /^(ID|ID_LIKE)=("([^"]*)"|'([^']*)'|([^\s#]*))\s*$/
+
+/** Read `ID` and `ID_LIKE` from an os-release document. */
+export function linuxDistribution(osRelease: string): LinuxDistribution {
+  const fields = new Map<string, string>()
+  for (const line of osRelease.split(/\r?\n/)) {
+    const match = OS_RELEASE_FIELD.exec(line.trim())
+    const key = match?.[1]
+    if (!key) continue
+    fields.set(key, (match[3] ?? match[4] ?? match[5] ?? '').toLowerCase())
+  }
+  const like = (fields.get('ID_LIKE') ?? '').split(/\s+/).filter(Boolean)
+  return fields.get('ID') === 'fedora' || like.includes('fedora') ? 'fedora' : 'other'
+}
+
+function readLinuxDistribution(): LinuxDistribution {
+  try {
+    return linuxDistribution(readFileSync('/etc/os-release', 'utf8'))
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT' || code === 'EACCES') return 'other'
+    throw error
+  }
+}
+
+/**
+ * Fixed server-owned commands keep PR setup interactive without exposing a shell RPC.
+ *
+ * macOS uses Homebrew and Windows uses winget. On Linux, Fedora installs GitHub CLI
+ * from its own repositories with dnf. Other distributions keep the setup-page path.
+ */
 export function githubSetupCommand(
   action: GitHubSetupAction,
   platform: NodeJS.Platform = process.platform,
+  distribution: LinuxDistribution = platform === 'linux' ? readLinuxDistribution() : 'other',
 ): string {
   if (action === 'login') return 'gh auth login'
   if (platform === 'darwin') return 'brew install gh'
   if (platform === 'win32') return 'winget install --id GitHub.cli'
+  if (platform === 'linux' && distribution === 'fedora') return 'sudo dnf install -y gh'
   throw new Error('GitHub CLI installation is not scripted on this platform')
 }
 
