@@ -2,10 +2,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { RendererErrorBoundary } from './RendererErrorBoundary.js'
-import { reportRendererError, writeClipboardText } from './bridge.js'
+import { launchCrashAgent, reportRendererError, writeClipboardText } from './bridge.js'
 
 vi.mock('./bridge.js', () => ({
   isDesktop: true,
+  canLaunchCrashAgent: true,
+  crashAgents: vi.fn(async () => [
+    { id: 'claude-code', installed: true },
+    { id: 'codex', installed: true },
+    { id: 'grok', installed: false },
+  ]),
+  launchCrashAgent: vi.fn(async () => {}),
   reportRendererError: vi.fn(),
   writeClipboardText: vi.fn(async () => {}),
 }))
@@ -47,7 +54,7 @@ describe('renderer recovery', () => {
     expect(reportRendererError).toHaveBeenCalledWith(failure)
     fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe('Diagnostics copied.'))
-    expect(screen.getByRole('status').dataset['state']).toBe('copied')
+    expect(screen.getByRole('status').dataset['tone']).toBe('success')
     const copied = vi.mocked(writeClipboardText).mock.calls[0]?.[0]
     expect(copied).toContain('Failure: application render exception')
     expect(copied).not.toContain('private')
@@ -69,7 +76,7 @@ describe('renderer recovery', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Copy diagnostics' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toContain('Could not copy'))
-    expect(screen.getByRole('status').dataset['state']).toBe('failed')
+    expect(screen.getByRole('status').dataset['tone']).toBe('error')
     expect(screen.getByRole('button', { name: 'Reload window' })).toBeTruthy()
   })
 
@@ -82,10 +89,55 @@ describe('renderer recovery', () => {
     )
     const buttons = screen.getAllByRole('button')
     expect(buttons.map((button) => button.textContent)).toEqual([
+      'Ask an agent to fix itOpens Claude Code, Codex or Grok',
       'Copy diagnostics',
       'Reload window',
     ])
-    expect(document.activeElement).toBe(buttons[1])
+    expect(document.activeElement).toBe(buttons[2])
     expect(screen.getByRole('status').textContent).toBe('')
+  })
+
+  it('hands the crash to the chosen agent and comes back to the summary', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    render(
+      <RendererErrorBoundary>
+        <Broken />
+      </RendererErrorBoundary>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Ask an agent/ }))
+    expect(screen.getByRole('heading').textContent).toBe('Which agent should look at this?')
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: /Grok/ }) as HTMLButtonElement).disabled).toBe(
+        true,
+      ),
+    )
+    expect(screen.getByRole('button', { name: /Grok/ }).textContent).toContain('Not installed')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Claude Code/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Codex/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toBe('Opened Codex in your terminal.'),
+    )
+    expect(launchCrashAgent).toHaveBeenCalledWith('codex', failure, expect.any(String))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: /Ask an agent/ }))
+  })
+
+  it('stays on the picker with an error when the terminal cannot open', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    vi.mocked(launchCrashAgent).mockRejectedValueOnce(new Error('no terminal'))
+    render(
+      <RendererErrorBoundary>
+        <Broken />
+      </RendererErrorBoundary>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Ask an agent/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Claude Code/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('status').textContent).toBe(
+        'Could not open Claude Code in a terminal.',
+      ),
+    )
+    expect(screen.getByRole('status').dataset['tone']).toBe('error')
+    fireEvent.keyDown(screen.getByRole('button', { name: /Claude Code/ }), { key: 'Escape' })
+    expect(screen.getByRole('heading').textContent).toContain('couldn’t display')
   })
 })
