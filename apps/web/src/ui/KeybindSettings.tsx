@@ -192,7 +192,10 @@ export function KeybindSettings(props: {
       })
       return
     }
-    const reserved = reservedShortcutLabel(shortcut)
+    // A binding saved there before this check still runs; pressing it again keeps it.
+    const reserved = sameShortcut(props.keybindings[action], shortcut)
+      ? undefined
+      : reservedShortcutLabel(shortcut)
     if (reserved) {
       setFault({ action, text: `Already used by ${reserved}.`, attempt: shortcut })
       return
