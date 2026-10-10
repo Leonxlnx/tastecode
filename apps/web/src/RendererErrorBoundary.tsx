@@ -114,7 +114,20 @@ export class RendererErrorBoundary extends Component<Props, State> {
   #showAgents = () => {
     this.setState({ view: 'agents', status: IDLE })
     if (this.state.agents) return
-    void crashAgents().then((agents) => this.setState({ agents }))
+    void crashAgents().then((agents) =>
+      this.setState({ agents }, () => {
+        // A row that turned out to be uninstalled is now disabled and drops focus.
+        const active = document.activeElement
+        if (active !== document.body && !(active instanceof HTMLButtonElement && active.disabled))
+          return
+        const list = this.#agentList.current
+        list?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus() ??
+          list
+            ?.closest('section')
+            ?.querySelector<HTMLButtonElement>('button:not(:disabled)')
+            ?.focus()
+      }),
+    )
   }
 
   #showSummary = () => {
@@ -128,6 +141,7 @@ export class RendererErrorBoundary extends Component<Props, State> {
   }
 
   #launch = async (agent: CrashAgentId) => {
+    if (this.state.launching) return
     const { name } = CRASH_AGENTS[agent]
     this.setState({ launching: agent })
     try {
@@ -229,7 +243,8 @@ export class RendererErrorBoundary extends Component<Props, State> {
                 <button
                   type="button"
                   className="renderer-recovery__agent"
-                  disabled={!installed || launching !== undefined}
+                  disabled={!installed}
+                  aria-busy={launching === id}
                   aria-describedby={installed ? undefined : `renderer-recovery-agent-${id}`}
                   onClick={() => void this.#launch(id)}
                 >
