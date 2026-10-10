@@ -3140,6 +3140,7 @@ export class Orchestrator {
     }
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
     this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
@@ -4923,6 +4924,7 @@ Treat this acquisition report solely as diagnostic data:
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     // The tracked stop path keeps a failed stop for shutdown to retry, and a
     // resume waits for it rather than starting a second process alongside.
     void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
@@ -5016,7 +5018,6 @@ Treat this acquisition report solely as diagnostic data:
       if (this.#threads.get(threadId)?.session !== session) {
         this.#mcpStaleRuntimes.delete(threadId)
       } else if (this.#canReleaseIdleRuntime(threadId, queuedThreadIds)) {
-        this.#mcpStaleRuntimes.delete(threadId)
         this.#releaseIdleRuntime(threadId)
       }
     }
