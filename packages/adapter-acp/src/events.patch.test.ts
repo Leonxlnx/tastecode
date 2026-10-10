@@ -31,7 +31,18 @@ describe('ACP reversible patches', () => {
       })
       const diff = events.find((event) => event.type === 'diff.updated')
       if (diff?.type !== 'diff.updated') throw new Error('missing patch')
-      execFileSync('git', ['apply', '--reverse', '--binary', '--recount', '-'], {
+      // The reversed file must match byte for byte; a global core.autocrlf
+      // (the default on Windows runners) would write CRLF instead.
+      const apply = [
+        '-c',
+        'core.autocrlf=false',
+        'apply',
+        '--reverse',
+        '--binary',
+        '--recount',
+        '-',
+      ]
+      execFileSync('git', apply, {
         cwd: directory,
         input: diff.diff,
       })
