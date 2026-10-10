@@ -112,6 +112,34 @@ describe('workspace files', () => {
     })
   })
 
+  it('locks every entry of a workspace opened directly on a credential folder', async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-files-'))
+    temporary.push(parent)
+    const root = path.join(parent, 'gcloud')
+    await mkdir(path.join(root, 'src'), { recursive: true })
+    await writeFile(path.join(root, 'README.md'), 'hello\n')
+    await writeFile(path.join(root, 'src', 'main.ts'), 'export {}\n')
+    const restricted = (entries: WorkspaceFileEntry[]) =>
+      entries.map((entry) => [entry.path, entry.restricted])
+
+    expect(restricted((await listWorkspaceDirectory(root)).entries)).toEqual([
+      ['src', true],
+      ['README.md', true],
+    ])
+    expect(restricted((await searchWorkspaceFiles(root, 'main')).entries)).toEqual([
+      ['src/main.ts', true],
+    ])
+    await expect(readWorkspaceTextFile(root, 'README.md')).rejects.toThrow(/credential/)
+
+    // Only the workspace's own name counts; a project inside such a folder stays open.
+    const nested = path.join(root, 'site')
+    await mkdir(nested)
+    await writeFile(path.join(nested, 'index.html'), '<p>hi</p>')
+    expect(restricted((await listWorkspaceDirectory(nested)).entries)).toEqual([
+      ['index.html', false],
+    ])
+  })
+
   it('finds unopened descendants by case-insensitive name and relative path', async () => {
     const root = await fixture()
     await mkdir(path.join(root, 'src', 'components'))
