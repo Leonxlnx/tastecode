@@ -28,7 +28,6 @@ export type TerminalPaneProps = {
   terminalKey?: string
   transport: Transport
   height?: number
-  theme: 'light' | 'dark'
   mode?: 'inline' | 'workspace'
   active?: boolean
   onHeightChange?: (height: number) => void

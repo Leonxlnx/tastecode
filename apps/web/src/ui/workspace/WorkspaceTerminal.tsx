@@ -9,7 +9,6 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
   transport: Transport
   threadId?: string | undefined
   projectPath?: string | undefined
-  theme: 'light' | 'dark'
   onClose: () => void
 }) {
   // The server does not know a chat's provisional id while its first message
@@ -35,7 +34,6 @@ export const WorkspaceTerminal = memo(function WorkspaceTerminal(props: {
         terminalKey={props.terminalKey}
         transport={props.transport}
         {...target}
-        theme={props.theme}
         mode="workspace"
         active={props.active}
         onClose={props.onClose}

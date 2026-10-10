@@ -34,7 +34,6 @@ describe('WorkspaceTerminal', () => {
         terminalKey="terminal-1"
         transport={new TestTransport()}
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -54,7 +53,6 @@ describe('WorkspaceTerminal', () => {
         transport={new TestTransport()}
         threadId="thread-1"
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -70,7 +68,6 @@ describe('WorkspaceTerminal', () => {
       terminalKey: 'terminal-4',
       transport: new TestTransport(),
       projectPath: '/workspace/current-project',
-      theme: 'dark' as const,
       onClose: vi.fn(),
     }
     const view = render(<WorkspaceTerminal {...props} />)
@@ -94,7 +91,6 @@ describe('WorkspaceTerminal', () => {
         terminalKey="terminal-3"
         transport={new TestTransport()}
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={onClose}
       />,
     )
