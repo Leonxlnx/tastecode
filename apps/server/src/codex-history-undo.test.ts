@@ -33,6 +33,7 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
   writeFileSync(path.join(repo, 'f.txt'), 'one\n2\nthree\n')
   writeFileSync(path.join(repo, 'g.txt'), 'x\nY\nz\n')
   writeFileSync(path.join(repo, 'new.txt'), 'fresh\n')
+  writeFileSync(path.join(repo, 'bare.txt'), 'no final newline')
   writeFileSync(path.join(repo, '__init__.py'), '')
   rmSync(path.join(repo, 'old.txt'))
 
@@ -61,6 +62,7 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
         },
         [`${root}/g.txt`]: { type: 'update', unified_diff: '@@ -1,3 +1,3 @@\n x\n-y\n+Y\n z\n' },
         [`${root}/new.txt`]: { type: 'add', content: 'fresh\n' },
+        [`${root}/bare.txt`]: { type: 'add', content: 'no final newline' },
       }),
       files('second-edit', {
         [`${root}/f.txt`]: {
@@ -81,7 +83,7 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
   const diff = updated?.type === 'diff.updated' ? updated.diff : ''
 
   expect(diff.match(/^diff --git .*$/gm)).toEqual(
-    ['f.txt', 'g.txt', 'new.txt', 'old.txt'].map(
+    ['f.txt', 'g.txt', 'new.txt', 'bare.txt', 'old.txt'].map(
       (name) => `diff --git a/${root}/${name} b/${root}/${name}`,
     ),
   )
@@ -91,5 +93,6 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
   expect(readFileSync(path.join(repo, 'g.txt'), 'utf8')).toBe('x\ny\nz\n')
   expect(readFileSync(path.join(repo, 'old.txt'), 'utf8')).toBe('gone\n')
   expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
+  expect(existsSync(path.join(repo, 'bare.txt'))).toBe(false)
   expect(existsSync(path.join(repo, 'dev'))).toBe(false)
 })
