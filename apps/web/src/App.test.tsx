@@ -1201,6 +1201,56 @@ describe('web client', () => {
     })
   })
 
+  it.each(['number shortcut', 'next chat', 'palette'] as const)(
+    'keeps a chat queued for deletion out of %s navigation',
+    async (route) => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      if (route === 'number shortcut') fireEvent.keyDown(window, { key: '1', metaKey: true })
+      else if (route === 'next chat')
+        fireEvent.keyDown(window, { key: 'ArrowDown', metaKey: true, altKey: true })
+      else {
+        fireEvent.keyDown(window, { key: 'k', metaKey: true })
+        fireEvent.change(await screen.findByRole('textbox', { name: 'Search commands' }), {
+          target: { value: 'Doomed' },
+        })
+        expect(screen.queryByRole('option', { name: /Doomed chat/ })).toBeNull()
+      }
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+        threadId: 'doomed-thread',
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'doomed-thread',
+      })
+    },
+  )
+
+  it('does not open a chat queued for deletion after settling the active chat', async () => {
+    serverProjects[0]!.sessions.push(
+      { id: 'kept-thread', title: 'Kept chat', createdAt: 3 },
+      { id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 },
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    act(() => sidebarProps().inbox?.onSettle('untouched-thread'))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'kept-thread',
+      }),
+    )
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'doomed-thread',
+    })
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'doomed-thread',
+    })
+  })
+
   it('cancels a deletion safety check when the chat is selected again', async () => {
     const request = transport.request.getMockImplementation()!
     let release!: (work: typeof serverUnsavedWork) => void
