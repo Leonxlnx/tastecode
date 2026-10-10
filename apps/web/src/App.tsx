@@ -33,6 +33,7 @@ import {
 } from './bridge.js'
 import {
   createDefaultKeybindings,
+  DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
@@ -4601,10 +4602,7 @@ export function App() {
       const debugModifier = macOS
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        debugModifier &&
-        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
-      ) {
+      if (debugModifier && matchesShortcut(event, DEBUG_SETTINGS_SHORTCUT)) {
         event.preventDefault()
         setDebugSettingsVisible((visible) => !visible)
         return
