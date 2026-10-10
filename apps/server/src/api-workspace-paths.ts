@@ -72,17 +72,19 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
 }
 
 /**
- * Only the part below `workspace` is checked: a project that merely lives under
- * a folder such as `gcloud` or `.docker` is not itself a credential.
+ * Only the workspace's own name and the part below it are checked: a project
+ * that merely lives under a folder such as `gcloud` or `.docker` is not itself a
+ * credential, but a workspace opened directly on `~/.aws` or `~/.kube` still is.
  */
 export function assertPublicWorkspaceFile(file: string, workspace?: string): void {
-  const relative = workspace === undefined ? file : path.relative(workspace, file)
-  const inside = !(
-    relative === '..' ||
-    relative.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relative)
-  )
-  if ((inside ? relative : file).split(path.sep).some(isSecretWorkspaceName)) {
+  const relative = workspace === undefined ? undefined : path.relative(workspace, file)
+  const inside =
+    relative !== undefined &&
+    !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  const checked = inside
+    ? [path.basename(workspace!), ...relative.split(path.sep)]
+    : file.split(path.sep)
+  if (checked.some(isSecretWorkspaceName)) {
     throw new Error('credential files are not available')
   }
 }
