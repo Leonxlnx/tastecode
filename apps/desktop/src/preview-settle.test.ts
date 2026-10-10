@@ -150,6 +150,19 @@ describe('preview capture settling', () => {
     expect(value).toMatchObject({ scrollContainer: 3200 })
   })
 
+  it('finds a shallow page scroller beside a list larger than the scan bound', () => {
+    const list = scrollBox({
+      width: 1440,
+      height: 1000,
+      contentHeight: 1000,
+      children: Array.from({ length: 25_000 }, () =>
+        scrollBox({ width: 10, height: 10, contentHeight: 10 }),
+      ),
+    })
+    const main = scrollBox({ width: 1440, height: 1000, contentHeight: 3000 })
+    expect(measure([main, list])).toMatchObject({ scrollContainer: 2000 })
+  })
+
   it('ignores closed drawers and modals and a full-height gallery scrollbar', () => {
     const value = measure(
       [

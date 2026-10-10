@@ -87,16 +87,17 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
 export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => {
   ${PAGE_SCROLLER_SOURCE}
   // The largest page scroller says how much of the page the document height leaves out.
-  // Like the DOM audit, walk open shadow roots and stop at a bound. The body itself
-  // is skipped: its overflow can belong to the document, which is already measured.
-  const pending = document.body ? Array.from(document.body.children) : []
+  // Like the DOM audit, walk open shadow roots and stop at a bound; shallowest first,
+  // where page scrollers sit, so a huge list cannot use up the bound before them. The
+  // body itself is skipped: its overflow can belong to the document, already measured.
+  const queue = document.body ? Array.from(document.body.children) : []
   let scrollContainer = 0
-  for (let scanned = 0; pending.length > 0 && scanned < 20000; scanned += 1) {
-    const element = pending.pop()
+  for (let index = 0; index < queue.length && index < 20000; index += 1) {
+    const element = queue[index]
     const hidden = pageScrollerOverflow(element)
     if (hidden > scrollContainer) scrollContainer = hidden
-    for (const child of element.shadowRoot ? element.shadowRoot.children : []) pending.push(child)
-    for (const child of element.children) pending.push(child)
+    for (const child of element.shadowRoot ? element.shadowRoot.children : []) queue.push(child)
+    for (const child of element.children) queue.push(child)
   }
   return {
     documentElement: document.documentElement.scrollHeight,
