@@ -38,6 +38,15 @@ describe('workspace branches', () => {
     expect((await readWorkspace(repo)).branch).toBe('feature/shelf')
   })
 
+  it('lists and switches to a branch that shares its name with a tag', async () => {
+    const repo = repository()
+    git(repo, 'branch', 'release')
+    git(repo, 'tag', 'release')
+    expect(await listWorkspaceBranches(repo)).toEqual(['main', 'feature/shelf', 'release'])
+    expect((await switchWorkspaceBranch(repo, 'release')).branch).toBe('release')
+    expect(await listWorkspaceBranches(repo)).toEqual(['release', 'feature/shelf', 'main'])
+  })
+
   it('rejects revisions that are not local branch names', async () => {
     const repo = repository()
     await expect(switchWorkspaceBranch(repo, 'HEAD~1')).rejects.toThrow('unknown local branch')
