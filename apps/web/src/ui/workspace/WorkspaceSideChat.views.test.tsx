@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { StrictMode } from 'react'
 import type { MethodName } from '@harness/contracts'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspacePanel } from './WorkspacePanel.js'
@@ -109,6 +110,36 @@ describe('Temporary chat views', () => {
 
     expect(calls('sideChat.start')).toHaveLength(2)
     expect(calls('thread.sendTurn')).toHaveLength(1)
+  })
+
+  it('sends a /side prompt that arrives under React Strict Mode', async () => {
+    const { transport, calls } = sideChatServer()
+    render(
+      <StrictMode>
+        <WorkspaceSideChat
+          active
+          parentThreadId="main-1"
+          parentStatus="idle"
+          transport={transport}
+          startOptions={{ approval: 'ask' }}
+          promptRequest={{
+            parentThreadId: 'main-1',
+            text: 'why did the build fail?',
+            attachments: [],
+            request: 1,
+          }}
+        />
+      </StrictMode>,
+    )
+
+    await waitFor(() =>
+      expect(calls('thread.sendTurn')).toEqual([
+        expect.objectContaining({ threadId: 'side-1', text: 'why did the build fail?' }),
+      ]),
+    )
+    await settle()
+    expect(calls('thread.sendTurn')).toHaveLength(1)
+    expect(calls('sideChat.close')).toEqual([])
   })
 
   it('keeps a Temporary chat shown in both panels alive until the last one closes', async () => {
