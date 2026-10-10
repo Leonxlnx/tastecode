@@ -4760,6 +4760,21 @@ describe('new chats', () => {
     })
   })
 
+  it('does not send a rename for a provisional chat that never started', async () => {
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+      typeof import('./ui/StageHeader.js').StageHeader
+    >
+
+    act(() => header.onRenameSession('pending:failed-start', 'Never started'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(rpcCount('thread.rename')).toBe(0)
+  })
+
   it('keeps deleting the other chats when several need a checkout confirmation', async () => {
     const nativeTimeout = globalThis.setTimeout
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(
