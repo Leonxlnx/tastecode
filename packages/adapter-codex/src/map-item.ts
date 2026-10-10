@@ -393,7 +393,7 @@ function unifiedDiff(change: {
   const raw = (change.diff ?? '').replace(/\n$/, '')
   if (raw.startsWith('diff --git')) return raw
   const body =
-    (kind === 'add' && !/^@@ -0,0 \+/.test(raw)) ||
+    (kind === 'add' && !raw.startsWith('@@ -0,0 +')) ||
     (kind === 'delete' && !/^@@ -1(?:,\d+)? \+0,0 @@/.test(raw))
       ? wholeFileHunk(kind, raw)
       : raw
