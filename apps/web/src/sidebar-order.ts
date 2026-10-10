@@ -4,6 +4,7 @@ import type { Project, Session } from './ui/Sidebar.js'
 export type SessionOrder = Record<string, string[]>
 export type PinnedSession = { projectPath: string; session: Session }
 type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
+export type SidebarRail = { orderedProjects: Project[]; pinnedSessions: PinnedSession[] }
 
 let cachedProjectOrderRaw: string | null | undefined
 let cachedProjectOrder: string[] = []
@@ -121,10 +122,7 @@ function sameIds<T>(
  * ahead of the rest, each project with working and unread chats lifted above
  * its other chats.
  */
-export function sidebarRail(projects: Project[]): {
-  orderedProjects: Project[]
-  pinnedSessions: PinnedSession[]
-} {
+export function sidebarRail(projects: Project[]): SidebarRail {
   const pinned: PinnedSession[] = []
   const pinnedProjects: Project[] = []
   const unpinnedProjects: Project[] = []
