@@ -10,6 +10,7 @@ import {
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { isConfirmEnter } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import {
@@ -280,7 +281,7 @@ function SessionSearchComponent(props: {
               } else if (event.key === 'End' && displayResults.length > 0) {
                 event.preventDefault()
                 setSelectedKey(displayResults.at(-1)?.key)
-              } else if (event.key === 'Enter') {
+              } else if (isConfirmEnter(event)) {
                 event.preventDefault()
                 choose(displayResults[selected])
               }

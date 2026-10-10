@@ -107,6 +107,8 @@ describe('AppSelect', () => {
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
       'Beta Serif',
     ])
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true })
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith('beta')
     expect(document.activeElement).toBe(trigger)
@@ -172,6 +174,8 @@ describe('AppSelect', () => {
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
     fireEvent.keyDown(trigger, { key: 'ArrowDown' })
     expect(trigger.getAttribute('aria-activedescendant')).toContain('option-1')
+    fireEvent.keyDown(trigger, { key: 'Enter', isComposing: true })
+    expect(onChange).not.toHaveBeenCalled()
     fireEvent.keyDown(trigger, { key: 'Enter' })
     expect(onChange).toHaveBeenCalledWith('beta')
 

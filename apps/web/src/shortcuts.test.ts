@@ -4,6 +4,7 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import {
   createDefaultKeybindings,
   findKeybindingConflict,
+  isConfirmEnter,
   isEditableTarget,
   KEYBINDING_STORAGE_KEY,
   KEYBINDING_DEFINITIONS,
@@ -145,6 +146,14 @@ describe('shortcuts', () => {
         { key: '?', primary: true, shift: true },
       ),
     ).toBe(true)
+  })
+
+  it('confirms on Enter only outside an IME composition', () => {
+    const enter = (key: string, isComposing: boolean) =>
+      isConfirmEnter({ key, nativeEvent: new KeyboardEvent('keydown', { key, isComposing }) })
+    expect(enter('Enter', false)).toBe(true)
+    expect(enter('Enter', true)).toBe(false)
+    expect(enter('a', false)).toBe(false)
   })
 
   it('does not capture AltGr, composition, or unsupported mixed primary modifiers', () => {

@@ -28,6 +28,18 @@ describe('thread search navigation', () => {
     expect(screen.getByText('1/1')).toBeTruthy()
   })
 
+  it('leaves the Enter that confirms an IME conversion to the input method', () => {
+    const onJump = vi.fn()
+    render(<ThreadSearch items={items} onJump={onJump} onClose={() => undefined} />)
+    const input = screen.getByLabelText('Find in thread')
+    fireEvent.change(input, { target: { value: 'match' } })
+    onJump.mockClear()
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onJump).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onJump).toHaveBeenCalledWith(0)
+  })
+
   it('clamps the counter and navigation when the transcript shrinks', () => {
     const onJump = vi.fn()
     const props = { threadId: 'thread', onJump, onClose: () => undefined }
