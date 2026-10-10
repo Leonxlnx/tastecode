@@ -106,6 +106,15 @@ function closeThenRun(close: () => void, action: () => void) {
   action()
 }
 
+/** A new chat keeps its provisional id until its thread starts, then takes the real one. */
+function startedFrom(provisionalId: string, sessionId: string | undefined) {
+  return (
+    provisionalId.startsWith('pending:') &&
+    sessionId !== undefined &&
+    !sessionId.startsWith('pending:')
+  )
+}
+
 /** Chat identity and direct workspace actions above the thread. */
 function StageHeaderComponent(props: {
   sessionId: string | undefined
@@ -125,7 +134,9 @@ function StageHeaderComponent(props: {
   const [renamingId, setRenamingId] = useState<string>()
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
-  const renaming = renamingId !== undefined && renamingId === props.sessionId
+  const renaming =
+    renamingId !== undefined &&
+    (renamingId === props.sessionId || startedFrom(renamingId, props.sessionId))
 
   useEffect(() => {
     if (!renaming) setDraft(props.title ?? '')
@@ -144,7 +155,9 @@ function StageHeaderComponent(props: {
   // Chat shortcuts still run while the field has focus. The draft belongs to
   // the chat it was typed for, so a switch saves it there and closes the field.
   useEffect(() => {
-    if (renamingId !== undefined && renamingId !== props.sessionId) commitRename()
+    if (renamingId === undefined || renamingId === props.sessionId) return
+    if (startedFrom(renamingId, props.sessionId)) setRenamingId(props.sessionId)
+    else commitRename()
   }, [props.sessionId])
 
   return (
