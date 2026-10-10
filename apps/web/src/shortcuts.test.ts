@@ -10,6 +10,7 @@ import {
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
+  reservedShortcutLabel,
   shortcutFromKeyboardEvent,
   shortcutLabel,
   shortcutRoute,
@@ -89,6 +90,27 @@ describe('shortcuts', () => {
       key: 'f8',
     })
     expect(shortcutFromKeyboardEvent(new KeyboardEvent('keydown', { key: 'a' }))).toBeUndefined()
+  })
+
+  it('names the owner of each chord the app keeps for itself', () => {
+    expect(reservedShortcutLabel({ key: '1', primary: true })).toBe('Open recent chat')
+    expect(reservedShortcutLabel({ key: '9', primary: true })).toBe('Open recent chat')
+    expect(reservedShortcutLabel({ key: 'd', primary: true, alt: true, shift: true })).toBe(
+      'Debug settings',
+    )
+    expect(reservedShortcutLabel({ key: 'f', primary: true })).toBe('Find in chat')
+    expect(reservedShortcutLabel({ key: 'arrowup', alt: true })).toBe('Previous turn')
+    expect(reservedShortcutLabel({ key: 'arrowdown', alt: true })).toBe('Next turn')
+    for (const tool of WORKSPACE_TOOL_SHORTCUTS) {
+      expect(reservedShortcutLabel(tool.shortcut)).toBe(tool.label)
+    }
+    expect(reservedShortcutLabel({ key: '0', primary: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: '1', primary: true, shift: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: '1', alt: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: 't', primary: true, shift: true })).toBeUndefined()
+    for (const shortcut of Object.values(createDefaultKeybindings())) {
+      if (shortcut) expect(reservedShortcutLabel(shortcut)).toBeUndefined()
+    }
   })
 
   it.each(['macOS', 'Windows', 'Linux'])('matches all assigned shortcuts on %s', (platform) => {

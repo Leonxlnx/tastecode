@@ -33,6 +33,7 @@ import {
 } from './bridge.js'
 import {
   createDefaultKeybindings,
+  DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
@@ -2988,11 +2989,13 @@ export function App() {
       const titlePrompt = text.trim() || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
-      // for the paragraph someone just typed.
-      const draftKey = activeId?.startsWith('pending:')
-        ? NEW_CHAT_DRAFT_KEY
-        : composerDraftKey(activeId)
-      const restoreDraft = () => restoreRejectedDraft(draftKey, { text, attachments })
+      // for the paragraph someone just typed. A chat that is still starting
+      // keeps its own draft: startup moves it to the real chat, or to New chat
+      // if it fails. Only a send that waited on that failed startup goes there.
+      const restoreDraft = () =>
+        restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
+      const restoreDraftAfterFailedStart = () =>
+        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelQueuedArchive(activeId)) {
         restoreDraft()
@@ -3139,7 +3142,7 @@ export function App() {
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3162,7 +3165,7 @@ export function App() {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -4601,10 +4604,7 @@ export function App() {
       const debugModifier = macOS
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        debugModifier &&
-        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
-      ) {
+      if (debugModifier && matchesShortcut(event, DEBUG_SETTINGS_SHORTCUT)) {
         event.preventDefault()
         setDebugSettingsVisible((visible) => !visible)
         return
@@ -4625,6 +4625,17 @@ export function App() {
       }
       if (modalOwnsKeyboard) return
 
+      // Keybinds come first, so one saved on a number key before the
+      // recorder refused them still runs, as its menu accelerator does.
+      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
+        matchesShortcut(event, keybindings[candidate.id]),
+      )
+      if (definition) {
+        event.preventDefault()
+        runRoutedShortcut(definition.id)
+        return
+      }
+
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
@@ -4635,15 +4646,6 @@ export function App() {
           .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
         event.preventDefault()
         if (session) void selectSession(session.id)
-        return
-      }
-
-      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
-        matchesShortcut(event, keybindings[candidate.id]),
-      )
-      if (definition) {
-        event.preventDefault()
-        runRoutedShortcut(definition.id)
         return
       }
 

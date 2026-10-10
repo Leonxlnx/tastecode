@@ -1803,6 +1803,7 @@ function ReviewThreadComment(props: {
                   title="Edit comment"
                   icon={<Pencil size={13} aria-hidden />}
                   onClick={() => {
+                    if (!editing) setBody(props.comment.body)
                     setEditing(true)
                     close()
                   }}
@@ -1917,6 +1918,7 @@ function CommentCard(props: {
                     title="Edit comment"
                     icon={<Pencil size={13} aria-hidden />}
                     onClick={() => {
+                      if (!editing) setBody(props.comment.body)
                       setEditing(true)
                       close()
                     }}

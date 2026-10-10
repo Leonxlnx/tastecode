@@ -13,6 +13,7 @@ import {
   DEFAULT_KEYBINDINGS,
   findKeybindingConflict,
   KEYBINDING_DEFINITIONS,
+  reservedShortcutLabel,
   sameShortcut,
   shortcutFromKeyboardEvent,
   shortcutLabel,
@@ -189,6 +190,14 @@ export function KeybindSettings(props: {
         action,
         text: `Add ${props.macOS ? 'Command or Option' : 'Ctrl or Alt'}, or use a function key.`,
       })
+      return
+    }
+    // A binding saved there before this check still runs; pressing it again keeps it.
+    const reserved = sameShortcut(props.keybindings[action], shortcut)
+      ? undefined
+      : reservedShortcutLabel(shortcut)
+    if (reserved) {
+      setFault({ action, text: `Already used by ${reserved}.`, attempt: shortcut })
       return
     }
     const conflict = findKeybindingConflict(props.keybindings, action, shortcut)

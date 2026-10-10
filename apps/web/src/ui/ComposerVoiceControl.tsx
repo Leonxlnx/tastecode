@@ -30,6 +30,11 @@ export function ComposerVoiceControl(props: {
   const mounted = useRef(true)
   const cancelRequest = useRef(props.onCancelVoice)
   cancelRequest.current = props.onCancelVoice
+  // Files and chips can change while a transcript is on its way. Hand it to the
+  // latest handler so a send uses what the composer shows, not what it showed
+  // when recording stopped.
+  const deliverTranscript = useRef(props.onTranscript)
+  deliverTranscript.current = props.onTranscript
   const context = useRef(props.contextKey)
   const currentContext = useRef(props.contextKey)
   currentContext.current = props.contextKey
@@ -104,7 +109,7 @@ export function ComposerVoiceControl(props: {
         operation.current === generation &&
         request.current === requestId
       ) {
-        props.onTranscript(transcript, cursor, sendAfter)
+        deliverTranscript.current(transcript, cursor, sendAfter)
       }
     } catch (error) {
       if (
