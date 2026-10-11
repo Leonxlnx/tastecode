@@ -484,7 +484,8 @@ answer is `reset` with the newest page when the boundary turn is gone (a restore
 the replay now ends before the cursor's sequence (a truncation with nothing written since), or
 when provider history gained events after that sequence. A truncation that keeps the boundary turn
 and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
-that only retires events is not detected, as on the `afterSeq` path. Requests without `page` keep
+that only retires events is detected only through the re-recorded thread start: the merge records
+`thread.started` again whenever it retires rows. Requests without `page` keep
 the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
 reader bounded before compaction, which is still to do. Until then a thread without a saved
 replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
