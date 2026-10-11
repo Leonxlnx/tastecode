@@ -878,6 +878,47 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each(['factory', 'initialize', 'exit'] as const)(
+    'detaches once when an effort restart fails in %s',
+    async (phase) => {
+      const fake = harness()
+      let failing = false
+      const adapter = new ClaudeCodeAdapter({
+        createQuery: (input) => {
+          if (failing && phase === 'factory') throw new Error('Claude could not start')
+          const query = fake.createQuery(input) as FakeQuery
+          if (failing)
+            vi.spyOn(query, 'initializationResult').mockImplementation(async () => {
+              if (phase === 'exit') query.close()
+              await tick()
+              throw new Error('Claude could not start')
+            })
+          return query
+        },
+      })
+      const disconnected = vi.fn()
+      adapter.onDisconnected(disconnected)
+      try {
+        const thread = await adapter.startThread('/repo', { effort: 'low' })
+        await adapter.sendTurn(thread.id, 'Brief')
+        fake.queries[0]!.emitMessage(resultMessage(false))
+        await tick()
+
+        failing = true
+        await expect(adapter.sendTurn(thread.id, 'Build', [], { effort: 'high' })).rejects.toThrow(
+          'Claude could not start',
+        )
+        await tick()
+        expect(disconnected).toHaveBeenCalledOnce()
+        await expect(adapter.sendTurn(thread.id, 'Again')).rejects.toThrow(
+          'Claude session is closed',
+        )
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('streams assistant text through one started/delta/completed lifecycle', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })

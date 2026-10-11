@@ -765,7 +765,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
-    this.#queryGeneration += 1
+    const generation = ++this.#queryGeneration
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
     this.#query?.close()
@@ -777,6 +777,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
     } catch (error) {
       const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
+      // dispose() drops every listener, so the owner must learn the session is gone first.
+      // #consume already announced it when the failed query ended on its own.
+      if (!this.#disposed && (this.#query || this.#queryGeneration === generation)) {
+        this.#settlePending('Claude session disconnected.')
+        this.emit('disconnected')
+      }
       await this.dispose()
       throw new Error(message)
     }
