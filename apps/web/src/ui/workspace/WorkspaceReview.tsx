@@ -23,6 +23,7 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   buildReviewTree,
   flattenReviewTree,
+  reviewTreeNodeKey,
   type ReviewTreeNode,
   type ReviewTreeRow,
 } from './review-file-tree.js'
@@ -446,7 +447,7 @@ export const ReviewTree = memo(function ReviewTree({
   return (
     <div className="workspace-review__tree-list">
       {tree.map((node) => (
-        <ReviewTreeNode key={node.path} node={node} depth={0} onSelect={onSelect} />
+        <ReviewTreeNode key={reviewTreeNodeKey(node)} node={node} depth={0} onSelect={onSelect} />
       ))}
     </div>
   )
@@ -466,7 +467,10 @@ function VirtualReviewTree({
   )
   const scroller = useRef<HTMLDivElement>(null)
   const getItemKey = useCallback(
-    (index: number) => rows[index]?.node.path ?? `missing-review-row-${index}`,
+    (index: number) => {
+      const row = rows[index]
+      return row ? reviewTreeNodeKey(row.node) : `missing-review-row-${index}`
+    },
     [rows],
   )
   const virtualizer = useVirtualizer({
@@ -602,7 +606,12 @@ function ReviewTreeNode({
       </button>
       {open
         ? node.children.map((child) => (
-            <ReviewTreeNode key={child.path} node={child} depth={depth + 1} onSelect={onSelect} />
+            <ReviewTreeNode
+              key={reviewTreeNodeKey(child)}
+              node={child}
+              depth={depth + 1}
+              onSelect={onSelect}
+            />
           ))
         : null}
     </div>
