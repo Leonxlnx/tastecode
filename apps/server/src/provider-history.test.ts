@@ -216,6 +216,57 @@ describe('provider history integration', () => {
     ).toEqual(['Hello'])
   })
 
+  it('recognizes a steer that the provider saved as a turn of its own', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const message = (id: string, turnId: string, role: 'user' | 'assistant', text: string) =>
+      ({
+        type: 'item.completed',
+        item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: 1000 },
+      }) satisfies DomainEvent
+    const started = (id: string, threadId: string) =>
+      ({
+        type: 'turn.started',
+        turn: { id, threadId, status: 'running', createdAt: 1000 },
+      }) satisfies DomainEvent
+    // The steer and its answer stay in the turn they steered.
+    for (const event of [
+      started('local-turn', 'local'),
+      message('prompt', 'local-turn', 'user', 'Hello'),
+      message('story', 'local-turn', 'assistant', 'Story'),
+      message('steer', 'local-turn', 'user', 'Steer'),
+      message('steer-answer', 'local-turn', 'assistant', 'Answer to the steer'),
+      { type: 'turn.completed', turnId: 'local-turn', status: 'completed' },
+    ] satisfies DomainEvent[])
+      store.append('local', event)
+    const { history, source } = setup()
+    // Claude's transcript starts a turn at every prompt, the steer included.
+    vi.mocked(source.read).mockResolvedValue([
+      transcript()[0]!,
+      started('native-a', 'native'),
+      message('native-prompt', 'native-a', 'user', 'Hello'),
+      message('native-story', 'native-a', 'assistant', 'Story'),
+      { type: 'turn.completed', turnId: 'native-a', status: 'interrupted' },
+      started('native-b', 'native'),
+      message('native-steer', 'native-b', 'user', 'Steer'),
+      message('native-steer-answer', 'native-b', 'assistant', 'Answer to the steer'),
+      { type: 'turn.completed', turnId: 'native-b', status: 'completed' },
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      'Story',
+      'Steer',
+      'Answer to the steer',
+    ])
+  })
+
   it('never imports provider-owned helper chats', async () => {
     const { history, source, hooks } = setup([{ ...metadata(), internal: true }])
     await history.refresh()
