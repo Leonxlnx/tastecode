@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { WorkspaceTabs, fitWorkspaceTabs } from './WorkspaceTabs.js'
+import { WorkspaceTabs, fitWorkspaceTabs, revealActiveTab } from './WorkspaceTabs.js'
 
 const motions: Array<{ frames: Keyframe[]; finish: () => void; cancel: ReturnType<typeof vi.fn> }> =
   []
@@ -224,6 +224,48 @@ it('keeps a readable prefix of a long title whole and names the tab in full', ()
   const short = screen.getByRole('tab', { name: 'Browser' })
   expect(short.querySelector('.workspace-tabs__label')!.textContent).toBe('Browser')
   expect(short.querySelector('.workspace-tabs__label-head')).toBeNull()
+})
+
+function stripWithTabs(widths: { client: number; scroll: number }) {
+  const strip = document.createElement('div')
+  strip.style.paddingLeft = '8px'
+  strip.style.paddingRight = '4px'
+  strip.innerHTML =
+    '<div class="workspace-tabs__tab"></div><div class="workspace-tabs__tab"></div><div class="workspace-tabs__add"></div>'
+  document.body.append(strip)
+  Object.defineProperty(strip, 'clientWidth', { get: () => widths.client })
+  Object.defineProperty(strip, 'scrollWidth', { get: () => widths.scroll })
+  const [first, second, add] = Array.from(strip.children) as HTMLElement[]
+  for (const [node, left, width] of [
+    [first!, 8, 120],
+    [second!, 132, 100],
+    [add!, 236, 26],
+  ] as const) {
+    Object.defineProperty(node, 'offsetLeft', { get: () => left })
+    Object.defineProperty(node, 'offsetWidth', { get: () => width })
+  }
+  return { strip, first: first!, second: second! }
+}
+
+it('scrolls an overflowing strip to show the active tab, and the add button after a last tab', () => {
+  const { strip, first, second } = stripWithTabs({ client: 150, scroll: 266 })
+  second.classList.add('is-active')
+  revealActiveTab(strip)
+  // The add button's end plus the strip's end padding, less the visible width.
+  expect(strip.scrollLeft).toBe(236 + 26 + 4 - 150)
+  second.classList.remove('is-active')
+  first.classList.add('is-active')
+  revealActiveTab(strip)
+  expect(strip.scrollLeft).toBe(0)
+  strip.remove()
+})
+
+it('leaves a strip that fits where it is', () => {
+  const { strip, second } = stripWithTabs({ client: 300, scroll: 300 })
+  second.classList.add('is-active')
+  revealActiveTab(strip)
+  expect(strip.scrollLeft).toBe(0)
+  strip.remove()
 })
 
 function fitStrip(widths: { client: number; labels: number; compact: number }) {
