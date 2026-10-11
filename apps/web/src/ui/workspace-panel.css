@@ -21,8 +21,10 @@
     transform var(--dur-slow) var(--ease-rail),
     visibility 0s linear var(--dur-slow);
   /* The tools lay out against the panel's own width, which the user drags,
-     not against the window's. */
-  container: workspace-panel / inline-size;
+     not against the window's. Width rules every host shares query
+     workspace-panel; layouts that trade width for height, which only the
+     full-height right host has, query workspace-panel-right. */
+  container: workspace-panel workspace-panel-right / inline-size;
 }
 
 .workspace-panel.is-open {
@@ -623,9 +625,9 @@
   }
 }
 
-/* Narrower than its default width the panel cannot give the diff a readable
-   column beside a 230px tree, so the tree moves underneath. */
-@container workspace-panel (max-width: 500px) {
+/* Narrower than its default width the right panel cannot give the diff a
+   readable column beside a 230px tree, so the tree moves underneath. */
+@container workspace-panel-right (max-width: 500px) {
   .workspace-review__split {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 210px;
@@ -923,7 +925,7 @@
   white-space: pre;
 }
 
-@container workspace-panel (max-width: 500px) {
+@container workspace-panel-right (max-width: 500px) {
   .workspace-files__split {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 220px;
@@ -1381,9 +1383,9 @@
   white-space: nowrap;
 }
 
-/* Below this width a two-column tile can no longer hold "Temporary chat", so
-   the five tools stack into one column instead of truncating. */
-@container workspace-panel (max-width: 380px) {
+/* Below this width two-column tiles get too tight for "Temporary chat", so
+   the right panel stacks the five tools into one column. */
+@container workspace-panel-right (max-width: 380px) {
   .workspace-selector__list {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -1411,12 +1413,16 @@
   }
 }
 
-/* The bottom host uses the same tools and tab lifecycle as the right host. */
+/* The bottom host uses the same tools and tab lifecycle as the right host.
+   It opens only about 260px tall, too short to stack a tree under a diff or
+   five launcher tiles in a column, so it answers only the shared width
+   rules. */
 .workspace-panel.workspace-panel--bottom {
   width: 100%;
   height: 100%;
   border-left: 0;
   transform: none;
+  container-name: workspace-panel;
 }
 
 .workspace-panel--bottom > .workspace-panel__resize {
