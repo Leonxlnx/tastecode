@@ -186,6 +186,30 @@ describe('Markdown inline references', () => {
     expect(revealProjectFile).toHaveBeenCalledWith(path, project)
   })
 
+  it('resolves relative links against the project instead of the app origin', async () => {
+    vi.mocked(revealProjectFile).mockClear()
+    const { container } = render(
+      <Markdown
+        text={
+          'See [a.ts](./src/a.ts), [b.ts](src/b.ts#L4), [docs](//example.com/docs), [up](../secret.ts) and [bad](javascript:alert(1)).'
+        }
+        projectPath="/home/u/project"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'a.ts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'b.ts' }))
+    expect(vi.mocked(revealProjectFile).mock.calls).toEqual([
+      ['/home/u/project/src/a.ts', '/home/u/project'],
+      ['/home/u/project/src/b.ts', '/home/u/project'],
+    ])
+    expect(screen.getByRole('link', { name: 'docs' }).getAttribute('href')).toBe(
+      'https://example.com/docs',
+    )
+    expect(screen.getByText('This file is outside the selected project')).toBeTruthy()
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull()
+  })
+
   it('shows a retryable error when the native reveal request fails', async () => {
     vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
     render(

@@ -11,6 +11,7 @@ vi.mock('./highlighter.js', () => ({
 }))
 
 vi.mock('streamdown', () => ({
+  defaultRehypePlugins: {},
   Streamdown: (props: {
     children: ReactNode
     controls: unknown

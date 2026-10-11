@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   preserveProjectFileLinks,
+  preserveRelativeLink,
   projectFileLinkParseWindow,
   projectFileReference,
 } from './project-file-link.js'
@@ -176,6 +177,26 @@ describe('project file links', () => {
       path: '/Users/blue/Developer/other/secret.ts',
       reason: 'This file is outside the selected project',
     })
+  })
+
+  it('resolves preserved relative links inside the project', () => {
+    const relative = (href: string, root: string) =>
+      projectFileReference(preserveRelativeLink(href), root)
+
+    expect(relative('./src/a.ts:12', '/home/u/project')).toEqual({
+      kind: 'safe',
+      path: '/home/u/project/src/a.ts',
+    })
+    expect(relative('src/a%20b.ts', 'E:\\project')).toEqual({
+      kind: 'safe',
+      path: 'E:\\project\\src\\a b.ts',
+    })
+    expect(relative('../secret.ts', '/home/u/project')?.kind).toBe('blocked')
+    expect(relative('src/a.ts', '~/project')).toBeUndefined()
+    for (const href of ['https://example.com', '/abs.ts', '#top', '?q', 'mailto:a@b.c', '..']) {
+      expect(preserveRelativeLink(href)).toBe(href)
+    }
+    expect(preserveRelativeLink('//example.com/docs')).toBe('https://example.com/docs')
   })
 
   it('blocks traversal, sibling, drive, and network paths with useful reasons', () => {
