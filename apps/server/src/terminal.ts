@@ -42,6 +42,12 @@ type CloseStep = keyof typeof CLOSE_STEPS
 /** The foreground process group of a closed shell, and that shell's session. */
 type Job = { group: number; session: string }
 type GroupMember = { pid: number; session: string; zombie: boolean }
+type JobState = 'ended' | 'running' | 'foreign' | 'unreadable'
+const JOB_LEFT = {
+  running: 'it survived SIGKILL',
+  foreign: 'its group now holds another session',
+  unreadable: 'its processes could not be listed',
+} satisfies Record<Exclude<JobState, 'ended'>, string>
 /** Reads and signals POSIX process groups; injectable so tests need no real job. */
 type JobControl = {
   /** The group's members, or undefined when they cannot be read. */
@@ -165,6 +171,7 @@ export class TerminalManager {
   #closingAll: Promise<void> | undefined
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
+  #onLog: (message: string) => void
   #spawnPty: SpawnPty
   #inspectShell: InspectShell
   #jobControl: JobControl
@@ -176,6 +183,7 @@ export class TerminalManager {
     handlers: {
       onOutput: (terminalId: string, data: string, outputOffset: number) => void
       onExit: (terminalId: string, exitCode: number | null) => void
+      onLog?: (message: string) => void
     },
     options: {
       spawnPty?: SpawnPty
@@ -186,6 +194,7 @@ export class TerminalManager {
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
+    this.#onLog = handlers.onLog ?? (() => {})
     this.#spawnPty = options.spawnPty ?? spawnPty
     this.#inspectShell = options.inspectShell ?? inspectShell
     this.#jobControl = options.jobControl ?? processGroups
@@ -395,20 +404,37 @@ export class TerminalManager {
     if (job !== undefined) await this.#stopJob(job)
   }
 
+  /**
+   * Stop what is left of the job. A job that cannot be stopped — a member
+   * owned by root, one stuck in the kernel — is logged rather than failing
+   * the close: the pane, chat or server is gone either way.
+   */
   async #stopJob(job: Job): Promise<void> {
-    if ((await this.#awaitJob(job, 'hangup')) !== 'running') return
-    this.#jobControl.signal(job.group, 'SIGTERM')
-    if ((await this.#awaitJob(job, 'terminate')) !== 'running') return
-    this.#jobControl.signal(job.group, 'SIGKILL')
-    if ((await this.#awaitJob(job, 'kill')) !== 'running') return
-    throw new Error(`terminal job ${job.group} did not stop after SIGKILL`)
+    try {
+      let state = await this.#awaitJob(job, 'hangup')
+      if (state === 'running') {
+        this.#jobControl.signal(job.group, 'SIGTERM')
+        state = await this.#awaitJob(job, 'terminate')
+      }
+      if (state === 'running') {
+        this.#jobControl.signal(job.group, 'SIGKILL')
+        state = await this.#awaitJob(job, 'kill')
+      }
+      if (state !== 'ended') {
+        this.#onLog(`[terminal] left job ${job.group} of a closed terminal: ${JOB_LEFT[state]}`)
+      }
+    } catch (error) {
+      this.#onLog(
+        `[terminal] could not stop job ${job.group} of a closed terminal: ${errorMessage(error)}`,
+      )
+    }
   }
 
   /**
    * Wait up to one step for the job to end. `running` means it is still the
    * closed shell's job, read just now, so the caller may signal it.
    */
-  async #awaitJob(job: Job, step: CloseStep): Promise<'ended' | 'running' | 'foreign'> {
+  async #awaitJob(job: Job, step: CloseStep): Promise<JobState> {
     const startedAt = Date.now()
     while (true) {
       // Members that exited stay in the group as zombies until their new
@@ -417,7 +443,8 @@ export class TerminalManager {
         (member) => !member.zombie,
       )
       // A group that cannot be read is not escalated blindly.
-      if (!members || members.length === 0) return 'ended'
+      if (!members) return 'unreadable'
+      if (members.length === 0) return 'ended'
       // A recycled group id now names someone else's processes.
       if (members.some((member) => member.session !== job.session)) return 'foreign'
       if (Date.now() - startedAt >= this.#stepMs(step)) return 'running'
@@ -571,6 +598,10 @@ const processGroups: JobControl = {
       if (errorCode(error) !== 'ESRCH') throw error
     }
   },
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function errorCode(error: unknown): unknown {
