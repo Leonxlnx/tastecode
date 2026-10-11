@@ -81,6 +81,32 @@ describe('workspace panel layout', () => {
     )
   })
 
+  it('ends the right tab strip before the floating panel toggles instead of under them', () => {
+    const toggles = appCss.match(/\.panel-toggles \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
+    const openToggles =
+      appCss.match(/\.panel-toggles\.is-workspace-open \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
+    const toggle = appCss.match(/\.stagehead__action \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
+    const reserve = (selector: string) =>
+      css.match(
+        new RegExp(
+          `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s+\\.workspace-panel:not\\(\\.workspace-panel--bottom\\)\\s+> \\.workspace-tabs \\{(?<body>[^}]*)\\}`,
+        ),
+      )?.groups?.body ?? ''
+    const workspaceOnly = reserve('.shell:has(> .panel-toggles.is-workspace-open)')
+    const withTerminal = reserve(
+      '.shell:has(> .panel-toggles.is-workspace-open > .panel-toggles__terminal)',
+    )
+
+    // The reserve is derived from these numbers; moving one means moving it.
+    expect(toggles).toContain('position: fixed')
+    expect(toggles).toContain('gap: 8px')
+    expect(openToggles).toContain('right: 44px')
+    expect(toggle).toContain('width: 28px')
+    expect(workspaceOnly).toContain('margin-right: 76px')
+    expect(workspaceOnly).toContain('padding-right: 8px')
+    expect(withTerminal).toContain('margin-right: 112px')
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =

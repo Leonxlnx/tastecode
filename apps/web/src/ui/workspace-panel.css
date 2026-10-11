@@ -1487,6 +1487,24 @@
 .workspace-tabs {
   position: relative;
 }
+
+/* On the chat surface the stage's panel toggles stay fixed over this strip,
+   left of the close button: a 44px inset plus 28px buttons and 8px gaps.
+   End the strip 4px short of them rather than padding it, so tabs that
+   scroll are clipped there instead of sliding under the transparent
+   buttons. */
+.shell:has(> .panel-toggles.is-workspace-open)
+  .workspace-panel:not(.workspace-panel--bottom)
+  > .workspace-tabs {
+  margin-right: 76px;
+  padding-right: 8px;
+}
+
+.shell:has(> .panel-toggles.is-workspace-open > .panel-toggles__terminal)
+  .workspace-panel:not(.workspace-panel--bottom)
+  > .workspace-tabs {
+  margin-right: 112px;
+}
 .workspace-tabs__tab {
   touch-action: pan-y;
 }
