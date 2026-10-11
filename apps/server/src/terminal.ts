@@ -177,6 +177,8 @@ export class TerminalManager {
   #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
+  /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
+  #stoppingJobs = new Set<Promise<void>>()
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #onLog: (message: string) => void
@@ -373,8 +375,8 @@ export class TerminalManager {
     threadClosings.add(closing)
     this.#closingByThread.set(entry.threadId, threadClosings)
     // A timeout is a failed close, not evidence that the native process is
-    // gone. Keep that generation tracked until its real exit arrives, and the
-    // foreground job is stopped, so a retry or shutdown waits for both.
+    // gone. Keep that generation tracked until its real exit arrives, so a
+    // retry or shutdown waits for it.
     void closing.catch(() => undefined)
     void Promise.allSettled([entry.exited, closing]).then(() =>
       this.#forgetClosing(terminalId, entry.threadId, closing),
@@ -405,8 +407,17 @@ export class TerminalManager {
     }
     await exitedInTime
     // The shell's exit sent its foreground job SIGHUP. Background jobs are
-    // left to the shell, as a terminal emulator leaves them.
-    if (job !== undefined) await this.#stopJob(job)
+    // left to the shell, as a terminal emulator leaves them. The close is done
+    // once the shell is gone: the job may take seconds to shut down, and the
+    // chat may already open a new terminal meanwhile.
+    if (job !== undefined) this.#trackJob(job)
+  }
+
+  #trackJob(job: Job): void {
+    const stopping = this.#stopJob(job)
+    this.#stoppingJobs.add(stopping)
+    const forget = () => this.#stoppingJobs.delete(stopping)
+    void stopping.then(forget, forget)
   }
 
   /**
@@ -524,7 +535,12 @@ export class TerminalManager {
         waits.add(Promise.reject(error))
       }
     }
-    await settleAll(waits, 'terminal shutdown failed')
+    try {
+      await settleAll(waits, 'terminal shutdown failed')
+    } finally {
+      // Every close that saw its shell exit has handed over its job by now.
+      await Promise.allSettled(this.#stoppingJobs)
+    }
   }
 
   #boundedExit(terminalId: string, exited: Promise<void>): Promise<void> {
