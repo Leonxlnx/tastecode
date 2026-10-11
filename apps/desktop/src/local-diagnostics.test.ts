@@ -81,6 +81,30 @@ describe('local diagnostics', () => {
     expect(scrub('x-api-key: abc123def456')).toBe('x-api-key: [redacted]')
   })
 
+  it('scrubs camelCase keyed secrets', () => {
+    expect(scrub('{"accessToken":"abc123def456"}')).toBe('{"accessToken":"[redacted]"}')
+    expect(scrub('refreshToken: abc123def456 rejected')).toBe('refreshToken: [redacted] rejected')
+    expect(scrub('clientSecret=abc123def456 rejected')).toBe('clientSecret=[redacted] rejected')
+    expect(scrub('dbPassword=hunter2xyz end')).toBe('dbPassword=[redacted] end')
+    expect(scrub('openaiApiKey=abc123def456 end')).toBe('openaiApiKey=[redacted] end')
+  })
+
+  it('scrubs credentials inside URLs whatever the host looks like', () => {
+    expect(scrub('connect postgres://admin:hunter2xyz@localhost:5432/app failed')).toBe(
+      'connect postgres://admin:[redacted]@localhost:5432/app failed',
+    )
+    expect(scrub('redis://default:hunter2xyz@10.0.0.5:6379')).toBe(
+      'redis://default:[redacted]@10.0.0.5:6379',
+    )
+    expect(scrub('redis://:hunter2xyz@10.0.0.5:6379')).toBe('redis://:[redacted]@10.0.0.5:6379')
+    expect(scrub('https://bot:hunter2xyz@example.com/repo.git')).toBe(
+      'https://bot:[redacted]@example.com/repo.git',
+    )
+    expect(scrub('http://127.0.0.1:4311/health?next=@a')).toBe(
+      'http://127.0.0.1:4311/health?next=@a',
+    )
+  })
+
   it('leaves prose that mentions credential vocabulary untouched', () => {
     expect(scrub('the token expired before the tokenizer finished')).toBe(
       'the token expired before the tokenizer finished',
@@ -91,6 +115,9 @@ describe('local diagnostics', () => {
     expect(scrub('a basic connectivity check failed')).toBe('a basic connectivity check failed')
     expect(scrub('token_type=bearer-like next_tokenizer=on')).toBe(
       'token_type=bearer-like next_tokenizer=on',
+    )
+    expect(scrub('inputTokens: 1234 maxTokens=4096 "output_tokens":12')).toBe(
+      'inputTokens: 1234 maxTokens=4096 "output_tokens":12',
     )
   })
 
