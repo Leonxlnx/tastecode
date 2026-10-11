@@ -12,6 +12,8 @@ const state = vi.hoisted(() => ({
   projects: [] as Array<{ path: string }>,
   threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
+  shutdown: [] as string[],
+  historyClosed: Promise.resolve(),
 }))
 const temporary: string[] = []
 
@@ -41,6 +43,9 @@ vi.mock('./orchestrator.js', () => ({
     async protectStoredCheckpoints() {}
     refreshLifecycle() {}
     async recoverWorktrees() {}
+    async closeAllTerminals() {
+      state.shutdown.push('terminals')
+    }
     async disposeAll() {}
   },
 }))
@@ -48,7 +53,10 @@ vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
     async refresh() {}
-    async close() {}
+    async close() {
+      state.shutdown.push('history')
+      await state.historyClosed
+    }
   },
 }))
 vi.mock('@harness/adapter-codex', () => ({ createCodexHistorySource: () => ({}) }))
@@ -76,6 +84,8 @@ afterEach(async () => {
   state.projects.length = 0
   state.threads.clear()
   state.reservedPreviewPorts.length = 0
+  state.shutdown.length = 0
+  state.historyClosed = Promise.resolve()
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -337,5 +347,22 @@ describe('workspace search requests', () => {
     expect(await search(port, { projectPath, ...params })).toMatchObject({
       error: { message: 'invalid params for workspace.searchFiles' },
     })
+  })
+})
+
+describe('server shutdown', () => {
+  it('starts closing terminals before it waits on provider history', async () => {
+    let finishHistory: () => void = () => {}
+    state.historyClosed = new Promise<void>((resolve) => {
+      finishHistory = resolve
+    })
+    await listen()
+    const closed = running!.close()
+    running = undefined
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(state.shutdown).toEqual(['terminals', 'history'])
+
+    finishHistory()
+    await closed
   })
 })
