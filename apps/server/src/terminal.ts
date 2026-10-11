@@ -486,13 +486,13 @@ export class TerminalManager {
       const members = (await this.#listProcesses())?.filter(
         (row) => row.group === job.group && !row.zombie,
       )
-      // A group that cannot be read is not escalated blindly.
-      if (!members) return 'unreadable'
-      if (members.length === 0) return 'ended'
+      if (members?.length === 0) return 'ended'
       // A recycled group id now names someone else's processes.
-      if (members.some((member) => member.session !== job.session)) return 'foreign'
+      if (members?.some((member) => member.session !== job.session)) return 'foreign'
       const left = this.#stepEnd(step, startedAt) - Date.now()
-      if (left <= 0) return 'running'
+      // A failed listing is retried on the next poll, but a group that still
+      // cannot be read when the step ends is not escalated blindly.
+      if (left <= 0) return members ? 'running' : 'unreadable'
       await this.#pause(left)
     }
   }
