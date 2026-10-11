@@ -1,5 +1,10 @@
-/** Narrowest the right workspace panel can be dragged. */
-export const MIN_WORKSPACE_PANEL_WIDTH = 360
+/**
+ * Narrowest the right workspace panel can be dragged. Every tool keeps a
+ * working layout here: the launcher stacks, Review and Files put their tree
+ * underneath, the browser address takes its own row and a terminal still
+ * fits about 38 columns.
+ */
+export const MIN_WORKSPACE_PANEL_WIDTH = 300
 
 /** Width the right workspace panel opens at until the user resizes it. */
 export const DEFAULT_WORKSPACE_PANEL_WIDTH = 520

@@ -135,6 +135,20 @@ describe('WorkspacePanel', () => {
     )
   })
 
+  it('lets the right panel narrow to 300px and stops it there', () => {
+    const props = defaults()
+    const { container } = render(<WorkspacePanel {...props} />)
+    container.className = 'workspace-layout'
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 1000 })
+    const handle = screen.getByRole('separator')
+    Object.defineProperty(handle, 'setPointerCapture', { configurable: true, value: vi.fn() })
+    fireEvent.pointerDown(handle, { clientX: 500, clientY: 500, pointerId: 9 })
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 500, pointerId: 9 })
+    fireEvent.blur(window)
+    expect(props.onWidthChange).toHaveBeenCalledWith(300)
+    expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('300px')
+  })
+
   it('keeps a shell when hidden with the panel toggle, and closes it on shell exit', async () => {
     const props = defaults()
     const view = render(<WorkspacePanel {...props} terminalToggleRequest={1} />)
