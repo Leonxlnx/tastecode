@@ -343,6 +343,11 @@ export const ItemDeltaNotificationSchema = z.object({
   itemId: z.string(),
   delta: z.string(),
 })
+export const ReasoningSummaryPartAddedNotificationSchema = z.object({
+  turnId: z.string(),
+  itemId: z.string(),
+  summaryIndex: z.number(),
+})
 export const CommandOutputDeltaNotificationSchema = ItemDeltaNotificationSchema.extend({
   delta: z.string().optional(),
   deltaBase64: z.string().optional(),
