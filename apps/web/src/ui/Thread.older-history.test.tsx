@@ -129,6 +129,7 @@ describe('Thread older history', () => {
 
     // Five rows arrived above; the same row stays 50 pixels in.
     expect(scroller.scrollTop).toBe(750)
+    // Every turn is loaded now, so nothing is left to announce.
     expect(screen.queryByRole('status')).toBeNull()
   })
 
@@ -220,6 +221,7 @@ describe('Thread older history', () => {
 
     await act(async () => fail(new Error('offline')))
     const retry = screen.getByRole('button', { name: /Couldn’t load earlier messages/ })
+    expect(screen.getByRole('status').textContent).toBe('Couldn’t load earlier messages')
     expect(load).toHaveBeenCalledOnce()
 
     fireEvent.click(retry)
