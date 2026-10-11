@@ -308,6 +308,23 @@ describe('restoreSnapshot', () => {
     expect(existsSync(path.join(repo, 'agent-made-this.txt'))).toBe(false)
   })
 
+  it('lists and removes more generated files than fit in a mebibyte of names', async () => {
+    const before = await takeSnapshot(repo)
+    mkdirSync(path.join(repo, 'generated'))
+    // About 1.2 MiB of NUL-separated paths: past Node's default output buffer
+    // for a child process, which an agent scaffolding a project reaches easily.
+    const files = Array.from({ length: 7_200 }, (_, index) =>
+      path.join('generated', `${String(index).padStart(5, '0')}-${'x'.repeat(144)}.txt`),
+    )
+    for (const file of files) write(file, '')
+
+    expect(await changedSince(repo, before.commit)).toHaveLength(files.length)
+    await restoreSnapshot(repo, before.commit)
+
+    expect(existsSync(path.join(repo, files[0]!))).toBe(false)
+    expect(existsSync(path.join(repo, files.at(-1)!))).toBe(false)
+  }, 60_000)
+
   it('brings back a file the agent deleted', async () => {
     write('will-be-deleted.txt', 'precious\n')
     git('add', '.')

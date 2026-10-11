@@ -1,7 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { afterAll, bench, describe } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 
 const OPTIONS = { iterations: 10, time: 0, warmupIterations: 2, warmupTime: 0 }
@@ -166,6 +170,62 @@ describe(`opening a ${records.length.toLocaleString('en-US')}-event thread`, () 
     'warm: cuts and encodes the newest page from the cached replay',
     () => {
       encodedCharacters += JSON.stringify(readHistoryPage(THREAD, replay, {}).events).length
+    },
+    OPTIONS,
+  )
+})
+
+// The same thread in a file database behind the orchestrator, while its next
+// turn streams: every page request follows a freshly written delta.
+const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-history-page-bench-'))
+const fileStore = new Store(path.join(directory, 'history.db'))
+fileStore.addProject('/history')
+fileStore.addThread({ id: THREAD, projectPath: '/history', provider: 'codex', title: 'Long' })
+for (let offset = 0; offset < records.length; offset += 500) {
+  fileStore.appendBatchWithSerializedEvents(records.slice(offset, offset + 500))
+}
+const orchestrator = new Orchestrator(fileStore, {
+  onEvent: () => undefined,
+  onLog: () => undefined,
+  onLogin: () => undefined,
+})
+const liveTurn = `turn-${TURNS}`
+fileStore.append(THREAD, {
+  type: 'turn.started',
+  turn: { id: liveTurn, threadId: THREAD, status: 'running', createdAt: TURNS },
+})
+fileStore.append(THREAD, {
+  type: 'item.started',
+  item: {
+    id: 'live-reply',
+    turnId: liveTurn,
+    type: 'message',
+    role: 'assistant',
+    status: 'started',
+    createdAt: TURNS,
+  },
+})
+const newest = await orchestrator.historyPage(THREAD, { turnLimit: 10 })
+const olderCursor = newest.page.olderCursor!
+
+afterAll(async () => {
+  await orchestrator.disposeAll()
+  fileStore.close()
+  rmSync(directory, { recursive: true, force: true })
+})
+
+describe('older pages while a turn streams', () => {
+  bench(
+    'writes one delta, then reads the twenty turns above the newest page',
+    async () => {
+      fileStore.append(THREAD, {
+        type: 'item.delta',
+        turnId: liveTurn,
+        itemId: 'live-reply',
+        textDelta: 'more ',
+      })
+      const page = await orchestrator.historyPage(THREAD, { before: olderCursor, turnLimit: 20 })
+      encodedCharacters += JSON.stringify(page.events).length
     },
     OPTIONS,
   )

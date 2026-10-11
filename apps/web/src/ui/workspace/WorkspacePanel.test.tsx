@@ -198,4 +198,49 @@ describe('WorkspacePanel', () => {
     expect(screen.getByRole('button', { name: 'Exit terminal', hidden: true })).toBeTruthy()
     expect(screen.getAllByRole('tab')).toHaveLength(2)
   })
+
+  it('reorders tab labels without moving the mounted surfaces', async () => {
+    const props = defaults()
+    const preview = (requestId: string) => ({ requestId, url: 'http://127.0.0.1:5173/' })
+    const view = render(<WorkspacePanel {...props} designPreviewRequest={preview('a')} />)
+    await screen.findByRole('textbox', { name: 'Browser address' })
+    const terminal = { request: 1, kind: 'terminal' as const }
+    view.rerender(
+      <WorkspacePanel
+        {...props}
+        designPreviewRequest={preview('a')}
+        externalToolRequest={terminal}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Exit terminal' })
+    const body = view.container.querySelector('.workspace-panel__body')!
+    const surfaces = Array.from(body.children)
+    const observer = new MutationObserver(() => undefined)
+    observer.observe(body, { childList: true })
+    const tabTitles = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
+
+    view.rerender(
+      <WorkspacePanel
+        {...props}
+        designPreviewRequest={preview('b')}
+        externalToolRequest={terminal}
+      />,
+    )
+    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), {
+      key: 'ArrowLeft',
+      altKey: true,
+    })
+    expect(tabTitles()).toEqual(['Browser', 'Terminal 1'])
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Terminal 1' }), {
+      key: 'ArrowLeft',
+      altKey: true,
+    })
+    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
+
+    const removed = observer.takeRecords().flatMap((record) => Array.from(record.removedNodes))
+    observer.disconnect()
+    expect(removed).toEqual([])
+    expect(Array.from(body.children)).toEqual(surfaces)
+  })
 })

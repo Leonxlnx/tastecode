@@ -618,7 +618,13 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
     const call = request.toolCall ?? {}
-    const id = call.toolCallId ?? `approval-${Date.now()}`
+    // Never replace a pending responder: two requests sharing a tool call id,
+    // or arriving without one in the same millisecond, left the first one
+    // unanswered and the agent blocked on it.
+    const id =
+      call.toolCallId && !this.#pendingApprovals.has(call.toolCallId)
+        ? call.toolCallId
+        : `approval-${crypto.randomUUID()}`
     const options = request.options ?? []
 
     // This is the only place a permissioned call is described. Its completion

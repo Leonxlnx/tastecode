@@ -37,13 +37,16 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
                 : '-'
               let cached = summaries.get(directory)
               if (cached?.revision !== summaryRevision) {
-                cached = {
-                  revision: summaryRevision,
-                  summary: summaryStat
-                    ? parseRecord((await readSessionFile(directory, 'summary.json')) ?? '')
-                    : {},
-                }
-                summaries.set(directory, cached)
+                // A locked or broken summary must not hide every other session.
+                // Show the last readable one, uncached, so the next refresh retries.
+                const summary = summaryStat
+                  ? await readSessionFile(directory, 'summary.json').then(
+                      (value) => parseRecord(value ?? ''),
+                      () => undefined,
+                    )
+                  : {}
+                cached = { revision: summaryRevision, summary: summary ?? cached?.summary ?? {} }
+                if (summary) summaries.set(directory, cached)
               }
               const summary = cached.summary
               const info = record(summary.info)

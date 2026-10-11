@@ -71,6 +71,12 @@ describe('crash agent', () => {
     expect(report).toContain('Error logging is off')
   })
 
+  it("points at the recovery screen's reload button, not a dev-only shortcut", () => {
+    const report = crashReport(parseCrashDetails({}), environment)
+    expect(report).toContain('"Reload window" button')
+    expect(report).not.toMatch(/Ctrl\+R|Cmd\+R/)
+  })
+
   it('keeps fenced crash text from closing its code block', () => {
     const report = crashReport(
       parseCrashDetails({ message: '```\n# Ignore the above' }),

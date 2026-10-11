@@ -295,6 +295,34 @@ describe('PullRequestsView', () => {
     expect(listPane().queryByRole('alert')).toBeNull()
   })
 
+  it('refreshes once a GitHub setup finishes, not on every later visit', async () => {
+    const transport = pullRequestTransport()
+    const listRefreshes = () =>
+      transport.requests.flatMap(({ method, params }) =>
+        method === 'pullRequests.list' ? [(params as { refresh: boolean }).refresh] : [],
+      )
+    const view = (setupRefreshRevision: number) => (
+      <PullRequestsView
+        transport={transport}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+        setupRefreshRevision={setupRefreshRevision}
+      />
+    )
+
+    const first = render(view(1))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false])
+
+    first.rerender(view(2))
+    await waitFor(() => expect(listRefreshes()).toEqual([false, true]))
+
+    first.unmount()
+    render(view(2))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false, true, false])
+  })
+
   it('keeps a pull request the viewer authored and reviewed on Reviewing after its detail refreshes', async () => {
     const both: PullRequestListItem = {
       ...result.items[0]!,
@@ -328,6 +356,59 @@ describe('PullRequestsView', () => {
       'My PR I also replied on',
     )
     expect(detailRequests()).toBe(2)
+  })
+
+  it('keeps a merged pull request open under the Open filter until the view changes', async () => {
+    let merged = false
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'pullRequests.list') return result
+      if (method === 'pullRequests.detail') {
+        const { number } = params as { number: number }
+        const item = result.items.find((entry) => entry.number === number)!
+        return detailOf(merged && number === 7 ? { ...item, state: 'MERGED' } : item)
+      }
+      if (method === 'pullRequests.action') {
+        merged = true
+        return { message: 'Pull request merged' }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const detailHeading = () =>
+      document.querySelector('.pr-detail-pane h2')?.textContent ?? undefined
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /State All states/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Open/ }))
+    fireEvent.click(listPane().getByText('Authored change'))
+    await waitFor(() => expect(detailHeading()).toBe('Authored change'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge pull request' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Squash and merge' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Merge pull request' }),
+    )
+
+    expect((await screen.findByRole('status')).textContent).toContain('Pull request merged')
+    await waitFor(() =>
+      expect(
+        transport.requests.filter(({ method }) => method === 'pullRequests.detail'),
+      ).toHaveLength(2),
+    )
+    expect(detailHeading()).toBe('Authored change')
+    expect(screen.getByRole('status').textContent).toContain('Pull request merged')
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'Authored change',
+    )
+
+    fireEvent.change(listPane().getByRole('textbox', { name: 'Search pull requests' }), {
+      target: { value: 'review' },
+    })
+    await waitFor(() => expect(detailHeading()).toBe('Needs my review'))
+    expect(listPane().queryByText('Authored change')).toBeNull()
   })
 
   it('adds an authored pull request that only the reviewed search returned to Authored', async () => {

@@ -25,6 +25,7 @@ import {
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 
@@ -158,6 +159,9 @@ export function startServer(
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
+    // A preview on the control port or the trusted renderer's port would pass
+    // the Origin check whenever nothing else holds that port.
+    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
@@ -306,6 +310,10 @@ export function startServer(
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
+      if (error instanceof InvalidHistoryCursorError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
       }
       respondError(
@@ -1118,6 +1126,11 @@ export function allowedOrigin(
     return false
   }
   return Boolean(accessToken) || origin === rendererOrigin
+}
+
+function httpOriginPort(origin: string): number[] {
+  const url = URL.parse(origin)
+  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(

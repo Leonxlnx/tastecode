@@ -10,6 +10,7 @@ import {
   reduce,
   reduceDeltas,
   reduceEventLog,
+  removeOptimisticMessage,
   threadItemAt,
   threadItemById,
   threadItems,
@@ -321,6 +322,32 @@ describe('thread reducer', () => {
     expect(state.items[0]?.attachments).toEqual(['/work/reference.png'])
     expect(state.running).toBe(true)
     expect(state.activeTurn?.id).toMatch(/^local-turn:/)
+  })
+
+  it('streams into one row after a queued local echo leaves the live turn', () => {
+    const answered = apply([
+      { type: 'item.completed', item: item({ id: 'u0', role: 'user', status: 'completed' }) },
+    ])
+    const optimistic = beginOptimisticTurn(answered, 'queue this', 'submission-queued')
+    const running = reduce(optimistic, {
+      type: 'turn.started',
+      turn: { id: 't2', threadId: 'thread-1', status: 'running', createdAt: 1 },
+    })
+    const queued = removeOptimisticMessage(running, 'submission-queued')
+    const started = reduce(queued, {
+      type: 'item.started',
+      item: item({ id: 'a2', turnId: 't2', text: '' }),
+    })
+    const deltas = [
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: 'Hello' },
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: ' world' },
+    ] satisfies ItemDeltaEvent[]
+    const streamed = deltas.reduce(reduce, started)
+
+    expect(threadItems(streamed).map(({ id, text }) => [id, text])).toEqual([
+      ['u0', undefined],
+      ['a2', 'Hello world'],
+    ])
   })
 
   it('reconciles a provisional local timer to the durable server boundary', () => {

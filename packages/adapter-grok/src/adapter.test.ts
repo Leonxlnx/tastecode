@@ -693,6 +693,40 @@ describe('Grok adapter', () => {
     })
   })
 
+  it('completes the turn when an event listener throws on the end frame', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({
+      spawn: () => child,
+    })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      events.push(event)
+      if (event.type === 'usage.updated') throw new Error('listener failed')
+    })
+    adapter.on('log', (line: string) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'finish normally')
+
+    const drained = new Promise<void>((resolve) => child.stdout.once('end', resolve))
+    child.stdout.end(
+      JSON.stringify({
+        type: 'end',
+        stopReason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }),
+    )
+    await drained
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(logs.some((line) => line.includes('unparsable'))).toBe(false)
+    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
+    expect(child.wasKilled).toBe(false)
+    child.emit('close', 0)
+  })
+
   it('parses the captured models listing and its auth line', () => {
     expect(parseGrokModels(MODELS_OUTPUT)).toEqual([
       {

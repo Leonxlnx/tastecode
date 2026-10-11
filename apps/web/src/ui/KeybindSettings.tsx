@@ -47,9 +47,10 @@ type Fault = {
   conflict?: KeybindingId
 }
 
-function heldModifiers(event: ReactKeyboardEvent): Modifiers {
+/** Command is the primary modifier on macOS only; elsewhere Meta is the Windows key. */
+function heldModifiers(event: ReactKeyboardEvent, macOS: boolean): Modifiers {
   return {
-    primary: event.metaKey || event.ctrlKey,
+    primary: (macOS && event.metaKey) || event.ctrlKey,
     alt: event.altKey,
     shift: event.shiftKey,
   }
@@ -163,16 +164,16 @@ export function KeybindSettings(props: {
   }
 
   const record = (action: KeybindingId, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    // A bare Tab still moves on, to the row's own actions.
+    // Tab and Shift+Tab still move on, to the row's own actions or back out.
     const bare = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-    if (event.key === 'Tab' && bare) return
+    if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) return
     event.preventDefault()
     event.stopPropagation()
     if (event.key === 'Escape') {
       stop()
       return
     }
-    setHeld(heldModifiers(event))
+    setHeld(heldModifiers(event, props.macOS))
     if (MODIFIER_KEYS.has(event.key)) {
       // Reaching for a modifier starts the next attempt, so the refused one goes.
       if (fault?.action === action) setFault(undefined)
@@ -184,7 +185,8 @@ export function KeybindSettings(props: {
       return
     }
 
-    const shortcut = shortcutFromKeyboardEvent(event.nativeEvent)
+    const shortcut =
+      props.macOS || !event.metaKey ? shortcutFromKeyboardEvent(event.nativeEvent) : undefined
     if (!shortcut) {
       setFault({
         action,
@@ -309,7 +311,7 @@ export function KeybindSettings(props: {
                       if (active) record(definition.id, event)
                     }}
                     onKeyUp={(event) => {
-                      if (active) setHeld(heldModifiers(event))
+                      if (active) setHeld(heldModifiers(event, props.macOS))
                     }}
                     onBlur={(event) => {
                       if (active) leaveRow(event)

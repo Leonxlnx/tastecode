@@ -23,3 +23,9 @@ body,
   overflow: auto;
   background: var(--bg);
 }
+.large-activity-fixture {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  background: var(--bg);
+}

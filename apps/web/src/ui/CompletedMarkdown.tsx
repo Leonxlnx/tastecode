@@ -6,10 +6,20 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from 'react'
-import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown'
+import {
+  Streamdown,
+  defaultRehypePlugins,
+  parseMarkdownIntoBlocks,
+  type Components,
+} from 'streamdown'
 import 'streamdown/styles.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
-import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
+import {
+  preserveProjectFileLinks,
+  preserveRelativeLink,
+  preservedRelativeLink,
+  projectFileReference,
+} from '../project-file-link.js'
 import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
@@ -18,8 +28,14 @@ import { MarkdownBlock, MarkdownPre } from './LargeCodeBlock.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
+// A command (`cat package.json`) or member access (`process.env`) is code, not a file.
+// A dotenv file is `.env` itself or sits in a folder.
+function isInlineFileReference(text: string): boolean {
+  return !/\s/.test(text) && !/^[^/\\]+\.env$/i.test(text) && isFileReference(text)
+}
+
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
-  const reference = typeof children === 'string' && isFileReference(children)
+  const reference = typeof children === 'string' && isInlineFileReference(children)
 
   if (!reference) return <code {...props}>{children}</code>
 
@@ -35,9 +51,11 @@ type MarkdownLinkProps = ComponentPropsWithoutRef<'a'> & { node?: unknown }
 
 const ProjectPathContext = createContext<string | undefined>(undefined)
 
-function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkProps) {
+function MarkdownLink({ children, href: source, node: _node, ...props }: MarkdownLinkProps) {
   const projectPath = useContext(ProjectPathContext)
+  const images = useContext(MarkdownImageContext)
   const [revealFailed, setRevealFailed] = useState(false)
+  const href = images && source ? repositoryLink(source, images.normalize) : source
   const fileLink = href ? localFileLink(href) : undefined
   if (fileLink) {
     if (projectPath) {
@@ -99,6 +117,15 @@ function MarkdownLink({ children, href, node: _node, ...props }: MarkdownLinkPro
   )
 }
 
+// PR text resolves a repository-relative link against the PR head, as it does for images.
+function repositoryLink(href: string, normalize: (source: string) => string): string {
+  const relative = preservedRelativeLink(href)
+  if (relative === undefined) return href
+  const [, path = '', suffix = ''] = /^([^?#]*)(.*)$/s.exec(relative) ?? []
+  const resolved = normalize(path)
+  return /^https:\/\//i.test(resolved) ? `${resolved}${suffix}` : href
+}
+
 const PRESERVED_FILE_PREFIX = '/__harness/project-file/'
 
 type LocalFileLink = { href: string; path: string }
@@ -111,13 +138,14 @@ function localFileLink(href: string): LocalFileLink | undefined {
   const path = decodeHref(target)
 
   const localPath =
+    preserved ||
     path.startsWith('/') ||
     path.startsWith('\\\\') ||
     /^file:\/\//i.test(path) ||
     /^[a-z]:[\\/]/i.test(path)
   if (!localPath) return undefined
 
-  // Preserved links were file: URLs or drive paths, so they stay file links without a known extension.
+  // Preserved links were file: URLs, drive or relative paths, so they stay file links without a known extension.
   return preserved || isFileReference(path) ? { href: target, path } : undefined
 }
 
@@ -157,6 +185,28 @@ function normalizeImageSources(normalize: (source: string) => string) {
   }
 }
 
+const REFERENCE_DEFINITION = /^[ \t]{0,3}(?:>[ \t]*)*\[[^\]\r\n]+\]:/m
+
+// Each block is parsed on its own, so `[text][ref]` would never see a `[ref]: url`
+// in another block. Like Streamdown's own footnote handling, such a text stays one
+// block; everything else keeps per-block rendering and the large-fence fast path.
+function completedBlocks(markdown: string): string[] {
+  return REFERENCE_DEFINITION.test(markdown) ? [markdown] : parseMarkdownIntoBlocks(markdown)
+}
+
+function preserveRelativeLinks() {
+  return (tree: ImageTreeNode) => {
+    const pending = [tree]
+    while (pending.length) {
+      const node = pending.pop()!
+      if (node.tagName === 'a' && typeof node.properties?.['href'] === 'string') {
+        node.properties['href'] = preserveRelativeLink(node.properties['href'])
+      }
+      if (node.children) pending.push(...node.children)
+    }
+  }
+}
+
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 const STREAM_ANIMATION = {
@@ -179,11 +229,11 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
   const imageSource = useContext(MarkdownImageContext)
   const rehypePlugins = useMemo(() => {
-    if (!imageSource) return undefined
     const plugins = Object.values(defaultRehypePlugins)
-    // Resolve repository-relative paths after raw HTML parsing, before the
-    // existing sanitizer/hardener can discard an origin-less image URL.
-    plugins.splice(1, 0, [normalizeImageSources, imageSource.normalize])
+    // Resolve repository- and project-relative paths after raw HTML parsing,
+    // before the existing sanitizer/hardener can discard an origin-less URL.
+    plugins.splice(1, 0, preserveRelativeLinks)
+    if (imageSource) plugins.splice(1, 0, [normalizeImageSources, imageSource.normalize])
     return plugins
   }, [imageSource])
 
@@ -195,12 +245,13 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
         mode="streaming"
         isAnimating={false}
         animated={STREAM_ANIMATION}
-        parseIncompleteMarkdown
+        parseIncompleteMarkdown={false}
+        parseMarkdownIntoBlocksFn={completedBlocks}
         plugins={STREAMDOWN_PLUGINS}
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}
         components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
-        {...(rehypePlugins ? { rehypePlugins } : {})}
+        rehypePlugins={rehypePlugins}
       >
         {renderedText}
       </Streamdown>

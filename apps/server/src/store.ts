@@ -217,7 +217,8 @@ const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
+// v2 reopens requests asked again after their answer; the rebuild settles them.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
@@ -630,7 +631,7 @@ type ThreadPayloadRow = { thread_id: string; payload: string }
 type SearchableEntry = { turnId: string; createdAt?: number | undefined; text: string }
 type ActiveLifecycleRow = { woke_at: SqliteInteger | null; keep_active: SqliteInteger }
 type RecoveryMutation =
-  | { kind: 'start'; eventType: string; lifecycleKey: string }
+  | { kind: 'start'; eventType: string; lifecycleKey: string; reopens?: true }
   | { kind: 'terminal'; lifecycleKey: string }
   | { kind: 'error' }
 type DerivedIndexRebuild = {
@@ -661,6 +662,12 @@ type MaxSequenceRow = { seq: SqliteInteger | null }
 type MinTimestampRow = { at: SqliteInteger | null }
 type ReplaySnapshotRow = { seq: SqliteInteger; payload: string }
 type ReplayEntry = { seq: number; event: DomainEvent }
+type CachedReplaySnapshot = {
+  seq: number
+  entries: ReplayEntry[]
+  characters: number
+  tail: boolean
+}
 
 /** Keep hot thread metadata without retaining every thread in a large workspace. */
 const THREAD_CACHE_LIMIT = 128
@@ -785,10 +792,11 @@ export class Store {
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
-  #replaySnapshotCache = new Map<
-    string,
-    { seq: number; entries: ReplayEntry[]; characters: number }
-  >()
+  /**
+   * Compact replays by thread. `tail` is false once an event lands after the
+   * snapshot: the entry still serves as a base and for older history pages.
+   */
+  #replaySnapshotCache = new Map<string, CachedReplaySnapshot>()
   #replaySnapshotCacheCharacters = 0
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
@@ -886,8 +894,10 @@ export class Store {
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
          event_type = excluded.event_type,
          started_seq = excluded.started_seq,
+         terminal_seq = NULL,
          payload = excluded.payload
-       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+       WHERE recovery_lifecycles.terminal_seq IS NULL
+          OR (? AND recovery_lifecycles.terminal_seq < excluded.started_seq)`,
     )
     this.#settleRecoveryLifecycle = this.#db.prepare(
       `INSERT INTO recovery_lifecycles
@@ -2689,7 +2699,8 @@ export class Store {
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
-    if (this.#replaySnapshotCache.size > 0) this.#deleteCachedReplaySnapshot(threadId)
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) cached.tail = false
     return Number(this.#insertEvent.run(threadId, at, payload).lastInsertRowid)
   }
 
@@ -2737,8 +2748,30 @@ export class Store {
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row) return undefined
     const seq = Number(row.seq)
-    const entries = this.#cacheReplaySnapshot(threadId, seq, row.payload)
+    const entries = this.#cacheReplaySnapshot(
+      threadId,
+      seq,
+      row.payload,
+      seq === this.lastSeq(threadId),
+    )
     return entries ? { seq, entries } : undefined
+  }
+
+  /**
+   * The saved replay exactly as it stood at `seq`, even when newer events have
+   * landed since. Every rewrite of older history deletes the snapshot, so a
+   * replay still saved at that sequence describes the same older turns.
+   */
+  replaySnapshotAt(threadId: string, seq: number): ReplayEntry[] | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      if (cached.seq !== seq) return undefined
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return cached.entries
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
+    if (!row || Number(row.seq) !== seq) return undefined
+    return this.#cacheReplaySnapshot(threadId, seq, row.payload, seq === this.lastSeq(threadId))
   }
 
   /** Preserve SQLite's JSON for the first response after a process restart. */
@@ -2746,20 +2779,27 @@ export class Store {
     threadId: string,
   ): { entries: ReplayEntry[]; serializedEntries?: string | undefined } | undefined {
     const cached = this.#replaySnapshotCache.get(threadId)
+    // The saved row holds the same replay, so it is no tail either.
+    if (cached && !cached.tail) return undefined
     if (cached) {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { entries: cached.entries }
     }
     const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
     if (!row) return undefined
-    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload)
+    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload, true)
     return entries ? { entries, serializedEntries: row.payload } : undefined
   }
 
-  #cacheReplaySnapshot(threadId: string, seq: number, payload: string): ReplayEntry[] | undefined {
+  #cacheReplaySnapshot(
+    threadId: string,
+    seq: number,
+    payload: string,
+    tail: boolean,
+  ): ReplayEntry[] | undefined {
     try {
       const entries = ReplaySnapshotSchema.parse(JSON.parse(payload))
-      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length)
+      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length, tail)
       return entries
     } catch {
       this.#deleteReplaySnapshot.run(threadId)
@@ -2768,10 +2808,7 @@ export class Store {
     }
   }
 
-  #promoteCachedReplaySnapshot(
-    threadId: string,
-    cached: { seq: number; entries: ReplayEntry[]; characters: number },
-  ): void {
+  #promoteCachedReplaySnapshot(threadId: string, cached: CachedReplaySnapshot): void {
     this.#replaySnapshotCache.delete(threadId)
     this.#replaySnapshotCache.set(threadId, cached)
   }
@@ -2781,6 +2818,7 @@ export class Store {
     seq: number,
     entries: ReplayEntry[],
     characters: number,
+    tail: boolean,
   ): void {
     this.#deleteCachedReplaySnapshot(threadId)
     if (characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT) return
@@ -2792,7 +2830,7 @@ export class Store {
       if (oldestThreadId === undefined) break
       this.#deleteCachedReplaySnapshot(oldestThreadId)
     }
-    this.#replaySnapshotCache.set(threadId, { seq, entries, characters })
+    this.#replaySnapshotCache.set(threadId, { seq, entries, characters, tail })
     this.#replaySnapshotCacheCharacters += characters
   }
 
@@ -2812,7 +2850,13 @@ export class Store {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
     this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
-    this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
+    this.#rememberReplaySnapshot(
+      threadId,
+      seq,
+      entries as ReplayEntry[],
+      payload.length,
+      seq === this.lastSeq(threadId),
+    )
     return payload
   }
 
@@ -3070,6 +3114,7 @@ export class Store {
         mutation.eventType,
         seq,
         payload,
+        mutation.reopens ? 1 : 0,
       )
       return
     }
@@ -3663,11 +3708,15 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
       }
     case 'item.completed':
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
+    // A request id asked again after its answer is a new question (a retried
+    // command reuses its id), not a late echo like an item started after it
+    // completed, so it reopens the lifecycle.
     case 'approval.requested':
       return {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `approval:${event.request.id}`,
+        reopens: true,
       }
     case 'approval.resolved':
       return { kind: 'terminal', lifecycleKey: `approval:${event.id}` }
@@ -3676,6 +3725,7 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `input:${event.request.id}`,
+        reopens: true,
       }
     case 'user_input.resolved':
       return { kind: 'terminal', lifecycleKey: `input:${event.id}` }

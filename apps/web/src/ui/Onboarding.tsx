@@ -352,6 +352,12 @@ export function Onboarding(props: {
     const apply = () => {
       props.onThemePreferenceChange(value)
       setThemeChoice(undefined)
+      // Only a pending System choice gets past the guard above with the theme
+      // already in force. It let the shell go, and an unchanged preference
+      // gives the app no reason to pin it again.
+      if (isDesktop && value === props.themePreference) {
+        void setDesktopTheme(value).catch(() => undefined)
+      }
     }
     // In the desktop shell a pinned Light or Dark also pins what the page is
     // told the OS prefers, so where System lands is unknown until the shell

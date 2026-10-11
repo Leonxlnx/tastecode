@@ -1096,6 +1096,98 @@ describe('web client', () => {
     },
   )
 
+  it('keeps the next project workspace when a restore Undo finishes after a switch', async () => {
+    serverProjects.push(
+      serverProject('/work/other', 'other', [{ id: 'other-thread', title: 'Other chat' }]),
+    )
+    const request = transport.request.getMockImplementation()!
+    let undone = false
+    const finishInfo: Array<(info: ResultOf<'workspace.info'>) => void> = []
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.undoRestore') undone = true
+      if (method === 'workspace.info') {
+        const { path } = methods[method].params.parse(params)
+        if (path === '/work/other')
+          return Promise.resolve({ branch: 'other-branch', added: 0, removed: 0, dirtyFiles: 0 })
+        if (undone) return new Promise((resolve) => finishInfo.push(resolve))
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    await openCheckpointHistory()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+    await waitFor(() => expect(finishInfo.length).toBeGreaterThan(0))
+
+    act(() => sidebarProps().onSelectSession('other-thread'))
+    await waitFor(() => expect(composerProps().branch).toBe('other-branch'))
+    await act(async () => {
+      for (const finish of finishInfo)
+        finish({ branch: 'project-branch', added: 0, removed: 0, dirtyFiles: 0 })
+    })
+
+    expect(composerProps().branch).toBe('other-branch')
+  })
+
+  it('keeps the next chat restore points when the previous chat read fails late', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.checkpoints' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    await openNewSession()
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() => expect(header().checkpointCount).toBe(1))
+    await act(async () => failFirst?.(new Error('checkpoints failed')))
+
+    expect(header().sessionId).toBe('second-thread')
+    expect(header().checkpointCount).toBe(1)
+  })
+
+  it('does not report a history failure for a chat the user already left', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.history' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'second-thread',
+        page: NEWEST_PAGE,
+      }),
+    )
+    await act(async () => failFirst?.(new Error('history read failed')))
+
+    expect(screen.queryByText('history read failed')).toBeNull()
+  })
+
   it('does not offer the previous restore target while inspecting another checkpoint', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -1707,6 +1799,26 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it.each(['projects.add', 'projects.list'])(
+    'reports a failed %s when adding a project',
+    async (failedMethod) => {
+      serverProjects = []
+      pickFolder.mockResolvedValue('/work/new-project')
+      const request = transport.request.getMockImplementation()!
+      let adding = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'projects.add') adding = true
+        if (adding && method === failedMethod) return Promise.reject(new Error('connection lost'))
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+      expect(await screen.findByText('connection lost')).toBeTruthy()
+    },
+  )
+
   it('adds one or many dropped folders without adding duplicates twice', async () => {
     serverProjects = []
     droppedProjectFolderPaths.mockResolvedValue([
@@ -1814,6 +1926,22 @@ describe('web client', () => {
       expect(fireEvent.keyDown(window, { key: 't', ...modifier })).toBe(true)
     },
   )
+
+  it('returns open Settings to Keybinds when the keybinds shortcut is pressed again', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: 'Show workspace tools' })
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    const keybinds = await within(settings).findByRole('button', { name: 'Keybinds' })
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+    fireEvent.click(within(settings).getByRole('button', { name: 'Appearance' }))
+    expect(keybinds.getAttribute('aria-current')).toBeNull()
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+  })
 
   it('mounts the deferred workspace panel for a preview capture', async () => {
     render(<App />)
@@ -3040,6 +3168,150 @@ describe('new chats', () => {
       expect(
         screen.getByRole('button', { name: /^Fix checkout cleanup, Codex(?:,|$)/ }),
       ).toBeTruthy()
+    })
+  })
+
+  it('keeps a title the user typed while the chat was starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'backgroundModel.generateTitle') return request(method, params)
+      // Like the server, only replace a title that still matches the expected one.
+      const { threadId, expectedTitle } =
+        methods['backgroundModel.generateTitle'].params.parse(params)
+      const current = serverProjects
+        .flatMap((entry) => entry.sessions)
+        .find((session) => session.id === threadId)
+      if (current?.title !== expectedTitle) return { title: current?.title ?? '', applied: false }
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, title: 'Generated title' } : session,
+        ),
+      }))
+      return { title: 'Generated title', applied: true }
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onRenameSession(header().sessionId!, 'My checkout notes'))
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'My checkout notes',
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().title).toBe('My checkout notes')
+    expect(rpcCount('backgroundModel.generateTitle')).toBe(0)
+  })
+
+  it('keeps a starting chat in the header across a project-list refresh', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      const result = request(method, params)
+      // The server has recorded the chat, but its reply has not arrived yet.
+      if (method === 'thread.start') await startGate
+      // Hold the follow-up refresh so the swap to the real id stays observable.
+      if (method === 'thread.rename') await new Promise(() => undefined)
+      return result
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId
+    const listed = rpcCount('projects.list')
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(listed + 1))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(header().sessionId).toBe(pendingId)
+    expect(header().title).toBe('Investigate flaky checkout cleanup')
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
+    expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
+  })
+
+  it('pins a chat that was pinned while it was still starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'thread.pin') return request(method, params)
+      const { threadId, pinned } = methods['thread.pin'].params.parse(params)
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, pinned } : session,
+        ),
+      }))
+      return {}
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onToggleSessionPin(header().sessionId!))
+    expect(header().pinned).toBe(true)
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.pin', {
+        threadId: 'thread-1',
+        pinned: true,
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().pinned).toBe(true)
+    expect(transport.request).not.toHaveBeenCalledWith('thread.pin', {
+      threadId: expect.stringMatching(/^pending:/),
+      pinned: true,
     })
   })
 
@@ -8993,7 +9265,9 @@ function dropFile(composer: HTMLElement, path: string) {
     },
   })
   try {
-    fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+    fireEvent.drop(composer.closest('.composer__box')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
   } finally {
     if (descriptor) Object.defineProperty(window, 'harness', descriptor)
     else Reflect.deleteProperty(window, 'harness')

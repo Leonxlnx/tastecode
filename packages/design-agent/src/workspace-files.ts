@@ -11,7 +11,24 @@ import path from 'node:path'
 
 const MAX_ENTRIES = 25_000
 const MAX_DEPTH = 40
-const OPAQUE_DIRECTORIES = new Set(['node_modules', '.pnpm-store'])
+/**
+ * Dependency and cache trees no design reads or delivers into. Listed but never
+ * entered: a single virtualenv or Rust `target` folder exceeds the entry cap.
+ */
+const OPAQUE_DIRECTORIES = new Set([
+  'node_modules',
+  '.pnpm-store',
+  '.venv',
+  'venv',
+  '__pycache__',
+  'target',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  '.cache',
+  '.gradle',
+])
 
 export interface WorkspaceEntry {
   relative: string

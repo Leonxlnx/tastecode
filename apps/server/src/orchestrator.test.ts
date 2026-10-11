@@ -282,6 +282,7 @@ function harness(
   const resumedIds: string[] = []
   const resumedIn: string[] = []
   const resumedOptions: StartOptions[] = []
+  const resumeBarriers: Promise<void>[] = []
   const capturePreview = vi.fn(
     async (
       _url: string,
@@ -321,6 +322,8 @@ function harness(
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
             resumedOptions.push(options)
+            const barrier = resumeBarriers.shift()
+            if (barrier) await barrier
             const session = new FakeSession(`s${sessions.length + 1}`)
             sessions.push(session)
             return {
@@ -394,11 +397,27 @@ function harness(
     resumedIds,
     resumedIn,
     resumedOptions,
+    resumeBarriers,
     capturePreview,
   }
 }
 
 describe('failed provider starts', () => {
+  const cleanupFailure = (message: string, dispose: () => Promise<void>) => {
+    const failure = Promise.reject(
+      new StartupCleanupError(new Error(message), new Error('process group survived'), {
+        dispose,
+      }),
+    )
+    failure.catch(() => {})
+    return failure
+  }
+  const failingOnce = () =>
+    vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('process group survived'))
+      .mockResolvedValue(undefined)
+
   it('keeps a session whose cleanup failed until a later stop confirms it', async () => {
     const { orchestrator, startBarriers, logs } = harness()
     const dispose = vi
@@ -422,6 +441,35 @@ describe('failed provider starts', () => {
     )
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
     expect(logs.some((line) => line.includes('process group survived'))).toBe(true)
+    await orchestrator.disposeAll()
+    expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a resumed session whose cleanup failed until a later stop confirms it', async () => {
+    const { orchestrator, store, resumeBarriers } = harness()
+    store.addProject('/repo')
+    store.addThread({ id: 'saved', projectPath: '/repo', provider: 'codex', title: 'Saved' })
+    const dispose = failingOnce()
+    resumeBarriers.push(cleanupFailure('thread/resume failed', dispose))
+
+    await expect(orchestrator.submitTurn('saved', 'continue')).rejects.toThrow(
+      'thread/resume failed',
+    )
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    await orchestrator.disposeAll()
+    expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a Side chat session whose cleanup failed until a later stop confirms it', async () => {
+    const { orchestrator, sessions, startBarriers } = harness()
+    const parent = await orchestrator.startThread('codex', process.cwd())
+    await orchestrator.submitTurn(parent.id, 'Main question', [], {}, 'main-question')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const dispose = failingOnce()
+    startBarriers.push(cleanupFailure('session/new failed', dispose))
+
+    await expect(orchestrator.startSideThread(parent.id)).rejects.toThrow('session/new failed')
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
     await orchestrator.disposeAll()
     expect(dispose).toHaveBeenCalledTimes(2)
   })
@@ -1987,6 +2035,137 @@ describe('history replay', () => {
     await orchestrator.disposeAll()
   })
 
+  describe('older history pages', () => {
+    function appendTurn(store: Store, threadId: string, index: number, done = true): void {
+      const turnId = `turn-${index}`
+      const reply = {
+        id: `reply-${index}`,
+        turnId,
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'started' as const,
+        text: '',
+        createdAt: index,
+      }
+      store.append(threadId, {
+        type: 'turn.started',
+        turn: { id: turnId, threadId, status: 'running', createdAt: index },
+      })
+      store.append(threadId, { type: 'item.started', item: reply })
+      store.append(threadId, { type: 'item.delta', turnId, itemId: reply.id, textDelta: 'Hel' })
+      if (!done) return
+      store.append(threadId, {
+        type: 'item.completed',
+        item: { ...reply, status: 'completed', text: 'Hello' },
+      })
+      store.append(threadId, { type: 'turn.completed', turnId, status: 'completed' })
+    }
+    const turnIds = (events: Array<{ event: DomainEvent }>) =>
+      events.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : []))
+
+    it('serves older pages from the issuing replay without rewriting it while a turn streams', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 4; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      appendTurn(store, thread.id, 4, false)
+      store.append(thread.id, {
+        type: 'item.delta',
+        turnId: 'turn-4',
+        itemId: 'reply-4',
+        textDelta: 'lo',
+      })
+
+      const save = vi.spyOn(store, 'saveReplaySnapshot')
+      const history = vi.spyOn(store, 'history')
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 2,
+      })
+      expect(turnIds(older.events)).toEqual(['turn-0', 'turn-1'])
+      expect(older.reset).toBeUndefined()
+      expect(save).not.toHaveBeenCalled()
+      expect(history).not.toHaveBeenCalled()
+      await orchestrator.disposeAll()
+    })
+
+    it('restarts older pages when imported turns arrive after the cursor', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 1; index < 5; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      store.mergeProviderHistory(thread.id, 'revision', [
+        {
+          key: 'old-start',
+          event: {
+            type: 'turn.started',
+            turn: { id: 'import:old', threadId: thread.id, status: 'running', createdAt: 0 },
+          },
+        },
+        {
+          key: 'old-end',
+          event: { type: 'turn.completed', turnId: 'import:old', status: 'completed' },
+        },
+      ])
+
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 2,
+      })
+      expect(older.reset).toBe(true)
+      expect(turnIds(older.events)).toEqual(['turn-3', 'turn-4'])
+      await orchestrator.disposeAll()
+    })
+
+    it('restarts after a truncation until newer events follow the kept cursor turn', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 3; index += 1) appendTurn(store, thread.id, index)
+      const kept = store.lastSeq(thread.id)
+      appendTurn(store, thread.id, 3)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      const before = newest.page.olderCursor!
+
+      // turn-2, the cursor's turn, survives; the replay now ends before the cursor.
+      store.saveRestoreUndo(thread.id, kept, 'commit')
+      const truncated = await orchestrator.historyPage(thread.id, { before, turnLimit: 2 })
+      expect(truncated.reset).toBe(true)
+      expect(turnIds(truncated.events)).toEqual(['turn-1', 'turn-2'])
+
+      appendTurn(store, thread.id, 5)
+      const continued = await orchestrator.historyPage(thread.id, { before, turnLimit: 2 })
+      expect(continued.reset).toBeUndefined()
+      expect(turnIds(continued.events)).toEqual(['turn-0', 'turn-1'])
+      await orchestrator.disposeAll()
+    })
+
+    it('opens a running turn from the newest page plus the catch-up after its snapshot', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 3; index += 1) appendTurn(store, thread.id, index)
+      appendTurn(store, thread.id, 3, false)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 1 })
+      store.append(thread.id, {
+        type: 'item.delta',
+        turnId: 'turn-3',
+        itemId: 'reply-3',
+        textDelta: 'lo',
+      })
+
+      const catchUp = await orchestrator.history(thread.id, newest.page.snapshotSeq)
+      const opened = reduceEventLog(
+        reduceEventLog(emptyThread, newest.events),
+        catchUp,
+        newest.page.snapshotSeq,
+      )
+      const full = reduceEventLog(emptyThread, await orchestrator.history(thread.id))
+      expect(catchUp).toHaveLength(1)
+      expect(opened.items).toEqual(full.items.slice(-opened.items.length))
+      expect(opened.items.at(-1)).toMatchObject({ id: 'reply-3', text: 'Hello' })
+      await orchestrator.disposeAll()
+    })
+  })
+
   it('hands fresh compact replay JSON to the response path once', async () => {
     const { orchestrator, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
@@ -3178,6 +3357,38 @@ describe('provider-neutral design briefing', () => {
         ).toBe(true),
       )
       expect(sessions[0]?.sent).toHaveLength(2)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('delivers Stop to a Design phase whose provider start is still pending', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-stop-handoff-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.release = () => {}
+      const malformed = JSON.stringify({
+        status: 'complete',
+        message: 'Brief ready',
+        questions: [],
+        brief: { version: 1 },
+      })
+      session.emit(message(malformed, 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+
+      // The correction turn starts on its own. An interrupt that reaches the
+      // adapter before it accepted the start finds no turn to stop.
+      const stopping = orchestrator.interrupt(thread.id)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(session.interrupted).toBe(false)
+      session.release?.()
+      await expect(stopping).resolves.toBeUndefined()
+      expect(session.interrupted).toBe(true)
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true })
