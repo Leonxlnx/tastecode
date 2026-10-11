@@ -242,8 +242,8 @@ const BACKDROP_OPTIONS = [
 ] as const satisfies ReadonlyArray<{ value: BackdropPreference; label: string }>
 
 const MCP_PROVIDER_OPTIONS = [
-  { provider: 'codex', providerName: 'Codex' },
   { provider: 'claude-code', providerName: 'Claude Code' },
+  { provider: 'codex', providerName: 'Codex' },
   { provider: 'grok', providerName: 'Grok' },
 ] satisfies Array<{ provider: ProviderId; providerName: string }>
 
@@ -596,9 +596,9 @@ function SettingsNavItem(props: {
 
 type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
-// main ships exactly the three subscription plans the server lists (Codex,
-// Claude Code, Grok). Every other provider lives on nightly — see AGENTS.md.
-const PROVIDER_ROSTER: readonly ProviderId[] = ['codex', 'claude-code', 'grok']
+// main ships exactly the three subscription plans the server lists (Claude
+// Code, Codex, Grok). Every other provider lives on nightly — see AGENTS.md.
+const PROVIDER_ROSTER: readonly ProviderId[] = ['claude-code', 'codex', 'grok']
 
 /** What a new chat on each provider starts with. The app shell owns it. */
 export type ProviderDefaultsControls = {

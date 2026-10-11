@@ -25,7 +25,7 @@ const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const PROVIDERS: ProviderId[] = ['codex', 'claude-code', 'grok']
+const PROVIDERS: ProviderId[] = ['claude-code', 'codex', 'grok']
 
 type DisplaySearchResult = {
   key: string
