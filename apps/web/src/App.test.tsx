@@ -3130,6 +3130,56 @@ describe('new chats', () => {
     expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
   })
 
+  it('pins a chat that was pinned while it was still starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'thread.pin') return request(method, params)
+      const { threadId, pinned } = methods['thread.pin'].params.parse(params)
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, pinned } : session,
+        ),
+      }))
+      return {}
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onToggleSessionPin(header().sessionId!))
+    expect(header().pinned).toBe(true)
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.pin', {
+        threadId: 'thread-1',
+        pinned: true,
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().pinned).toBe(true)
+    expect(transport.request).not.toHaveBeenCalledWith('thread.pin', {
+      threadId: expect.stringMatching(/^pending:/),
+      pinned: true,
+    })
+  })
+
   it('carries Stop through new-session creation and interrupts the first turn', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
