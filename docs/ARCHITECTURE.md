@@ -52,11 +52,12 @@ to a TypeScript client).
 `kill()` only sends the shell SIGHUP, which the shell forwards to its jobs and the kernel to
 the foreground group. Before that hangup the server reads the foreground group from a shell it
 forked itself; afterwards it escalates whatever is left of that group to SIGTERM and SIGKILL,
-and SIGKILLs a shell that still ignores SIGHUP after 500 ms. Closing the pane, the chat or the
-project, and server shutdown, all wait for that. Background jobs stay the shell's business, as
-in a terminal emulator: `nohup`, `disown` and `setsid` keep working, and so does a background
-job that ignores SIGHUP, which the OS cannot tell apart from `nohup`. On Windows node-pty
-already terminates every process attached to the closed ConPTY.
+and SIGKILLs a shell that still ignores SIGHUP after 500 ms. Closing the pane or the chat,
+and server shutdown, wait for that; removing a project starts it without waiting. Background
+jobs stay the shell's business, as in a terminal emulator: `nohup … &`, `disown` and `setsid`
+keep working, and so does a background job that ignores SIGHUP, which the OS cannot tell apart
+from `nohup`. A foreground `nohup` command is the foreground job and is ended. On Windows
+node-pty already terminates every process attached to the closed ConPTY.
 
 _Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs, and
 reading sessions needs `/proc`, so it would only work on Linux.
