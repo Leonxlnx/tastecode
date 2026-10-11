@@ -151,6 +151,19 @@ describe('isInstalled', () => {
     await expect(commandOnPath(command, guiPath, env)).resolves.toBe(false)
     await expect(isInstalled(command, env)).resolves.toBe(true)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not take a directory named like the command for an installed CLI',
+    async () => {
+      const home = mkdtempSync(path.join(os.tmpdir(), 'harness-directory-cli-'))
+      roots.push(home)
+      const command = `harness-directory-cli-${process.pid}`
+      mkdirSync(path.join(home, 'bin', command), { recursive: true })
+      const env: NodeJS.ProcessEnv = { HOME: home, PATH: path.join(home, 'bin') }
+
+      await expect(isInstalled(command, env)).resolves.toBe(false)
+    },
+  )
 })
 
 function commandOnPath(
