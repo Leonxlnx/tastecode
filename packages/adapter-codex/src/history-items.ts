@@ -147,20 +147,26 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
         let body = text(change.unified_diff ?? change.diff ?? change.content)
         if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string')
           body = wholeFileHunk(kind, change.content)
+        const moved = change.move_path ?? object(change.kind).move_path
+        const target = typeof moved === 'string' && moved ? moved : file
         // Without its mode line Git reads `/dev/null` as a path, and Undo would
-        // move a created file to `dev/null` instead of deleting it.
+        // move a created file to `dev/null` instead of deleting it. Without its
+        // rename lines Undo would look for a moved file at its old path.
         const mode =
           kind === 'add'
             ? 'new file mode 100644\n'
             : kind === 'delete'
               ? 'deleted file mode 100644\n'
-              : ''
-        const header = `diff --git a/${file} b/${file}\n${mode}`
-        // An empty created or deleted file has no hunk, only its header.
+              : target !== file
+                ? `rename from ${file}\nrename to ${target}\n`
+                : ''
+        const header = `diff --git a/${file} b/${target}\n${mode}`
+        // An empty created or deleted file, or a moved one without edits, has
+        // no hunk, only its header.
         const diff = body.startsWith('diff --git')
           ? body
           : body
-            ? `${header}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+            ? `${header}--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${target}`}\n${body}`
             : header
         return {
           item: {

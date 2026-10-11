@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -758,6 +760,47 @@ describe('native Codex history', () => {
         '',
       ].join('\n'),
     )
+  })
+
+  it('keeps the destination of imported renames so Undo moves the files back', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'moved',
+        changes: {
+          'old.txt': {
+            type: 'update',
+            unified_diff: '@@ -1 +1 @@\n-one\n+two\n',
+            move_path: 'new.txt',
+          },
+        },
+      }),
+      rich({
+        type: 'FileChange',
+        id: 'renamed',
+        changes: [{ path: 'a.txt', kind: { type: 'update', move_path: 'b.txt' }, diff: '' }],
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    const repo = await mkdtemp(path.join(os.tmpdir(), 'codex-history-repo-'))
+    roots.push(repo)
+    execFileSync('git', ['init', '--quiet', repo])
+    await writeFile(path.join(repo, 'new.txt'), 'two\n')
+    await writeFile(path.join(repo, 'b.txt'), 'same\n')
+
+    execFileSync(
+      'git',
+      ['-c', 'core.autocrlf=false', 'apply', '--reverse', '--binary', '--recount', '-'],
+      { cwd: repo, input: diff?.type === 'diff.updated' ? diff.diff : '' },
+    )
+
+    expect(await readFile(path.join(repo, 'old.txt'), 'utf8')).toBe('one\n')
+    expect(await readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('same\n')
+    expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
+    expect(existsSync(path.join(repo, 'b.txt'))).toBe(false)
   })
 
   it('marks an imported file content without a final newline', async () => {
