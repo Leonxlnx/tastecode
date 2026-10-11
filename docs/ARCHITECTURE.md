@@ -558,8 +558,9 @@ The rules that solve it:
 6. **Collapse huge blocks by default** — better UX and better performance.
 7. **Never mount full history on open.** A cold open asks for the newest ten turns; twenty more
    load when the reader nears the top, and the row being read keeps its position as they are
-   prepended. Find in chat and search jumps need every turn, so they fetch the rest in
-   100-turn pages instead of searching only what is loaded.
+   prepended. Find in chat and search jumps need every turn, so they fetch the rest in one
+   unpaged read instead of searching only what is loaded. Closing find drops that read, and a
+   failed read says so and waits for Retry.
 8. **Partial background caches do not grow a second transcript.** At most eight inactive
    workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
    in total. Older or larger workers retain only lifecycle and attention state. Their transcript
