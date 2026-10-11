@@ -151,6 +151,16 @@ export function ThreadSearch(props: {
                 : 'None'
             : `${currentCursor + 1}/${hits.length}${loadingOlder ? '…' : ''}`}
       </span>
+      {/* Always mounted, so the reader hears when the read changes state. */}
+      <span className="visually-hidden" role="status">
+        {!searching
+          ? ''
+          : loadingOlder
+            ? 'Searching earlier messages'
+            : olderFailed
+              ? 'Couldn’t search earlier messages'
+              : ''}
+      </span>
       {searching && olderFailed ? (
         <button
           className="icon-btn icon-btn--always"
