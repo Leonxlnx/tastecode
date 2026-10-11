@@ -248,12 +248,15 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // viewport and how far into it, so the same pixels stay there after the
   // virtualizer lays the new rows out. Computed once per items array, so a
   // repeated render never re-reads measurements that already include them.
-  const committedItems = useRef({ threadId: props.threadId, items: thread.items })
+  // The baseline moves in render, together with the shifts below: a render
+  // React throws away has still moved those refs, and the next render must not
+  // shift them by the same rows again.
+  const shiftedItems = useRef({ threadId: props.threadId, items: thread.items })
   const prepend = useRef<PrependAnchor | undefined>(undefined)
   if (prepend.current?.items !== thread.items) {
-    const committed = committedItems.current
+    const shifted = shiftedItems.current
     const shift =
-      committed.threadId === props.threadId ? prependedRowCount(committed.items, thread.items) : 0
+      shifted.threadId === props.threadId ? prependedRowCount(shifted.items, thread.items) : 0
     const previous = virtualizerRef.current
     const offset = previous?.scrollOffset ?? null
     const row =
@@ -280,6 +283,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           }
         : undefined
   }
+  shiftedItems.current = { threadId: props.threadId, items: thread.items }
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
@@ -469,7 +473,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const rows = virtualizer.getVirtualItems()
 
   useLayoutEffect(() => {
-    committedItems.current = { threadId: props.threadId, items: thread.items }
     const anchor = prepend.current
     if (!anchor || anchor.items !== thread.items || anchor.applied) return
     anchor.applied = true
