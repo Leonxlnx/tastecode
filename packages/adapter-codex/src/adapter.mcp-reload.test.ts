@@ -17,6 +17,42 @@ vi.mock('@harness/proc', async (importOriginal) => ({
   },
 }))
 
+function signInFixture() {
+  const state = { signedIn: false }
+  const rpc = new FakeCodexRpc((method) =>
+    method === 'mcpServerStatus/list'
+      ? {
+          data: [
+            {
+              name: 'docs',
+              serverInfo: state.signedIn
+                ? { name: 'docs', title: null, version: '1.0.0', description: null }
+                : null,
+              authStatus: state.signedIn ? 'oAuth' : 'notLoggedIn',
+              tools: state.signedIn
+                ? { lookup: { name: 'lookup', inputSchema: { type: 'object' } } }
+                : {},
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
+          nextCursor: null,
+        }
+      : method === 'mcpServer/oauth/login'
+        ? { authorizationUrl: 'https://example.com/authorize' }
+        : {},
+  )
+  proc.rpc = rpc
+  return { rpc, state, adapter: new CodexAdapter() }
+}
+
+async function loadedInventory(adapter: CodexAdapter) {
+  await adapter.listMcpServers('t1')
+  await vi.waitFor(async () =>
+    expect(await adapter.listMcpServers('t1')).toMatchObject([{ id: 'docs', resources: [] }]),
+  )
+}
+
 const stdioServer = (id: string): McpServerConfig => ({
   id,
   enabled: true,
@@ -54,6 +90,57 @@ describe('Codex MCP changes', () => {
           },
         },
       })
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory after a successful MCP sign-in', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+      expect((await adapter.listMcpServers('t1'))[0]?.auth.status).toBe('sign_in_required')
+      await adapter.startMcpOAuth('docs', 't1')
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/oauthLogin/completed', {
+        name: 'docs',
+        threadId: 't1',
+        success: true,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { auth: { status: 'authenticated' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
+      expect(rpc.calls.filter((call) => call.method === 'mcpServerStatus/list')).toHaveLength(2)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory when a server finishes starting', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/startupStatus/updated', {
+        threadId: 't1',
+        name: 'docs',
+        status: 'ready',
+        error: null,
+        failureReason: null,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { startup: { state: 'ready' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
     } finally {
       await adapter.dispose()
     }

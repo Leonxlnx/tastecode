@@ -1595,7 +1595,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const p = McpServerStatusUpdatedNotificationSchema.parse(params)
         this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
         const inventory = this.#mcpInventory.get(p.threadId ?? '')
-        if (inventory) {
+        if (p.status === 'ready') {
+          // A server that just connected reports tools and auth the cached copy lacks.
+          this.#mcpInventory.delete(p.threadId ?? '')
+          this.#mcpInventoryLoads.delete(p.threadId ?? '')
+        } else if (inventory) {
           this.#mcpInventory.set(
             p.threadId ?? '',
             inventory.map((server) =>
@@ -1609,6 +1613,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'mcpServer/oauthLogin/completed': {
         const p = McpServerOauthLoginCompletedNotificationSchema.parse(params)
+        if (p.success) {
+          // The sign-in is the server's, not one chat's: every cached copy is stale.
+          this.#mcpInventory.clear()
+          this.#mcpInventoryLoads.clear()
+        }
         // A completion without a threadId still ends someone's login — match
         // by server name across threads rather than leaving the browser flow
         // finished and the UI waiting forever.
