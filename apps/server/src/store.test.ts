@@ -1454,6 +1454,36 @@ describe('events', () => {
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
   })
 
+  it('keeps a cached replay for its own sequence after newer events land', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-at-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('one'))
+      const snapshot = [{ seq, event: message('cached') }]
+      seeded.saveReplaySnapshot('t1', seq, snapshot)
+      seeded.append('t1', message('two'))
+
+      // Still the same replay object: no reread or parse of the saved row.
+      expect(seeded.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      expect(seeded.replaySnapshotBase('t1')?.entries).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq)).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq + 1)).toBeUndefined()
+      seeded.close()
+
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotAt('t1', seq)).toEqual(snapshot)
+      expect(reopened.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      reopened.saveRestoreUndo('t1', seq, 'commit')
+      expect(reopened.replaySnapshotAt('t1', seq)).toBeUndefined()
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-chronological-'))
     const file = path.join(dir, 'replay.db')
