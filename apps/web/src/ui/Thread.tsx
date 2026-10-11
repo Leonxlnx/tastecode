@@ -397,6 +397,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
   const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
+  // The older-history hook cancels the complete read when its effects are torn
+  // down, which StrictMode also does on mount; the next run must ask again.
+  useEffect(
+    () => () => {
+      searchJumpRead.current = undefined
+    },
+    [props.threadId],
+  )
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
