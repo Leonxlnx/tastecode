@@ -548,6 +548,95 @@ describe('paged history', () => {
     expect(controller.snapshot('thread')!.olderCursor).toBe('second')
   })
 
+  describe('complete history for find', () => {
+    const answer = (index: number, seq: number, text: string) => {
+      const entry = turn(index, seq)
+      return { seq, event: { ...entry.event, item: { ...entry.event.item, text } } }
+    }
+    const deferred = () => {
+      let reply!: (value: ResultOf<'thread.history'>) => void
+      const transport = new TestTransport((_, params) => {
+        const page = pageOf(params)
+        if (page === undefined) return new Promise((resolve) => (reply = resolve))
+        return page.before === 'cursor'
+          ? { events: [turn(1, 4)], running: false, page: { olderCursor: 'top', snapshotSeq: 9 } }
+          : newest('cursor')
+      })
+      return { transport, reply: (value: ResultOf<'thread.history'>) => reply(value) }
+    }
+    const complete: ResultOf<'thread.history'> = {
+      events: [turn(0, 2), turn(1, 4), answer(2, 7, 'Answer 2 as replayed'), turn(3, 9)],
+      running: false,
+    }
+
+    it('adds every older turn from one unpaged read and keeps the loaded rows', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const liveStart = controller.snapshot('thread')!.liveStart
+      const read = controller.loadCompleteHistory('thread')
+      expect(transport.requests[1]!.params).toEqual({ threadId: 'thread' })
+
+      // A row streamed while the read was out is already loaded.
+      controller.receive({ threadId: 'thread', seq: 11, event: turn(4, 11).event }, () => false)
+      reply(complete)
+      await read
+
+      expect(texts(controller)).toEqual([
+        'Answer 0',
+        'Answer 1',
+        'Answer 2',
+        'Answer 3',
+        'Answer 4',
+      ])
+      expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+      expect(controller.snapshot('thread')!.liveStart).toBe(liveStart + 2)
+      expect(controller.cursor('thread')).toBe(11)
+      expect(transport.requests).toHaveLength(2)
+    })
+
+    it('drops a read its caller gave up on', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const abort = new AbortController()
+      const read = controller.loadCompleteHistory('thread', abort.signal)
+      abort.abort()
+      reply(complete)
+      await read
+      expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+      expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+    })
+
+    it('adds only what an older page that landed first left out', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const read = controller.loadCompleteHistory('thread')
+      await controller.loadOlderHistory('thread')
+      expect(texts(controller)).toEqual(['Answer 1', 'Answer 2', 'Answer 3'])
+      reply(complete)
+      await read
+      expect(texts(controller)).toEqual(['Answer 0', 'Answer 1', 'Answer 2', 'Answer 3'])
+      expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    })
+
+    it('reopens from the newest page when the history lacks the first loaded row', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const read = controller.loadCompleteHistory('thread')
+      reply({ events: [turn(0, 2), turn(3, 9)], running: false })
+      await read
+      expect(transport.requests.map((request) => pageOf(request.params))).toEqual([
+        { turnLimit: NEWEST_HISTORY_TURNS },
+        undefined,
+        { turnLimit: NEWEST_HISTORY_TURNS },
+      ])
+      expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+    })
+  })
+
   it('drops an older page when flushing compacts its background thread', async () => {
     let reply!: (value: ResultOf<'thread.history'>) => void
     const transport = new TestTransport((_, params) =>

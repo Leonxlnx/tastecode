@@ -882,6 +882,25 @@ export function prependOlderHistory(
   )
 }
 
+/**
+ * Places the rows a complete history orders before the first loaded row above
+ * the transcript, which then needs no cursor. Loaded rows keep their live
+ * state; anything newer in the history already reached them live. Undefined
+ * when the history lacks the first loaded row: the transcript no longer
+ * matches the server's and has to be reloaded.
+ */
+export function prependCompleteHistory(
+  state: ThreadState,
+  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+): ThreadState | undefined {
+  const current = settleLiveItems(state)
+  const complete = reduceEventLog(emptyThread, entries)
+  const first = current.items[0]
+  const end = first ? itemIndex(complete.items, first.id) : complete.items.length
+  if (end < 0) return undefined
+  return prependHistoryRows(current, { ...complete, items: complete.items.slice(0, end) }, null)
+}
+
 function prependHistoryRows(
   current: ThreadState,
   older: ThreadState,
