@@ -1264,8 +1264,10 @@ const Row = memo(function Row({
   }
 
   if (item.type === 'reasoning') {
-    const text = item.text?.trim()
-    if (!text) return null
+    const raw = item.text ?? ''
+    if (!/\S/.test(raw)) return null
+    // Streamed Markdown appends a delta only when the text grew by exactly that delta.
+    const text = live && item.status === 'started' ? raw : raw.trim()
     return (
       <ReasoningDisclosure
         item={item}
