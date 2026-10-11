@@ -1526,6 +1526,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Chromium never elides the first character of a line, so a tail that starts
+   with a letter would show that letter and a clipped ellipsis. A word joiner
+   has no width and no glyph; leading the tail with one lets the ellipsis stand
+   in for the whole tail. As generated content it stays out of the tab's text. */
+.workspace-tabs__label-tail::before {
+  content: '\2060';
+}
 .workspace-tabs__tab button svg {
   flex: none;
 }

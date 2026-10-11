@@ -9,18 +9,11 @@ export type WorkspaceTabLabel = { id: string; title: string; icon: ReactNode }
 const READABLE_PREFIX = 5
 
 /**
- * Chromium never elides the first character of a line, so a tail that starts
- * with a real letter would show that letter and a clipped ellipsis. A word
- * joiner has no width and no glyph, so leading the tail with one lets the
- * ellipsis stand in for the whole tail.
- */
-const ELLIPSIS_ANCHOR = '\u2060'
-
-/**
  * A long title is split after a fixed prefix so only the rest can give way to
  * an ellipsis: a shrinking tab never reads as one letter. Shorter titles stay
- * whole. The tab's aria-label carries the title, so the split never changes
- * its accessible name.
+ * whole. The split keeps the tab's text the plain title (the stylesheet adds
+ * the tail's ellipsis anchor as generated content), and the tab's aria-label
+ * carries the title too, so its accessible name never changes.
  */
 function TabLabel(props: { title: string }) {
   const characters = Array.from(props.title)
@@ -33,7 +26,7 @@ function TabLabel(props: { title: string }) {
         {characters.slice(0, READABLE_PREFIX).join('')}
       </span>
       <span className="workspace-tabs__label-tail">
-        {ELLIPSIS_ANCHOR + characters.slice(READABLE_PREFIX).join('')}
+        {characters.slice(READABLE_PREFIX).join('')}
       </span>
     </span>
   )
