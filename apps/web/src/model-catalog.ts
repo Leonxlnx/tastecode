@@ -60,9 +60,29 @@ const DEFAULT_HIDDEN_MODELS = new Set([
   'grok-4.7-build-fast',
 ])
 
+function visibilityId(model: Model): string {
+  return model.id.toLowerCase().replace(/\[1m\]$/, '')
+}
+
 /** Hide known older models while letting newly discovered models start enabled. */
 export function modelVisibleByDefault(model: Model): boolean {
-  return !DEFAULT_HIDDEN_MODELS.has(model.id.toLowerCase().replace(/\[1m\]$/, ''))
+  return !DEFAULT_HIDDEN_MODELS.has(visibilityId(model))
+}
+
+/** Raise when the defaults above change for models a saved profile already lists. */
+export const MODEL_VISIBILITY_VERSION = '4'
+
+/** Move a saved visibility profile onto the current defaults for the models in `choices`. */
+export function migrateHiddenModels(
+  hidden: ReadonlySet<string>,
+  choices: readonly ModelChoice[],
+): Set<string> {
+  const migrated = new Set(hidden)
+  for (const choice of choices) {
+    if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
+    else migrated.add(choice.key)
+  }
+  return migrated
 }
 
 const REASONING_EFFORT_RANKS = new Map([

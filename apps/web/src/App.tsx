@@ -125,6 +125,8 @@ import {
   customModelChoice,
   customModelKey,
   isCustomModelChoice,
+  migrateHiddenModels,
+  MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
   modelVisibleByDefault,
   providerDisplayName,
@@ -224,7 +226,6 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-const MODEL_VISIBILITY_VERSION = '4'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -1893,12 +1894,7 @@ export function App() {
         directCatalogReady &&
         readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION
       ) {
-        const migrated = new Set(hidden)
-        for (const choice of directCatalog) {
-          if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
-          else migrated.add(choice.key)
-        }
-        hidden = migrated
+        hidden = migrateHiddenModels(hidden, directCatalog)
         hiddenChanged = true
         writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
       }
