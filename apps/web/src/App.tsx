@@ -2856,9 +2856,15 @@ export function App() {
               ? project
               : {
                   ...project,
+                  // A refresh during the start may already list the real row;
+                  // the local one carries the user's title and wins.
                   sessions: project.sessions.some((session) => session.id === provisionalId)
-                    ? project.sessions.map((session) =>
-                        session.id === provisionalId ? { ...session, id: threadId } : session,
+                    ? project.sessions.flatMap((session) =>
+                        session.id === provisionalId
+                          ? [{ ...session, id: threadId }]
+                          : session.id === threadId
+                            ? []
+                            : [session],
                       )
                     : project.sessions.some((session) => session.id === threadId)
                       ? project.sessions
