@@ -942,6 +942,7 @@
 
 .workspace-browser {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
   min-width: 0;
@@ -1033,6 +1034,29 @@
 .workspace-browser__viewports button {
   width: 28px;
   height: 28px;
+}
+
+/* Too narrow for a usable address beside the preview sizes: the address
+   takes a row of its own under the navigation, so every control stays
+   reachable instead of the sizes being cut off at the panel edge. */
+@container workspace-panel (max-width: 420px) {
+  .workspace-browser__toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .workspace-browser__address {
+    order: 1;
+    min-width: 0;
+    flex-basis: 100%;
+    margin: 0;
+  }
+
+  .workspace-browser__viewports {
+    margin-left: auto;
+    padding-left: 0;
+    border-left: 0;
+  }
 }
 
 .workspace-browser__canvas {
@@ -1265,12 +1289,6 @@
 .workspace-side-chat__composer button:disabled {
   cursor: default;
   opacity: 0.28;
-}
-
-@media (max-width: 640px) {
-  .workspace-browser__viewports {
-    display: none;
-  }
 }
 
 .workspace-selector {
