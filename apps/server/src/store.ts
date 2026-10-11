@@ -2841,11 +2841,17 @@ export class Store {
     this.#replaySnapshotCacheCharacters -= cached.characters
   }
 
-  /** Cache only renderer-ready derived data; the event log remains authoritative. */
+  /**
+   * Cache only renderer-ready derived data; the event log remains authoritative.
+   * `readToEnd` marks a replay built from every stored row: it stays the latest
+   * even when `seq` names an older event because the newest rows are unreadable
+   * or retired.
+   */
   saveReplaySnapshot(
     threadId: string,
     seq: number,
     entries: ReadonlyArray<{ seq: number; event: DomainEvent }>,
+    options: { readToEnd?: boolean } = {},
   ): string {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
@@ -2855,7 +2861,7 @@ export class Store {
       seq,
       entries as ReplayEntry[],
       payload.length,
-      seq === this.lastSeq(threadId),
+      options.readToEnd === true || seq === this.lastSeq(threadId),
     )
     return payload
   }

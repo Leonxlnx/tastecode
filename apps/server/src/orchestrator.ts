@@ -2177,7 +2177,11 @@ export class Orchestrator {
       const tail = this.#store.history(threadId, base?.seq ?? 0)
       const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
       const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
-      const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted)
+      // History skips unreadable and retired rows, so `seq` can name an older
+      // event than the thread's newest row; this replay still read to the end.
+      const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted, {
+        readToEnd: true,
+      })
       return { events: compacted, serializedEvents }
     }
     return { events: this.#store.history(threadId, afterSeq) }
