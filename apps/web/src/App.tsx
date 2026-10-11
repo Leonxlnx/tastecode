@@ -168,6 +168,7 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import { restoreWorkspacePanelWidth } from './ui/workspace/workspace-panel-width.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
@@ -5653,9 +5654,10 @@ function readTerminalHeight(): number {
 }
 
 function readWorkspacePanelWidth(): number {
-  const stored = Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY))
-  if (!Number.isFinite(stored) || stored < 360) return 520
-  return Math.min(stored, Math.max(360, Math.floor(window.innerWidth * 0.78)))
+  return restoreWorkspacePanelWidth(
+    Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY)),
+    window.innerWidth,
+  )
 }
 
 function displayName(project: { path: string; name?: string | undefined }): string {
