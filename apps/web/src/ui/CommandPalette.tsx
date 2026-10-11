@@ -77,7 +77,7 @@ function CommandPaletteComponent(props: {
   onClose: () => void
 }) {
   const [query, setQuery] = useState('')
-  const [selected, setSelected] = useState(0)
+  const [selectedId, setSelectedId] = useState<string>()
   const input = useRef<HTMLInputElement>(null)
   const results = useRef<HTMLDivElement>(null)
   const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
@@ -99,9 +99,21 @@ function CommandPaletteComponent(props: {
     [searchIndex, props.scope, props.preferredCommandId, props.deferredSearch, query],
   )
 
+  // The app rebuilds the list while the palette is open, so an index would
+  // point at whichever command slid into its place.
+  const selected = useMemo(() => {
+    if (commands.length === 0) return -1
+    const index = commands.findIndex((command) => command.id === selectedId)
+    return index >= 0 ? index : 0
+  }, [commands, selectedId])
+
+  useEffect(() => setSelectedId(undefined), [query, props.scope])
+
   useEffect(() => {
-    setSelected(0)
-  }, [query, props.scope])
+    if (selectedId && !commands.some((command) => command.id === selectedId)) {
+      setSelectedId(commands[0]?.id)
+    }
+  }, [commands, selectedId])
 
   useEffect(() => {
     const command = commands[selected]
@@ -163,7 +175,9 @@ function CommandPaletteComponent(props: {
                 event.preventDefault()
                 if (commands.length === 0) return
                 const direction = event.key === 'ArrowDown' ? 1 : -1
-                setSelected((current) => (current + direction + commands.length) % commands.length)
+                setSelectedId(
+                  commands[(selected + direction + commands.length) % commands.length]?.id,
+                )
                 return
               }
               if (isConfirmEnter(event)) {
@@ -205,7 +219,7 @@ function CommandPaletteComponent(props: {
                     id={`command-${command.id}`}
                     className={`command-palette__item ${index === selected ? 'is-selected' : ''}`}
                     onClick={() => choose(command)}
-                    onMouseEnter={() => setSelected(index)}
+                    onMouseEnter={() => setSelectedId(command.id)}
                     role="option"
                     tabIndex={-1}
                     aria-selected={index === selected}
