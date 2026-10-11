@@ -74,6 +74,7 @@ export async function transcriptRecords(
  */
 function currentTurn(localTurnIds: ReadonlySet<string> | undefined) {
   let current: string | undefined
+  const seen = new Set<string>()
   const ended = new Set<string>()
   return {
     isLocal: () =>
@@ -82,15 +83,14 @@ function currentTurn(localTurnIds: ReadonlySet<string> | undefined) {
       const payload = object(record.payload)
       const turnId = typeof payload.turn_id === 'string' ? payload.turn_id : undefined
       const event = record.type === 'event_msg' ? String(payload.type) : undefined
-      if (
-        record.type === 'turn_context' ||
-        event === 'task_started' ||
-        event === 'item_completed'
-      ) {
-        if (turnId) current = turnId
-      } else if (event !== undefined && TURN_ENDS.has(event)) {
-        if (turnId) current = turnId
-        if (current) ended.add(current)
+      const start = record.type === 'turn_context' || event === 'task_started'
+      const end = event !== undefined && TURN_ENDS.has(event)
+      if (start || end || event === 'item_completed') {
+        // A late item or end of an earlier turn does not make that turn current again.
+        if (turnId && (start || !seen.has(turnId))) current = turnId
+        if (turnId) seen.add(turnId)
+        const ending = end ? (turnId ?? current) : undefined
+        if (ending) ended.add(ending)
       } else if (
         current !== undefined &&
         ended.has(current) &&

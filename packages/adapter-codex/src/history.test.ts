@@ -906,4 +906,38 @@ describe('native Codex history', () => {
     ).toEqual(['turn-one', 'turn-two'])
     expect(items(events).find((entry) => entry.id === 'late')?.turnId).toBe('turn-one')
   })
+
+  it.each([true, false])(
+    'keeps the next turn in its own turn after a late item of an earlier one (ended: %s)',
+    async (ended) => {
+      const { source } = await store([
+        event({ type: 'task_started', turn_id: 'turn-one' }),
+        event({ type: 'user_message', message: 'Question one' }),
+        ...(ended ? [event({ type: 'task_complete', turn_id: 'turn-one' })] : []),
+        event({ type: 'task_started', turn_id: 'turn-two' }),
+        event({ type: 'user_message', message: 'Question two' }),
+        rich({ type: 'SubAgentActivity', id: 'late', kind: 'interacted' }),
+        event({ type: 'agent_message', message: 'Answer two' }),
+        response({
+          type: 'function_call',
+          call_id: 'list',
+          name: 'exec_command',
+          arguments: '{"cmd":"ls"}',
+        }),
+        event({ type: 'task_complete', turn_id: 'turn-two' }),
+      ])
+      const session = (await source.list())[0]!
+      const placed = (events: DomainEvent[]) =>
+        items(events).map((entry) => `${entry.turnId}: ${entry.command ?? entry.text}`)
+      const turnTwo = ['turn-two: Question two', 'turn-two: Answer two', 'turn-two: ls']
+
+      expect(placed(await source.read(session))).toEqual([
+        'turn-one: Question one',
+        'turn-one: Subagent interacted\n',
+        ...turnTwo,
+      ])
+      const skipped = await source.read(session, { localTurnIds: new Set(['turn-one']) })
+      expect(placed(skipped).filter((entry) => entry.startsWith('turn-two'))).toEqual(turnTwo)
+    },
+  )
 })
