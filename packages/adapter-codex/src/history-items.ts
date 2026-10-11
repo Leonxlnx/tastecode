@@ -6,7 +6,8 @@ import { wholeFileHunk } from './whole-file-hunk.js'
 
 type Value = Record<string, unknown>
 type Base = Pick<Item, 'id' | 'turnId' | 'createdAt' | 'status'>
-export type HistoryItem = { item: Item; diff?: string }
+/** A multi-part reasoning item's `parts`, which Codex also writes as one event each. */
+export type HistoryItem = { item: Item; diff?: string; parts?: string[] }
 
 function text(value: unknown): string {
   if (typeof value === 'string') return value
@@ -95,19 +96,22 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
       return message(payload, base, 'assistant')
     case 'Reasoning': {
       const paragraphs = (value: unknown) =>
-        Array.isArray(value)
-          ? value
-              .map((part) => text(typeof part === 'string' ? part : object(part).text))
-              .filter(Boolean)
-              .join('\n\n')
-          : text(value)
-      const value = [
-        paragraphs(payload.summary_text ?? payload.summary),
-        paragraphs(payload.raw_content ?? payload.content),
+        (Array.isArray(value)
+          ? value.map((part) => text(typeof part === 'string' ? part : object(part).text))
+          : [text(value)]
+        ).filter(Boolean)
+      const parts = [
+        ...paragraphs(payload.summary_text ?? payload.summary),
+        ...paragraphs(payload.raw_content ?? payload.content),
       ]
-        .filter(Boolean)
-        .join('\n\n')
-      return value ? [{ item: { ...base, type: 'reasoning', text: value } }] : []
+      return parts.length
+        ? [
+            {
+              item: { ...base, type: 'reasoning', text: parts.join('\n\n') },
+              ...(parts.length > 1 ? { parts } : {}),
+            },
+          ]
+        : []
     }
     case 'Plan':
       return [{ item: { ...base, type: 'plan', text: text(payload.text ?? payload.content) } }]

@@ -232,17 +232,21 @@ function turnItems(turn: SavedTurn): HistoryItem[] {
       const { item } = result
       const dedup = item.type === 'message' || item.type === 'reasoning'
       const key = `${item.type}:${item.role ?? ''}:${item.text ?? ''}`
+      // A reasoning item also counts once for each part, so its part events match it.
+      const keys = [key, ...(result.parts ?? []).map((part) => `${item.type}::${part}`)]
       const occurrence = (occurrences.get(key) ?? 0) + 1
-      occurrences.set(key, occurrence)
+      for (const each of keys) occurrences.set(each, (occurrences.get(each) ?? 0) + 1)
       if (dedup && occurrence <= (counts.get(key) ?? 0)) {
         const original = acceptedByContent.get(key)?.[occurrence - 1]
         if (original) original.index = Math.min(original.index, result.index)
         continue
       }
       accepted.push(result)
-      const byContent = acceptedByContent.get(key) ?? []
-      byContent.push(result)
-      acceptedByContent.set(key, byContent)
+      for (const each of keys) {
+        const byContent = acceptedByContent.get(each) ?? []
+        byContent.push(result)
+        acceptedByContent.set(each, byContent)
+      }
     }
     for (const [key, count] of occurrences) counts.set(key, Math.max(counts.get(key) ?? 0, count))
   }
