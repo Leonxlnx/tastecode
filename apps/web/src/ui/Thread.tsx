@@ -80,6 +80,7 @@ import {
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { MAX_HISTORY_PAGE_TURNS, nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 import {
@@ -206,53 +207,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
-  const [olderHistory, setOlderHistory] = useState<'idle' | 'loading' | 'failed'>('idle')
-  const olderRead = useRef<{ threadId: string; read: Promise<boolean> } | undefined>(undefined)
-  const olderFailed = useRef(false)
-  const threadIdRef = useRef(props.threadId)
-  threadIdRef.current = props.threadId
-  const loadOlderRef = useRef(props.onLoadOlderHistory)
-  loadOlderRef.current = props.onLoadOlderHistory
-  const loadOlder = useCallback((turnLimit?: number): Promise<boolean> => {
-    const threadId = threadIdRef.current
-    const load = loadOlderRef.current
-    if (!threadId || !load) return Promise.resolve(false)
-    if (olderRead.current?.threadId === threadId) return olderRead.current.read
-    olderFailed.current = false
-    setOlderHistory('loading')
-    const read = load(threadId, turnLimit).then(
-      () => true,
-      () => false,
-    )
-    olderRead.current = { threadId, read }
-    void read.then((loaded) => {
-      if (olderRead.current?.read !== read) return
-      olderRead.current = undefined
-      olderFailed.current = !loaded
-      if (threadIdRef.current === threadId) setOlderHistory(loaded ? 'idle' : 'failed')
-    })
-    return read
-  }, [])
-  const searchingOlder = useRef(false)
-  // Find and search jumps need every turn, so fetch the rest in large pages.
-  const loadAllOlder = useCallback(async () => {
-    const threadId = threadIdRef.current
-    if (searchingOlder.current) return
-    searchingOlder.current = true
-    try {
-      while (
-        threadIdRef.current === threadId &&
-        props.frameStore.getStructureSnapshot().olderCursor &&
-        (await loadOlder(MAX_HISTORY_PAGE_TURNS))
-      );
-    } finally {
-      searchingOlder.current = false
-    }
-  }, [props.frameStore, loadOlder])
-  useEffect(() => {
-    olderFailed.current = false
-    setOlderHistory('idle')
-  }, [props.threadId])
+  const {
+    status: olderHistory,
+    loadOlder,
+    loadAllOlder,
+    canLoadOnScroll,
+  } = useOlderHistory(props.threadId, props.frameStore, props.onLoadOlderHistory)
   const liveItems = thread.liveItems
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
@@ -368,14 +328,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       modeRef.current = nextMode
       setMode(nextMode)
     }
-    if (
-      props.frameStore.getStructureSnapshot().olderCursor &&
-      olderRead.current === undefined &&
-      !olderFailed.current &&
-      nearOlderHistoryEdge(el)
-    )
-      void loadOlder()
-  }, [props.frameStore, loadOlder])
+    if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
+  }, [canLoadOnScroll, loadOlder])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
