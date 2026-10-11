@@ -570,6 +570,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       : olderHistory === 'failed' || completeFailed
         ? 'failed'
         : 'idle'
+  // While find reads the rest of the chat, the find bar's status speaks for
+  // both reads; two live regions at once would talk over each other.
+  const olderAnnouncement = finding && completeStatus === 'loading' ? 'idle' : olderPill
 
   return (
     // The overlays live OUTSIDE the scroller: an absolutely positioned child
@@ -727,9 +730,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
             out of the reading. */}
         {thread.olderCursor ? (
           <div className="visually-hidden" role="status">
-            {olderPill === 'loading'
+            {olderAnnouncement === 'loading'
               ? 'Loading earlier messages'
-              : olderPill === 'failed'
+              : olderAnnouncement === 'failed'
                 ? 'Couldn’t load earlier messages'
                 : ''}
           </div>

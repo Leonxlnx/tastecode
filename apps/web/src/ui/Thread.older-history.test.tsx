@@ -317,6 +317,36 @@ describe('Thread older history', () => {
     expect(loadComplete).toHaveBeenCalledTimes(2)
   })
 
+  it('announces only find while its read runs beside a page read', async () => {
+    const store = new ThreadFrameStore(paged(turns(150, 151), 'cursor'))
+    // The short transcript starts a page read that is still out when find opens.
+    const loadOlder = vi.fn(() => new Promise<void>(noop))
+    const loadComplete = vi.fn((_threadId: string, _signal: AbortSignal) => new Promise<void>(noop))
+    render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={loadOlder}
+        onLoadCompleteHistory={loadComplete}
+      />,
+    )
+    expect(loadOlder).toHaveBeenCalledOnce()
+    const announced = () =>
+      screen
+        .getAllByRole('status')
+        .map((region) => region.textContent)
+        .filter(Boolean)
+    expect(announced()).toEqual(['Loading earlier messages'])
+
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    const find = await screen.findByLabelText('Find in thread')
+    fireEvent.change(find, { target: { value: 'Answer 3' } })
+    expect(loadComplete).toHaveBeenCalledOnce()
+    expect(announced()).toEqual(['Searching earlier messages'])
+  })
+
   it('stops waiting for the complete read when find closes', async () => {
     const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
     const loadComplete = vi.fn((_threadId: string, _signal: AbortSignal) => new Promise<void>(noop))
