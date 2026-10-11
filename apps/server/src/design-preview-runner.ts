@@ -20,6 +20,10 @@ const COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
 const UNSAFE_ARG = /[&|<>^%!"\r\n()]/
 const PACKAGE_SCOPE_ARG =
   /^-(?:C|F|r|w)|^--(?:cwd|dir|prefix|filter(?:-prod)?|recursive|workspace(?:-root|s)?|include-workspace-root)(?:=|$)/
+// Only output options. Any other package-manager option can reconfigure what
+// the script runs: `--node-options`, `--script-shell`, `--config.*` and other
+// config keys reach the processes the script starts.
+const PACKAGE_MANAGER_OPTIONS = new Set(['--if-present', '--silent'])
 const MAX_OUTPUT_BYTES = 100_000
 const startingPreviewPorts = new Set<number>()
 const PackageManifestSchema = z.object({
@@ -207,8 +211,20 @@ export function assertRunsWorkspaceCode(
   ) {
     throw new Error('preview package-manager workspace selectors are not allowed')
   }
-  const { script } = packageScriptRun(plan.args)
+  const { script, scriptIndex } = packageScriptRun(plan.args)
   if (!script) throw new Error('preview command must name a package script')
+  // npm also reads options after the script name, up to `--`, as its own config.
+  const optionsEnd =
+    plan.command === 'npm' ? Math.max(scriptIndex, packageManagerArgs.length) : scriptIndex
+  if (
+    plan.args
+      .slice(0, optionsEnd)
+      .some((arg) => arg.startsWith('-') && !PACKAGE_MANAGER_OPTIONS.has(arg))
+  ) {
+    throw new Error(
+      'preview package-manager options other than --silent and --if-present are not allowed',
+    )
+  }
   if (!packageScripts(cwd).has(script)) {
     throw new Error(`preview script "${script}" is not declared in package.json`)
   }
@@ -219,10 +235,12 @@ export function assertRunsWorkspaceCode(
  * Validation and launch share this so the script that runs is the one checked.
  */
 function packageScriptRun(args: readonly string[]) {
-  const named = args.filter((arg) => !arg.startsWith('-'))
-  const explicitRun = named[0] === 'run'
+  const named = args.flatMap((arg, index) => (arg.startsWith('-') ? [] : [index]))
+  const explicitRun = named[0] !== undefined && args[named[0]] === 'run'
+  const scriptIndex = (explicitRun ? named[1] : named[0]) ?? args.length
   return {
-    script: explicitRun ? named[1] : named[0],
+    script: args[scriptIndex],
+    scriptIndex,
     args: explicitRun ? [...args] : ['run', ...args],
   }
 }
