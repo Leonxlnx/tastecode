@@ -12,7 +12,7 @@ import {
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
-import type { NativeMenuAction } from './bridge.js'
+import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
 import type { ModelChoice } from './model-catalog.js'
@@ -21,6 +21,9 @@ import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
+import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+
+const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 
 beforeEach(mockKeyboardModifierState)
 
@@ -81,7 +84,8 @@ const highlighterHighlight = vi.hoisted(() => vi.fn(() => ({ tokens: [] })))
 const desktopShell = vi.hoisted(() => ({ enabled: false }))
 const shortcutPlatform = vi.hoisted(() => ({ macOS: true }))
 const nativeMenu = vi.hoisted(() => ({
-  listener: undefined as ((action: NativeMenuAction) => void) | undefined,
+  listener: undefined as
+    ((action: NativeMenuAction, source?: NativeMenuActionSource) => void) | undefined,
   syncShortcuts: vi.fn(),
 }))
 type ThreadProps = ComponentProps<(typeof import('./ui/Thread.js'))['Thread']>
@@ -288,7 +292,9 @@ vi.mock('./bridge.js', async (importOriginal) => ({
   },
   pickFolder,
   syncNativeMenuShortcuts: nativeMenu.syncShortcuts,
-  onNativeMenuAction: (listener: (action: NativeMenuAction) => void) => {
+  onNativeMenuAction: (
+    listener: (action: NativeMenuAction, source?: NativeMenuActionSource) => void,
+  ) => {
     nativeMenu.listener = listener
     return () => {
       if (nativeMenu.listener === listener) nativeMenu.listener = undefined
@@ -976,6 +982,7 @@ describe('web client', () => {
       expect(transport.state).toBe('open')
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
       const requests = shellRenders.threadFrame.mock.lastCall![0].userInputs
       expect(requests).toHaveLength(resolved ? 0 : 1)
@@ -1036,6 +1043,33 @@ describe('web client', () => {
       expect(composerProps().draftRequest?.attachments).toEqual(['/work/later.png'])
     },
   )
+
+  it('keeps a rejected side prompt in the chat that is still starting', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    submitTurn('/side what is this?')
+    await screen.findByText('Start the main chat before opening a side chat.')
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    expect(composer().value).toBe('/side what is this?')
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    expect(composer().value).toBe('/side what is this?')
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
+    expect(composer().value).toBe('')
+    fireEvent.click(await screen.findByRole('button', { name: /^First prompt,/ }))
+    expect(composer().value).toBe('/side what is this?')
+  })
 
   it('restores failed startup into the new-chat draft without overwriting another chat', async () => {
     const request = transport.request.getMockImplementation()!
@@ -1144,6 +1178,98 @@ describe('web client', () => {
     },
   )
 
+  it('keeps the next project workspace when a restore Undo finishes after a switch', async () => {
+    serverProjects.push(
+      serverProject('/work/other', 'other', [{ id: 'other-thread', title: 'Other chat' }]),
+    )
+    const request = transport.request.getMockImplementation()!
+    let undone = false
+    const finishInfo: Array<(info: ResultOf<'workspace.info'>) => void> = []
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.undoRestore') undone = true
+      if (method === 'workspace.info') {
+        const { path } = methods[method].params.parse(params)
+        if (path === '/work/other')
+          return Promise.resolve({ branch: 'other-branch', added: 0, removed: 0, dirtyFiles: 0 })
+        if (undone) return new Promise((resolve) => finishInfo.push(resolve))
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    await openCheckpointHistory()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+    await waitFor(() => expect(finishInfo.length).toBeGreaterThan(0))
+
+    act(() => sidebarProps().onSelectSession('other-thread'))
+    await waitFor(() => expect(composerProps().branch).toBe('other-branch'))
+    await act(async () => {
+      for (const finish of finishInfo)
+        finish({ branch: 'project-branch', added: 0, removed: 0, dirtyFiles: 0 })
+    })
+
+    expect(composerProps().branch).toBe('other-branch')
+  })
+
+  it('keeps the next chat restore points when the previous chat read fails late', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.checkpoints' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    await openNewSession()
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() => expect(header().checkpointCount).toBe(1))
+    await act(async () => failFirst?.(new Error('checkpoints failed')))
+
+    expect(header().sessionId).toBe('second-thread')
+    expect(header().checkpointCount).toBe(1)
+  })
+
+  it('does not report a history failure for a chat the user already left', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.history' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'second-thread',
+        page: NEWEST_PAGE,
+      }),
+    )
+    await act(async () => failFirst?.(new Error('history read failed')))
+
+    expect(screen.queryByText('history read failed')).toBeNull()
+  })
+
   it('does not offer the previous restore target while inspecting another checkpoint', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -1171,6 +1297,55 @@ describe('web client', () => {
     await act(async () => reject(new Error('inspection failed')))
     expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
     expect(rpcCount('thread.restore')).toBe(0)
+  })
+
+  it('drops the previous chat restore points when switching to a running chat', async () => {
+    serverProjects[0]!.sessions.push({ id: 'running-thread', title: 'Running chat' })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.checkpoints' &&
+        methods[method].params.parse(params).threadId === 'running-thread'
+      )
+        return Promise.resolve({ checkpoints: [] })
+      if (
+        method === 'thread.history' &&
+        methods[method].params.parse(params).threadId === 'running-thread'
+      )
+        return Promise.resolve({ events: [], running: true })
+      return request(method, params)
+    })
+    const openPalette = async () => {
+      fireEvent.keyDown(window, { key: 'k', metaKey: true })
+      await screen.findByRole('dialog', { name: 'Command palette' })
+    }
+    const closePalette = async () => {
+      fireEvent.keyDown(screen.getByRole('textbox', { name: 'Search commands' }), {
+        key: 'Escape',
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull(),
+      )
+    }
+    await openNewSession()
+    fireEvent.click(screen.getByRole('button', { name: /^Running chat,/ }))
+    startTurn('running-thread', 'turn-running')
+    await screen.findByText('Working')
+
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: /^New session,/ }).classList).toContain(
+        'is-active',
+      ),
+    )
+    await openPalette()
+    expect(await screen.findByRole('option', { name: /Restore points/ })).toBeTruthy()
+    await closePalette()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Running chat,/ }))
+    await screen.findByText('Working')
+    await openPalette()
+    expect(screen.queryByRole('option', { name: /Restore points/ })).toBeNull()
   })
 
   it('clears the removed project chat and rejects its pending start completion', async () => {
@@ -1231,6 +1406,59 @@ describe('web client', () => {
     await act(async () => window.dispatchEvent(new Event('pagehide')))
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
       threadId: 'untouched-thread',
+    })
+  })
+
+  it.each(['number shortcut', 'next chat', 'palette'] as const)(
+    'keeps a chat queued for deletion out of %s navigation',
+    async (route) => {
+      serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+      await openNewSession()
+      act(() => sidebarProps().onDeleteSession('doomed-thread'))
+      await screen.findByText('Chat deleted')
+      if (route === 'number shortcut') fireEvent.keyDown(window, { key: '1', metaKey: true })
+      else if (route === 'next chat')
+        fireEvent.keyDown(window, { key: 'ArrowDown', metaKey: true, altKey: true })
+      else {
+        fireEvent.keyDown(window, { key: 'k', metaKey: true })
+        fireEvent.change(await screen.findByRole('textbox', { name: 'Search commands' }), {
+          target: { value: 'Doomed' },
+        })
+        expect(screen.queryByRole('option', { name: /Doomed chat/ })).toBeNull()
+      }
+      await act(async () => window.dispatchEvent(new Event('pagehide')))
+      expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+        threadId: 'doomed-thread',
+        page: NEWEST_PAGE,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'doomed-thread',
+      })
+    },
+  )
+
+  it('does not open a chat queued for deletion after settling the active chat', async () => {
+    serverProjects[0]!.sessions.push(
+      { id: 'kept-thread', title: 'Kept chat', createdAt: 3 },
+      { id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 },
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    act(() => sidebarProps().inbox?.onSettle('untouched-thread'))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'kept-thread',
+        page: NEWEST_PAGE,
+      }),
+    )
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
+      threadId: 'doomed-thread',
+      page: NEWEST_PAGE,
+    })
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'doomed-thread',
     })
   })
 
@@ -1655,6 +1883,26 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it.each(['projects.add', 'projects.list'])(
+    'reports a failed %s when adding a project',
+    async (failedMethod) => {
+      serverProjects = []
+      pickFolder.mockResolvedValue('/work/new-project')
+      const request = transport.request.getMockImplementation()!
+      let adding = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'projects.add') adding = true
+        if (adding && method === failedMethod) return Promise.reject(new Error('connection lost'))
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+      expect(await screen.findByText('connection lost')).toBeTruthy()
+    },
+  )
+
   it('adds one or many dropped folders without adding duplicates twice', async () => {
     serverProjects = []
     droppedProjectFolderPaths.mockResolvedValue([
@@ -1762,6 +2010,22 @@ describe('web client', () => {
       expect(fireEvent.keyDown(window, { key: 't', ...modifier })).toBe(true)
     },
   )
+
+  it('returns open Settings to Keybinds when the keybinds shortcut is pressed again', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: 'Show workspace tools' })
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    const keybinds = await within(settings).findByRole('button', { name: 'Keybinds' })
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+    fireEvent.click(within(settings).getByRole('button', { name: 'Appearance' }))
+    expect(keybinds.getAttribute('aria-current')).toBeNull()
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+  })
 
   it('mounts the deferred workspace panel for a preview capture', async () => {
     render(<App />)
@@ -3446,6 +3710,150 @@ describe('new chats', () => {
     })
   })
 
+  it('keeps a title the user typed while the chat was starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'backgroundModel.generateTitle') return request(method, params)
+      // Like the server, only replace a title that still matches the expected one.
+      const { threadId, expectedTitle } =
+        methods['backgroundModel.generateTitle'].params.parse(params)
+      const current = serverProjects
+        .flatMap((entry) => entry.sessions)
+        .find((session) => session.id === threadId)
+      if (current?.title !== expectedTitle) return { title: current?.title ?? '', applied: false }
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, title: 'Generated title' } : session,
+        ),
+      }))
+      return { title: 'Generated title', applied: true }
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onRenameSession(header().sessionId!, 'My checkout notes'))
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'My checkout notes',
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().title).toBe('My checkout notes')
+    expect(rpcCount('backgroundModel.generateTitle')).toBe(0)
+  })
+
+  it('keeps a starting chat in the header across a project-list refresh', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      const result = request(method, params)
+      // The server has recorded the chat, but its reply has not arrived yet.
+      if (method === 'thread.start') await startGate
+      // Hold the follow-up refresh so the swap to the real id stays observable.
+      if (method === 'thread.rename') await new Promise(() => undefined)
+      return result
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId
+    const listed = rpcCount('projects.list')
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(listed + 1))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(header().sessionId).toBe(pendingId)
+    expect(header().title).toBe('Investigate flaky checkout cleanup')
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
+    expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
+  })
+
+  it('pins a chat that was pinned while it was still starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'thread.pin') return request(method, params)
+      const { threadId, pinned } = methods['thread.pin'].params.parse(params)
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, pinned } : session,
+        ),
+      }))
+      return {}
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onToggleSessionPin(header().sessionId!))
+    expect(header().pinned).toBe(true)
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.pin', {
+        threadId: 'thread-1',
+        pinned: true,
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().pinned).toBe(true)
+    expect(transport.request).not.toHaveBeenCalledWith('thread.pin', {
+      threadId: expect.stringMatching(/^pending:/),
+      pinned: true,
+    })
+  })
+
   it('carries Stop through new-session creation and interrupts the first turn', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -4494,6 +4902,7 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       }),
     )
     fireEvent.keyDown(window, { key: 'p', metaKey: true })
@@ -5180,6 +5589,88 @@ describe('new chats', () => {
     })
   })
 
+  it('does not send a rename for a provisional chat that never started', async () => {
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+      typeof import('./ui/StageHeader.js').StageHeader
+    >
+
+    act(() => header.onRenameSession('pending:failed-start', 'Never started'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(rpcCount('thread.rename')).toBe(0)
+  })
+
+  it('keeps deleting the other chats when several need a checkout confirmation', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    const isolated = (id: string, title: string) => ({
+      id,
+      title,
+      provider: 'codex' as const,
+      createdAt: 0,
+      running: false,
+      worktreeBranch: `harness/${id}`,
+    })
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          isolated('first-dirty', 'First dirty'),
+          { id: 'clean', title: 'Clean chat', provider: 'codex', createdAt: 0, running: false },
+          isolated('second-dirty', 'Second dirty'),
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'thread.unsavedWork') return request(method, params)
+      const dirty = methods[method].params.parse(params).threadId !== 'clean'
+      return Promise.resolve({ isolated: dirty, uncommitted: dirty })
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: 'Delete Clean chat' })
+
+    act(() => sidebarProps().onArchiveProject(['first-dirty', 'clean', 'second-dirty']))
+
+    expect(await screen.findByText(/Deleting “First dirty” now/)).toBeTruthy()
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'clean' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }))
+    expect(await screen.findByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Discard changes and delete' }), {
+      detail: 2,
+    })
+    expect(screen.getByText(/Deleting “Second dirty” now/)).toBeTruthy()
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Discard isolated checkout' }), {
+      key: 'Escape',
+    })
+
+    expect(screen.queryByRole('dialog', { name: 'Discard isolated checkout' })).toBeNull()
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.discardWorktree', {
+        threadId: 'first-dirty',
+        force: true,
+      })
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', { threadId: 'first-dirty' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('thread.delete', {
+      threadId: 'second-dirty',
+    })
+  })
+
   it('persists chat pinning from the sidebar menu', async () => {
     serverProjects = [
       {
@@ -5350,11 +5841,11 @@ describe('new chats', () => {
         .filter(([method]) => method === 'thread.history')
         .map(([, params]) => params),
     ).toEqual([
-      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', page: NEWEST_PAGE },
       { threadId: 'thread-rollback', afterSeq: 0 },
-      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', page: NEWEST_PAGE },
       { threadId: 'thread-rollback', afterSeq: 0 },
-      ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback' })),
+      ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback', page: NEWEST_PAGE })),
     ])
   })
 
@@ -5814,10 +6305,10 @@ describe('new chats', () => {
     expect(fontSelector.textContent).toContain('System default')
     fireEvent.click(fontSelector)
     expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'System default',
       'Geist',
       'Geist Mono',
       'Inter',
-      'System default',
     ])
     fireEvent.click(screen.getByRole('option', { name: 'Inter' }))
 
@@ -5867,11 +6358,11 @@ describe('new chats', () => {
       await act(async () => finishScan(records))
       const atkinson = await screen.findByRole('option', { name: 'Atkinson Hyperlegible' })
       expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
-        'Atkinson Hyperlegible',
+        'System default',
         'Geist',
         'Geist Mono',
         'Inter',
-        'System default',
+        'Atkinson Hyperlegible',
         'Zilla Slab',
       ])
       fireEvent.change(screen.getByRole('searchbox', { name: 'Search fonts' }), {
@@ -7265,6 +7756,95 @@ describe('sidebar chat ordering', () => {
     })
   })
 
+  it('drops a chat where the rail shows it beside a lifted unread chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'thread-b', title: 'B chat' },
+        { id: 'thread-c', title: 'C chat' },
+        { id: 'thread-a', title: 'A chat', status: 'ready', unread: true },
+      ]),
+    ]
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^C chat,/ })
+    expect(sessionTitles()).toEqual(['A chat', 'B chat', 'C chat'])
+    dropChatRow('C chat', 'A chat', 'after')
+
+    expect(sessionTitles()).toEqual(['A chat', 'C chat', 'B chat'])
+    await waitFor(() => {
+      const order = SessionOrderSchema.parse(
+        JSON.parse(localStorage.getItem('harness.sessionOrder.dragged') ?? '{}'),
+      )
+      expect(order['/work/project']).toEqual(['thread-c', 'thread-b', 'thread-a'])
+    })
+  })
+
+  it('moves to the previous and next chat in the order the rail shows', async () => {
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'one-a', title: 'One A' },
+        { id: 'one-pinned', title: 'One pinned', pinned: true },
+        { id: 'one-b', title: 'One B' },
+        { id: 'one-unread', title: 'One unread', status: 'ready', unread: true },
+      ]),
+      { ...serverProject('/work/two', 'Two', [{ id: 'two-a', title: 'Two A' }]), pinned: true },
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^One pinned,/ })
+    act(() => sidebarProps().onSelectSession('one-a'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('one-a'))
+    // The rail reads: Pinned (One pinned), Two (Two A), One (One unread, One A, One B).
+    await step('ArrowDown', 'one-b')
+    await step('ArrowDown', 'one-pinned')
+    await step('ArrowDown', 'two-a')
+    await step('ArrowUp', 'one-pinned')
+    await step('ArrowUp', 'one-b')
+  })
+
+  it('moves to the previous and next chat in the order the inbox shows', async () => {
+    serverSidebarSettings.mode = 'inbox'
+    const active = { state: 'active', keepActive: false } as const
+    serverProjects = [
+      serverProject('/work/one', 'One', [
+        { id: 'oldest', title: 'Oldest chat', createdAt: 1, lifecycle: active },
+        {
+          id: 'settled',
+          title: 'Settled chat',
+          createdAt: 5,
+          lifecycle: { state: 'settled', settledAt: 6, reason: 'manual' },
+        },
+        { id: 'newest', title: 'Newest chat', createdAt: 4, lifecycle: active },
+      ]),
+      serverProject('/work/two', 'Two', [
+        { id: 'older', title: 'Older chat', createdAt: 2, lifecycle: active },
+        { id: 'newer', title: 'Newer chat', createdAt: 3, lifecycle: active },
+      ]),
+    ]
+    const step = async (key: 'ArrowDown' | 'ArrowUp', expected: string) => {
+      fireEvent.keyDown(window, { key, metaKey: true, altKey: true })
+      await waitFor(() => expect(sidebarProps().activeSessionId).toBe(expected))
+    }
+
+    render(<App />)
+
+    await screen.findByRole('button', { name: /^Newest chat, One,/ })
+    act(() => sidebarProps().onSelectSession('newest'))
+    await waitFor(() => expect(sidebarProps().activeSessionId).toBe('newest'))
+    // Active chats newest first, then settled ones.
+    await step('ArrowDown', 'newer')
+    await step('ArrowDown', 'older')
+    await step('ArrowDown', 'oldest')
+    await step('ArrowDown', 'settled')
+    await step('ArrowUp', 'oldest')
+  })
+
   it('keeps chats imported later from another provider in date order', async () => {
     // Every project's order used to be saved automatically, freezing the order
     // in which provider histories happened to arrive.
@@ -7851,6 +8431,43 @@ describe('global shortcuts', () => {
     fireEvent.keyDown(window, { key: 'g', metaKey: true })
     expect(transport.request).not.toHaveBeenCalledWith('thread.delete', expect.anything())
     expect(composerProps().newSession).toBe(true)
+  })
+
+  it('runs a keybind saved on a number key instead of opening a recent chat', async () => {
+    localStorage.setItem(
+      'harness.keybindings.v1',
+      JSON.stringify({ version: 1, bindings: { newChat: { key: '1', primary: true } } }),
+    )
+    await openNewSession()
+    expect(composerProps().newSession).toBe(false)
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() => expect(composerProps().newSession).toBe(true))
+  })
+
+  it('refuses a number key in the keybind recorder and keeps it opening recent chats', async () => {
+    serverProjects[0]!.sessions.push({ id: 'recent-thread', title: 'Recent chat', createdAt: 5 })
+    await openNewSession()
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    fireEvent.click(await screen.findByRole('button', { name: 'Keybinds' }))
+    const recorder = screen.getByRole('button', { name: 'Change New chat keybind' })
+    fireEvent.click(recorder)
+    fireEvent.keyDown(recorder, { key: '1', metaKey: true })
+
+    expect(screen.getByRole('alert').textContent).toBe('Already used by Open recent chat.')
+    expect(localStorage.getItem('harness.keybindings.v1')).toBeNull()
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('dialog', { name: 'Settings' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull()
+
+    fireEvent.keyDown(window, { key: '1', metaKey: true })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'recent-thread' }),
+      ),
+    )
+    expect(composerProps().newSession).toBe(false)
   })
 
   it('opens the project switcher directly without rendering a top project control', async () => {
@@ -8636,12 +9253,14 @@ describe('live sessions', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'background',
+        page: NEWEST_PAGE,
       }),
     )
     fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'foreground',
+        page: NEWEST_PAGE,
       }),
     )
 
@@ -8940,6 +9559,31 @@ describe('live sessions', () => {
     expect(document.activeElement).toBe(composer)
   })
 
+  it('keeps app shortcuts from acting behind chat search', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    composer.focus()
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    const search = await screen.findByRole('combobox', { name: 'Search every chat' })
+    const stageHeader = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    const sessionBefore = stageHeader().sessionId
+
+    fireEvent.keyDown(search, { key: '1', metaKey: true })
+    expect(stageHeader().sessionId).toBe(sessionBefore)
+    expect(document.activeElement).toBe(search)
+
+    fireEvent.keyDown(search, { key: 'k', metaKey: true })
+    act(() => nativeMenu.listener?.('commandPalette', 'accelerator'))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(screen.queryByRole('textbox', { name: 'Search commands' })).toBeNull()
+    expect(document.activeElement).toBe(search)
+  })
+
   it('returns focus to inbox search after the command palette opener unmounts', async () => {
     serverSidebarSettings.mode = 'inbox'
     render(<App />)
@@ -9171,7 +9815,9 @@ function dropFile(composer: HTMLElement, path: string) {
     },
   })
   try {
-    fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+    fireEvent.drop(composer.closest('.composer__box')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
   } finally {
     if (descriptor) Object.defineProperty(window, 'harness', descriptor)
     else Reflect.deleteProperty(window, 'harness')
@@ -9221,6 +9867,20 @@ function emitQueue(
 
 function sessionTitles(): string[] {
   return Array.from(document.querySelectorAll('.sess__title'), (node) => node.textContent ?? '')
+}
+
+function dropChatRow(sourceTitle: string, targetTitle: string, position: 'before' | 'after') {
+  const row = (title: string) =>
+    screen.getByRole('button', { name: new RegExp(`^${title},`) }).closest('li')!
+  const source = row(sourceTitle)
+  const target = row(targetTitle)
+  vi.spyOn(target, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 60, 200, 28))
+  const dataTransfer = { dropEffect: 'none', effectAllowed: 'none', setData: vi.fn() }
+  const clientY = position === 'before' ? 65 : 85
+
+  fireEvent.dragStart(source, { dataTransfer })
+  fireEvent.dragOver(target, { clientY, dataTransfer })
+  fireEvent.drop(target, { clientY, dataTransfer })
 }
 
 describe('reopening a session', () => {
@@ -9331,7 +9991,7 @@ describe('reopening a session', () => {
       expect(screen.getAllByText('Existing message')).toHaveLength(1)
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'thread.history'),
-      ).toEqual([['thread.history', { threadId: 'untouched-thread' }]])
+      ).toEqual([['thread.history', { threadId: 'untouched-thread', page: NEWEST_PAGE }]])
     },
   )
 
@@ -9353,6 +10013,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     expect(screen.queryByText('75% left')).toBeNull()
@@ -9646,6 +10307,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     expect(await screen.findByText('Durable base')).toBeTruthy()
@@ -9728,6 +10390,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'thread-1',
+        page: NEWEST_PAGE,
       })
     })
     expect(transport.request).not.toHaveBeenCalledWith(
@@ -9817,6 +10480,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'background',
+        page: NEWEST_PAGE,
       })
     })
     expect(transport.request).not.toHaveBeenCalledWith(
@@ -9939,6 +10603,7 @@ describe('reopening a session', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       }),
     )
     const frames: FrameRequestCallback[] = []
@@ -9980,6 +10645,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     transport.request.mockClear()
@@ -10269,4 +10935,81 @@ describe('send availability for a connection-backed model', () => {
   it('needs setup when its connection is no longer listed', () => {
     expect(resolve([modelConnection({ id: 'other-1' })])).toBe('setup-required')
   })
+})
+
+// Last in this file: it resets the module registry so App starts with the
+// workspace panel unloaded, the way a fresh window opens it on first use.
+describe('workspace panel loading', () => {
+  it('keeps a Temporary chat across the first update after a cold /side', async () => {
+    vi.resetModules()
+    const { App: ColdApp } = await import('./App.js')
+    // Spies from earlier tests can leave frames that never run, and Temporary
+    // chat starts and sends on the next frame.
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+      setTimeout(() => callback(performance.now()), 0),
+    )
+    vi.stubGlobal('cancelAnimationFrame', (frame: number) => clearTimeout(frame))
+    localStorage.setItem('harness.models.cache', serializeModelCatalogCache([cachedCodexChoice()]))
+    const fallback = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (
+        method === 'thread.history' &&
+        methods['thread.history'].params.parse(params).threadId === 'untouched-thread'
+      ) {
+        return Promise.resolve({
+          events: [
+            {
+              seq: 1,
+              event: {
+                type: 'item.completed',
+                item: {
+                  id: 'main-user',
+                  turnId: 'main-turn',
+                  type: 'message',
+                  role: 'user',
+                  status: 'completed',
+                  text: 'Fix the build',
+                  createdAt: 1,
+                },
+              },
+            },
+          ],
+          running: false,
+        })
+      }
+      if (method === 'sideChat.start') return Promise.resolve({ threadId: 'side-1' })
+      if (
+        method === 'thread.history' &&
+        methods['thread.history'].params.parse(params).threadId === 'side-1'
+      ) {
+        return Promise.resolve({ events: [], running: false })
+      }
+      return fallback(method, params)
+    })
+    const calls = (method: string) =>
+      transport.request.mock.calls.filter(([called]) => called === method)
+
+    render(<ColdApp />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/side why did it fail?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // The first load of the panel's modules is slow in a reset registry.
+    await waitFor(
+      () =>
+        expect(transport.request).toHaveBeenCalledWith(
+          'thread.sendTurn',
+          expect.objectContaining({ threadId: 'side-1', text: 'why did it fail?' }),
+        ),
+      { timeout: 15_000 },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Show workspace tools' }))
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, 50)))
+
+    expect(calls('sideChat.close')).toEqual([])
+    expect(calls('sideChat.start')).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: 'Message temporary chat' })).toBeTruthy()
+  }, 30_000)
 })

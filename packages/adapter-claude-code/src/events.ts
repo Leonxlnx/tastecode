@@ -12,8 +12,7 @@ import { z } from 'zod'
  */
 
 const JsonObjectSchema = z.record(z.string(), JsonRpcValueSchema)
-const ResultPartSchema = z.union([z.string(), z.object({ text: z.string().optional() })])
-const ToolResultContentSchema = z.union([z.string(), z.array(ResultPartSchema)])
+const ResultTextSchema = z.object({ text: z.string() })
 const ContentBlockSchema = z.object({
   type: z.string(),
   text: z.string().optional(),
@@ -22,7 +21,9 @@ const ContentBlockSchema = z.object({
   name: z.string().optional(),
   input: JsonObjectSchema.optional(),
   tool_use_id: z.string().optional(),
-  content: ToolResultContentSchema.optional(),
+  // A string or block array for tool results, an object for server-tool errors: read it
+  // when it is needed so one unfamiliar block cannot reject the whole message.
+  content: z.unknown().optional(),
   is_error: z.boolean().optional(),
 })
 const ClaudeUsageSchema = z.object({
@@ -54,7 +55,6 @@ export const ClaudeEventSchema = z.object({
 
 export type ClaudeEvent = z.infer<typeof ClaudeEventSchema>
 type ContentBlock = z.infer<typeof ContentBlockSchema>
-type ToolResultContent = z.infer<typeof ToolResultContentSchema>
 type ClaudeUsage = z.infer<typeof ClaudeUsageSchema>
 
 /** Tools whose call is really a shell command, so it reads as one. */
@@ -269,11 +269,13 @@ function editDiff(name: string, path: string, input: ToolInput): string | undefi
 }
 
 /** Tool results are sometimes a string, sometimes a content-block array. */
-function flattenContent(content: ToolResultContent | undefined): string {
-  if (content === undefined) return ''
+function flattenContent(content: unknown): string {
   if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
   return content
-    .map((part) => (typeof part === 'string' ? part : (part.text ?? '')))
+    .map((part: unknown) =>
+      typeof part === 'string' ? part : (ResultTextSchema.safeParse(part).data?.text ?? ''),
+    )
     .join('')
     .trim()
 }

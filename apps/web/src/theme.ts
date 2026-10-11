@@ -122,12 +122,20 @@ export function fontFamilyFromPreference(font: FontPreference): string | undefin
   return fontPreferenceForFamily(family)?.slice(LOCAL_FONT_PREFIX.length)
 }
 
+/** The CSS font-family a preference sets, for type that shows a font other than the app's own. */
+export function fontFamilyStack(font: FontPreference): string {
+  const localFamily = fontFamilyFromPreference(font)
+  if (localFamily) return `${JSON.stringify(localFamily)}, system-ui, sans-serif`
+  if (font === 'system' || !FONT_PRESETS.has(font as FontPreset)) return 'var(--font-system)'
+  return `var(--font-${font})`
+}
+
 export function applyFontPreference(font: FontPreference): void {
   const root = document.documentElement
   const localFamily = fontFamilyFromPreference(font)
   root.dataset.font = localFamily ? 'local' : font
   if (localFamily) {
-    root.style.setProperty('--font-ui', `${JSON.stringify(localFamily)}, system-ui, sans-serif`)
+    root.style.setProperty('--font-ui', fontFamilyStack(font))
   } else {
     root.style.removeProperty('--font-ui')
   }

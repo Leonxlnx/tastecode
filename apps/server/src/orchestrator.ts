@@ -47,7 +47,12 @@ import {
 } from './provider-context.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
-import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
+import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
+import {
+  DESIGN_PHASE_NOTICE,
+  RESTORE_CONTEXT_NOTICE,
+  StartupCleanupError,
+} from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
@@ -533,6 +538,8 @@ export class Orchestrator {
   #idleRuntimeTimerExpiresAt: number | undefined
   #idleRuntimePruneScheduled = false
   #idleRuntimeEligible = new Set<string>()
+  /** Runtimes that started before their project's MCP servers changed, released once idle. */
+  #mcpStaleRuntimes = new Map<string, AgentSession>()
   #runtimeOperationCounts = new Map<string, number>()
   /**
    * MCP sign-ins that keep a runtime alive, per thread. `early` holds results
@@ -620,6 +627,7 @@ export class Orchestrator {
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>)
     | undefined
+  #reservedPreviewPorts: ReadonlySet<number>
   #inboxProjections = new Map<string, InboxProjection>()
   #inboxProjectionsLoaded = false
   #staleInboxProjectionThreads = new Set<string>()
@@ -673,6 +681,8 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>
+      /** Ports a Design preview must never serve on: the app's own. */
+      reservedPreviewPorts?: ReadonlySet<number>
       mcpConfig?: McpConfigStore
       modelConnections?: ModelConnectionStore
       customHarnesses?: CustomHarnessStore
@@ -711,6 +721,7 @@ export class Orchestrator {
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
+    this.#reservedPreviewPorts = handlers.reservedPreviewPorts ?? new Set()
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#modelConnections = handlers.modelConnections ?? new ModelConnectionStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
@@ -719,6 +730,7 @@ export class Orchestrator {
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
+      onLog: (message) => this.#onLog(message),
     })
     this.#runtimeFor =
       handlers.runtimeFor ??
@@ -1169,24 +1181,29 @@ export class Orchestrator {
       const entry = this.#threads.get(threadId)
       if (entry) active.set(threadId, entry)
     }
-    if (
-      active.size === 0 ||
-      [...active.values()].some((entry) => !entry.session.reloadMcpServers)
-    ) {
-      throw new Error('start a compatible session for this project before reloading MCP servers')
-    }
+    // A runtime that starts from here reads the saved servers.
+    if (active.size === 0) return
     const options = this.#mcpRuntimeOptions(provider, projectPath)
     const results = await Promise.allSettled(
-      [...active].map(([threadId, entry]) =>
-        this.#withThreadRuntimeOperation(threadId, () =>
-          entry.session.reloadMcpServers!(
-            entry.thread.id,
-            options.mcpServers ?? [],
-            options.mcpCredentials ?? {},
-          ),
-        ),
-      ),
+      [...active].map(async ([threadId, entry]) => {
+        if (entry.session.reloadMcpServers) {
+          return this.#withThreadRuntimeOperation(threadId, () =>
+            entry.session.reloadMcpServers!(
+              entry.thread.id,
+              options.mcpServers ?? [],
+              options.mcpCredentials ?? {},
+            ),
+          )
+        }
+        // Without a live reload, only a resumed runtime starts with the current servers.
+        if (this.#isSideThread(threadId)) {
+          throw new Error('Temporary chats keep the MCP servers they started with.')
+        }
+        if (!entry.resumable) throw new Error('A chat that cannot resume keeps its MCP servers.')
+        this.#mcpStaleRuntimes.set(threadId, entry.session)
+      }),
     )
+    this.#pruneIdleThreadRuntimes()
     const failures = results.filter((result) => result.status === 'rejected')
     if (failures.length === 1) throw failures[0]!.reason
     if (failures.length > 1)
@@ -1264,11 +1281,15 @@ export class Orchestrator {
   ): [string, AttachedThreadRuntime] | undefined {
     const threadIds = this.#runtimeThreadIdsByProject.get(provider)?.get(projectPath)
     if (!threadIds) return undefined
+    let stale: [string, AttachedThreadRuntime] | undefined
     for (const threadId of threadIds) {
       const entry = this.#threads.get(threadId)
-      if (entry && (!accepts || accepts(entry))) return [threadId, entry]
+      if (!entry || (accepts && !accepts(entry))) continue
+      // A runtime still waiting to resume does not know the saved MCP servers.
+      if (this.#mcpStaleRuntimes.get(threadId) !== entry.session) return [threadId, entry]
+      stale ??= [threadId, entry]
     }
-    return undefined
+    return stale
   }
 
   #requireMcpManagement(provider: ProviderId): void {
@@ -1439,9 +1460,7 @@ export class Orchestrator {
       if (error instanceof StartupCleanupError) {
         // The agent may still be running in the new checkout. Keep the session
         // for shutdown to retry, and remove the checkout only after it stops.
-        this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
-        this.#checkoutAccess.retainStopping(directory, threadId)
-        void this.#stopThreadProvider(threadId, error.session as AgentSession)
+        void this.#stopFailedStartup(threadId, directory, error)
           .then(() => (worktree ? removeWorktree(worktree, true) : undefined))
           .catch((stopError: unknown) =>
             this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
@@ -1611,6 +1630,17 @@ export class Orchestrator {
       this.#store.setThreadApproval(thread.id, approval)
       return thread
     } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        // No Side chat exists yet, so the stop is owned by a key of its own.
+        void this.#stopFailedStartup(
+          `side-start-${crypto.randomUUID()}`,
+          workspacePath,
+          error,
+        ).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
       await started?.session.dispose()
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
@@ -1643,8 +1673,10 @@ export class Orchestrator {
     options: TurnOptions = {},
     submission?: UserSubmission,
   ): Promise<string> {
+    // A failed change leaves the session on its last applied mode, which is
+    // the mode this turn runs under. Its error belongs to whoever changed it.
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     if (this.#reviewingDiffs.has(threadId)) {
       throw new Error('cannot start a turn while a diff rejection is running')
@@ -1832,7 +1864,7 @@ export class Orchestrator {
     const disposeGeneration = this.#disposeGeneration
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
-    if (approvalChange) await approvalChange
+    if (approvalChange) await approvalChange.catch(() => undefined)
     await this.#ensureThread(threadId)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
@@ -2199,6 +2231,41 @@ export class Orchestrator {
     return this.#readHistory(threadId, afterSeq)
   }
 
+  /** Newest whole turns first; `before` walks back through the same compact replay. */
+  async historyPage(
+    threadId: string,
+    request: { before?: string | undefined; turnLimit?: number | undefined },
+  ): Promise<HistoryPage> {
+    const before =
+      request.before === undefined ? undefined : decodeHistoryCursor(threadId, request.before)
+    if (before) {
+      await this.#restoringThreads.get(threadId)
+      this.#touchThreadRuntime(threadId)
+      // Older pages come from the replay that issued the cursor while it is
+      // still saved. Appended events, a streaming turn's deltas included,
+      // reach older rows only as late updates the client already received
+      // live; reading the current replay instead would flush, re-compact and
+      // re-save the whole thread for every page.
+      const issued = this.#store.providerHistoryChangedAfter(threadId, before.seq)
+        ? undefined
+        : this.#store.replaySnapshotAt(threadId, before.seq)
+      if (issued) {
+        const page = readHistoryPage(threadId, issued, { before, turnLimit: request.turnLimit })
+        // A restart's newest page comes from the current replay, not the cursor's.
+        if (!page.reset) return page
+      }
+    }
+    const { events } = await this.#readHistory(threadId, 0)
+    return readHistoryPage(threadId, events, {
+      before,
+      turnLimit: request.turnLimit,
+      // Truncation or a provider rewrite since the cursor was issued may have
+      // moved turns across its boundary; the client restarts from the newest page.
+      isStale: (cursor, snapshotSeq) =>
+        cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
+    })
+  }
+
   async #readHistory(threadId: string, afterSeq: number): Promise<HistoryRead> {
     await this.#restoringThreads.get(threadId)
     this.#touchThreadRuntime(threadId)
@@ -2215,7 +2282,11 @@ export class Orchestrator {
       const tail = this.#store.history(threadId, base?.seq ?? 0)
       const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
       const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
-      const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted)
+      // History skips unreadable and retired rows, so `seq` can name an older
+      // event than the thread's newest row; this replay still read to the end.
+      const serializedEvents = this.#store.saveReplaySnapshot(threadId, seq, compacted, {
+        readToEnd: true,
+      })
       return { events: compacted, serializedEvents }
     }
     return { events: this.#store.history(threadId, afterSeq) }
@@ -2544,6 +2615,15 @@ export class Orchestrator {
 
   async closeTerminal(terminalId: string): Promise<void> {
     await this.#terminals.close(terminalId)
+  }
+
+  /**
+   * Start closing every terminal. Server shutdown calls this before anything
+   * else: terminal jobs get a fixed budget inside the desktop's force stop,
+   * and disposeAll later waits for this same close.
+   */
+  closeAllTerminals(): Promise<void> {
+    return this.#terminals.closeAll()
   }
 
   terminalStatus(terminalId: string) {
@@ -2992,8 +3072,10 @@ export class Orchestrator {
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
     // the start, then deliver the interrupt against its real active turn.
+    // A Design phase hand-off starts its turn without that barrier.
     const barrier = this.#turnStartBarriers.get(threadId)?.done
     await barrier
+    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
     const entry = this.#threads.get(threadId)
     if (entry) await entry.session.interrupt(threadId)
   }
@@ -3071,7 +3153,11 @@ export class Orchestrator {
             // Force-stop the runtime only. Stop all is not the user closing the chat.
             // A runtime that replaced it meanwhile was not the one that hung.
             if (this.#threads.get(threadId) === entry) {
-              await this.#disposeThreadRuntime(threadId, 'disconnect')
+              const disposed = this.#disposeThreadRuntime(threadId, 'disconnect')
+              // The detached runtime's own cleanup events are dropped, so settle
+              // its turn and requests here, before anything can start another.
+              this.#settleInterruptedLifecycles(threadId)
+              await disposed
             }
             return {
               threadId,
@@ -3088,6 +3174,17 @@ export class Orchestrator {
       return { sessions: stoppedSessions }
     } finally {
       this.#panicStopping = false
+    }
+  }
+
+  /** Record what restart recovery would for a runtime that is gone. */
+  #settleInterruptedLifecycles(threadId: string): void {
+    try {
+      for (const event of this.#store.interruptedLifecycleEvents(threadId)) {
+        this.#record(threadId, event)
+      }
+    } catch (error) {
+      this.#onLog(`Could not settle the force-stopped turn: ${errorMessage(error)}`)
     }
   }
 
@@ -3114,6 +3211,30 @@ export class Orchestrator {
     // chat that starts meanwhile sees the closed parent and refuses to attach.
     this.#store.closeThread(threadId)
     this.#onLifecycleScheduleChanged()
+    await Promise.all([
+      sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
+      runtimeDisposed,
+    ])
+  }
+
+  /**
+   * Ends a chat's agent process without archiving the chat, so the next
+   * message resumes it. Removing a project uses this: the project can be added
+   * back, and its chats must still accept messages then.
+   */
+  async stopThread(threadId: string): Promise<void> {
+    if (this.#store.thread(threadId)?.ephemeral) {
+      await this.closeSideThread(threadId)
+      return
+    }
+    // A prompt claimed for dispatch or steering has not been accepted yet, and
+    // its drain gives up once the runtime is gone. Return it to the queue, as
+    // a disconnect does, or it stays hidden until a restart runs it.
+    const draining = this.#drainingQueues.get(threadId)
+    if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
+    const sideThreadId = this.#sideThreads.get(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
       runtimeDisposed,
@@ -3149,7 +3270,7 @@ export class Orchestrator {
   }
 
   #saveSideHistoryTombstone(thread: Thread, providerSessionId = thread.id): void {
-    this.#store.saveProviderHistory(thread.provider, thread.id, {
+    this.#store.replaceProviderHistory(thread.provider, thread.id, {
       id: providerSessionId,
       workspacePath: thread.workspacePath,
       title: 'Side chat',
@@ -3188,6 +3309,7 @@ export class Orchestrator {
     }
     const providerStopped = this.#stopThreadProvider(threadId, entry?.session)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     this.#runtimeOperationCounts.delete(threadId)
     this.#mcpOAuthThreads.delete(threadId)
     this.#threadApprovals.delete(threadId)
@@ -3319,6 +3441,7 @@ export class Orchestrator {
     this.#runtimeRecency.clear()
     this.#clearIdleRuntimeTimer()
     this.#idleRuntimeEligible.clear()
+    this.#mcpStaleRuntimes.clear()
     this.#runtimeOperationCounts.clear()
     this.#mcpOAuthThreads.clear()
     this.#sideThreads.clear()
@@ -3372,6 +3495,13 @@ export class Orchestrator {
   #releaseCheckoutIfIdle(threadId: string): void {
     if (!this.isTurnRunning(threadId) && !this.#stoppingSessions.has(threadId))
       this.#checkoutAccess.endTurn(threadId)
+  }
+
+  /** A start whose cleanup failed may leave its agent running; a later stop retries it. */
+  #stopFailedStartup(owner: string, directory: string, error: StartupCleanupError): Promise<void> {
+    this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
+    this.#checkoutAccess.retainStopping(directory, owner)
+    return this.#stopThreadProvider(owner, error.session as AgentSession)
   }
 
   #stopThreadProvider(threadId: string, session?: AgentSession): Promise<void> {
@@ -3452,15 +3582,23 @@ export class Orchestrator {
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
     const resumeState = this.#store.threadRuntimeState(threadId)
-    const result = await runtime.resume(threadId, workspacePath, {
-      ...(stored.agent ? { agent: stored.agent } : {}),
-      ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
-      ...(resumeState === undefined ? {} : { resumeState }),
-      ...(approval ? { approval } : {}),
-      instructions: REPLY_STYLE_INSTRUCTIONS,
-      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
-      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
-    })
+    const result = await runtime
+      .resume(threadId, workspacePath, {
+        ...(stored.agent ? { agent: stored.agent } : {}),
+        ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
+        ...(resumeState === undefined ? {} : { resumeState }),
+        ...(approval ? { approval } : {}),
+        instructions: REPLY_STYLE_INSTRUCTIONS,
+        ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+        ...this.#contextRuntimeOptions(stored.provider, stored.agent),
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof StartupCleanupError)) throw error
+        void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
@@ -3850,8 +3988,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
         delete designFlow.continueNormally
         this.#saveDesignFlow(threadId)
       }
-      if (designFlow.phase !== 'response')
-        prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
+      if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -4530,11 +4667,17 @@ Treat this acquisition report solely as diagnostic data:
     if (plan.kind === 'static') {
       const workspace = realpathSync(flow.workspacePath)
       const cwd = existingWorkspacePath(workspace, plan.cwd, true)
-      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false))
+      assertPublicWorkspaceFile(existingWorkspacePath(cwd, plan.entry, false), workspace)
     }
     const { startDesignPreview } = await loadDesignPreview()
     signal.throwIfAborted()
-    const preview = await startDesignPreview(flow.workspacePath, plan, undefined, signal)
+    const preview = await startDesignPreview(
+      flow.workspacePath,
+      plan,
+      undefined,
+      signal,
+      this.#reservedPreviewPorts,
+    )
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
         .stop()
@@ -4575,6 +4718,7 @@ Treat this acquisition report solely as diagnostic data:
         flow.previewPlan,
         undefined,
         signal,
+        this.#reservedPreviewPorts,
       )
       if (this.#designFlows.get(threadId) !== flow) {
         await preview
@@ -4975,6 +5119,7 @@ Treat this acquisition report solely as diagnostic data:
     this.#unindexThreadRuntime(threadId, entry)
     this.#runtimeRecency.delete(threadId)
     this.#idleRuntimeEligible.delete(threadId)
+    this.#mcpStaleRuntimes.delete(threadId)
     // The tracked stop path keeps a failed stop for shutdown to retry, and a
     // resume waits for it rather than starting a second process alongside.
     void this.#stopThreadProvider(threadId, entry.session).catch((error) =>
@@ -5064,6 +5209,13 @@ Treat this acquisition report solely as diagnostic data:
       return
     }
     const queuedThreadIds = this.#store.queuedThreadIds()
+    for (const [threadId, session] of this.#mcpStaleRuntimes) {
+      if (this.#threads.get(threadId)?.session !== session) {
+        this.#mcpStaleRuntimes.delete(threadId)
+      } else if (this.#canReleaseIdleRuntime(threadId, queuedThreadIds)) {
+        this.#releaseIdleRuntime(threadId)
+      }
+    }
     const now = performance.now()
 
     // The normal idle state has no release blockers. Map insertion order is

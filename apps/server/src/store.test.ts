@@ -530,7 +530,7 @@ describe('recovering interrupted turns', () => {
 
     const raw = new DatabaseSync(file)
     raw.exec(`DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors`)
-    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v1')
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v2')
     raw.close()
 
     const restarted = new Store(file)
@@ -566,6 +566,31 @@ describe('recovering interrupted turns', () => {
     store.saveRestoreUndo('thread-1', startedSeq, 'before-completion')
 
     expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+  })
+
+  it('settles a request asked again under an id that was already answered', () => {
+    store.addProject('/repo')
+    seedThread(store, 'thread-1')
+    const approval: DomainEvent = {
+      type: 'approval.requested',
+      request: { id: 'item-1', kind: 'command', createdAt: 2 },
+    }
+    store.append('thread-1', approval)
+    store.append('thread-1', { type: 'approval.resolved', id: 'item-1' })
+    store.append('thread-1', userInput('input-1', 'thread-1-turn'))
+    store.append('thread-1', { type: 'user_input.resolved', id: 'input-1' })
+    // A retried command reuses its id for a new approval.
+    store.append('thread-1', approval)
+    store.append('thread-1', userInput('input-1', 'thread-1-turn'))
+
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+
+    const events = store.history('thread-1').map(({ event }) => event)
+    expect(events.filter((event) => event.type === 'approval.resolved')).toHaveLength(2)
+    expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(2)
+    const inbox = store.inboxProjections().get('thread-1')
+    expect(inbox?.approvals).toBeUndefined()
+    expect(inbox?.inputs).toBeUndefined()
   })
 
   it('rolls back the whole recovery when one terminal event cannot be written', () => {
@@ -1452,6 +1477,36 @@ describe('events', () => {
     store.saveReplaySnapshot('t1', 1, snapshot)
     store.applyRestoreUndo('t1', token)
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
+  })
+
+  it('keeps a cached replay for its own sequence after newer events land', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-at-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('one'))
+      const snapshot = [{ seq, event: message('cached') }]
+      seeded.saveReplaySnapshot('t1', seq, snapshot)
+      seeded.append('t1', message('two'))
+
+      // Still the same replay object: no reread or parse of the saved row.
+      expect(seeded.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      expect(seeded.replaySnapshotBase('t1')?.entries).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq)).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq + 1)).toBeUndefined()
+      seeded.close()
+
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotAt('t1', seq)).toEqual(snapshot)
+      expect(reopened.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      reopened.saveRestoreUndo('t1', seq, 'commit')
+      expect(reopened.replaySnapshotAt('t1', seq)).toBeUndefined()
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {

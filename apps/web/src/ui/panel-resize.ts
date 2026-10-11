@@ -17,9 +17,12 @@ export function beginPanelResize(
   options: PanelResizeOptions,
 ): () => void {
   const start = event[options.axis]
+  // A saved size can exceed the space now available, where CSS draws the panel clamped;
+  // the drag starts from that drawn size so the first movement already resizes.
+  const startSize = Math.min(options.maxSize, Math.max(options.minSize, options.initialSize))
   const haptics = appHapticsEnabled()
     ? new ResizeHaptics({
-        startValue: options.initialSize,
+        startValue: startSize,
         startTime: event.timeStamp,
         minValue: options.minSize,
         maxValue: options.maxSize,
@@ -45,7 +48,7 @@ export function beginPanelResize(
     if (feedback) performAppHaptic(feedback)
   }
   const move = (next: PointerEvent) => {
-    const rawValue = options.initialSize + start - next[options.axis]
+    const rawValue = startSize + start - next[options.axis]
     const value = Math.min(options.maxSize, Math.max(options.minSize, rawValue))
     pending = { rawValue, value, time: next.timeStamp }
     if (frame === undefined) frame = requestAnimationFrame(applyPending)

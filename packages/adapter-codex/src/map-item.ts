@@ -2,6 +2,7 @@ import path from 'node:path'
 import type { Item, ItemStatus } from '@harness/contracts'
 import { z } from 'zod'
 import { jsonWithoutBinary } from './binary-content.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 const ItemEnvelopeSchema = z.object({ type: z.string(), id: z.string().optional() })
 const UserMessageSchema = z.object({
@@ -253,7 +254,9 @@ export function mapThreadItem(
         text: toolCallText(
           `${item.server}.${item.tool}`,
           item.arguments,
-          item.error?.message ?? readable(item.result?.content ?? item.result?.structuredContent),
+          item.error?.message ??
+            readable(item.result?.content) ??
+            readable(item.result?.structuredContent),
         ),
         ...(item.durationMs === null ? {} : { durationMs: item.durationMs }),
       }
@@ -288,7 +291,7 @@ export function mapThreadItem(
         type: 'tool_call',
         status,
         text: toolCallText(
-          collabAgentLabel(item.tool, status, targets, failed),
+          collabAgentLabel(item.tool, status, targets, failed, runningAgentCount(item)),
           undefined,
           item.prompt,
         ),
@@ -390,8 +393,14 @@ function unifiedDiff(change: {
 }): string {
   const kind = change.kind?.type ?? 'update'
   const target = change.kind?.move_path ?? change.path
-  const body = (change.diff ?? '').replace(/\n$/, '')
-  if (body.startsWith('diff --git')) return body
+  const raw = change.diff ?? ''
+  // Codex sends a created or deleted file's whole content, so a patch file's
+  // content must not be read as the diff.
+  const whole =
+    (kind === 'add' && !raw.startsWith('@@ -0,0 +')) ||
+    (kind === 'delete' && !/^@@ -1(?:,\d+)? \+0,0 @@/.test(raw))
+  if (!whole && raw.startsWith('diff --git')) return raw.replace(/\n$/, '')
+  const body = (whole ? wholeFileHunk(kind, raw) : raw).replace(/\n$/, '')
   const header = [
     `diff --git a/${change.path} b/${target}`,
     `--- ${kind === 'add' ? '/dev/null' : `a/${change.path}`}`,
@@ -400,7 +409,7 @@ function unifiedDiff(change: {
   return body ? `${header.join('\n')}\n${body}` : header.join('\n')
 }
 
-function countDiffLines(diff: string, marker: '+' | '-'): number {
+export function countDiffLines(diff: string, marker: '+' | '-'): number {
   let count = 0
   let inHunk = false
   for (const line of diff.split('\n')) {
@@ -420,11 +429,21 @@ function failedAgentCount(item: Extract<CodexThreadItem, { type: 'collabAgentToo
   ).length
 }
 
+/** A wait that timed out completes with its subagents still pending or running. */
+function runningAgentCount(
+  item: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>,
+): number {
+  return Object.values(item.agentsStates).filter(
+    (state) => state?.status === 'pendingInit' || state?.status === 'running',
+  ).length
+}
+
 function collabAgentLabel(
   tool: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>['tool'],
   status: ItemStatus,
   targets: number,
   failed: number,
+  running: number,
 ): string {
   if (failed > 0) {
     return targets > 1 ? `${failed} of ${targets} subagents failed` : 'Subagent failed'
@@ -439,12 +458,20 @@ function collabAgentLabel(
     case 'wait':
       if (status === 'failed') return 'Subagent wait failed'
       if (status === 'started') return 'Waiting for subagents'
+      if (running > 0) {
+        return plural
+          ? `${running} of ${targets} subagents still running`
+          : 'Subagent still running'
+      }
       return plural ? `${targets} subagents finished` : 'Subagent finished'
     case 'sendInput':
+      if (status === 'failed') return 'Could not send input to a subagent'
       return status === 'started' ? 'Sending input to a subagent' : 'Sent input to a subagent'
     case 'resumeAgent':
+      if (status === 'failed') return 'Could not resume a subagent'
       return status === 'started' ? 'Resuming a subagent' : 'Resumed a subagent'
     case 'closeAgent':
+      if (status === 'failed') return 'Could not close a subagent'
       return status === 'started' ? 'Closing a subagent' : 'Closed a subagent'
   }
 }

@@ -35,6 +35,7 @@ import {
 } from './bridge.js'
 import {
   createDefaultKeybindings,
+  DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
@@ -84,8 +85,10 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
@@ -169,6 +172,7 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import { restoreWorkspacePanelWidth } from './ui/workspace/workspace-panel-width.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
@@ -337,6 +341,9 @@ type AccountCheck = {
   error?: ComposerError
 }
 
+/** The counter makes a repeated request for the open section navigate again. */
+type SettingsSectionRequest = { section: SettingsSection; request: number }
+
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
   pendingPath: string | undefined
@@ -376,6 +383,10 @@ function shellStyle(width: number): ShellStyle {
 
 function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
+}
+
+function requestSettingsSection(section: SettingsSection) {
+  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
 }
 
 export function resolveSendAvailability(input: {
@@ -624,6 +635,7 @@ export function App() {
         promise: Promise<string | undefined>
         threadId?: string | undefined
         title: string
+        pinned?: boolean | undefined
       }
     | undefined
   >(undefined)
@@ -756,7 +768,10 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('workflows')
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
+    section: 'workflows',
+    request: 0,
+  })
   const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [pullRequestSetupRefreshRevision, setPullRequestSetupRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -849,9 +864,16 @@ export function App() {
     (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
     [setThreadDesignMode],
   )
-  const [checkoutDelete, setCheckoutDelete] = useState<
-    { id: string; title: string; branch: string } | undefined
-  >()
+  // A multi-chat delete can stop on several isolated checkouts; each one is
+  // confirmed in turn while the rest of the batch goes ahead.
+  const [checkoutDeletes, setCheckoutDeletes] = useState<
+    Array<{ id: string; title: string; branch: string }>
+  >([])
+  const checkoutDelete = checkoutDeletes[0]
+  const dropCheckoutDelete = useCallback(
+    (id: string) => setCheckoutDeletes((current) => current.filter((entry) => entry.id !== id)),
+    [],
+  )
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
@@ -1275,6 +1297,10 @@ export function App() {
   )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
+  // What the sidebar shows. Navigation picks from this list so it never
+  // selects, and thereby silently cancels, a chat queued for deletion.
+  const visibleProjectsRef = useRef(archiveProjects)
+  visibleProjectsRef.current = archiveProjects
   const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
     inFlight: undefined,
     pendingPath: undefined,
@@ -2624,12 +2650,17 @@ export function App() {
     }
   }, [transport, activeId, settleQueuedSubmissions, beginQueueRead, finishQueueRead])
 
+  // Restore points belong to one chat. A running chat skips the read below,
+  // so the previous chat's list must not survive the switch.
   useEffect(() => {
-    if (!activeId || thread.running) {
-      if (!activeId) setCheckpoints([])
-      return
-    }
-    void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
+    setCheckpoints([])
+  }, [activeId])
+
+  useEffect(() => {
+    if (!activeId || thread.running) return
+    void refreshCheckpoints(activeId).catch(() => {
+      if (activeIdRef.current === activeId) setCheckpoints([])
+    })
   }, [activeId, thread.running, refreshCheckpoints])
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
@@ -2966,9 +2997,14 @@ export function App() {
       const uniquePaths = [...new Set(paths)]
       const activePath = uniquePaths.at(-1)
       if (!activePath) return
-      await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-      for (const path of uniquePaths) removedProjectPaths.current.delete(path)
-      await refreshProjects()
+      try {
+        await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
+        for (const path of uniquePaths) removedProjectPaths.current.delete(path)
+        await refreshProjects()
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+        return
+      }
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -3093,9 +3129,15 @@ export function App() {
               ? project
               : {
                   ...project,
+                  // A refresh during the start may already list the real row;
+                  // the local one carries the user's title and wins.
                   sessions: project.sessions.some((session) => session.id === provisionalId)
-                    ? project.sessions.map((session) =>
-                        session.id === provisionalId ? { ...session, id: threadId } : session,
+                    ? project.sessions.flatMap((session) =>
+                        session.id === provisionalId
+                          ? [{ ...session, id: threadId }]
+                          : session.id === threadId
+                            ? []
+                            : [session],
                       )
                     : project.sessions.some((session) => session.id === threadId)
                       ? project.sessions
@@ -3130,9 +3172,22 @@ export function App() {
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
+        // A pin made while the chat was starting has only been shown locally.
+        // Send it ahead of the rename so the refresh below already includes it.
+        if (pending?.pinned !== undefined) {
+          void transport
+            .request('thread.pin', { threadId, pinned: pending.pinned })
+            .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        }
+        // A title the user typed while the chat was starting is final; only a
+        // prompt-derived one is worth replacing with a generated title.
         void transport
           .request('thread.rename', { threadId, title: canonicalTitle })
-          .then(() => generateSessionTitle(threadId, titlePrompt, canonicalTitle))
+          .then(() =>
+            canonicalTitle === title
+              ? generateSessionTitle(threadId, titlePrompt, canonicalTitle)
+              : undefined,
+          )
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
@@ -3236,11 +3291,13 @@ export function App() {
       const titlePrompt = text.trim() || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
-      // for the paragraph someone just typed.
-      const draftKey = activeId?.startsWith('pending:')
-        ? NEW_CHAT_DRAFT_KEY
-        : composerDraftKey(activeId)
-      const restoreDraft = () => restoreRejectedDraft(draftKey, { text, attachments })
+      // for the paragraph someone just typed. A chat that is still starting
+      // keeps its own draft: startup moves it to the real chat, or to New chat
+      // if it fails. Only a send that waited on that failed startup goes there.
+      const restoreDraft = () =>
+        restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
+      const restoreDraftAfterFailedStart = () =>
+        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
       if (activeId && !cancelQueuedArchive(activeId)) {
         restoreDraft()
@@ -3388,7 +3445,7 @@ export function App() {
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3411,7 +3468,7 @@ export function App() {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -3718,7 +3775,7 @@ export function App() {
     setWorkspacePanelOpen(completed.restorePanelOpen)
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
-      setSettingsSection('providers')
+      setSettingsSection(requestSettingsSection('providers'))
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -3896,7 +3953,8 @@ export function App() {
       try {
         await loadHistory(id, cached ? threadController.cursor(id) : undefined)
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
+        if (activeIdRef.current === id)
+          reportError(error instanceof Error ? error.message : String(error))
       } finally {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
@@ -4013,6 +4071,17 @@ export function App() {
     [inspectCheckpoint],
   )
 
+  const loadOlderHistory = useCallback(
+    (threadId: string, turnLimit?: number) =>
+      threadController.loadOlderHistory(threadId, turnLimit),
+    [threadController],
+  )
+  const loadCompleteHistory = useCallback(
+    (threadId: string, signal: AbortSignal) =>
+      threadController.loadCompleteHistory(threadId, signal),
+    [threadController],
+  )
+
   const undoTurnChanges = useCallback(
     async (threadId: string, turnId: string, expectedDiff: string) => {
       setNotice(undefined)
@@ -4081,7 +4150,11 @@ export function App() {
       })
       await loadHistory(undoRestore.threadId)
       await refreshCheckpoints(undoRestore.threadId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === undoRestore.threadId)
+          setWorkspace(info)
+      }
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
@@ -4133,21 +4206,24 @@ export function App() {
   }, [selectSession, undoQueuedArchives])
 
   const archiveSession = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
       const found = findSession(projectsRef.current, id)
-      if (!found) return false
+      if (!found) return 'skipped'
       const check = {}
       pendingDeletionChecks.current.set(id, check)
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
-        if (pendingDeletionChecks.current.get(id) !== check) return false
+        if (pendingDeletionChecks.current.get(id) !== check) return 'skipped'
         if (work.isolated && work.uncommitted) {
-          setCheckoutDelete({
+          const confirmation = {
             id,
             title: found.session.title,
             branch: found.session.worktreeBranch ?? 'isolated checkout',
-          })
-          return false
+          }
+          setCheckoutDeletes((current) =>
+            current.some((entry) => entry.id === id) ? current : [...current, confirmation],
+          )
+          return 'confirming'
         }
         queueArchive(id, async () => {
           if (work.isolated) {
@@ -4156,11 +4232,11 @@ export function App() {
           }
           await deleteSession(id)
         })
-        return true
+        return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
-        return false
+        return 'failed'
       } finally {
         if (pendingDeletionChecks.current.get(id) === check)
           pendingDeletionChecks.current.delete(id)
@@ -4179,14 +4255,14 @@ export function App() {
         await transport.request('thread.discardWorktree', { threadId: id, force: true })
         await deleteSession(id)
       })
-      setCheckoutDelete(undefined)
+      dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
       await refreshProjects().catch(() => undefined)
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, refreshProjects, queueArchive])
+  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -4254,10 +4330,9 @@ export function App() {
         )
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
-        const currentProjects = projectsRef.current
-        const current = findSession(currentProjects, activeId)
+        const current = findSession(projectsRef.current, activeId)
         const hidden = new Set(targets)
-        const next = currentProjects
+        const next = visibleProjectsRef.current
           .flatMap((project) => project.sessions)
           .filter((session) => !hidden.has(session.id) && session.lifecycle.state === 'active')
           .sort((a, b) => b.createdAt - a.createdAt)[0]
@@ -4501,6 +4576,8 @@ export function App() {
         if (!pending.threadId) return
         id = pending.threadId
       }
+      // A provisional chat whose start failed has no thread to rename.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:title`,
         () => transport.request('thread.rename', { threadId: id, title }),
@@ -4513,6 +4590,14 @@ export function App() {
     (id: string) => {
       const pinned = !findSession(projectsRef.current, id)?.session.pinned
       setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
+      const pending = pendingSession.current
+      if (pending?.id === id) {
+        pending.pinned = pinned
+        if (!pending.threadId) return
+        id = pending.threadId
+      }
+      // A provisional chat whose start failed has no thread to pin.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:pinned`,
         () => transport.request('thread.pin', { threadId: id, pinned }),
@@ -4529,7 +4614,7 @@ export function App() {
     (sessionIds: string[]) => {
       void (async () => {
         for (const id of sessionIds) {
-          if (!(await archiveSession(id))) break
+          if ((await archiveSession(id)) === 'failed') break
         }
       })()
     },
@@ -4541,15 +4626,8 @@ export function App() {
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
-          if (sourceIndex < 0) return project
-
-          const sessions = [...project.sessions]
-          const [moved] = sessions.splice(sourceIndex, 1)
-          const targetIndex = sessions.findIndex((session) => session.id === targetId)
-          if (!moved || targetIndex < 0) return project
-          sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
-          return { ...project, sessions }
+          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
     },
@@ -4575,7 +4653,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = projectsRef.current.flatMap((project) => project.sessions)
+      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -4606,7 +4684,7 @@ export function App() {
     [selectSession],
   )
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
-    setSettingsSection(section)
+    setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -4721,7 +4799,7 @@ export function App() {
       setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
-        setSettingsSection('providers')
+        setSettingsSection(requestSettingsSection('providers'))
         setSettingsOpen(true)
       }
     },
@@ -4831,10 +4909,10 @@ export function App() {
       const route = shortcutRoute(action, {
         settingsOpen,
         onboardingPreview,
-        modalOpen: modalOwnsKeyboard,
+        modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
-      else if (route === 'showKeybinds') setSettingsSection('keybinds')
+      else if (route === 'showKeybinds') setSettingsSection(requestSettingsSection('keybinds'))
       else if (route === 'run') keybindingActions[action]()
     },
     [keybindingActions, modalOwnsKeyboard, onboardingPreview, settingsOpen],
@@ -4856,10 +4934,7 @@ export function App() {
       const debugModifier = macOS
         ? event.metaKey && !event.ctrlKey
         : event.ctrlKey && !event.metaKey
-      if (
-        debugModifier &&
-        matchesShortcut(event, { key: 'd', primary: true, alt: true, shift: true })
-      ) {
+      if (debugModifier && matchesShortcut(event, DEBUG_SETTINGS_SHORTCUT)) {
         event.preventDefault()
         setDebugSettingsVisible((visible) => !visible)
         return
@@ -4878,27 +4953,29 @@ export function App() {
         }
         return
       }
-      if (modalOwnsKeyboard) return
+      if (modalOwnsKeyboard || sessionSearch.current?.isOpen()) return
 
-      // Number keys open the newest sessions in the first sidebar project.
-      const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
-      if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const currentProjects = projectsRef.current
-        const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
-        const session = project?.sessions
-          .slice()
-          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
-        event.preventDefault()
-        if (session) void selectSession(session.id)
-        return
-      }
-
+      // Keybinds come first, so one saved on a number key before the
+      // recorder refused them still runs, as its menu accelerator does.
       const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
         matchesShortcut(event, keybindings[candidate.id]),
       )
       if (definition) {
         event.preventDefault()
         runRoutedShortcut(definition.id)
+        return
+      }
+
+      // Number keys open the newest sessions in the first sidebar project.
+      const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
+        const currentProjects = visibleProjectsRef.current
+        const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
+        const session = project?.sessions
+          .slice()
+          .sort((left, right) => right.createdAt - left.createdAt)[Number(event.key) - 1]
+        event.preventDefault()
+        if (session) void selectSession(session.id)
         return
       }
 
@@ -4953,7 +5030,7 @@ export function App() {
   const paletteChatSearch = useMemo(
     () =>
       createPaletteChatSearch(
-        () => projectsRef.current,
+        () => visibleProjectsRef.current,
         displayName,
         (threadId) => void selectSession(threadId),
         PALETTE_CHAT_SEARCH_CACHE,
@@ -5161,7 +5238,18 @@ export function App() {
     workspacePanelOpen,
   ])
 
-  const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel
+  // A lazy wrapper and the component it loads are different element types, so
+  // swapping one for the other on a later render remounts the panel and closes
+  // its tabs. Each panel keeps the type it first rendered with: the loaded
+  // component when it was preloaded, otherwise the lazy wrapper.
+  const rightPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  const bottomPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  if (workspacePanelHasMounted) rightPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  if (activePath && bottomTerminalMounted) {
+    bottomPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  }
+  const RightWorkspacePanel = rightPanelType.current ?? WorkspacePanel
+  const BottomWorkspacePanel = bottomPanelType.current ?? WorkspacePanel
 
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
@@ -5323,6 +5411,8 @@ export function App() {
                           onEditMessage={editMessage}
                           onRevertCheckpoint={revertCheckpoint}
                           onUndoChanges={undoTurnChanges}
+                          onLoadOlderHistory={loadOlderHistory}
+                          onLoadCompleteHistory={loadCompleteHistory}
                         />
                       </Suspense>
                     ) : (
@@ -5426,7 +5516,7 @@ export function App() {
                       <Suspense
                         fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
                       >
-                        <RenderedWorkspacePanel
+                        <BottomWorkspacePanel
                           placement="bottom"
                           open={terminalOpen}
                           expanded={false}
@@ -5464,7 +5554,7 @@ export function App() {
             <Suspense
               fallback={<WorkspacePanelSkeleton placement="right" open={workspacePanelOpen} />}
             >
-              <RenderedWorkspacePanel
+              <RightWorkspacePanel
                 open={workspacePanelOpen}
                 expanded={workspacePanelExpanded}
                 width={workspacePanelWidth}
@@ -5508,10 +5598,11 @@ export function App() {
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
-            fallback={<SettingsSkeleton section={settingsSection} />}
+            fallback={<SettingsSkeleton section={settingsSection.section} />}
           >
             <Settings
-              initialSection={settingsSection}
+              initialSection={settingsSection.section}
+              sectionRequest={settingsSection.request}
               showDebug={debugSettingsVisible}
               provider={provider}
               providerName={providerName(provider, sourceAgentName)}
@@ -5638,11 +5729,12 @@ export function App() {
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
+            key={checkoutDelete.id}
             title={checkoutDelete.title}
             branch={checkoutDelete.branch}
             busy={checkoutDeleteBusy}
             onDiscard={() => void discardAndArchive()}
-            onClose={() => setCheckoutDelete(undefined)}
+            onClose={() => dropCheckoutDelete(checkoutDelete.id)}
           />
         </Suspense>
       ) : null}
@@ -5841,9 +5933,10 @@ function readTerminalHeight(): number {
 }
 
 function readWorkspacePanelWidth(): number {
-  const stored = Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY))
-  if (!Number.isFinite(stored) || stored < 360) return 520
-  return Math.min(stored, Math.max(360, Math.floor(window.innerWidth * 0.78)))
+  return restoreWorkspacePanelWidth(
+    Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY)),
+    window.innerWidth,
+  )
 }
 
 function displayName(project: { path: string; name?: string | undefined }): string {

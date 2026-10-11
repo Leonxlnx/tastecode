@@ -27,6 +27,7 @@ import {
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 
@@ -172,6 +173,9 @@ export function startServer(
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
+    // A preview on the control port or the trusted renderer's port would pass
+    // the Origin check whenever nothing else holds that port.
+    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
@@ -320,6 +324,10 @@ export function startServer(
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
+      if (error instanceof InvalidHistoryCursorError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
       }
       respondError(
@@ -730,8 +738,10 @@ export function startServer(
           )
         }
         // The sidebar entry can disappear while its history remains available
-        // when the project is added again. Running processes still need an owner.
-        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
+        // when the project is added again. Running processes still need an
+        // owner, so stop them — but do not archive the chats, or none of them
+        // could be continued after the project is added back.
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.stopThread(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
@@ -834,6 +844,19 @@ export function startServer(
       case 'thread.history': {
         const p = parseParams(method, params)
         await loadProviderHistory(p.threadId)
+        if (p.page) {
+          const history = await orchestrator.historyPage(p.threadId, p.page)
+          const running = orchestrator.isTurnRunning(p.threadId)
+          const approval = store.threadApproval(p.threadId) ?? 'ask'
+          if (p.page.before === undefined) orchestrator.markThreadRead(p.threadId)
+          return {
+            events: history.events,
+            running,
+            approval,
+            ...(history.reset ? { reset: true } : {}),
+            page: history.page,
+          }
+        }
         const reset =
           p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
         const history = await orchestrator.historyForResponse(
@@ -1102,6 +1125,9 @@ export function startServer(
     close: async () => {
       historyClosing = true
       clearInterval(providerHistoryTimer)
+      // Terminal jobs get a fixed shutdown budget; waiting on provider history
+      // first would spend it. disposeAll below waits for the same close.
+      void orchestrator.closeAllTerminals().catch(() => undefined)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true
@@ -1169,6 +1195,11 @@ export function allowedOrigin(
     return false
   }
   return Boolean(accessToken) || origin === rendererOrigin
+}
+
+function httpOriginPort(origin: string): number[] {
+  const url = URL.parse(origin)
+  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(

@@ -162,6 +162,24 @@ describe('Grok native history', () => {
     )
   })
 
+  it('keeps listing every session when one summary cannot be read', async () => {
+    const { source, directory, root } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
+    ])
+    const other = path.join(root, 'other')
+    const broken = path.join(root, 'sessions', encodeURIComponent(other), 'broken-session')
+    await mkdir(path.join(broken, 'summary.json'), { recursive: true })
+    await save(broken, 'chat_history.jsonl', [{ type: 'user', content: 'Saved elsewhere' }])
+
+    const sessions = await source.list()
+    expect(sessions.map(({ id }) => id).sort()).toEqual(['broken-session', 'saved-session'])
+    expect(sessions.find(({ id }) => id === 'broken-session')).toMatchObject({
+      title: 'Grok chat',
+      workspacePath: other,
+    })
+  })
+
   it('reads a session summary again only after it changes', async () => {
     const { source, directory } = await fixture()
     await save(directory, 'updates.jsonl', [

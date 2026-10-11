@@ -13,7 +13,14 @@ describe('gradient recipes', () => {
     const result = generateGradientSet(input)
     expect(result).toEqual(generateGradientSet(input))
     expect(result.recipes.map(({ purpose }) => purpose)).toEqual(['card', 'section', 'page'])
-    expect(result.recipes[0]?.background).toContain('rgba(56, 189, 248 / 0.42)')
+    expect(result.recipes[0]?.background).toContain('rgba(56, 189, 248, 0.42)')
+    // Browsers drop the whole layered value when one color mixes the comma and
+    // slash-alpha syntaxes.
+    for (const { background } of result.recipes) {
+      for (const [color] of background.matchAll(/rgba\([^)]*\)/gu)) {
+        expect(color).toMatch(/^rgba\(\d+, \d+, \d+, [\d.]+\)$/u)
+      }
+    }
     expect(result.recipes[0]?.contentSurface).toBe('#101C28')
   })
 
@@ -46,7 +53,7 @@ describe('gradient recipes', () => {
       motionDirection: { summary: 'Tactile.', principles: [], avoid: [] },
       voice: { summary: 'Direct.', avoid: [] },
     })
-    expect(result?.recipes[0]?.background).toContain('rgba(224, 82, 53 / 0.42)')
+    expect(result?.recipes[0]?.background).toContain('rgba(224, 82, 53, 0.42)')
   })
 
   it('rejects invalid colors at the tool boundary', () => {

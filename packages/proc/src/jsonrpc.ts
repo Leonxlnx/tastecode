@@ -129,6 +129,7 @@ export class StdioJsonRpc {
     this.#onFailure = options.onFailure
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => this.#ingest(chunk))
+    child.stdout.on('end', () => this.#flush())
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => this.#onStderr(chunk))
     child.on('close', (code) => {
@@ -275,6 +276,17 @@ export class StdioJsonRpc {
         this.#logFailure(`protocol error handler failed: ${String(handlerError)}`)
       }
     }
+  }
+
+  /**
+   * A peer that exits right after its last write may leave that frame without
+   * a newline. Settle it before the close fails every pending call.
+   */
+  #flush(): void {
+    if (this.#failure || this.#disposed) return
+    this.#buffer.end((line) => {
+      if (line.trim()) this.#handleLine(line.trim())
+    })
   }
 
   #handleLine(line: string): void {

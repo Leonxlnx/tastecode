@@ -6,6 +6,7 @@ import {
   CODEX_MCP_CAPABILITIES,
   mapMcpServerStatus,
   mapMcpStartupStatus,
+  mcpShellEnvironmentConfig,
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
@@ -150,6 +151,32 @@ describe('Codex MCP inventory', () => {
     expect(Object.values(result.environment)).toEqual(['Bearer secret-value'])
     expect(JSON.stringify(result.servers)).not.toContain('secret-value')
     expect(result.servers['local']).toMatchObject({ env: { API_KEY: 'local-secret' } })
+  })
+
+  it('keeps header credentials out of the shell commands Codex runs', () => {
+    const { environment } = prepareMcpConfig(
+      [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        },
+      ],
+      { 'mcp/docs/auth': 'Bearer secret-value' },
+    )
+    const [variable] = Object.keys(environment)
+
+    // Codex's optional default filter drops names containing KEY, SECRET or TOKEN.
+    expect(variable).toMatch(/^HARNESS_MCP_TOKEN_[0-9A-F]{16}$/)
+    expect(mcpShellEnvironmentConfig(environment)).toEqual({
+      [`shell_environment_policy.set.${variable}`]: '',
+    })
   })
 
   it.each([

@@ -7,6 +7,8 @@ export function enteringThreadItems(previous: readonly Item[], items: Item[]): I
     // Loading history is one replacement, not thousands of live appends. Do
     // not copy that history just to decide that none of it should animate.
     if (previous.length === 0 && appendedCount > 1) return []
+    // Older history arriving above the first row is not a live arrival either.
+    if (previous.length > 0 && items[0]?.id !== previous[0]?.id) return []
     return items.slice(previous.length)
   }
 

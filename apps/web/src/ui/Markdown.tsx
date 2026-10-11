@@ -17,7 +17,7 @@ const LIVE_MARKDOWN_ANIMATION_CHARACTER_LIMIT = 4 * 1024
 const RICH_MARKDOWN_INLINE =
   /`|\||~~|!\[|\]\s*(?:\(|\[)|<(?:[/!?A-Za-z][^>\r\n]*|[^<>\s@]+@[^<>\s@]+)>|\\(?:[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]|\r?\n)/
 const RICH_MARKDOWN_STRUCTURE =
-  /https?:\/\/|(?:^|\n)[ \t]{0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|\r?(?:\n|$))|(?:^|\n)[ \t]{0,3}>|(?:^|\n)[ \t]{0,3}#{1,6}(?:[ \t]+|\r?(?:\n|$))|(?:^|\n)\s*(?:-{3,}|=+)[ \t]*(?:\n|$)|(?:^|\n)(?: {4}|\t)\S| {2,}\r?\n|(?:^|\n)[ \t]{0,3}\[[^\]\r\n]+\]:/
+  /https?:\/\/|[wW]{3}\.|[\w.+-]@[A-Za-z\d_-]+\.|(?:^|\n)[ \t]{0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]+|\r?(?:\n|$))|(?:^|\n)[ \t]{0,3}>|(?:^|\n)[ \t]{0,3}#{1,6}(?:[ \t]+|\r?(?:\n|$))|(?:^|\n)\s*(?:-{3,}|=+)[ \t]*(?:\n|$)|(?:^|\n)(?: {4}|\t)\S| {2,}\r?\n|(?:^|\n)[ \t]{0,3}\[[^\]\r\n]+\]:/
 const RICH_MARKDOWN_ENTITY = /&(?:#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});/
 const PLAIN_PARAGRAPH_BREAK = /\r?\n[ \t]*\r?\n(?:[ \t]*\r?\n)*/
 
@@ -28,6 +28,7 @@ export function needsRichMarkdown(text: string): boolean {
     RICH_MARKDOWN_STRUCTURE.test(text) ||
     RICH_MARKDOWN_ENTITY.test(text) ||
     hasRepeatedMarker(text, '*') ||
+    hasRepeatedMarker(text, '~') ||
     hasPotentialUnderscorePair(text)
   )
 }

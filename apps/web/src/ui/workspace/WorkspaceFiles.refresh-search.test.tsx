@@ -58,6 +58,32 @@ describe('workspace file refresh', () => {
     expect(screen.queryByText('7 B')).toBeNull()
   })
 
+  it('keeps the open file mounted while a refresh rereads it', async () => {
+    const reread = deferred<ReturnType<typeof contents>>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'workspace.listDirectory') return { path: '', entries: [entry('file.ts')] }
+      if (method === 'workspace.readFile') {
+        reads += 1
+        return reads === 1 ? contents('file.ts', 'old') : reread.promise
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    const view = render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.click(await screen.findByTitle('file.ts'))
+    await screen.findByText('3 B')
+    const scroller = view.container.querySelector<HTMLElement>('.workspace-code')!
+    scroller.scrollTop = 400
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    expect(screen.queryByText('Opening file…')).toBeNull()
+    expect(screen.getByText('3 B')).toBeTruthy()
+    await act(async () => reread.resolve(contents('file.ts', 'updated')))
+    expect(screen.getByText('7 B')).toBeTruthy()
+    expect(view.container.querySelector('.workspace-code')).toBe(scroller)
+    expect(scroller.scrollTop).toBe(400)
+  })
+
   it('ignores an open-file refresh that finishes after selecting another file', async () => {
     const stale = deferred<ReturnType<typeof contents>>()
     let reads = 0
@@ -79,6 +105,39 @@ describe('workspace file refresh', () => {
     await act(async () => stale.resolve(contents('first.ts', 'stale contents')))
     expect(screen.queryByText('14 B')).toBeNull()
     expect(screen.getByText('3 B')).toBeTruthy()
+  })
+  it('closes a folder the agent deleted instead of reporting it missing on every refresh', async () => {
+    const folder = (path: string) => ({ ...entry(path), kind: 'directory' as const })
+    let deleted = false
+    const transport = new TestTransport((method, params) => {
+      if (method !== 'workspace.listDirectory') throw new Error(`Unexpected ${method}`)
+      const directory = (params as { directory?: string }).directory ?? ''
+      if (!directory)
+        return {
+          path: '',
+          entries: deleted ? [entry('file.ts')] : [folder('tmp'), entry('file.ts')],
+        }
+      if (deleted) throw new Error("ENOENT: no such file or directory, realpath '/project/tmp'")
+      return { path: directory, entries: [entry('tmp/log.txt')] }
+    })
+    const settle = () => act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.click(await screen.findByTitle('tmp'))
+    expect(await screen.findByTitle('tmp/log.txt')).toBeTruthy()
+
+    deleted = true
+    for (let refresh = 0; refresh < 2; refresh += 1) {
+      fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+      await settle()
+      expect(screen.queryByTitle('tmp')).toBeNull()
+      expect(screen.queryByRole('alert')).toBeNull()
+    }
+
+    deleted = false
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await settle()
+    expect(screen.getByTitle('tmp').getAttribute('aria-expanded')).toBe('false')
+    expect(screen.queryByTitle('tmp/log.txt')).toBeNull()
   })
 })
 
@@ -147,6 +206,37 @@ describe('workspace file search', () => {
     expect(
       transport.requests.filter((request) => request.method === 'workspace.searchFiles'),
     ).toHaveLength(2)
+  })
+
+  it('keeps search results on screen while a refresh searches again', async () => {
+    vi.useFakeTimers()
+    const reply = deferred<{ entries: ReturnType<typeof entry>[]; truncated: boolean }>()
+    let searches = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'workspace.listDirectory') return { path: '', entries: [] }
+      if (method === 'workspace.searchFiles') {
+        searches += 1
+        return searches === 1
+          ? { entries: [entry('src/needle.ts')], truncated: false }
+          : reply.promise
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.change(screen.getByLabelText('Filter workspace files'), {
+      target: { value: 'needle' },
+    })
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(screen.getByTitle('src/needle.ts')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(searches).toBe(2)
+    expect(screen.getByTitle('src/needle.ts')).toBeTruthy()
+    expect(screen.queryByText('Searching files…')).toBeNull()
+    await act(async () => reply.resolve({ entries: [entry('lib/needle.ts')], truncated: false }))
+    expect(screen.getByTitle('lib/needle.ts')).toBeTruthy()
+    expect(screen.queryByTitle('src/needle.ts')).toBeNull()
   })
 
   it('ignores stale query and project replies and restores the tree on clear', async () => {

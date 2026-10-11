@@ -40,6 +40,8 @@ export type ThreadState = {
   userInputs: UserInputRequest[]
   /** Automatic approval reviews, upserted by their stable provider id. */
   reviews: Record<string, ApprovalReview>
+  /** Opaque server cursor for turns older than `items`; absent once history is complete. */
+  olderCursor?: string | undefined
 }
 
 export const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()

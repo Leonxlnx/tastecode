@@ -30,11 +30,13 @@ import {
 } from '@harness/proc'
 import { z, ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
+import type { McpServerElicitationAction } from './generated/v2/McpServerElicitationAction.js'
 import type { RequestId } from './generated/RequestId.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   mapMcpServerStatus,
   mapMcpStartupStatus,
+  mcpShellEnvironmentConfig,
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
@@ -58,8 +60,10 @@ import {
   McpServerOauthLoginCompletedNotificationSchema,
   McpServerOauthLoginResponseSchema,
   McpServerStatusUpdatedNotificationSchema,
+  McpToolApprovalParamsSchema,
   ModelListResponseSchema,
   PermissionsRequestApprovalParamsSchema,
+  ReasoningSummaryPartAddedNotificationSchema,
   SkillsConfigWriteResponseSchema,
   SkillsListResponseSchema,
   ThreadResumeResponseSchema,
@@ -80,6 +84,7 @@ import {
   type ErrorNotification,
   type GuardianReviewAction,
   type GuardianReviewNotification,
+  type McpToolApprovalParams,
   type RequestPermissionProfile,
   type PermissionsRequestApprovalParams,
   type ThreadTokenUsageUpdatedNotification,
@@ -122,6 +127,8 @@ const IGNORABLE_NOTIFICATIONS = new Set([
   // The app-server writes the same warning to stderr, which is already
   // forwarded to the log; mapping this too would print every warning twice.
   'configWarning',
+  // Experimental, and not guaranteed to add up to the plan item that completes it.
+  'item/plan/delta',
 ])
 
 /** Provider state TasteCode either does not expose or already derives from shared events. */
@@ -453,6 +460,61 @@ type CodexApprovalResponse =
       scope: 'session' | 'turn'
     }
 
+/**
+ * MCP tool approvals are elicitations, answered with an action. `cancel` only
+ * skips the tool in Codex, so aborting also interrupts the turn.
+ */
+const MCP_TOOL_ACTION = {
+  approve: 'accept',
+  'approve-session': 'accept',
+  deny: 'decline',
+  abort: 'cancel',
+} satisfies Record<ApprovalDecision, McpServerElicitationAction>
+
+export function mapMcpToolApprovalResponse(
+  decision: ApprovalDecision,
+  rememberForSession: boolean,
+) {
+  return {
+    action: MCP_TOOL_ACTION[decision],
+    content: null,
+    _meta: decision === 'approve-session' && rememberForSession ? { persist: 'session' } : null,
+  }
+}
+
+export function mapMcpToolApprovalRequest(params: McpToolApprovalParams): ApprovalRequest {
+  const toolParams = params._meta.tool_params
+  const shownParams =
+    toolParams === undefined || toolParams === null || JSON.stringify(toolParams) === '{}'
+      ? ''
+      : `\n${JSON.stringify(toolParams, null, 2)}`
+  return {
+    id: crypto.randomUUID(),
+    kind: 'permissions',
+    ...(params._meta.tool_description ? { reason: params._meta.tool_description } : {}),
+    command: `${params.message}${shownParams}`,
+    createdAt: Date.now(),
+  }
+}
+
+type PendingApproval = {
+  kind: ApprovalRequest['kind']
+  respond: (result: JsonRpcValue) => void
+  rpcId?: RequestId | undefined
+  permissions?: RequestPermissionProfile
+  threadId?: string
+  turnId?: string
+  /** Present when Codex asked through an MCP elicitation. */
+  mcpTool?: { rememberForSession: boolean }
+}
+
+function approvalReply(pending: PendingApproval, decision: ApprovalDecision): JsonRpcValue {
+  if (pending.mcpTool) {
+    return mapMcpToolApprovalResponse(decision, pending.mcpTool.rememberForSession)
+  }
+  return mapApprovalResponse(pending.kind, decision, pending.permissions)
+}
+
 type ParsedApprovalRequest =
   | { kind: 'permissions'; params: PermissionsRequestApprovalParams }
   | { kind: 'command' | 'file_change'; params: ApprovalParams }
@@ -519,22 +581,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
+  #mcpShellConfig: Record<string, JsonValue>
   #mcpLogins = new Map<string, string>()
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
    * responder because Codex is blocked on that specific request id.
    */
-  #approvals = new Map<
-    string,
-    {
-      kind: ApprovalRequest['kind']
-      respond: (result: JsonRpcValue) => void
-      rpcId?: RequestId | undefined
-      permissions?: RequestPermissionProfile
-      threadId?: string
-      turnId?: string
-    }
-  >()
+  #approvals = new Map<string, PendingApproval>()
   #threadApprovals = new Map<string, ApprovalMode>()
   #userInputs = new Map<
     string,
@@ -558,6 +611,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
+    this.#mcpShellConfig = mcpShellEnvironmentConfig(prepared.environment)
   }
 
   get capabilities(): Capabilities {
@@ -570,7 +624,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#starting) return this.#starting
     const generation = this.#startupGeneration
     this.#starting = (async () => {
-      await this.#processStop
+      await this.#settleProcessStop()
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (generation !== this.#startupGeneration) throw new Error('Codex startup was cancelled')
         try {
@@ -632,7 +686,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       )
     } catch (error) {
       this.#processStop = Promise.resolve(rpc.dispose())
-      await this.#processStop
+      await this.#settleProcessStop()
       if (this.#rpc === rpc) this.#rpc = undefined
       throw error
     }
@@ -641,6 +695,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
     this.#started = true
     this.#restartNeeded = false
+  }
+
+  /** A process that refused to stop is reported once, never left to block every restart. */
+  async #settleProcessStop(): Promise<void> {
+    const stopping = this.#processStop
+    try {
+      await stopping
+    } catch (cause) {
+      this.emit(
+        'log',
+        `Previous Codex process did not stop: ${cause instanceof Error ? cause.message : String(cause)}`,
+      )
+      if (this.#processStop === stopping) this.#processStop = Promise.resolve()
+    }
   }
 
   #onFailure(rpc: CodexRpc, error: Error): void {
@@ -910,36 +978,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return response.effectiveEnabled
   }
 
-  async reloadMcpServers(
-    threadId: string,
-    servers: McpServerConfig[],
-    credentials: Record<string, string>,
-  ): Promise<void> {
-    const prepared = prepareMcpConfig(servers, credentials)
-    for (const [name, value] of Object.entries(prepared.environment)) {
-      if (this.#mcpEnvironment[name] !== value) {
-        throw new Error('start a new session to apply new MCP credentials')
-      }
-    }
-    try {
-      await this.#call('thread/resume', {
-        threadId,
-        excludeTurns: true,
-        config: { mcp_servers: prepared.servers },
-      })
-    } catch {
-      throw new Error('Codex could not hot-reload MCP config; start a new session to apply it')
-    }
-    await this.#call('config/mcpServer/reload', undefined)
-    // Only after the process actually reloaded: assigning earlier left the
-    // in-memory config disagreeing with the running Codex on failure. The
-    // inventory cache describes the pre-reload world, so it goes too.
-    this.#mcpServers = prepared.servers
-    this.#mcpInventory.delete(threadId)
-    this.#mcpInventoryLoads.delete(threadId)
-    this.emit('mcpChanged', { threadId })
-  }
-
   async startMcpOAuth(
     serverId: string,
     threadId: string,
@@ -979,6 +1017,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             mcp_servers: this.#mcpServers,
           }
         : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/start',
@@ -1023,6 +1062,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const config = {
       ...codexContextConfig(options.context),
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/resume',
@@ -1155,7 +1195,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const pending = this.#approvals.get(approvalId)
     if (!pending) return
     this.#approvals.delete(approvalId)
-    pending.respond(mapApprovalResponse(pending.kind, decision, pending.permissions))
+    pending.respond(approvalReply(pending, decision))
     this.emit('event', { type: 'approval.resolved', id: approvalId })
     if (
       pending.kind === 'permissions' &&
@@ -1275,6 +1315,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       return
     }
 
+    if (method === 'mcpServer/elicitation/request') {
+      this.#onMcpElicitation(params, respond, rpcId)
+      return
+    }
+
     const kind = APPROVAL_KIND.get(method)
     if (!kind) {
       this.emit('log', `declined unhandled server request: ${method}`)
@@ -1294,7 +1339,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // drop the earlier responder and leave Codex blocked on it forever.
     const previous = this.#approvals.get(id)
     if (previous) {
-      previous.respond(mapApprovalResponse(previous.kind, 'deny', previous.permissions))
+      previous.respond(approvalReply(previous, 'deny'))
       this.emit('event', { type: 'approval.resolved', id })
     }
     this.#approvals.set(id, {
@@ -1312,6 +1357,38 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ...(permission ? { turnId: permission.turnId } : {}),
     })
 
+    this.emit('event', { type: 'approval.requested', request })
+  }
+
+  /**
+   * Codex asks before an MCP tool call with an elicitation marked as an
+   * approval. Forms an MCP server starts itself have no card yet; they are
+   * declined in the elicitation shape, since Codex rejects any other reply.
+   */
+  #onMcpElicitation(
+    params: JsonRpcValue | undefined,
+    respond: (result: JsonRpcValue) => void,
+    rpcId?: RequestId,
+  ): void {
+    const parsed = McpToolApprovalParamsSchema.safeParse(params)
+    if (!parsed.success) {
+      this.emit('log', 'declined unhandled server request: mcpServer/elicitation/request')
+      respond(mapMcpToolApprovalResponse('deny', false))
+      return
+    }
+    const { threadId, _meta: meta } = parsed.data
+    const turnId = parsed.data.turnId ?? this.#activeTurns.get(threadId)
+    const request = mapMcpToolApprovalRequest(parsed.data)
+    this.#approvals.set(request.id, {
+      kind: request.kind,
+      respond,
+      rpcId,
+      threadId,
+      ...(turnId ? { turnId } : {}),
+      mcpTool: {
+        rememberForSession: [meta.persist ?? []].flat().includes('session'),
+      },
+    })
     this.emit('event', { type: 'approval.requested', request })
   }
 
@@ -1390,7 +1467,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           )
             continue
           this.#approvals.delete(id)
-          pending.respond(mapApprovalResponse(pending.kind, 'deny', pending.permissions))
+          pending.respond(approvalReply(pending, 'deny'))
           emit({ type: 'approval.resolved', id })
         }
         for (const [id, pending] of this.#userInputs) {
@@ -1467,6 +1544,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
+      // The completed item joins summary parts with a blank line; match it live.
+      case 'item/reasoning/summaryPartAdded': {
+        const p = ReasoningSummaryPartAddedNotificationSchema.parse(params)
+        if (p.summaryIndex > 0) {
+          emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: '\n\n' })
+        }
+        return
+      }
+
       // Command output, live. A build that prints for a minute should show it
       // printing, not a spinner and then a wall of text.
       case 'item/commandExecution/outputDelta': {
@@ -1535,7 +1621,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const p = McpServerStatusUpdatedNotificationSchema.parse(params)
         this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
         const inventory = this.#mcpInventory.get(p.threadId ?? '')
-        if (inventory) {
+        if (p.status === 'ready') {
+          // A server that just connected reports tools and auth the cached copy lacks.
+          this.#mcpInventory.delete(p.threadId ?? '')
+          this.#mcpInventoryLoads.delete(p.threadId ?? '')
+        } else if (inventory) {
           this.#mcpInventory.set(
             p.threadId ?? '',
             inventory.map((server) =>
@@ -1549,6 +1639,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'mcpServer/oauthLogin/completed': {
         const p = McpServerOauthLoginCompletedNotificationSchema.parse(params)
+        if (p.success) {
+          // The sign-in is the server's, not one chat's: every cached copy is stale.
+          this.#mcpInventory.clear()
+          this.#mcpInventoryLoads.clear()
+        }
         // A completion without a threadId still ends someone's login — match
         // by server name across threads rather than leaving the browser flow
         // finished and the UI waiting forever.

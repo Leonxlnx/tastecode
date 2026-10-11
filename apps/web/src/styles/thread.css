@@ -160,6 +160,38 @@
   box-shadow: var(--composer-action-shadow-hover);
 }
 
+/* Older turns arriving above the transcript. Outside the scroller like the
+   jump button, so it never changes the runway it reports on. */
+.thread__older {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 4px 12px;
+  background: var(--composer-action-bg);
+  border: 1px solid var(--composer-action-border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--composer-action-shadow);
+  color: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  font: inherit;
+  font-size: var(--t-sm);
+  /* A page that arrives quickly is gone before this fades in. */
+  animation: fade-in var(--dur-slow) var(--ease-out) 150ms both;
+}
+
+button.thread__older {
+  cursor: pointer;
+}
+
+button.thread__older:hover {
+  background: var(--composer-action-bg-hover);
+  border-color: var(--composer-action-border-hover);
+}
+
 .aux__code {
   color: var(--error);
   font-family: var(--font-mono);

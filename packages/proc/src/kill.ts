@@ -145,7 +145,9 @@ function onlyZombiesRemain(group: number): boolean {
   // kill(pid, 0) includes zombies. They cannot run code or hold open files,
   // but only their parent/init can reap them. Verify that distinction instead
   // of declaring a surviving, possibly live group stopped after a timeout.
-  const result = spawnSync('ps', ['-A', '-o', 'pid=,pgid=,stat='], {
+  // One -o per column: BSD ps on macOS takes everything after the first `=`
+  // as that column's header, so `pid=,pgid=,stat=` would print one column.
+  const result = spawnSync('ps', ['-A', '-o', 'pid=', '-o', 'pgid=', '-o', 'stat='], {
     encoding: 'utf8',
     timeout: 500,
     maxBuffer: 1024 * 1024,

@@ -294,12 +294,10 @@ function designSourceFiles(workspacePath: string): string[] {
     '.svelte',
     '.svg',
   ])
+  // Dependency and cache trees are already opaque to every workspace scan.
   const ignoredDirectories = new Set([
     '.git',
     '.taste',
-    '.next',
-    '.turbo',
-    'node_modules',
     'dist',
     'build',
     'out',

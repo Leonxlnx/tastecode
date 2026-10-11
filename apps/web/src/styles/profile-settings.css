@@ -9,23 +9,14 @@
   padding-top: 64px;
 }
 
-@property --profile-rule {
-  syntax: '<color>';
-  inherits: false;
-  initial-value: transparent;
-}
-
-/* The name is written in place, as wide as what is typed; a hairline under
-   it shows only when it can be edited. */
+/* The name is written in place, as wide as what is typed. */
 .profile__name {
-  --profile-rule: transparent;
   field-sizing: content;
   min-width: 4ch;
   max-width: 100%;
   margin: 36px 0 0;
   padding: 0 2px 5px;
-  background: linear-gradient(var(--profile-rule), var(--profile-rule)) center bottom /
-    calc(100% - 4px) 1px no-repeat;
+  background: none;
   border: 0;
   border-radius: 0;
   color: var(--text);
@@ -37,20 +28,11 @@
   line-height: 1.25;
   text-align: center;
   outline: none;
-  transition: --profile-rule var(--dur-fast) var(--ease-out);
 }
 
 .profile__name::placeholder {
   color: var(--text-3);
   opacity: 1;
-}
-
-.profile__name:hover {
-  --profile-rule: var(--line-strong);
-}
-
-.profile__name:focus {
-  --profile-rule: var(--text-2);
 }
 
 .profile__facts,
@@ -87,16 +69,11 @@
   color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  text-decoration: underline 1px transparent;
-  text-underline-offset: 4px;
-  transition:
-    color var(--dur-fast) var(--ease-out),
-    text-decoration-color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
 .profile__actions button:hover {
   color: var(--text);
-  text-decoration-color: var(--text-3);
 }
 
 .profile__actions button:focus-visible {
@@ -112,14 +89,12 @@
 }
 
 .profile__word {
-  --profile-rule: var(--text-3);
   field-sizing: content;
   min-width: 6ch;
   max-width: 24ch;
   margin: 0;
   padding: 0 2px 3px;
-  background: linear-gradient(var(--profile-rule), var(--profile-rule)) center bottom /
-    calc(100% - 4px) 1px no-repeat;
+  background: none;
   border: 0;
   border-radius: 0;
   color: var(--text);
@@ -127,11 +102,6 @@
   font: inherit;
   text-align: center;
   outline: none;
-  transition: --profile-rule var(--dur-fast) var(--ease-out);
-}
-
-.profile__word:focus {
-  --profile-rule: var(--text-2);
 }
 
 .profile__word::placeholder {

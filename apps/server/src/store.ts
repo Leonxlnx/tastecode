@@ -228,7 +228,8 @@ const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
+// v2 reopens requests asked again after their answer; the rebuild settles them.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
@@ -650,7 +651,7 @@ type ThreadPayloadRow = { thread_id: string; payload: string }
 type SearchableEntry = { turnId: string; createdAt?: number | undefined; text: string }
 type ActiveLifecycleRow = { woke_at: SqliteInteger | null; keep_active: SqliteInteger }
 type RecoveryMutation =
-  | { kind: 'start'; eventType: string; lifecycleKey: string }
+  | { kind: 'start'; eventType: string; lifecycleKey: string; reopens?: true }
   | { kind: 'terminal'; lifecycleKey: string }
   | { kind: 'error' }
 type DerivedIndexRebuild = {
@@ -681,6 +682,12 @@ type MaxSequenceRow = { seq: SqliteInteger | null }
 type MinTimestampRow = { at: SqliteInteger | null }
 type ReplaySnapshotRow = { seq: SqliteInteger; payload: string }
 type ReplayEntry = { seq: number; event: DomainEvent }
+type CachedReplaySnapshot = {
+  seq: number
+  entries: ReplayEntry[]
+  characters: number
+  tail: boolean
+}
 
 /** Keep hot thread metadata without retaining every thread in a large workspace. */
 const THREAD_CACHE_LIMIT = 128
@@ -739,6 +746,7 @@ export class Store {
   #settleRecoveryLifecycle: StatementSync
   #upsertRecoveryError: StatementSync
   #readInterruptedThreads: StatementSync
+  #readInterruptedThread: StatementSync
   #insertQueuedTurnEvent: StatementSync
   #listQueuedTurns: StatementSync
   #hasQueuedSubmission: StatementSync
@@ -804,10 +812,11 @@ export class Store {
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
-  #replaySnapshotCache = new Map<
-    string,
-    { seq: number; entries: ReplayEntry[]; characters: number }
-  >()
+  /**
+   * Compact replays by thread. `tail` is false once an event lands after the
+   * snapshot: the entry still serves as a base and for older history pages.
+   */
+  #replaySnapshotCache = new Map<string, CachedReplaySnapshot>()
   #replaySnapshotCacheCharacters = 0
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
@@ -905,8 +914,10 @@ export class Store {
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
          event_type = excluded.event_type,
          started_seq = excluded.started_seq,
+         terminal_seq = NULL,
          payload = excluded.payload
-       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+       WHERE recovery_lifecycles.terminal_seq IS NULL
+          OR (? AND recovery_lifecycles.terminal_seq < excluded.started_seq)`,
     )
     this.#settleRecoveryLifecycle = this.#db.prepare(
       `INSERT INTO recovery_lifecycles
@@ -922,8 +933,7 @@ export class Store {
       `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
     )
-    this.#readInterruptedThreads = this.#db.prepare(
-      `SELECT recovery.thread_id, recovery.payload,
+    const openRecoveryLifecycles = `SELECT recovery.thread_id, recovery.payload,
               CASE WHEN recovery.event_type = 'user_input.requested'
                 AND EXISTS (
                   SELECT 1 FROM design_runs
@@ -941,8 +951,12 @@ export class Store {
          AND recovery.terminal_seq IS NULL
          AND recovery.payload IS NOT NULL
          AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
-              OR errors.event_seq < recovery.started_seq)
-       ORDER BY recovery.started_seq`,
+              OR errors.event_seq < recovery.started_seq)`
+    this.#readInterruptedThreads = this.#db.prepare(
+      `${openRecoveryLifecycles} ORDER BY recovery.started_seq`,
+    )
+    this.#readInterruptedThread = this.#db.prepare(
+      `${openRecoveryLifecycles} AND recovery.thread_id = ? ORDER BY recovery.started_seq`,
     )
     this.#insertQueuedTurnEvent = this.#db.prepare(
       `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
@@ -1609,6 +1623,27 @@ export class Store {
     }
   }
 
+  /**
+   * Saves a provider session as the thread's only history row. A Side chat's
+   * tombstone is keyed by its TasteCode id until the provider reports its own
+   * session id, and `thread_id` is unique, so the new key replaces the old row.
+   */
+  replaceProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(
+          `DELETE FROM provider_history
+           WHERE thread_id = ? AND NOT (provider = ? AND session_id = ?)`,
+        )
+        .run(threadId, provider, session.id)
+      this.saveProviderHistory(provider, threadId, session)
+    })
+  }
+
   /** Only locally recorded events, used to identify provider echoes of our own turns. */
   localHistory(threadId: string): Array<{ seq: number; event: DomainEvent }> {
     return sqliteRows<HistoryRow>(
@@ -2047,6 +2082,13 @@ export class Store {
     this.#deleteCachedReplaySnapshot(id)
     this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
     this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
+  }
+
+  /** Clears the closed mark of an imported chat its provider can resume again. */
+  reopenThread(id: string): void {
+    this.#db.prepare(`UPDATE threads SET closed_at = NULL WHERE id = ?`).run(id)
+    this.#updateCachedThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
+    this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
   }
 
   deleteThread(id: string): void {
@@ -2514,6 +2556,40 @@ export class Store {
 
   // ---- events ------------------------------------------------------------
 
+  #interruptedThreadStates(rows: InterruptedThreadRow[]): Map<string, InterruptedThreadState> {
+    const states = new Map<string, InterruptedThreadState>()
+    for (const row of rows) {
+      // Leave newer-provider histories intact; they must not abort recovery of other threads.
+      if (!this.thread(row.thread_id)) continue
+      const event = parseDomainEvent(
+        row.payload,
+        `recovery for interrupted thread ${row.thread_id}`,
+      )
+      if (event === undefined) continue
+      const state = states.get(row.thread_id) ?? {
+        openTurns: new Set<string>(),
+        activeItems: new Map(),
+        approvals: new Set<string>(),
+        userInputs: new Set<string>(),
+        reviews: new Map(),
+        hasResumableInput: false,
+      }
+      states.set(row.thread_id, state)
+
+      if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
+      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+      if (event.type === 'user_input.requested') {
+        if (row.resumable) state.hasResumableInput = true
+        else state.userInputs.add(event.request.id)
+      }
+      if (event.type === 'approval.review.started') {
+        state.reviews.set(event.review.id, event.review)
+      }
+    }
+    return states
+  }
+
   /**
    * Close event lifecycles that cannot still be live in this server process.
    *
@@ -2530,71 +2606,13 @@ export class Store {
       // long transcript therefore costs the same to recover as a short one.
       const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThreads)
 
-      const states = new Map<string, InterruptedThreadState>()
-      for (const row of rows) {
-        // Leave newer-provider histories intact; they must not abort recovery of other threads.
-        if (!this.thread(row.thread_id)) continue
-        const event = parseDomainEvent(
-          row.payload,
-          `recovery for interrupted thread ${row.thread_id}`,
-        )
-        if (event === undefined) continue
-        const state = states.get(row.thread_id) ?? {
-          openTurns: new Set<string>(),
-          activeItems: new Map(),
-          approvals: new Set<string>(),
-          userInputs: new Set<string>(),
-          reviews: new Map(),
-          hasResumableInput: false,
-        }
-        states.set(row.thread_id, state)
-
-        if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
-        if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
-        if (event.type === 'approval.requested') state.approvals.add(event.request.id)
-        if (event.type === 'user_input.requested') {
-          if (row.resumable) state.hasResumableInput = true
-          else state.userInputs.add(event.request.id)
-        }
-        if (event.type === 'approval.review.started') {
-          state.reviews.set(event.review.id, event.review)
-        }
-      }
-
       const recovered: string[] = []
       const at = Date.now()
-      for (const [threadId, state] of states) {
-        for (const item of state.activeItems.values()) {
-          // Omitting text preserves every persisted delta when the renderer
-          // folds this terminal item over the streamed version.
-          const { text: _streamedText, ...started } = item
-          this.#appendEvent(
-            threadId,
-            { type: 'item.completed', item: { ...started, status: 'failed' } },
-            at,
-          )
-        }
-        for (const id of state.approvals) {
-          this.#appendEvent(threadId, { type: 'approval.resolved', id }, at)
-        }
-        for (const id of state.userInputs) {
-          this.#appendEvent(threadId, { type: 'user_input.resolved', id }, at)
-        }
-        for (const review of state.reviews.values()) {
-          if (review.status !== 'in_progress') continue
-          this.#appendEvent(
-            threadId,
-            {
-              type: 'approval.review.completed',
-              review: { ...review, status: 'aborted', completedAt: at },
-            },
-            at,
-          )
+      for (const [threadId, state] of this.#interruptedThreadStates(rows)) {
+        for (const event of interruptedLifecycleEvents(state, at)) {
+          this.#appendEvent(threadId, event, at)
         }
         if (state.openTurns.size === 0) continue
-        for (const turnId of state.openTurns) {
-          this.#appendEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' }, at)
-        }
         if (!state.hasResumableInput) {
           this.#appendEvent(
             threadId,
@@ -2616,6 +2634,19 @@ export class Store {
       this.#searchRevision += 1
       throw error
     }
+  }
+
+  /**
+   * The terminal events for every lifecycle one thread's runtime left open.
+   *
+   * Restart recovery settles these for a dead process; a runtime force-stopped
+   * while the server keeps running needs the same, or its turn and requests
+   * stay open in the log until the next restart. The caller records them.
+   */
+  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+    const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
+    const state = this.#interruptedThreadStates(rows).get(threadId)
+    return state ? interruptedLifecycleEvents(state, Date.now()) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -2704,7 +2735,8 @@ export class Store {
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
-    if (this.#replaySnapshotCache.size > 0) this.#deleteCachedReplaySnapshot(threadId)
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) cached.tail = false
     return Number(this.#insertEvent.run(threadId, at, payload).lastInsertRowid)
   }
 
@@ -2752,8 +2784,30 @@ export class Store {
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row) return undefined
     const seq = Number(row.seq)
-    const entries = this.#cacheReplaySnapshot(threadId, seq, row.payload)
+    const entries = this.#cacheReplaySnapshot(
+      threadId,
+      seq,
+      row.payload,
+      seq === this.lastSeq(threadId),
+    )
     return entries ? { seq, entries } : undefined
+  }
+
+  /**
+   * The saved replay exactly as it stood at `seq`, even when newer events have
+   * landed since. Every rewrite of older history deletes the snapshot, so a
+   * replay still saved at that sequence describes the same older turns.
+   */
+  replaySnapshotAt(threadId: string, seq: number): ReplayEntry[] | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      if (cached.seq !== seq) return undefined
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return cached.entries
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
+    if (!row || Number(row.seq) !== seq) return undefined
+    return this.#cacheReplaySnapshot(threadId, seq, row.payload, seq === this.lastSeq(threadId))
   }
 
   /** Preserve SQLite's JSON for the first response after a process restart. */
@@ -2761,20 +2815,27 @@ export class Store {
     threadId: string,
   ): { entries: ReplayEntry[]; serializedEntries?: string | undefined } | undefined {
     const cached = this.#replaySnapshotCache.get(threadId)
+    // The saved row holds the same replay, so it is no tail either.
+    if (cached && !cached.tail) return undefined
     if (cached) {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { entries: cached.entries }
     }
     const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
     if (!row) return undefined
-    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload)
+    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload, true)
     return entries ? { entries, serializedEntries: row.payload } : undefined
   }
 
-  #cacheReplaySnapshot(threadId: string, seq: number, payload: string): ReplayEntry[] | undefined {
+  #cacheReplaySnapshot(
+    threadId: string,
+    seq: number,
+    payload: string,
+    tail: boolean,
+  ): ReplayEntry[] | undefined {
     try {
       const entries = ReplaySnapshotSchema.parse(JSON.parse(payload))
-      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length)
+      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length, tail)
       return entries
     } catch {
       this.#deleteReplaySnapshot.run(threadId)
@@ -2783,10 +2844,7 @@ export class Store {
     }
   }
 
-  #promoteCachedReplaySnapshot(
-    threadId: string,
-    cached: { seq: number; entries: ReplayEntry[]; characters: number },
-  ): void {
+  #promoteCachedReplaySnapshot(threadId: string, cached: CachedReplaySnapshot): void {
     this.#replaySnapshotCache.delete(threadId)
     this.#replaySnapshotCache.set(threadId, cached)
   }
@@ -2796,6 +2854,7 @@ export class Store {
     seq: number,
     entries: ReplayEntry[],
     characters: number,
+    tail: boolean,
   ): void {
     this.#deleteCachedReplaySnapshot(threadId)
     if (characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT) return
@@ -2807,7 +2866,7 @@ export class Store {
       if (oldestThreadId === undefined) break
       this.#deleteCachedReplaySnapshot(oldestThreadId)
     }
-    this.#replaySnapshotCache.set(threadId, { seq, entries, characters })
+    this.#replaySnapshotCache.set(threadId, { seq, entries, characters, tail })
     this.#replaySnapshotCacheCharacters += characters
   }
 
@@ -2818,16 +2877,28 @@ export class Store {
     this.#replaySnapshotCacheCharacters -= cached.characters
   }
 
-  /** Cache only renderer-ready derived data; the event log remains authoritative. */
+  /**
+   * Cache only renderer-ready derived data; the event log remains authoritative.
+   * `readToEnd` marks a replay built from every stored row: it stays the latest
+   * even when `seq` names an older event because the newest rows are unreadable
+   * or retired.
+   */
   saveReplaySnapshot(
     threadId: string,
     seq: number,
     entries: ReadonlyArray<{ seq: number; event: DomainEvent }>,
+    options: { readToEnd?: boolean } = {},
   ): string {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
     this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
-    this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
+    this.#rememberReplaySnapshot(
+      threadId,
+      seq,
+      entries as ReplayEntry[],
+      payload.length,
+      options.readToEnd === true || seq === this.lastSeq(threadId),
+    )
     return payload
   }
 
@@ -3085,6 +3156,7 @@ export class Store {
         mutation.eventType,
         seq,
         payload,
+        mutation.reopens ? 1 : 0,
       )
       return
     }
@@ -3703,11 +3775,15 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
       }
     case 'item.completed':
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
+    // A request id asked again after its answer is a new question (a retried
+    // command reuses its id), not a late echo like an item started after it
+    // completed, so it reopens the lifecycle.
     case 'approval.requested':
       return {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `approval:${event.request.id}`,
+        reopens: true,
       }
     case 'approval.resolved':
       return { kind: 'terminal', lifecycleKey: `approval:${event.id}` }
@@ -3716,6 +3792,7 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `input:${event.request.id}`,
+        reopens: true,
       }
     case 'user_input.resolved':
       return { kind: 'terminal', lifecycleKey: `input:${event.id}` }
@@ -3732,6 +3809,30 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
     default:
       return undefined
   }
+}
+
+/** The terminal events that settle every lifecycle a dead runtime left open. */
+function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+  const events: DomainEvent[] = []
+  for (const item of state.activeItems.values()) {
+    // Omitting text preserves every persisted delta when the renderer
+    // folds this terminal item over the streamed version.
+    const { text: _streamedText, ...started } = item
+    events.push({ type: 'item.completed', item: { ...started, status: 'failed' } })
+  }
+  for (const id of state.approvals) events.push({ type: 'approval.resolved', id })
+  for (const id of state.userInputs) events.push({ type: 'user_input.resolved', id })
+  for (const review of state.reviews.values()) {
+    if (review.status !== 'in_progress') continue
+    events.push({
+      type: 'approval.review.completed',
+      review: { ...review, status: 'aborted', completedAt: at },
+    })
+  }
+  for (const turnId of state.openTurns) {
+    events.push({ type: 'turn.completed', turnId, status: 'interrupted' })
+  }
+  return events
 }
 
 function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {

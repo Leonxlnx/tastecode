@@ -64,8 +64,64 @@ describe('StageHeader', () => {
     const rename = screen.getByRole('textbox', { name: 'Rename chat' })
     expect(rename.classList.contains('rename--chat')).toBe(true)
     fireEvent.change(rename, { target: { value: 'Polished landing page' } })
+    fireEvent.keyDown(rename, { key: 'Enter', isComposing: true })
+    expect(stage.onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(rename, { key: 'Enter' })
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
+  })
+
+  it('saves a rename to the chat it was typed for when a shortcut switches chats', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="thread-a" title="Chat A" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Chat A' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename chat' }), {
+      target: { value: 'Draft typed for A' },
+    })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-b" title="Chat B" />)
+
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-a', 'Draft typed for A')
+    expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
+    expect(screen.getByText('Chat B')).toBeTruthy()
+  })
+
+  it('keeps renaming a new chat when its thread starts', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="pending:new" title="New chat" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for New chat' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    fireEvent.change(rename, { target: { value: 'Landing' } })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-started" title="New chat" />)
+
+    expect(stage.onRenameSession).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Rename chat' })).toBe(rename)
+    fireEvent.change(rename, { target: { value: 'Landing page' } })
+    fireEvent.keyDown(rename, { key: 'Enter' })
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-started', 'Landing page')
+  })
+
+  it('saves a new chat rename there when a shortcut switches away before it starts', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="pending:new" title="Fix login" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Fix login' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename chat' }), {
+      target: { value: 'Login fix' },
+    })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-b" title="Chat B" />)
+
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('pending:new', 'Login fix')
+    expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
   })
 
   it('keeps useful app options available on New chat', () => {
