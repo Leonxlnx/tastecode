@@ -55,29 +55,17 @@ export function killTree(child: KillableProcess): Promise<void> {
   return done
 }
 
-/**
- * SIGTERM a POSIX process group the caller owns, escalating to SIGKILL after a
- * bounded wait. An already empty group resolves at once.
- */
-export async function killProcessGroup(group: number): Promise<void> {
-  // -1 would reach every process we may signal, and 0 our own group.
-  if (!Number.isInteger(group) || group <= 1) {
-    throw new Error(`Refusing to signal process group ${String(group)}`)
-  }
-  if ((await signalGroup(group, 'SIGTERM')) && !(await waitForGroupExit(group, 500))) {
-    await signalGroup(group, 'SIGKILL')
-    if (!(await waitForGroupExit(group, 1_000)) && !onlyZombiesRemain(group)) {
-      throw new Error('Owned process group did not stop after forced termination')
-    }
-  }
-}
-
 async function terminate(child: KillableProcess): Promise<void> {
   const group = groups.get(child)
   if (group) {
     // Keep the group after its leader exits: children can still be alive.
     // Never derive a group from an arbitrary pid supplied by a caller.
-    await killProcessGroup(group)
+    if ((await signalGroup(group, 'SIGTERM')) && !(await waitForGroupExit(group, 500))) {
+      await signalGroup(group, 'SIGKILL')
+      if (!(await waitForGroupExit(group, 1_000)) && !onlyZombiesRemain(group)) {
+        throw new Error('Owned process group did not stop after forced termination')
+      }
+    }
     groups.delete(child)
     return
   }
