@@ -7,14 +7,17 @@ import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
-// How long each step of a close may take. After SIGHUP the shell and its
-// foreground job get `hangup` to finish a clean shutdown on their own; what is
-// left then gets SIGTERM and `terminate`, then SIGKILL and `kill`. Server
-// shutdown has to end inside the desktop's three-second force stop, so it
-// signals sooner but still leaves a job that began a clean shutdown on SIGHUP
-// almost two seconds before SIGKILL.
+// A pane or chat close: how long each step may take, counted from its start.
+// After SIGHUP the shell gets `hangup` to exit before SIGKILL. Once it is gone
+// its foreground job gets `hangup` to exit on its own, then `terminate` after
+// SIGTERM and `kill` after SIGKILL before the close gives up and logs it.
 const CLOSE_STEPS = { hangup: 3_000, terminate: 3_000, kill: 1_000 }
-const SHUTDOWN_STEPS = { hangup: 400, terminate: 1_400, kill: 300 }
+// Server shutdown: the latest each step may end, counted from closeAll(), so
+// the last SIGKILL goes out about two seconds in, inside the desktop's
+// three-second force stop. Most of it belongs to SIGTERM: servers such as
+// gunicorn, nginx or postgres reload on SIGHUP and shut down cleanly only on
+// SIGTERM.
+const SHUTDOWN_STEP_ENDS = { hangup: 200, terminate: 1_800, kill: 2_100 }
 const CLOSE_POLL_MS = 100
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
@@ -177,6 +180,9 @@ export class TerminalManager {
   #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
+  #shutdownStartedAt: number | undefined
+  /** Wakes every pending poll, so a starting shutdown shortens it at once. */
+  #wakers = new Set<() => void>()
   /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
   #stoppingJobs = new Set<Promise<void>>()
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
@@ -463,25 +469,49 @@ export class TerminalManager {
       if (members.length === 0) return 'ended'
       // A recycled group id now names someone else's processes.
       if (members.some((member) => member.session !== job.session)) return 'foreign'
-      if (Date.now() - startedAt >= this.#stepMs(step)) return 'running'
-      await delay(CLOSE_POLL_MS)
+      const left = this.#stepEnd(step, startedAt) - Date.now()
+      if (left <= 0) return 'running'
+      await this.#pause(left)
     }
   }
 
   /** Whether `promise` settles within a step; a shutdown shortens the step. */
   async #settlesWithin(promise: Promise<void>, step: CloseStep): Promise<boolean> {
-    const settled = promise.then(() => true)
+    let settled = false
+    void promise.then(() => (settled = true))
     const startedAt = Date.now()
-    while (true) {
-      const remaining = this.#stepMs(step) - (Date.now() - startedAt)
-      if (remaining <= 0) return false
-      const tick = delay(Math.min(remaining, CLOSE_POLL_MS)).then(() => false)
-      if (await Promise.race([settled, tick])) return true
+    while (!settled) {
+      const left = this.#stepEnd(step, startedAt) - Date.now()
+      if (left <= 0) return false
+      await this.#pause(left, promise)
     }
+    return true
   }
 
-  #stepMs(step: CloseStep): number {
-    return (this.#closingAll ? SHUTDOWN_STEPS : CLOSE_STEPS)[step]
+  /** When a step that started at `startedAt` ends at the latest. */
+  #stepEnd(step: CloseStep, startedAt: number): number {
+    const end = startedAt + CLOSE_STEPS[step]
+    if (this.#shutdownStartedAt === undefined) return end
+    return Math.min(end, this.#shutdownStartedAt + SHUTDOWN_STEP_ENDS[step])
+  }
+
+  /**
+   * Sleep one poll, never past the time left in the step, and wake early when
+   * `wake` settles or a shutdown starts. The timer keeps the process alive:
+   * once a shutting-down server has closed everything else, an unreferenced
+   * one would let it exit mid-close and leave the job running.
+   */
+  #pause(left: number, wake?: Promise<unknown>): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timer)
+        this.#wakers.delete(done)
+        resolve()
+      }
+      const timer = setTimeout(done, Math.min(left, CLOSE_POLL_MS))
+      this.#wakers.add(done)
+      void wake?.then(done, done)
+    })
   }
 
   /** The shell behind a PTY, only when this server forked it as a session leader. */
@@ -508,6 +538,9 @@ export class TerminalManager {
 
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
+    this.#shutdownStartedAt = Date.now()
+    // Each waker removes itself; a Set iterator tolerates that.
+    for (const wake of this.#wakers) wake()
     this.#closingAll = this.#drainAll()
     return this.#closingAll
   }
@@ -576,15 +609,6 @@ async function settleAll(waiters: Iterable<Promise<void>>, message: string): Pro
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map((result) => result.reason)
   if (errors.length > 0) throw new AggregateError(errors, message)
-}
-
-/**
- * A poll sleep that keeps the process alive: once a shutting-down server has
- * closed everything else, an unreferenced timer would let it exit mid-close
- * and leave the job running.
- */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 // One -o per column: BSD ps on macOS takes everything after the first `=` as

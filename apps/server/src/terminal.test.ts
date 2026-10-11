@@ -361,7 +361,7 @@ describe('TerminalManager', () => {
 
   it.each([
     { closeWith: 'a pane close', steps: [3_000, 3_000] },
-    { closeWith: 'server shutdown', steps: [400, 1_400] },
+    { closeWith: 'server shutdown', steps: [200, 1_600] },
   ])('gives a job time to shut down before SIGTERM and SIGKILL on $closeWith', async (test) => {
     vi.useFakeTimers()
     try {
@@ -416,13 +416,81 @@ describe('TerminalManager', () => {
       expect(signals).toEqual([])
 
       const shutdown = manager.closeAll()
-      await vi.advanceTimersByTimeAsync(100)
+      await vi.advanceTimersByTimeAsync(199)
+      expect(signals).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
       expect(signals).toEqual(['SIGTERM'])
-      await vi.advanceTimersByTimeAsync(1_399)
+      await vi.advanceTimersByTimeAsync(1_599)
       expect(signals).toEqual(['SIGTERM'])
       await vi.advanceTimersByTimeAsync(1)
       expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
       await Promise.all([closed, shutdown])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops every stubborn job by the shutdown deadline even when ps is slow', async () => {
+    vi.useFakeTimers()
+    try {
+      const count = 6
+      const jobKilledAt = new Map<number, number>()
+      let startedAt = 0
+      const ptys = Array.from({ length: count }, (_, index) => {
+        const pty = controlledPty({
+          pid: 4100 + index,
+          // Each shell ignores SIGHUP, and node-pty reports its SIGKILL 200 ms late.
+          kill: (signal) => {
+            if (signal === 'SIGKILL') setTimeout(() => pty.emitExit(137), 200)
+          },
+        })
+        return pty
+      })
+      const spawned = [...ptys]
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => spawned.shift()!,
+          processes: {
+            // A ps that takes 60 ms blocks the event loop for as long...
+            inspect: (pids) => {
+              vi.setSystemTime(Date.now() + 60)
+              return pids.map((pid) => ownShell(pid, pid + 1_000))
+            },
+            // ...and lists every process 100 ms after it was asked.
+            list: () =>
+              new Promise((resolve) =>
+                setTimeout(() => {
+                  const groups = ptys.map((_, index) => 5_100 + index)
+                  const live = groups.filter((group) => !jobKilledAt.has(group))
+                  resolve(
+                    live.map((group) => ({
+                      ...jobMember,
+                      pid: group,
+                      group,
+                      session: String(group - 1_000),
+                    })),
+                  )
+                }, 100),
+              ),
+            // Every job ignores SIGHUP and SIGTERM.
+            signal: (group, signal) => {
+              if (signal === 'SIGKILL') jobKilledAt.set(group, Date.now() - startedAt)
+            },
+          },
+        },
+      )
+      for (let index = 0; index < count; index += 1) {
+        manager.open(`thread-${index}`, os.tmpdir(), 80, 24)
+      }
+      startedAt = Date.now()
+      let finished = false
+      void manager.closeAll().then(() => (finished = true))
+
+      await vi.advanceTimersByTimeAsync(2_500)
+      expect(finished).toBe(true)
+      expect(jobKilledAt.size).toBe(count)
+      expect(Math.max(...jobKilledAt.values())).toBeLessThanOrEqual(2_200)
     } finally {
       vi.useRealTimers()
     }
