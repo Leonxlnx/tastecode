@@ -117,13 +117,19 @@ try {
   const electron = require('electron')
   for (let index = 1; index <= runs; index += 1) {
     const resultPath = path.join(reportDirectory, `renderer-${index}.json`)
-    await runChild(electron, [path.join(here, 'performance/electron.cjs')], {
-      ELECTRON_RUN_AS_NODE: undefined,
-      HARNESS_PERF_DATA_DIR: path.join(temporary, `renderer-data-${index}`),
-      HARNESS_PERF_RENDERER: path.join(rendererDirectory, 'index.html'),
-      HARNESS_PERF_RESULT: resultPath,
-      HARNESS_PERF_MEMORY_MODULE: memoryModule,
-    })
+    // Outlasts the fixture's own 120-second limit, so its error is the one reported.
+    await runChild(
+      electron,
+      [path.join(here, 'performance/electron.cjs')],
+      {
+        ELECTRON_RUN_AS_NODE: undefined,
+        HARNESS_PERF_DATA_DIR: path.join(temporary, `renderer-data-${index}`),
+        HARNESS_PERF_RENDERER: path.join(rendererDirectory, 'index.html'),
+        HARNESS_PERF_RESULT: resultPath,
+        HARNESS_PERF_MEMORY_MODULE: memoryModule,
+      },
+      130_000,
+    )
     const sample = JSON.parse(await readFile(resultPath, 'utf8'))
     sample.highlighting.trace = inspectHighlightingTrace(
       JSON.parse(await readFile(`${resultPath}.highlighting-trace.json`, 'utf8')),
@@ -131,7 +137,7 @@ try {
     await writeFile(resultPath, JSON.stringify(sample, null, 2))
     samples.push(sample)
     console.log(
-      `[performance] renderer ${index}/${runs}: ${sample.scroll.seenMessages} messages visible, first paint ${sample.firstPaintMs.toFixed(1)} ms, worst frame ${Math.max(...sample.scroll.frames).toFixed(1)} ms, batch ${Math.max(...sample.streaming.batches).toFixed(1)} ms`,
+      `[performance] renderer ${index}/${runs}: ${sample.scroll.seenMessages} messages visible, first paint ${sample.firstPaintMs.toFixed(1)} ms, worst frame ${Math.max(...sample.scroll.frames).toFixed(1)} ms, batch ${Math.max(...sample.streaming.batches).toFixed(1)} ms, collapsed large activity ${(sample.largeActivity.mountedHeapBytes / 2 ** 20).toFixed(1)} MiB heap`,
     )
     const startup = await measure(
       electron,

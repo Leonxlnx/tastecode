@@ -25,6 +25,15 @@ const goodSample = () => ({
     longTasks: [] as number[],
     trace: { maxMainTaskMs: 16, mainTaskCount: 10, workerThreads: 1 },
   },
+  largeActivity: {
+    toolCalls: 300,
+    outputCharacters: 300 * 128 * 1024,
+    collapsed: { activityElements: 6, toolRows: 0, openDetails: 0 },
+    opened: { activityElements: 3_300, toolRows: 300, openDetails: 1 },
+    closed: { activityElements: 6, toolRows: 0, openDetails: 0 },
+    mountedHeapBytes: 2_000_000,
+    retainedAfterCloseBytes: -100_000,
+  },
 })
 const startups = () =>
   Array.from({ length: 3 }, () => ({
@@ -105,6 +114,47 @@ describe('real Electron performance gates', () => {
     samples[0]!.highlighting.trace.maxMainTaskMs = 32
     expect(performanceFailures(samples, startups())).toEqual([
       'renderer 1 worst highlighting trace task ms: 32 (must be < 32)',
+    ])
+  })
+
+  it('requires a real 300-call activity that opened every row', () => {
+    for (const change of [
+      { toolCalls: 30 },
+      { outputCharacters: 1024 },
+      { opened: { activityElements: 6, toolRows: 0, openDetails: 0 } },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.largeActivity, change)
+      expect(performanceFailures(samples, startups())).toEqual([
+        'renderer 1: missing large activity coverage',
+      ])
+    }
+  })
+
+  it('fails rows or output mounted while collapsed, beyond the one opened, or after closing', () => {
+    for (const change of [
+      { collapsed: { activityElements: 6, toolRows: 300, openDetails: 0 } },
+      { collapsed: { activityElements: 6, toolRows: 0, openDetails: 300 } },
+      { opened: { activityElements: 3_300, toolRows: 300, openDetails: 2 } },
+      { closed: { activityElements: 6, toolRows: 0, openDetails: 1 } },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.largeActivity, change)
+      expect(performanceFailures(samples, startups())).toEqual([
+        'renderer 1: large activity mounted rows or output it was not showing',
+      ])
+    }
+  })
+
+  it('fails collapsed large activity DOM, heap and retained heap budgets', () => {
+    const samples = Array.from({ length: 3 }, goodSample)
+    samples[2]!.largeActivity.collapsed.activityElements = 200
+    samples[2]!.largeActivity.mountedHeapBytes = 8 * 1024 * 1024
+    samples[2]!.largeActivity.retainedAfterCloseBytes = 2 * 1024 * 1024
+    expect(performanceFailures(samples, startups())).toEqual([
+      'renderer 3 collapsed large activity elements: 200 (must be < 200)',
+      `renderer 3 collapsed large activity heap bytes: ${8 * 1024 * 1024} (must be < ${8 * 1024 * 1024})`,
+      `renderer 3 large activity heap retained after closing bytes: ${2 * 1024 * 1024} (must be < ${2 * 1024 * 1024})`,
     ])
   })
 })
