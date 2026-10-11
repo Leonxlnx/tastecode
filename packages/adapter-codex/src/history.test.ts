@@ -612,6 +612,37 @@ describe('native Codex history', () => {
     expect(items(await source.read(second))[0]!.id).toBe(previous.id)
   })
 
+  it('shows multi-part reasoning once although Codex also writes each part as an event', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      event({ type: 'user_message', message: 'Plan it' }),
+      response({
+        type: 'reasoning',
+        id: 'reasoning-one',
+        summary: [
+          { type: 'summary_text', text: 'First' },
+          { type: 'summary_text', text: 'Second' },
+        ],
+      }),
+      event({ type: 'agent_reasoning', text: 'First' }),
+      event({ type: 'agent_reasoning', text: 'Second' }),
+      rich({
+        type: 'Reasoning',
+        id: 'reasoning-two',
+        summary_text: ['Third'],
+        raw_content: ['Raw'],
+      }),
+      event({ type: 'agent_reasoning', text: 'Third' }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(
+      items(events)
+        .filter((entry) => entry.type === 'reasoning')
+        .map((entry) => entry.text),
+    ).toEqual(['First\n\nSecond', 'Third\n\nRaw'])
+  })
+
   it('does not let malformed rich items hide other messages and preserves unknown future items', async () => {
     const { source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
