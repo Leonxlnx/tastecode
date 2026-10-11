@@ -220,6 +220,6 @@ describe('streamed Markdown renders', () => {
     rendered.rerender(<Markdown text={text} />)
     await waitFor(() => expect(streamdownRender).toHaveBeenCalledTimes(1))
     expect(shikiHighlight).toHaveBeenCalledTimes(1)
-    expect(streamdownRender.mock.calls[0]?.[0].parseIncompleteMarkdown).toBe(true)
+    expect(streamdownRender.mock.calls[0]?.[0].parseIncompleteMarkdown).toBe(false)
   })
 })
