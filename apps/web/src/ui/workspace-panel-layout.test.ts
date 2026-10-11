@@ -253,6 +253,12 @@ describe('workspace panel layout', () => {
       /\.workspace-side-chat__conversation \.thread__col,\s*\.workspace-side-chat__skeleton \.thread-skeleton__col \{[^}]*padding-inline: 14px;/,
     )
     expect(narrow).toMatch(/\.workspace-side-chat__composer \{[^}]*width: calc\(100% - 28px\);/)
+    // Wider, the gutter matches the composer's inset by panel width alone, not by window width.
+    expect(css).toMatch(
+      /\n\.workspace-side-chat__conversation \.thread__col,\s*\.workspace-side-chat__skeleton \.thread-skeleton__col \{[^}]*padding-inline: 24px;/,
+    )
+    expect(css).toMatch(/\n\.workspace-side-chat__composer \{[^}]*width: calc\(100% - 48px\);/)
+    expect(css).not.toMatch(/\d+vw/)
   })
 
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
