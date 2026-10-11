@@ -6685,6 +6685,66 @@ describe('new chats', () => {
     )
   })
 
+  it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    localStorage.setItem('harness.model', 'codex:gpt-5.4')
+    serverProjects[0]!.sessions = [
+      { id: 'chat-retired', title: 'Retired model chat', provider: 'codex', createdAt: 1 },
+    ]
+    localStorage.setItem(
+      'harness.modelByThread:chat-retired',
+      JSON.stringify({ modelKey: 'codex:gpt-5.4', effort: 'high' }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              {
+                id: 'gpt-6-astra',
+                displayName: 'GPT-6-Astra',
+                isDefault: true,
+                reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+                defaultReasoningEffort: 'medium',
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6-Sol',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium', 'high'],
+                defaultReasoningEffort: 'low',
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Retired model chat,/ }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'chat-retired' }),
+      )
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Astra',
+      )
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Carry on' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ threadId: 'chat-retired', model: 'gpt-6-astra' }),
+      ),
+    )
+  })
+
   it('keeps edits made while a new chat starts after leaving the chat', async () => {
     let finishStart!: () => Promise<void>
     let savedApproval = 'full'
