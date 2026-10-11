@@ -427,14 +427,17 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#assertThread(threadId)
     this.#options = next
 
-    const queue = this.#requirePromptQueue()
-    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
-    queue.push(claudeUserMessage(text, attachments, this.#sessionId))
+    this.#requirePromptQueue().push(claudeUserMessage(text, attachments, this.#sessionId))
+    return this.#startTurn()
+  }
+
+  #startTurn(): string {
+    const turnId = `${this.#threadId}-turn-${crypto.randomUUID()}`
     this.#activeTurnId = turnId
     this.#interruptRequested = false
     this.emit('event', {
       type: 'turn.started',
-      turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+      turn: { id: turnId, threadId: this.#threadId, status: 'running', createdAt: Date.now() },
     })
     return turnId
   }
