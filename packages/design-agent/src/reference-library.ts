@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { PAGE_LAYOUT_FAMILIES, WEBSITE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
-import type { ReferenceDirection } from './reference-directions.js'
+import { REFERENCE_ROLES, type ReferenceDirection } from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
 import { generatedReferenceCandidates } from './reference-library-index.js'
 import { containedWorkspaceFile, readWorkspaceFile } from './workspace-files.js'
@@ -31,6 +31,9 @@ export function parseReferenceDeck(value: unknown): ReferenceDirection[] {
       ...(entry.source ? { source: string(entry.source, `${id}.source`) } : {}),
       ...(entry.group ? { group: string(entry.group, `${id}.group`) } : {}),
       ...(entry.tags ? { tags: strings(entry.tags, `${id}.tags`) } : {}),
+      ...(entry.site ? { site: string(entry.site, `${id}.site`) } : {}),
+      ...(entry.role ? { role: member(entry.role, REFERENCE_ROLES, `${id}.role`) } : {}),
+      ...(entry.style ? { style: string(entry.style, `${id}.style`) } : {}),
     }
   })
 }
@@ -98,7 +101,10 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
       if (!['https:', 'http:'].includes(source.protocol))
         throw new Error('reference source must be HTTP(S)')
       if (entry.mobileImagePath) string(entry.pairEvidence, 'pairEvidence')
-      const [reference] = parseReferenceDeck([entry])
+      // A catalog describes compositions; only the sampler assigns deck sites, roles and styles.
+      const [reference] = parseReferenceDeck([
+        { ...entry, site: undefined, role: undefined, style: undefined },
+      ])
       return [
         {
           ...reference!,

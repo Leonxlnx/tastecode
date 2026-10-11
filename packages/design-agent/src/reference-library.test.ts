@@ -500,6 +500,31 @@ describe('reviewed reference library', () => {
       selectReviewedReferences({ ...brief, requiredContent: ['Hero', 'Pricing'] }, references),
     ).toHaveLength(1)
   })
+  it('round-trips deck sites, roles and the anchor style while old decks still parse', () => {
+    const saved = {
+      id: 'studio-hero',
+      family: 'hero',
+      cue: 'Centered portrait collage.',
+      imagePath: '/library/hero.webp',
+    }
+    expect(parseReferenceDeck([saved])).toEqual([saved])
+    const deck = [
+      { ...saved, site: 'example.com', role: 'anchor', style: 'Quiet serif studio.' },
+      { ...saved, id: 'studio-about', family: 'about', site: 'example.com', role: 'same-site' },
+      { ...saved, id: 'other-faq', family: 'faq', site: 'other.example', role: 'similar-site' },
+      { ...saved, id: 'any-footer', family: 'footer', role: 'fallback' },
+    ]
+    expect(parseReferenceDeck(JSON.parse(JSON.stringify(deck)))).toEqual(deck)
+    expect(() => parseReferenceDeck([{ ...saved, role: 'primary' }])).toThrow('studio-hero.role')
+    expect(() => parseReferenceDeck([{ ...saved, site: 7 }])).toThrow('studio-hero.site')
+
+    const root = library()
+    save(root, [{ ...entry, site: 'claimed.example', role: 'anchor', style: 'Claimed.' }])
+    const [loaded] = loadReviewedReferences(root)
+    expect(loaded).not.toHaveProperty('site')
+    expect(loaded).not.toHaveProperty('role')
+    expect(loaded).not.toHaveProperty('style')
+  })
   it('rejects duplicate identifiers and corrupt selected images with actionable errors', () => {
     const root = library()
     save(root, [entry, entry])

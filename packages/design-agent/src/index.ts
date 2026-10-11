@@ -50,11 +50,13 @@ export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
   lockPageReferenceDirections,
   REFERENCE_DIRECTIONS,
+  REFERENCE_ROLES,
   referenceDirectionAttachmentPath,
   referenceDirectionAttachments,
   referenceDirectionsForPage,
   selectReferenceDirectionDeck,
   type ReferenceDirection,
+  type ReferenceRole,
 } from './reference-directions.js'
 export {
   assertPageCopy,

@@ -3,6 +3,14 @@ import type { BrandSystem } from './brand.js'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { WEBSITE_LAYOUT_FAMILIES, type PageBlueprint, type PageLayoutFamily } from './page.js'
 
+/**
+ * How the sampler related a deck entry to the page's design language. The `anchor` defines it;
+ * `same-site` entries come from the anchor's source site, `similar-site` entries from the most
+ * similar profiled sites, and `fallback` entries from the uniform pool.
+ */
+export const REFERENCE_ROLES = ['anchor', 'same-site', 'similar-site', 'fallback'] as const
+export type ReferenceRole = (typeof REFERENCE_ROLES)[number]
+
 export interface ReferenceDirection {
   id: string
   family: PageLayoutFamily
@@ -12,6 +20,12 @@ export interface ReferenceDirection {
   source?: string
   group?: string
   tags?: string[]
+  /** Source host without `www.`; references from one site share one design language. */
+  site?: string
+  /** Set on sampled decks; absent on catalog entries and decks saved before anchor sampling. */
+  role?: ReferenceRole
+  /** One-line design-language summary of the anchor's source site; only on the anchor. */
+  style?: string
 }
 
 function direction(id: string, family: PageLayoutFamily, cue: string): ReferenceDirection {
