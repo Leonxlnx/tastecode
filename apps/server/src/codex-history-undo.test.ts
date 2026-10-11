@@ -84,7 +84,7 @@ it('undoes an imported Codex turn that edited a file twice, created and deleted 
 
   expect(diff.match(/^diff --git .*$/gm)).toEqual(
     ['f.txt', 'g.txt', 'new.txt', 'bare.txt', 'old.txt', '__init__.py'].map(
-      (name) => `diff --git a/${root}/${name} b/${root}/${name}`,
+      (name) => `diff --git a/${name} b/${name}`,
     ),
   )
   await reverseUnifiedDiff(repo, diff)

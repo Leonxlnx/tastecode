@@ -992,5 +992,6 @@ export function removeOptimisticMessage(state: ThreadState, itemId: string): Thr
   const items = copyMaterializedItems(state)
   items.splice(index, 1)
   itemIndexes.delete(items)
-  return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
+  const liveStart = index < state.liveStart ? state.liveStart - 1 : state.liveStart
+  return { ...state, items, liveItems: EMPTY_LIVE_ITEMS, liveStart }
 }

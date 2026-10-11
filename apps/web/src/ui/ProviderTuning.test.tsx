@@ -1,6 +1,15 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import type { Capabilities, Model, ProviderId, ProviderStatus } from '@harness/contracts'
 import { choicesFor } from '../model-catalog.js'
 import { TestTransport } from '../test-transport.js'
@@ -537,5 +546,41 @@ describe('useProviderContextSettings', () => {
     expect(screen.getByRole('alert').textContent).toBe(
       'Could not save the context setting. This provider cannot switch automatic compaction off.',
     )
+  })
+
+  it('reports a refused save even while another provider is saving', async () => {
+    const settle = new Map<ProviderId, { resolve: (map: object) => void; reject: () => void }>()
+    const transport = new TestTransport((method, params) => {
+      if (method === 'providers.contextSettings') return { 'claude-code': { compactAt: 60 } }
+      if (method === 'providers.updateContextSettings') {
+        return new Promise((resolve, reject) =>
+          settle.set((params as { provider: ProviderId }).provider, {
+            resolve,
+            reject: () => reject(new Error('Refused.')),
+          }),
+        )
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    const { result } = renderHook(() => useProviderContextSettings(transport, true))
+    await waitFor(() => expect(result.current.state.phase).toBe('ready'))
+
+    act(() => result.current.update('claude-code', { compactAt: 'off' }))
+    act(() => result.current.update('codex', { compactAt: 50 }))
+    await act(async () => settle.get('claude-code')?.reject())
+
+    expect(result.current.errors['claude-code']).toBe('Refused.')
+    expect(result.current.state).toEqual({
+      phase: 'ready',
+      settings: { 'claude-code': { compactAt: 60 }, codex: { compactAt: 50 } },
+    })
+    await act(async () =>
+      settle.get('codex')?.resolve({ 'claude-code': { compactAt: 60 }, codex: { compactAt: 50 } }),
+    )
+    expect(result.current.errors['claude-code']).toBe('Refused.')
+    expect(result.current.state).toEqual({
+      phase: 'ready',
+      settings: { 'claude-code': { compactAt: 60 }, codex: { compactAt: 50 } },
+    })
   })
 })

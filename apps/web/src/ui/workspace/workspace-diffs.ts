@@ -35,6 +35,10 @@ export function workspaceDiffCollection(
         continue
       }
 
+      // The parser splits an unquoted header with spaces at the wrong " b/", stops a
+      // ---/+++ name at a tab and never unquotes, so the contract's path is the name.
+      fileDiff.name = file.path
+
       if (file.status === 'renamed' && file.previousPath) {
         fileDiff.prevName = file.previousPath
         fileDiff.type = file.hunks.length === 0 ? 'rename-pure' : 'rename-changed'
@@ -56,7 +60,7 @@ export function workspaceDiffCollection(
 
 export function workspaceDiffFilePatch(file: DiffFile): string {
   const previousPath = file.previousPath ?? file.path
-  const lines = [`diff --git a/${previousPath} b/${file.path}`]
+  const lines = [`diff --git ${gitPath(`a/${previousPath}`)} ${gitPath(`b/${file.path}`)}`]
 
   // Diffs.com reads added and deleted files only from the mode line, not from /dev/null.
   if (file.status === 'added') lines.push('new file mode 100644')
@@ -64,11 +68,15 @@ export function workspaceDiffFilePatch(file: DiffFile): string {
 
   if (file.hunks.length === 0) {
     if (file.status === 'renamed') {
-      lines.push('similarity index 100%', `rename from ${previousPath}`, `rename to ${file.path}`)
+      lines.push(
+        'similarity index 100%',
+        `rename from ${gitPath(previousPath)}`,
+        `rename to ${gitPath(file.path)}`,
+      )
     }
   } else {
-    const oldPath = file.status === 'added' ? '/dev/null' : `a/${previousPath}`
-    const newPath = file.status === 'deleted' ? '/dev/null' : `b/${file.path}`
+    const oldPath = file.status === 'added' ? '/dev/null' : gitPath(`a/${previousPath}`)
+    const newPath = file.status === 'deleted' ? '/dev/null' : gitPath(`b/${file.path}`)
     lines.push(`--- ${oldPath}`, `+++ ${newPath}`)
   }
 
@@ -82,6 +90,27 @@ export function workspaceDiffFilePatch(file: DiffFile): string {
   }
 
   return `${lines.join('\n')}\n`
+}
+
+const GIT_PATH_ESCAPES = new Map([
+  ['\u0007', 'a'],
+  ['\b', 'b'],
+  ['\t', 't'],
+  ['\n', 'n'],
+  ['\v', 'v'],
+  ['\f', 'f'],
+  ['\r', 'r'],
+  ['"', '"'],
+  ['\\', '\\'],
+])
+
+/** C-quote a path as git does, so a quote, backslash or control character keeps its line intact. */
+function gitPath(path: string): string {
+  const quoted = path.replace(
+    /["\\\p{Cc}]/gu,
+    (char) => `\\${GIT_PATH_ESCAPES.get(char) ?? char.charCodeAt(0).toString(8).padStart(3, '0')}`,
+  )
+  return quoted === path ? path : `"${quoted}"`
 }
 
 export function workspaceDiffItemId(path: string): string {

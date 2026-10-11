@@ -75,6 +75,17 @@ describe('desktopPath', () => {
     )
   })
 
+  it.each([
+    ['darwin', '/usr/bin', '/Users/tester', path.posix],
+    ['win32', 'C:\\Windows\\System32', 'C:\\Users\\tester', path.win32],
+  ] as const)(
+    'finds the official Grok install on %s, which a stale PATH misses',
+    (platform, current, home, flavor) => {
+      const result = desktopPath(current, { platform, home, env: {} })
+      expect(result.split(flavor.delimiter)).toContain(flavor.join(home, '.grok', 'bin'))
+    },
+  )
+
   it('writes the desktop-safe PATH back onto the given environment', () => {
     const home = process.platform === 'win32' ? 'C:\\Users\\tester' : '/Users/tester'
     const env: NodeJS.ProcessEnv = {
@@ -140,6 +151,19 @@ describe('isInstalled', () => {
     await expect(commandOnPath(command, guiPath, env)).resolves.toBe(false)
     await expect(isInstalled(command, env)).resolves.toBe(true)
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'does not take a directory named like the command for an installed CLI',
+    async () => {
+      const home = mkdtempSync(path.join(os.tmpdir(), 'harness-directory-cli-'))
+      roots.push(home)
+      const command = `harness-directory-cli-${process.pid}`
+      mkdirSync(path.join(home, 'bin', command), { recursive: true })
+      const env: NodeJS.ProcessEnv = { HOME: home, PATH: path.join(home, 'bin') }
+
+      await expect(isInstalled(command, env)).resolves.toBe(false)
+    },
+  )
 })
 
 function commandOnPath(

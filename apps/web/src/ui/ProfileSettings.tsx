@@ -17,7 +17,7 @@ import {
 import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import '../styles/profile-settings.css'
 
 // Words to strike a seal from when experimenting: concrete, varied in
@@ -171,6 +171,7 @@ export function ProfileSettings(props: {
     setTrial(undefined)
   }
   const onTrialKey = (event: ReactKeyboardEvent) => {
+    if (isComposingKey(event)) return
     if (isConfirmEnter(event)) keepTrial()
     if (event.key !== 'Escape') return
     // Leave the trial, not Settings.

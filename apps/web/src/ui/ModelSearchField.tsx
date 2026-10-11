@@ -1,5 +1,6 @@
 import { useRef } from 'react'
 import { IconSearch as Search, IconX as X } from '@tabler/icons-react'
+import { isComposingKey } from '../shortcuts.js'
 import '../styles/model-search.css'
 
 export function ModelSearchField(props: {
@@ -28,6 +29,7 @@ export function ModelSearchField(props: {
         spellCheck={false}
         onChange={(event) => props.onChange(event.currentTarget.value)}
         onKeyDown={(event) => {
+          if (isComposingKey(event)) return
           if ((event.key === 'ArrowDown' || event.key === 'ArrowUp') && props.onNavigate) {
             event.preventDefault()
             event.stopPropagation()

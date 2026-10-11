@@ -4,6 +4,7 @@ import { Store } from './store.js'
 import { storeLocation } from './data-location.js'
 import { checkpointRepository, clearSnapshotRefs, syncCheckpointRefs } from './checkpoint.js'
 import { acquireDataLease } from './data-lease.js'
+import { resolveWorkspacePath } from './orchestrator.js'
 
 export const HISTORY_HELP = `History commands:
   harness history stats
@@ -111,7 +112,9 @@ export async function runHistoryCli(
       return roots.get(directory)
     }
     const entryPath = (entry: (typeof priorRefs)[number]) =>
-      entry.worktreePath && existsSync(entry.worktreePath) ? entry.worktreePath : entry.projectPath
+      entry.worktreePath && existsSync(entry.worktreePath)
+        ? entry.worktreePath
+        : resolveWorkspacePath(entry.projectPath)
     const commitsByRepo = new Map<string, Set<string>>()
     // Resolve groups before deleting anything. One shared ref namespace is
     // synchronized once, with the union of every retained worktree's commits.

@@ -558,7 +558,9 @@ The rules that solve it:
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
-   must not consume layout, DOM, or image-preview work.
+   must not consume layout, DOM, parsing, or image-preview work: a closed row decides that it
+   can open from its arguments, or from its output once per item, and builds its detail only
+   when it mounts.
 6. **Collapse huge blocks by default** — better UX and better performance.
 7. **Never mount full history on open.** Last N turns, fetch older on demand.
 8. **Partial background caches do not grow a second transcript.** At most eight inactive
@@ -580,6 +582,8 @@ The rules that solve it:
 | Cold start → interactive                | < 1.5 s                  |
 | Switch sessions                         | < 100 ms                 |
 | Idle memory, 5 sessions                 | < 500 MB                 |
+| Collapsed 300-call activity, 37.5 MiB   | < 8 MiB, < 200 elements  |
+| Same activity, reopened and closed      | < 2 MiB retained         |
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
@@ -649,4 +653,5 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
 | 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
+| 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |

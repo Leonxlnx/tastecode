@@ -7,8 +7,14 @@ import {
 } from '@tabler/icons-react'
 import type { LiveItemUpdate } from '../thread-store.js'
 import type { ThreadFrameStore } from '../thread-frame-store.js'
-import { createThreadSearchIndexer, findThreadSearchHits } from '../thread-search-index.js'
-import { isConfirmEnter } from '../shortcuts.js'
+import {
+  createLiveThreadSearch,
+  createThreadSearchIndexer,
+  findThreadSearchHits,
+  mergeThreadSearchHits,
+  NO_LIVE_THREAD_SEARCH,
+} from '../thread-search-index.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 
 /**
  * Find within the open thread.
@@ -47,9 +53,17 @@ export function ThreadSearch(props: {
   // of lowercasing the whole transcript again for every typed character.
   const projectSearchIndex = useMemo(createThreadSearchIndexer, [props.threadId])
   const searchIndex = projectSearchIndex(items)
+  // A streamed delta publishes a new liveItems map every frame. Only structural
+  // updates rescan settled rows; deltas search the live rows' new tails.
+  const settledHits = useMemo(
+    () => (term ? findThreadSearchHits(searchIndex, undefined, term) : []),
+    [items, searchIndex, term],
+  )
+  const searchLiveItems = useMemo(createLiveThreadSearch, [props.threadId])
+  const liveSearch = term ? searchLiveItems(liveItems, term) : NO_LIVE_THREAD_SEARCH
   const hits = useMemo(
-    () => (term ? findThreadSearchHits(searchIndex, liveItems, term) : []),
-    [items, liveItems, searchIndex, term],
+    () => mergeThreadSearchHits(settledHits, liveSearch),
+    [settledHits, liveSearch],
   )
   const currentCursor = Math.min(cursor, Math.max(0, hits.length - 1))
 
@@ -93,6 +107,7 @@ export function ThreadSearch(props: {
           jumped.current = false
         }}
         onKeyDown={(e) => {
+          if (isComposingKey(e)) return
           if (e.key === 'Escape') props.onClose()
           if (isConfirmEnter(e)) advance(e.shiftKey)
         }}

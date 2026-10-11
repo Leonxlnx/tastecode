@@ -37,6 +37,18 @@ OS read time is included in the sampling interval, so a slow read does not add a
 full second of delay. The report retains every sample and the transient peak. It does not force garbage
 collection, unload the page, purge caches, or change GPU flags.
 
+After the idle capture, a fresh window mounts one finished turn with 300 tool calls and
+37.5 MiB of plain, command and JSON output, collapsed, over a store that already holds that
+text. The main process reads the heap through Chromium's debugger after three forced
+garbage collections between steps. The collapsed activity must stay below 200 elements and
+add less than 8 MiB of heap; opening it must mount 300 rows and exactly the one output that
+was opened. One open and close warms up first-open costs such as lazily loaded code; after
+a second close no row or output may remain and the heap must stay less than 2 MiB above the
+reading taken before that second open. On Linux with Electron 43 the collapsed activity added
+1.4 MiB; mounting every output while collapsed, as before
+[#1013](https://github.com/Leonxlnx/tastecode/issues/1013), added 29 MiB and 4,707 elements.
+The fixture opens its own window, so the memory figures above stay unchanged.
+
 Keep the machine otherwise quiet during measurement. A failure is a failed check; inspect
 the full report before drawing a conclusion. Run this on each release OS. Unit tests
 cover the accounting and thresholds; they do not replace real Electron measurements.

@@ -235,6 +235,18 @@ describe('JSON-RPC failure lifecycle', () => {
     expect(failure).toHaveBeenCalledTimes(1)
   })
 
+  it('settles a final reply without a trailing newline before the close fails calls', async () => {
+    const process = child()
+    const rpc = transport(process)
+    const pending = rpc.request('final')
+
+    const ended = new Promise((resolve) => process.stdout.once('end', resolve))
+    process.stdout.end('{"jsonrpc":"2.0","id":1,"result":"unterminated"}')
+    await ended
+    process.emit('close', 0)
+    await expect(pending).resolves.toBe('unterminated')
+  })
+
   it('keeps legacy protocol errors and reports the same failure once', async () => {
     const process = child()
     const failure = vi.fn()

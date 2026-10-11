@@ -1,4 +1,5 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef } from 'react'
+import { isComposingKey } from '../shortcuts.js'
 
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -13,6 +14,17 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
   close.current = onClose
 
   useEffect(() => {
+    // A menu returns focus to its trigger in a layout effect, after this dialog
+    // rendered from one of its items. A field that autofocused inside the
+    // panel keeps the opener read during render.
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      active !== document.body &&
+      !panel.current?.contains(active)
+    ) {
+      previousFocus.current = active
+    }
     if (!panel.current?.contains(document.activeElement)) panel.current?.focus()
     return () => {
       if (previousFocus.current?.isConnected) previousFocus.current.focus()
@@ -23,6 +35,7 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
     // The app owns global shortcuts on window. A modal must not let those
     // commands mutate the surface hidden underneath it.
     event.stopPropagation()
+    if (isComposingKey(event)) return
     if (event.key === 'Escape' && !event.defaultPrevented) {
       event.preventDefault()
       close.current()

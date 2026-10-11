@@ -492,7 +492,7 @@ function PullRequestSummary(props: {
       const pending = props.transport
         .request('pullRequests.metadataOptions', {
           repository: detail.repository,
-          ...(refresh ? { includedValue: true } : {}),
+          ...(refresh ? { refresh: true } : {}),
         })
         .then((next) => {
           metadataOptionsRef.current = next

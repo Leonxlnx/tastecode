@@ -72,7 +72,7 @@ export async function switchWorkspaceBranch(path: string, branch: string): Promi
   if (!branches.includes(branch)) throw new Error(`unknown local branch: ${branch}`)
 
   try {
-    await run('git', ['switch', '--quiet', branch], {
+    await run('git', ['switch', '--quiet', '--end-of-options', branch], {
       cwd: path,
       windowsHide: true,
       timeout: 10_000,

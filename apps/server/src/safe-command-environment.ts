@@ -16,7 +16,11 @@ export function commandRuntimeDirectory(): string {
   return path.join(os.tmpdir(), leaf)
 }
 
-function ensurePrivateDirectory(directory: string): void {
+/** Creates a user-only directory, refusing one another user created or redirected first. */
+export function ensurePrivateDirectory(
+  directory: string,
+  label = 'command runtime directory',
+): void {
   if (process.platform === 'win32') {
     mkdirSync(directory, { recursive: true })
     return
@@ -32,21 +36,16 @@ function ensurePrivateDirectory(directory: string): void {
   // than tightening — or following — someone else's target.
   const stats = lstatSync(directory)
   if (stats.isSymbolicLink()) {
-    throw new Error(
-      `Refusing to use symlinked command runtime directory at ${directory}. ` +
-        `Remove it and retry.`,
-    )
+    throw new Error(`Refusing to use symlinked ${label} at ${directory}. Remove it and retry.`)
   }
   if (!stats.isDirectory()) {
     throw new Error(
-      `Refusing to use command runtime directory at ${directory}: not a directory. ` +
-        `Remove it and retry.`,
+      `Refusing to use ${label} at ${directory}: not a directory. Remove it and retry.`,
     )
   }
   if (typeof process.getuid === 'function' && stats.uid !== process.getuid()) {
     throw new Error(
-      `Refusing to use command runtime directory at ${directory}: owned by another user. ` +
-        `Remove it and retry.`,
+      `Refusing to use ${label} at ${directory}: owned by another user. Remove it and retry.`,
     )
   }
   // Tightens a directory left readable by an older build.
