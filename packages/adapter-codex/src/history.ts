@@ -187,14 +187,21 @@ async function filesSignature(home: string, files: string[]): Promise<string> {
 
 async function allowedFile(home: string, file: string): Promise<boolean> {
   try {
-    const canonicalHome = await realpath(home)
-    const relative = path.relative(canonicalHome, await realpath(file)).split(path.sep)
-    return (
-      ['sessions', 'archived_sessions'].includes(relative[0] ?? '') &&
-      !relative.includes('..') &&
-      path.extname(file) === '.jsonl' &&
-      (await stat(file)).isFile()
+    const canonical = await realpath(file)
+    // Listing follows a linked sessions folder, so its target is the boundary.
+    const folders = await Promise.all(
+      ['sessions', 'archived_sessions'].map((name) =>
+        realpath(path.join(home, name)).catch(() => undefined),
+      ),
     )
+    const inside = folders.some((folder) => {
+      if (!folder) return false
+      const relative = path.relative(folder, canonical)
+      return (
+        relative !== '' && !path.isAbsolute(relative) && !relative.split(path.sep).includes('..')
+      )
+    })
+    return inside && path.extname(file) === '.jsonl' && (await stat(file)).isFile()
   } catch {
     return false
   }
