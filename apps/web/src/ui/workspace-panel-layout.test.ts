@@ -164,6 +164,18 @@ describe('workspace panel layout', () => {
     expect(css).not.toMatch(/\.workspace-browser__viewports \{[^}]*display: none;/)
   })
 
+  it('gives Temporary chat the main chat narrow gutters in a narrow panel', () => {
+    const narrow = containerBlocks(css, 'workspace-panel (max-width: 480px)')
+
+    expect(appCss).toMatch(
+      /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.thread__col \{[^}]*padding-inline: 14px;/,
+    )
+    expect(narrow).toMatch(
+      /\.workspace-side-chat__conversation \.thread__col,\s*\.workspace-side-chat__skeleton \.thread-skeleton__col \{[^}]*padding-inline: 14px;/,
+    )
+    expect(narrow).toMatch(/\.workspace-side-chat__composer \{[^}]*width: calc\(100% - 28px\);/)
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =
