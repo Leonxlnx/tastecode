@@ -49,18 +49,30 @@ _Rejected:_ everything in Electron main (forecloses the web client). tRPC on the
 to a TypeScript client).
 
 **Closing a terminal ends its foreground job, not everything it ever started.** node-pty's
-`kill()` only sends the shell SIGHUP, which the shell forwards to its jobs and the kernel to
-the foreground group. Before that hangup the server reads the foreground group from a shell it
-forked itself; afterwards it escalates whatever is left of that group to SIGTERM and SIGKILL,
-and SIGKILLs a shell that still ignores SIGHUP after 500 ms. Closing the pane or the chat,
-and server shutdown, wait for that; removing a project starts it without waiting. Background
-jobs stay the shell's business, as in a terminal emulator: `nohup … &`, `disown` and `setsid`
-keep working, and so does a background job that ignores SIGHUP, which the OS cannot tell apart
-from `nohup`. A foreground `nohup` command is the foreground job and is ended. On Windows
-node-pty already terminates every process attached to the closed ConPTY.
+`kill()` only sends the shell SIGHUP; bash and zsh forward it to their jobs, and when the shell
+exits the kernel sends it to the terminal's foreground process group. Before that hangup the
+server reads the foreground group from a shell it forked as a session leader. The group then
+gets a grace period to exit on its own, then SIGTERM, then SIGKILL: three seconds per step when
+a pane or chat closes, shorter steps on server shutdown so it ends inside the desktop's
+three-second force stop. A signal goes out only while every live member of the group is still
+in the closed shell's session, and a job that cannot be stopped is logged instead of failing the
+close. A shell that still ignores SIGHUP after the grace period is SIGKILLed. Closing the pane
+or the chat, and server shutdown, wait for all of this; removing a project starts it without
+waiting.
 
-_Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs, and
-reading sessions needs `/proc`, so it would only work on Linux.
+Only processes outside the foreground group survive. A job put in the background from the
+interactive prompt gets its own group through job control and stays the shell's business, as in
+a terminal emulator: `nohup … &` and `disown` keep working, and so does a background job that
+ignores SIGHUP, which the OS cannot tell apart from `nohup`. `setsid` leaves the group from
+anywhere. Everything else in the foreground group is ended whatever it does with SIGHUP: a
+foreground `nohup` command, and the `&` or `nohup … &` children of a foreground script or of a
+one-shot `run()` command, which run without job control and stay in the group. On Windows
+node-pty already terminates every process attached to the closed ConPTY (read from its source,
+not yet tried on Windows).
+
+_Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs that
+a terminal emulator leaves running. SIGTERM straight after the hangup: it cut off jobs that need
+more than a moment to shut down cleanly.
 
 ---
 
@@ -637,4 +649,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
 | 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
-| 2026-10-11 | Ended a closed terminal's foreground job and a shell that ignores SIGHUP; background jobs stay the shell's.                                                                    |
+| 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
