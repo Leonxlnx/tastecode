@@ -1,5 +1,10 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
-import { EMPTY_LIVE_ITEMS, type LiveItemUpdate, type ThreadState } from './thread-state.js'
+import {
+  EMPTY_LIVE_ITEMS,
+  emptyThread,
+  type LiveItemUpdate,
+  type ThreadState,
+} from './thread-state.js'
 
 export { emptyThread } from './thread-state.js'
 export type { LiveItemUpdate, ThreadState } from './thread-state.js'
@@ -857,6 +862,31 @@ export function reduceEventLog(
   }
   flushDeltas()
   replayItems?.retainIndex()
+  return next
+}
+
+/**
+ * Places an older history page above the loaded transcript. Only its rows,
+ * their turn timing and reviews are taken: usage, plan, diff, pending requests
+ * and the live turn already reflect newer events than anything on the page.
+ */
+export function prependOlderHistory(
+  state: ThreadState,
+  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+  olderCursor: string | null,
+): ThreadState {
+  const current = settleLiveItems(state)
+  const older = reduceEventLog(emptyThread, entries)
+  const rows = older.items.filter((item) => itemIndex(current.items, item.id) < 0)
+  const next: ThreadState = {
+    ...current,
+    items: rows.length === 0 ? current.items : [...rows, ...current.items],
+    liveStart: current.liveStart + rows.length,
+    turnTiming: { ...older.turnTiming, ...current.turnTiming },
+    reviews: { ...older.reviews, ...current.reviews },
+  }
+  if (olderCursor === null) delete next.olderCursor
+  else next.olderCursor = olderCursor
   return next
 }
 

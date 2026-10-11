@@ -315,5 +315,7 @@ function compactRunningTranscript(state: ThreadState): ThreadState {
   delete compacted.usage
   delete compacted.diff
   delete compacted.diffTurnId
+  // Its items are gone, so the cursor no longer marks where they begin.
+  delete compacted.olderCursor
   return compacted
 }
