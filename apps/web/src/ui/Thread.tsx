@@ -1356,12 +1356,7 @@ function lastActivityItemForRender({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
-  const detail =
-    item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
-      ? activityDetail(item)
-      : isContextCompaction(item)
-        ? undefined
-        : (imageViewDetail(item) ?? item.text)
+  const detail = auxDetail(item)
 
   const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
   const expandable = Boolean(detail) && !phase
@@ -1415,20 +1410,29 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         >
           {disclosure.contentMounted ? (
             <div className="aux__reveal-clip">
-              {isImageView(item) && item.status === 'completed' ? (
-                <ViewedImagePreview
-                  reference={detail}
-                  active={disclosure.expanded}
-                  fallbackClassName="aux__out"
-                />
-              ) : (
-                <ActivityDetail item={item} detail={detail} className="aux__out" />
-              )}
+              <AuxDetail item={item} detail={detail} active={disclosure.expanded} />
             </div>
           ) : null}
         </div>
       ) : null}
     </div>
+  )
+}
+
+/** What a standalone row opens to, or nothing beyond its label. */
+function auxDetail(item: Item): string | undefined {
+  return item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
+    ? activityDetail(item)
+    : isContextCompaction(item)
+      ? undefined
+      : (imageViewDetail(item) ?? item.text)
+}
+
+function AuxDetail({ item, detail, active }: { item: Item; detail: string; active: boolean }) {
+  return isImageView(item) && item.status === 'completed' ? (
+    <ViewedImagePreview reference={detail} active={active} fallbackClassName="aux__out" />
+  ) : (
+    <ActivityDetail item={item} detail={detail} className="aux__out" />
   )
 }
 
