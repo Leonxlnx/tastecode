@@ -1,14 +1,19 @@
-import { spawnSync } from 'node:child_process'
+import { execFile, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { promisify } from 'node:util'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
-import { killProcessGroup } from '@harness/proc/kill'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
-// Long enough for a shell to save its history on SIGHUP.
-const HANGUP_GRACE_MS = 500
+// How long each step of a close may take. After SIGHUP the shell and its
+// foreground job get `hangup` to finish a clean shutdown on their own; what is
+// left then gets SIGTERM and `terminate`, then SIGKILL and `kill`. Server
+// shutdown has to end inside the desktop's three-second force stop.
+const CLOSE_STEPS = { hangup: 3_000, terminate: 3_000, kill: 1_000 }
+const SHUTDOWN_STEPS = { hangup: 500, terminate: 600, kill: 300 }
+const CLOSE_POLL_MS = 100
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
 const RETAINED_OUTPUT_SIZE = 200_000
@@ -24,6 +29,16 @@ type SpawnPty = typeof NodePtySpawn
 /** A POSIX shell's parent, own process group and its terminal's foreground group. */
 type ShellProcess = { parent: number; group: number; foreground: number }
 type InspectShell = (pid: number) => ShellProcess | undefined
+type CloseStep = keyof typeof CLOSE_STEPS
+type GroupMember = { pid: number; zombie: boolean }
+/** Reads and signals POSIX process groups; injectable so tests need no real job. */
+type JobControl = {
+  /** The group's members, or undefined when they cannot be read. */
+  members(group: number): Promise<GroupMember[] | undefined>
+  signal(group: number, signal: NodeJS.Signals): void
+}
+
+const execFileAsync = promisify(execFile)
 
 const require = createRequire(import.meta.url)
 let loadedSpawn: SpawnPty | undefined
@@ -141,7 +156,7 @@ export class TerminalManager {
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
   #inspectShell: InspectShell
-  #killProcessGroup: (group: number) => Promise<void>
+  #jobControl: JobControl
   #closeTimeoutMs: number
   readonly #outputScheduler = new TerminalOutputScheduler()
   #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
@@ -154,7 +169,7 @@ export class TerminalManager {
     options: {
       spawnPty?: SpawnPty
       inspectShell?: InspectShell
-      killProcessGroup?: (group: number) => Promise<void>
+      jobControl?: JobControl
       closeTimeoutMs?: number
     } = {},
   ) {
@@ -162,7 +177,7 @@ export class TerminalManager {
     this.#onExit = handlers.onExit
     this.#spawnPty = options.spawnPty ?? spawnPty
     this.#inspectShell = options.inspectShell ?? inspectShell
-    this.#killProcessGroup = options.killProcessGroup ?? killProcessGroup
+    this.#jobControl = options.jobControl ?? processGroups
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -308,11 +323,10 @@ export class TerminalManager {
     // that treats it as "reload" outlives the pane. Read which job holds the
     // terminal now: once the shell exits, nothing records it.
     const shell = this.#ownedShell(entry.process.pid)
-    const foreground = shell && shell.foreground > 1 ? shell.foreground : undefined
+    const job = shell && shell.foreground > 1 ? shell.foreground : undefined
     // Kill first. If node-pty rejects the request synchronously, the terminal
     // remains attached and a later close can retry instead of losing it.
     entry.process.kill()
-    if (shell) this.#killIfHangupIgnored(entry)
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
@@ -323,12 +337,9 @@ export class TerminalManager {
     // pane down, so those late chunks must not be broadcast for its id.
     entry.output.dispose()
     entry.outputBuffer.dispose()
-    // The shell's exit already sent that job SIGHUP; whatever survived it gets
-    // SIGTERM, then SIGKILL. Background jobs are left to the shell, so `nohup`
-    // and `disown` keep their usual meaning.
-    const closing = this.#boundedExit(terminalId, entry.exited).then(() =>
-      foreground === undefined ? undefined : this.#killProcessGroup(foreground),
-    )
+    const exitedInTime = this.#boundedExit(terminalId, entry.exited)
+    void exitedInTime.catch(() => undefined)
+    const closing = this.#finishClose(entry, shell !== undefined, exitedInTime, job)
     this.#closingById.set(terminalId, closing)
     const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
     threadClosings.add(closing)
@@ -343,23 +354,69 @@ export class TerminalManager {
     return closing
   }
 
-  /**
-   * A shell that ignores SIGHUP would keep its PTY and job alive and fail the
-   * close at its timeout; a closed terminal emulator would at least have
-   * hung up its line. End it once the grace period has passed.
-   */
-  #killIfHangupIgnored(entry: TerminalEntry): void {
-    const timer = setTimeout(() => {
-      // Ask again: a pid that is no longer our session leader is not ours to kill.
-      if (!this.#ownedShell(entry.process.pid)) return
+  async #finishClose(
+    entry: TerminalEntry,
+    owned: boolean,
+    exitedInTime: Promise<void>,
+    job: number | undefined,
+  ): Promise<void> {
+    // A shell that ignores SIGHUP would keep its PTY and job alive and fail the
+    // close at its timeout; a closed terminal emulator would at least have
+    // hung up its line. Ask again first: a pid that is no longer our session
+    // leader is not ours to kill.
+    if (
+      owned &&
+      !(await this.#settlesWithin(entry.exited, 'hangup')) &&
+      this.#ownedShell(entry.process.pid)
+    ) {
       try {
         entry.process.kill('SIGKILL')
       } catch {
         // The exit, or the bounded close timeout, reports the outcome.
       }
-    }, HANGUP_GRACE_MS)
-    timer.unref()
-    void entry.exited.then(() => clearTimeout(timer))
+    }
+    await exitedInTime
+    // The shell's exit sent its foreground job SIGHUP. Background jobs are
+    // left to the shell, as a terminal emulator leaves them.
+    if (job !== undefined) await this.#stopJob(job)
+  }
+
+  async #stopJob(group: number): Promise<void> {
+    if (await this.#jobEnds(group, 'hangup')) return
+    this.#jobControl.signal(group, 'SIGTERM')
+    if (await this.#jobEnds(group, 'terminate')) return
+    this.#jobControl.signal(group, 'SIGKILL')
+    if (await this.#jobEnds(group, 'kill')) return
+    throw new Error(`terminal job ${group} did not stop after SIGKILL`)
+  }
+
+  async #jobEnds(group: number, step: CloseStep): Promise<boolean> {
+    const startedAt = Date.now()
+    while (true) {
+      const members = await this.#jobControl.members(group)
+      // Members that exited stay in the group as zombies until their new
+      // parent reaps them, which a container's pid 1 may do only lazily. A
+      // group that cannot be read is not escalated blindly.
+      if (!members || members.every((member) => member.zombie)) return true
+      if (Date.now() - startedAt >= this.#stepMs(step)) return false
+      await delay(CLOSE_POLL_MS)
+    }
+  }
+
+  /** Whether `promise` settles within a step; a shutdown shortens the step. */
+  async #settlesWithin(promise: Promise<void>, step: CloseStep): Promise<boolean> {
+    const settled = promise.then(() => true)
+    const startedAt = Date.now()
+    while (true) {
+      const remaining = this.#stepMs(step) - (Date.now() - startedAt)
+      if (remaining <= 0) return false
+      const tick = delay(Math.min(remaining, CLOSE_POLL_MS)).then(() => false)
+      if (await Promise.race([settled, tick])) return true
+    }
+  }
+
+  #stepMs(step: CloseStep): number {
+    return (this.#closingAll ? SHUTDOWN_STEPS : CLOSE_STEPS)[step]
   }
 
   /** The shell behind a PTY, only when this server forked it as a session leader. */
@@ -449,6 +506,53 @@ async function settleAll(waiters: Iterable<Promise<void>>, message: string): Pro
     .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
     .map((result) => result.reason)
   if (errors.length > 0) throw new AggregateError(errors, message)
+}
+
+/** A poll sleep that never keeps a closing server alive on its own. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms).unref())
+}
+
+const processGroups: JobControl = {
+  async members(group) {
+    try {
+      globalThis.process.kill(-group, 0)
+    } catch (error) {
+      if (errorCode(error) === 'ESRCH') return []
+    }
+    try {
+      // One -o per column: BSD ps on macOS takes everything after the first
+      // `=` as that column's header.
+      const { stdout } = await execFileAsync(
+        'ps',
+        ['-A', '-o', 'pid=', '-o', 'pgid=', '-o', 'stat='],
+        {
+          encoding: 'utf8',
+          timeout: 1_000,
+          maxBuffer: 4 * 1024 * 1024,
+        },
+      )
+      return stdout.split('\n').flatMap((line) => {
+        const row = /^\s*(\d+)\s+(\d+)\s+(\S+)/.exec(line)
+        return row && Number(row[2]) === group
+          ? [{ pid: Number(row[1]), zombie: row[3]!.startsWith('Z') }]
+          : []
+      })
+    } catch {
+      return undefined
+    }
+  },
+  signal(group, signal) {
+    try {
+      globalThis.process.kill(-group, signal)
+    } catch (error) {
+      if (errorCode(error) !== 'ESRCH') throw error
+    }
+  },
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined
 }
 
 function isFolder(folder: string): boolean {
