@@ -322,6 +322,70 @@ describe('streamed tool output', () => {
     expect(secondDone.item.text ?? secondDone.item.command ?? '').not.toContain('first output')
   })
 
+  it('gives a call that reuses a finished call’s id its own item', () => {
+    const streamer = new Streamer('t1')
+    // Grok reuses tool call ids one call after another.
+    const run = (command: string, output: string) => [
+      ...streamer.translate({
+        sessionUpdate: 'tool_call',
+        toolCallId: 'tool-1',
+        status: 'in_progress',
+        title: command,
+        kind: 'execute',
+      }),
+      ...streamer.translate({
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [{ type: 'content', content: { type: 'text', text: output } }],
+      }),
+    ]
+    const first = run('echo first', 'first output')
+    const second = run('echo second', 'second output')
+
+    const firstDone = first.find((entry) => entry.type === 'item.completed')
+    const [secondStarted, secondDone] = second
+    if (
+      firstDone?.type !== 'item.completed' ||
+      secondStarted?.type !== 'item.started' ||
+      secondDone?.type !== 'item.completed'
+    ) {
+      throw new Error('shape')
+    }
+    expect(firstDone.item.id).toBe('tool-1')
+    expect(secondStarted.item.id).not.toBe(firstDone.item.id)
+    expect(secondDone.item.id).toBe(secondStarted.item.id)
+    expect(secondStarted.item.text).toBeUndefined()
+    expect(secondDone.item).toMatchObject({ command: 'echo second', text: 'second output' })
+  })
+
+  it('gives a permissioned call that reuses a finished call’s id its own item', () => {
+    const streamer = new Streamer('t1')
+    const first = streamer.translate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      title: 'echo first',
+      kind: 'execute',
+      content: [{ type: 'content', content: { type: 'text', text: 'first output' } }],
+    })
+    streamer.note('tool-1', { kind: 'edit', title: 'notes.md' })
+    const second = streamer.translate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tool-1',
+      status: 'completed',
+    })
+
+    const firstDone = first.find((entry) => entry.type === 'item.completed')
+    const secondDone = second.find((entry) => entry.type === 'item.completed')
+    if (firstDone?.type !== 'item.completed' || secondDone?.type !== 'item.completed') {
+      throw new Error('shape')
+    }
+    expect(secondDone.item.id).not.toBe(firstDone.item.id)
+    expect(secondDone.item).toMatchObject({ type: 'file_change', path: 'notes.md' })
+    expect(secondDone.item.text).toBeUndefined()
+  })
+
   it('starts a new thought after a tool call instead of joining the first', () => {
     const streamer = new Streamer('t1')
     const first = streamer.translate(chunk('agent_thought_chunk', 'plan A'))

@@ -27,6 +27,9 @@ export {
  * Chunks split mid-line constantly, so the partial tail has to survive between
  * reads — parsing per chunk instead of per line is the bug every one of these
  * starts with.
+ *
+ * `onError` also receives whatever `onValue` throws. That is the consumer's
+ * failure, not a broken stream, so the lines after it are still read.
  */
 export function readNdjson(
   stream: NodeJS.ReadableStream,
@@ -39,10 +42,17 @@ export function readNdjson(
   const onLine = (raw: string) => {
     const line = raw.trim()
     if (line === '') return
+    let value: JsonRpcValue
     try {
-      onValue(parseJsonValue(line))
+      value = parseJsonValue(line)
     } catch {
       onUnparsable?.(line)
+      return
+    }
+    try {
+      onValue(value)
+    } catch (error) {
+      options.onError?.(error instanceof Error ? error : new Error(String(error)))
     }
   }
   stream.setEncoding('utf8')

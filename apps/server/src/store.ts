@@ -217,7 +217,8 @@ const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
+// v2 reopens requests asked again after their answer; the rebuild settles them.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
@@ -630,7 +631,7 @@ type ThreadPayloadRow = { thread_id: string; payload: string }
 type SearchableEntry = { turnId: string; createdAt?: number | undefined; text: string }
 type ActiveLifecycleRow = { woke_at: SqliteInteger | null; keep_active: SqliteInteger }
 type RecoveryMutation =
-  | { kind: 'start'; eventType: string; lifecycleKey: string }
+  | { kind: 'start'; eventType: string; lifecycleKey: string; reopens?: true }
   | { kind: 'terminal'; lifecycleKey: string }
   | { kind: 'error' }
 type DerivedIndexRebuild = {
@@ -893,8 +894,10 @@ export class Store {
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
          event_type = excluded.event_type,
          started_seq = excluded.started_seq,
+         terminal_seq = NULL,
          payload = excluded.payload
-       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+       WHERE recovery_lifecycles.terminal_seq IS NULL
+          OR (? AND recovery_lifecycles.terminal_seq < excluded.started_seq)`,
     )
     this.#settleRecoveryLifecycle = this.#db.prepare(
       `INSERT INTO recovery_lifecycles
@@ -3111,6 +3114,7 @@ export class Store {
         mutation.eventType,
         seq,
         payload,
+        mutation.reopens ? 1 : 0,
       )
       return
     }
@@ -3704,11 +3708,15 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
       }
     case 'item.completed':
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
+    // A request id asked again after its answer is a new question (a retried
+    // command reuses its id), not a late echo like an item started after it
+    // completed, so it reopens the lifecycle.
     case 'approval.requested':
       return {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `approval:${event.request.id}`,
+        reopens: true,
       }
     case 'approval.resolved':
       return { kind: 'terminal', lifecycleKey: `approval:${event.id}` }
@@ -3717,6 +3725,7 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `input:${event.request.id}`,
+        reopens: true,
       }
     case 'user_input.resolved':
       return { kind: 'terminal', lifecycleKey: `input:${event.id}` }

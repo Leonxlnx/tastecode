@@ -186,6 +186,30 @@ describe('Markdown inline references', () => {
     expect(revealProjectFile).toHaveBeenCalledWith(path, project)
   })
 
+  it('resolves relative links against the project instead of the app origin', async () => {
+    vi.mocked(revealProjectFile).mockClear()
+    const { container } = render(
+      <Markdown
+        text={
+          'See [a.ts](./src/a.ts), [b.ts](src/b.ts#L4), [docs](//example.com/docs), [up](../secret.ts) and [bad](javascript:alert(1)).'
+        }
+        projectPath="/home/u/project"
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: 'a.ts' }))
+    fireEvent.click(screen.getByRole('button', { name: 'b.ts' }))
+    expect(vi.mocked(revealProjectFile).mock.calls).toEqual([
+      ['/home/u/project/src/a.ts', '/home/u/project'],
+      ['/home/u/project/src/b.ts', '/home/u/project'],
+    ])
+    expect(screen.getByRole('link', { name: 'docs' }).getAttribute('href')).toBe(
+      'https://example.com/docs',
+    )
+    expect(screen.getByText('This file is outside the selected project')).toBeTruthy()
+    expect(container.querySelector('a[href^="javascript:"]')).toBeNull()
+  })
+
   it('shows a retryable error when the native reveal request fails', async () => {
     vi.mocked(revealProjectFile).mockRejectedValueOnce(new Error('reveal failed'))
     render(
@@ -224,6 +248,34 @@ describe('Markdown inline references', () => {
     )
 
     expect(await screen.findByText('Network file links are not allowed')).toBeTruthy()
+  })
+})
+
+describe('Completed Markdown', () => {
+  it.each(['Match files with **/*.ts in the repo.', 'Hold ^_foo to repeat.', 'Press the ` key.'])(
+    'does not repair finished text as if it were cut off: %s',
+    (text) => {
+      const { container } = render(<CompletedMarkdown text={`${text}\n\nZZEND`} />)
+
+      expect([...container.querySelectorAll('p')].at(-1)?.textContent).toBe('ZZEND')
+    },
+  )
+
+  it('resolves reference-style links against definitions in other blocks', () => {
+    render(
+      <CompletedMarkdown
+        text={
+          'See [the docs][docs] first.\n\n- then [the guide]\n\n[docs]: https://example.com/docs\n[the guide]: https://example.com/guide "Guide"'
+        }
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: 'the docs' }).getAttribute('href')).toBe(
+      'https://example.com/docs',
+    )
+    expect(screen.getByRole('link', { name: 'the guide' }).getAttribute('href')).toBe(
+      'https://example.com/guide',
+    )
   })
 })
 

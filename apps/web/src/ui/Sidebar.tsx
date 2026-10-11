@@ -62,6 +62,7 @@ import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-pref
 import { sidebarRail } from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isComposingKey,
   isConfirmEnter,
   shortcutAria,
   type Keybindings,
@@ -1498,21 +1499,30 @@ const ProjectSessions = memo(function ProjectSessions(props: {
       } as CSSProperties)
     : undefined
 
+  // Deleting or restoring a chat changes the count but must not move the list.
+  // Only a newly active chat, or virtualization switching on (null), re-centres.
+  const centredSessionId = useRef<string | undefined | null>(null)
   useLayoutEffect(() => {
-    if (!virtualized) return
+    if (!virtualized) {
+      centredSessionId.current = null
+      return
+    }
     const list = virtualSessionList.current
     if (!list) return
-    const activeIndex = props.activeSessionId
-      ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
-      : -1
-    const target = Math.max(
-      0,
-      Math.min(
-        activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
-        virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
-      ),
-    )
-    list.scrollTop = activeIndex >= 0 ? target : 0
+    if (centredSessionId.current !== props.activeSessionId) {
+      centredSessionId.current = props.activeSessionId
+      const activeIndex = props.activeSessionId
+        ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+        : -1
+      const target = Math.max(
+        0,
+        Math.min(
+          activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
+          virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
+        ),
+      )
+      list.scrollTop = activeIndex >= 0 ? target : 0
+    }
     updateVirtualRange(list.scrollTop)
   }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
 
@@ -1945,6 +1955,7 @@ function InlineRename(props: {
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
+        if (isComposingKey(e)) return
         if (isConfirmEnter(e)) commit()
         if (e.key === 'Escape') props.onCancel()
       }}

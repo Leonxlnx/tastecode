@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { McpServerConfig } from '@harness/contracts'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
+import { prepareMcpConfig } from './mcp.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
@@ -15,6 +16,42 @@ vi.mock('@harness/proc', async (importOriginal) => ({
     }
   },
 }))
+
+function signInFixture() {
+  const state = { signedIn: false }
+  const rpc = new FakeCodexRpc((method) =>
+    method === 'mcpServerStatus/list'
+      ? {
+          data: [
+            {
+              name: 'docs',
+              serverInfo: state.signedIn
+                ? { name: 'docs', title: null, version: '1.0.0', description: null }
+                : null,
+              authStatus: state.signedIn ? 'oAuth' : 'notLoggedIn',
+              tools: state.signedIn
+                ? { lookup: { name: 'lookup', inputSchema: { type: 'object' } } }
+                : {},
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
+          nextCursor: null,
+        }
+      : method === 'mcpServer/oauth/login'
+        ? { authorizationUrl: 'https://example.com/authorize' }
+        : {},
+  )
+  proc.rpc = rpc
+  return { rpc, state, adapter: new CodexAdapter() }
+}
+
+async function loadedInventory(adapter: CodexAdapter) {
+  await adapter.listMcpServers('t1')
+  await vi.waitFor(async () =>
+    expect(await adapter.listMcpServers('t1')).toMatchObject([{ id: 'docs', resources: [] }]),
+  )
+}
 
 const stdioServer = (id: string): McpServerConfig => ({
   id,
@@ -53,6 +90,101 @@ describe('Codex MCP changes', () => {
           },
         },
       })
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory after a successful MCP sign-in', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+      expect((await adapter.listMcpServers('t1'))[0]?.auth.status).toBe('sign_in_required')
+      await adapter.startMcpOAuth('docs', 't1')
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/oauthLogin/completed', {
+        name: 'docs',
+        threadId: 't1',
+        success: true,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { auth: { status: 'authenticated' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
+      expect(rpc.calls.filter((call) => call.method === 'mcpServerStatus/list')).toHaveLength(2)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory when a server finishes starting', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/startupStatus/updated', {
+        threadId: 't1',
+        name: 'docs',
+        status: 'ready',
+        error: null,
+        failureReason: null,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { startup: { state: 'ready' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('blanks header credentials in the shell environment of every chat', async () => {
+    const rpc = new FakeCodexRpc(() => ({
+      thread: { id: 't1', createdAt: 1_700_000_000 },
+      model: 'fake-model',
+    }))
+    proc.rpc = rpc
+    const options = {
+      mcpServers: [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        } satisfies McpServerConfig,
+      ],
+      mcpCredentials: { 'mcp/docs/auth': 'Bearer secret-value' },
+    }
+    const [variable] = Object.keys(
+      prepareMcpConfig(options.mcpServers, options.mcpCredentials).environment,
+    )
+    const adapter = new CodexAdapter(options)
+    try {
+      await adapter.start()
+      await adapter.startThread(process.cwd())
+      await adapter.resumeThread('t1', process.cwd())
+
+      for (const method of ['thread/start', 'thread/resume']) {
+        expect(rpc.calls.find((call) => call.method === method)?.params).toMatchObject({
+          config: {
+            mcp_servers: { docs: { env_http_headers: { Authorization: variable } } },
+            [`shell_environment_policy.set.${variable}`]: '',
+          },
+        })
+      }
     } finally {
       await adapter.dispose()
     }

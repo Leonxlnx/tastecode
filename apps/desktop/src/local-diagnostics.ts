@@ -10,10 +10,13 @@ const STANDALONE_SECRET =
   /(?<![A-Za-z0-9_])(?:sk-(?:proj-|ant-api\d{2}-)?[A-Za-z0-9_-]{16,}|sk_live_[0-9A-Za-z]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{16,}|xox[baprs]-[A-Za-z0-9-]{10,}|xapp-[A-Za-z0-9-]{10,}|npm_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}|https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+){2})(?![A-Za-z0-9_])/g
 const SCHEME_SECRET = /(?<![A-Za-z0-9_])(bearer)(\s+)\S+/gi
 const BASIC_AUTH_SECRET = /(?<![A-Za-z0-9_])(authorization\s*[:=]\s*basic\s+)\S+/gi
-// The key may carry `_`/`-` prefixed words (access_token, GITHUB_TOKEN,
-// x-api-key); the trailing boundary still keeps words like "tokenizer" out.
+// The key may carry any prefix (access_token, GITHUB_TOKEN, x-api-key,
+// accessToken); the trailing boundary still keeps words like "tokenizer" out.
+// The prefix is one flat class: nested repetition here backtracks
+// exponentially on long words such as commit hashes.
 const KEYED_SECRET =
-  /(?<![A-Za-z0-9_-])((?:[A-Za-z0-9]+[_-])*(?:token|api[_-]?key|password|secret))(?![A-Za-z0-9_])(["']?\s*[:=]\s*["']?)[^\s"']+/gi
+  /(?<![A-Za-z0-9_-])([A-Za-z0-9_-]*?(?:token|api[_-]?key|password|secret))(?![A-Za-z0-9_])(["']?\s*[:=]\s*["']?)[^\s"']+/gi
+const URL_CREDENTIAL = /(\b[a-z][\w+.-]*:\/\/[^\s:@/]*:)[^\s@/]+@/gi
 
 export function localDiagnosticsDirectory(userDataDirectory: string): string {
   return path.join(userDataDirectory, 'diagnostics', 'text')
@@ -144,6 +147,7 @@ export function scrub(value: string): string {
   return value
     .replace(PRIVATE_KEY, '[redacted]')
     .replace(STANDALONE_SECRET, '[redacted]')
+    .replace(URL_CREDENTIAL, '$1[redacted]@')
     .replace(/\b[A-Z]:\\Users\\(?:[^\\\r\n]+(?=\\)|[^\\\s]+)/gi, '[home]')
     .replace(/\/(?:Users|home)\/(?:[^/\r\n]+(?=\/)|[^/\s]+)/g, '[home]')
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b/g, '[email]')

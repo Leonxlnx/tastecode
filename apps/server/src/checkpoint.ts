@@ -475,7 +475,14 @@ export async function syncCheckpointRefs(
 
 async function git(cwd: string, args: string[]): Promise<string | undefined> {
   try {
-    const { stdout } = await run('git', args, { cwd, windowsHide: true, timeout: 20000 })
+    // Path lists after an agent generated thousands of files outgrow Node's
+    // 1 MiB default, and the failed call would make undo unavailable.
+    const { stdout } = await run('git', args, {
+      cwd,
+      windowsHide: true,
+      timeout: 20000,
+      maxBuffer: 256 * 1024 * 1024,
+    })
     return args.includes('-z') ? stdout : stdout.trim()
   } catch {
     return undefined

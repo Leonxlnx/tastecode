@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
 
 /**
  * Fixtures captured from claude-code 2.1.220's actual output.
@@ -266,6 +266,29 @@ describe('claude event translation', () => {
     // The shape will change. A session must not die because of a new event.
     expect(toDomainEvents({ type: 'some_future_event' }, 't1')).toEqual([])
     expect(toDomainEvents({}, 't1')).toEqual([])
+  })
+
+  it('keeps the rest of a message when one block carries an unfamiliar content shape', () => {
+    // Server tools such as web search report their errors as an object rather than the
+    // string or block array a tool_result carries.
+    const parsed = ClaudeEventSchema.safeParse({
+      type: 'assistant',
+      message: {
+        id: 'msg_4',
+        content: [
+          {
+            type: 'web_search_tool_result',
+            tool_use_id: 'srvtoolu_1',
+            content: { type: 'web_search_tool_result_error', error_code: 'max_uses_exceeded' },
+          },
+          { type: 'text', text: 'Search is unavailable, so from memory:' },
+        ],
+      },
+    })
+    expect(parsed.success).toBe(true)
+    expect(toDomainEvents(parsed.data!, 't1')).toMatchObject([
+      { item: { type: 'message', text: 'Search is unavailable, so from memory:' } },
+    ])
   })
 
   it('counts cached tokens, which dominate real usage', () => {

@@ -16,7 +16,9 @@ type MutableTreeNode = {
   name: string
   path: string
   children: MutableTreeNode[]
-  childrenByName?: Map<string, MutableTreeNode>
+  // A deleted file and the folder that replaced it share a name, so each kind has its own index.
+  foldersByName?: Map<string, MutableTreeNode>
+  filesByName?: Map<string, MutableTreeNode>
   file?: DiffFile
 }
 
@@ -32,18 +34,26 @@ export function buildReviewTree(files: readonly DiffFile[]): ReviewTreeNode[] {
     for (let index = 0; index < parts.length; index += 1) {
       const part = parts[index]!
       currentPath = currentPath ? `${currentPath}/${part}` : part
-      const childrenByName = (parent.childrenByName ??= new Map())
+      const isFile = index === parts.length - 1
+      const childrenByName = isFile
+        ? (parent.filesByName ??= new Map())
+        : (parent.foldersByName ??= new Map())
       let node = childrenByName.get(part)
       if (!node) {
         node = { name: part, path: currentPath, children: [] }
         childrenByName.set(part, node)
         parent.children.push(node)
       }
-      if (index === parts.length - 1) node.file = file
+      if (isFile) node.file = file
       parent = node
     }
   }
   return finalizeTree(root.children)
+}
+
+/** A file and a folder can share a path, so rendered rows key on both. */
+export function reviewTreeNodeKey(node: ReviewTreeNode): string {
+  return `${node.file ? 'file' : 'folder'}:${node.path}`
 }
 
 /** Project only the currently open rows; virtual rendering consumes this flat order. */

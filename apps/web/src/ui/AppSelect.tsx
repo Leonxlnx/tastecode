@@ -10,7 +10,7 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { IconCheck as Check, IconChevronDown as ChevronDown } from '@tabler/icons-react'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 import { usePopupPresence } from './use-popup-presence.js'
 
@@ -227,7 +227,7 @@ export function AppSelect<Value extends string>(props: {
       }
     }
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || isComposingKey(event)) return
       event.preventDefault()
       closeListbox(true)
     }
@@ -376,6 +376,7 @@ export function AppSelect<Value extends string>(props: {
   }
 
   const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (isComposingKey(event)) return
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault()
       const direction = event.key === 'ArrowDown' ? 1 : -1

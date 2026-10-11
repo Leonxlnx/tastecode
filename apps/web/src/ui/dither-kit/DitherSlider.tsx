@@ -212,20 +212,20 @@ export function DitherSlider({ active, cell = 4 }: { active: boolean; cell?: num
     const setStrengthTarget = (target: number) => {
       const now = performance.now()
       sampleStrength(now)
-      if (reducedMotion) {
-        strengthAnimation = null
-        strength = target
-        stopAnimationFrame()
-        paint()
-        return
-      }
-
       if (strengthAnimation?.to === target || (!strengthAnimation && strength === target)) {
         // Invisible and staying invisible: nothing to paint. Scheduling
         // anyway meant a full canvas repaint per pointer move, app-wide, for
         // every mounted slider at rest. A visible spot still repaints — it
         // follows the pointer.
         if (strengthAnimation || strength > 0) scheduleFrame()
+        return
+      }
+
+      if (reducedMotion) {
+        strengthAnimation = null
+        strength = target
+        stopAnimationFrame()
+        paint()
         return
       }
 

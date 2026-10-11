@@ -209,6 +209,23 @@ describe('ACP approval lifecycle', () => {
     await adapter.dispose()
   })
 
+  it('keeps two pending requests that share a tool call id answerable', async () => {
+    const { adapter, events } = await startedAdapter('ask')
+    const first = activeRpc().requestPermission('execute')
+    const second = activeRpc().requestPermission('execute')
+
+    const ids = events.flatMap((event) =>
+      event.type === 'approval.requested' ? [event.request.id] : [],
+    )
+    expect(ids).toHaveLength(2)
+    expect(ids[1]).not.toBe(ids[0])
+    adapter.respondToApproval(ids[0]!, 'approve')
+    adapter.respondToApproval(ids[1]!, 'deny')
+    await expect(first).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'allow' } })
+    await expect(second).resolves.toEqual({ outcome: { outcome: 'selected', optionId: 'deny' } })
+    await adapter.dispose()
+  })
+
   it('does not start a turn when attachment preparation fails', async () => {
     const current = adapter()
     const events: DomainEvent[] = []

@@ -23,7 +23,8 @@ export function SkillsSettings(props: {
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
-  const [busy, setBusy] = useState<string>()
+  // Per id: one toggle settling must not unlock another switch still in flight.
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [reload, setReload] = useState(0)
   const inventoryGeneration = useRef(0)
   const inventoryContext = useRef<Context | undefined>(undefined)
@@ -51,7 +52,7 @@ export function SkillsSettings(props: {
       errorContext.current = undefined
       setLoading(false)
       setError(undefined)
-      setBusy(undefined)
+      setBusy(new Set())
       return
     }
 
@@ -90,7 +91,7 @@ export function SkillsSettings(props: {
     inventoryContext.current = undefined
     errorContext.current = undefined
     setError(undefined)
-    setBusy(undefined)
+    setBusy(new Set())
     void load()
     const off = props.transport.on('skills.changed', ({ provider, projectPath }) => {
       if (provider === props.provider && projectPath === props.projectPath) void load()
@@ -112,7 +113,7 @@ export function SkillsSettings(props: {
 
   async function toggle(skill: Skill): Promise<void> {
     if (!props.projectPath) return
-    setBusy(skill.id)
+    setBusy((current) => new Set(current).add(skill.id))
     setError(undefined)
     try {
       const { enabled } = await props.transport.request('skills.setEnabled', {
@@ -137,14 +138,14 @@ export function SkillsSettings(props: {
     } catch (cause) {
       if (isCurrentContext()) setError(message(cause))
     } finally {
-      if (isCurrentContext()) setBusy(undefined)
+      if (isCurrentContext()) setBusy(without(skill.id))
     }
   }
 
   async function install(): Promise<void> {
     if (!props.projectPath) return
     setError(undefined)
-    setBusy('install')
+    setBusy((current) => new Set(current).add('install'))
     try {
       const folderPath = await pickSkillFolder()
       if (!folderPath || !isCurrentContext()) return
@@ -167,7 +168,7 @@ export function SkillsSettings(props: {
     } catch (cause) {
       if (isCurrentContext()) setError(message(cause))
     } finally {
-      if (isCurrentContext()) setBusy(undefined)
+      if (isCurrentContext()) setBusy(without('install'))
     }
   }
 
@@ -215,11 +216,11 @@ export function SkillsSettings(props: {
           <button
             className="settings__action"
             type="button"
-            disabled={busy !== undefined}
+            disabled={busy.size > 0}
             onClick={() => void install()}
           >
             <FolderPlus size={14} aria-hidden />
-            {busy === 'install' ? 'Installing…' : 'Install from folder'}
+            {busy.has('install') ? 'Installing…' : 'Install from folder'}
           </button>
         ) : null}
       </header>
@@ -259,7 +260,7 @@ export function SkillsSettings(props: {
               key={skill.id}
               skill={skill}
               configurable={currentInventory.capabilities.configure}
-              busy={busy === skill.id}
+              busy={busy.has(skill.id)}
               onToggle={() => void toggle(skill)}
             />
           ))}
@@ -314,6 +315,14 @@ function SkillRow(props: {
       ) : null}
     </article>
   )
+}
+
+function without(id: string) {
+  return (current: ReadonlySet<string>) => {
+    const next = new Set(current)
+    next.delete(id)
+    return next
+  }
 }
 
 function message(cause: unknown): string {

@@ -10,7 +10,7 @@ import {
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import {
@@ -237,6 +237,7 @@ function SessionSearchComponent(props: {
       aria-modal="true"
       aria-label="Search all chats"
       onKeyDown={(event) => {
+        if (isComposingKey(event)) return
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
@@ -269,6 +270,7 @@ function SessionSearchComponent(props: {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isComposingKey(event)) return
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault()
                 if (displayResults.length === 0) return

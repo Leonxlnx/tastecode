@@ -1,12 +1,25 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { ensurePrivateDirectory } from './safe-command-environment.js'
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1_024 * 1_024
 
 const MAX_BASE64_LENGTH = Math.ceil(MAX_ATTACHMENT_BYTES / 3) * 4
-const DEFAULT_DIRECTORY = path.join(os.tmpdir(), 'TasteCode', 'attachments')
+const DEFAULT_DIRECTORY = attachmentDirectory()
+
+/**
+ * The Linux temp folder is shared by every local user, so a fixed name there
+ * could be created first by someone who can then replace attachments before
+ * the agent reads them. Windows and macOS temp folders are already per user.
+ */
+function attachmentDirectory(): string {
+  if (process.platform === 'win32') return path.join(os.tmpdir(), 'TasteCode', 'attachments')
+  const uid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  const leaf = uid === undefined ? 'tastecode-attachments' : `tastecode-attachments-${uid}`
+  return path.join(os.tmpdir(), leaf)
+}
 
 export async function materializeAttachment(
   input: { name: string; data: string },
@@ -24,7 +37,7 @@ export async function materializeAttachment(
     throw new Error('attachment exceeds the 25 MB limit')
   }
 
-  await mkdir(directory, { recursive: true, mode: 0o700 })
+  ensurePrivateDirectory(directory, 'attachment directory')
   const target = path.join(directory, `${randomUUID()}-${safeFileName(input.name)}`)
   await writeFile(target, bytes, { flag: 'wx', mode: 0o600 })
   return target

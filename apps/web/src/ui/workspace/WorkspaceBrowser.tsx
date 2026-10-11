@@ -98,6 +98,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const guest = useRef<BrowserGuest | null>(null)
   const readyGuest = useRef<BrowserGuest | null>(null)
   const lastNavigationRequest = useRef<string | undefined>(undefined)
+  // Page navigation must not overwrite an address the user is still typing.
+  const editingAddress = useRef(false)
   const [guestReadyRevision, setGuestReadyRevision] = useState(0)
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
@@ -117,7 +119,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         canGoBack: view.canGoBack(),
         canGoForward: view.canGoForward(),
       })
-      if (currentUrl) setAddress(currentUrl)
+      if (currentUrl && !editingAddress.current) setAddress(currentUrl)
       if (currentUrl && pageReady) setHasRenderedPage(true)
     } catch {
       // The guest can detach between an event and this state read. Its next
@@ -155,7 +157,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
       if (url) {
-        setAddress(url)
+        if (!editingAddress.current) setAddress(url)
         setState((current) => ({ ...current, url }))
       }
       syncGuestState()
@@ -269,6 +271,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         return false
       }
 
+      editingAddress.current = false
       setAddress(url)
       setState((current) => ({ ...current, url, loading: true }))
       setError(undefined)
@@ -347,8 +350,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             placeholder="Enter a URL"
             aria-label="Browser address"
             spellCheck={false}
-            onChange={(event) => setAddress(event.target.value)}
+            onChange={(event) => {
+              editingAddress.current = true
+              setAddress(event.target.value)
+            }}
             onFocus={(event) => event.currentTarget.select()}
+            onBlur={() => {
+              editingAddress.current = false
+            }}
           />
           <button
             type="button"

@@ -1,4 +1,6 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -142,9 +144,47 @@ describe('native Codex history', () => {
     expect((await source.list())[0]?.title).toBe('Renamed')
   })
 
+  it('reads the index again after a rewrite that kept its size and modification time', async () => {
+    const { root, file, source } = await store([])
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, name TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'native-session',
+      file,
+      '/project',
+      'Prompt',
+      'First name',
+      1,
+      2,
+    )
+    // Both commits fall into one timestamp tick, so the second keeps this mtime.
+    const tick = new Date(Math.floor(Date.now() / 1000) * 1000)
+    await utimes(database, tick, tick)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(tick.getTime() + 100)
+    try {
+      expect((await source.list())[0]?.title).toBe('First name')
+      db.prepare('UPDATE threads SET name = ?').run('Other name')
+      await utimes(database, tick, tick)
+      now.mockReturnValue(tick.getTime() + 5_000)
+
+      const renamed = (await source.list())[0]
+
+      expect(renamed?.title).toBe('Other name')
+      // An index older than one tick is trusted without reading it again.
+      expect((await source.list())[0]).toBe(renamed)
+    } finally {
+      now.mockRestore()
+      db.close()
+    }
+  })
+
   it('checks indexed rollouts again when the index changes or a minute has passed', async () => {
     const { root, file, source } = await store([])
-    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
     db.exec(
       'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
     )
@@ -157,6 +197,9 @@ describe('native Codex history', () => {
       1,
       2,
     )
+    // The mocked clock cannot tell a recent write, so the same-size update
+    // below must not share the insert's timestamp tick.
+    await utimes(database, new Date(at), new Date(at))
     const append = async (message: string) =>
       writeFile(
         file,
@@ -572,6 +615,19 @@ describe('native Codex history', () => {
     expect(events.at(-1)).toMatchObject({ turnId: 'second-turn', status: 'interrupted' })
   })
 
+  it('opens sessions listed from a linked sessions folder', async () => {
+    const { root, source } = await store([event({ type: 'user_message', message: 'Linked chat' })])
+    const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'codex-history-linked-'))
+    roots.push(elsewhere)
+    await rename(path.join(root, 'sessions'), path.join(elsewhere, 'sessions'))
+    // A junction needs no privilege on Windows; other systems ignore the type.
+    await symlink(path.join(elsewhere, 'sessions'), path.join(root, 'sessions'), 'junction')
+
+    const session = (await source.list())[0]!
+
+    expect(items(await source.read(session)).map((entry) => entry.text)).toEqual(['Linked chat'])
+  })
+
   it('isolates corrupt rows, corrupt indexes, missing stores, and unfinished writes', async () => {
     const { root, file, source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),
@@ -610,6 +666,37 @@ describe('native Codex history', () => {
     expect(second.title).toBe('Named chat')
     expect(second.revision).not.toBe(first.revision)
     expect(items(await source.read(second))[0]!.id).toBe(previous.id)
+  })
+
+  it('shows multi-part reasoning once although Codex also writes each part as an event', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      event({ type: 'user_message', message: 'Plan it' }),
+      response({
+        type: 'reasoning',
+        id: 'reasoning-one',
+        summary: [
+          { type: 'summary_text', text: 'First' },
+          { type: 'summary_text', text: 'Second' },
+        ],
+      }),
+      event({ type: 'agent_reasoning', text: 'First' }),
+      event({ type: 'agent_reasoning', text: 'Second' }),
+      rich({
+        type: 'Reasoning',
+        id: 'reasoning-two',
+        summary_text: ['Third'],
+        raw_content: ['Raw'],
+      }),
+      event({ type: 'agent_reasoning', text: 'Third' }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    expect(
+      items(events)
+        .filter((entry) => entry.type === 'reasoning')
+        .map((entry) => entry.text),
+    ).toEqual(['First\n\nSecond', 'Third\n\nRaw'])
   })
 
   it('does not let malformed rich items hide other messages and preserves unknown future items', async () => {
@@ -657,9 +744,9 @@ describe('native Codex history', () => {
     ])
     const events = await source.read((await source.list())[0]!)
     const file = (name: string, to: string) => [
-      `diff --git a//project/${name} b//project/${name}`,
-      `--- a//project/${name}`,
-      `+++ b//project/${name}`,
+      `diff --git a/${name} b/${name}`,
+      `--- a/${name}`,
+      `+++ b/${name}`,
       '@@ -1,2 +1,2 @@',
       ` ${name[0]}`,
       '-old',
@@ -690,8 +777,8 @@ describe('native Codex history', () => {
     })
     const diff = events.find((entry) => entry.type === 'diff.updated')
     expect(diff?.type === 'diff.updated' && diff.diff).toBe(
-      'diff --git a//project/__init__.py b//project/__init__.py\nnew file mode 100644\n' +
-        'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
+      'diff --git a/__init__.py b/__init__.py\nnew file mode 100644\n' +
+        'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
     )
   })
 
@@ -712,21 +799,113 @@ describe('native Codex history', () => {
     const diff = events.find((entry) => entry.type === 'diff.updated')
     expect(diff?.type === 'diff.updated' && diff.diff).toBe(
       [
-        'diff --git a//project/new.txt b//project/new.txt',
+        'diff --git a/new.txt b/new.txt',
         'new file mode 100644',
         '--- /dev/null',
-        '+++ b//project/new.txt',
+        '+++ b/new.txt',
         '@@ -0,0 +1,1 @@',
         '+fresh',
-        'diff --git a//project/old.txt b//project/old.txt',
+        'diff --git a/old.txt b/old.txt',
         'deleted file mode 100644',
-        '--- a//project/old.txt',
+        '--- a/old.txt',
         '+++ /dev/null',
         '@@ -1,1 +0,0 @@',
         '-gone',
         '',
       ].join('\n'),
     )
+  })
+
+  it('keeps the destination of imported renames so Undo moves the files back', async () => {
+    const { source } = await store([
+      event({ type: 'task_started', turn_id: 'turn-one' }),
+      rich({
+        type: 'FileChange',
+        id: 'moved',
+        changes: {
+          'old.txt': {
+            type: 'update',
+            unified_diff: '@@ -1 +1 @@\n-one\n+two\n',
+            move_path: 'new.txt',
+          },
+        },
+      }),
+      rich({
+        type: 'FileChange',
+        id: 'renamed',
+        changes: [{ path: 'a.txt', kind: { type: 'update', move_path: 'b.txt' }, diff: '' }],
+      }),
+      event({ type: 'task_complete', turn_id: 'turn-one' }),
+    ])
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    const repo = await mkdtemp(path.join(os.tmpdir(), 'codex-history-repo-'))
+    roots.push(repo)
+    execFileSync('git', ['init', '--quiet', repo])
+    await writeFile(path.join(repo, 'new.txt'), 'two\n')
+    await writeFile(path.join(repo, 'b.txt'), 'same\n')
+
+    execFileSync(
+      'git',
+      ['-c', 'core.autocrlf=false', 'apply', '--reverse', '--binary', '--recount', '-'],
+      { cwd: repo, input: diff?.type === 'diff.updated' ? diff.diff : '' },
+    )
+
+    expect(await readFile(path.join(repo, 'old.txt'), 'utf8')).toBe('one\n')
+    expect(await readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('same\n')
+    expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
+    expect(existsSync(path.join(repo, 'b.txt'))).toBe(false)
+  })
+
+  it('names imported Windows files in Git headers relative to the project with / separators', async () => {
+    const { file, source } = await store([])
+    await writeFile(
+      file,
+      [
+        record('session_meta', { id: 'native-session', cwd: 'C:\\proj', timestamp: at }),
+        event({ type: 'task_started', turn_id: 'turn-one' }),
+        rich({
+          type: 'FileChange',
+          id: 'files',
+          changes: {
+            'C:\\proj\\src\\a.ts': {
+              type: 'update',
+              unified_diff: '@@ -1 +1 @@\n-a\n+A\n',
+              move_path: 'C:\\proj\\src\\b.ts',
+            },
+            'D:\\elsewhere\\c.ts': { type: 'add', content: 'c\n' },
+          },
+        }),
+        event({ type: 'task_complete', turn_id: 'turn-one' }),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join('\n') + '\n',
+    )
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      [
+        'diff --git a/src/a.ts b/src/b.ts',
+        'rename from src/a.ts',
+        'rename to src/b.ts',
+        '--- a/src/a.ts',
+        '+++ b/src/b.ts',
+        '@@ -1 +1 @@',
+        '-a',
+        '+A',
+        'diff --git a/D:/elsewhere/c.ts b/D:/elsewhere/c.ts',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b/D:/elsewhere/c.ts',
+        '@@ -0,0 +1,1 @@',
+        '+c',
+        '',
+      ].join('\n'),
+    )
+    expect(items(events).map((entry) => entry.path)).toEqual([
+      'C:\\proj\\src\\a.ts',
+      'D:\\elsewhere\\c.ts',
+    ])
   })
 
   it('marks an imported file content without a final newline', async () => {
@@ -781,4 +960,38 @@ describe('native Codex history', () => {
     ).toEqual(['turn-one', 'turn-two'])
     expect(items(events).find((entry) => entry.id === 'late')?.turnId).toBe('turn-one')
   })
+
+  it.each([true, false])(
+    'keeps the next turn in its own turn after a late item of an earlier one (ended: %s)',
+    async (ended) => {
+      const { source } = await store([
+        event({ type: 'task_started', turn_id: 'turn-one' }),
+        event({ type: 'user_message', message: 'Question one' }),
+        ...(ended ? [event({ type: 'task_complete', turn_id: 'turn-one' })] : []),
+        event({ type: 'task_started', turn_id: 'turn-two' }),
+        event({ type: 'user_message', message: 'Question two' }),
+        rich({ type: 'SubAgentActivity', id: 'late', kind: 'interacted' }),
+        event({ type: 'agent_message', message: 'Answer two' }),
+        response({
+          type: 'function_call',
+          call_id: 'list',
+          name: 'exec_command',
+          arguments: '{"cmd":"ls"}',
+        }),
+        event({ type: 'task_complete', turn_id: 'turn-two' }),
+      ])
+      const session = (await source.list())[0]!
+      const placed = (events: DomainEvent[]) =>
+        items(events).map((entry) => `${entry.turnId}: ${entry.command ?? entry.text}`)
+      const turnTwo = ['turn-two: Question two', 'turn-two: Answer two', 'turn-two: ls']
+
+      expect(placed(await source.read(session))).toEqual([
+        'turn-one: Question one',
+        'turn-one: Subagent interacted\n',
+        ...turnTwo,
+      ])
+      const skipped = await source.read(session, { localTurnIds: new Set(['turn-one']) })
+      expect(placed(skipped).filter((entry) => entry.startsWith('turn-two'))).toEqual(turnTwo)
+    },
+  )
 })

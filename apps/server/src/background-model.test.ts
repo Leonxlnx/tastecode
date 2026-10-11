@@ -16,6 +16,7 @@ import {
   runBackgroundCompletion,
   type AvailableBackgroundModelSource,
 } from './background-model.js'
+import { StartupCleanupError } from './provider-session.js'
 
 const model = (id: string, reasoningEfforts: string[] = [], isDefault = false): Model => ({
   id,
@@ -300,6 +301,29 @@ describe('background completion deadline and cleanup', () => {
       }),
     ).resolves.toBe('Generated title')
     expect(failures).toEqual([new Error('child survived')])
+    expect(existsSync(folder)).toBe(true)
+  })
+
+  it('stops a session whose startup cleanup failed and keeps the folder it may still use', async () => {
+    const dispose = vi.fn(() => Promise.reject(new Error('child survived')))
+    let folder = ''
+    const runtime = runtimeWith(async (workspacePath) => {
+      folder = workspacePath
+      throw new StartupCleanupError(new Error('session/new failed'), new Error('kill failed'), {
+        dispose,
+      })
+    })
+    const failures: unknown[] = []
+    await expect(
+      runBackgroundCompletion({
+        runtime,
+        selection,
+        prompt: 'Title.',
+        onCleanupError: (error) => failures.push(error),
+      }),
+    ).rejects.toThrow('session/new failed')
+    await vi.waitFor(() => expect(failures).toEqual([new Error('child survived')]))
+    expect(dispose).toHaveBeenCalledOnce()
     expect(existsSync(folder)).toBe(true)
   })
 })

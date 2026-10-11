@@ -3,7 +3,7 @@ export function browserUrl(value: string): string | undefined {
   if (!trimmed) return undefined
   const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
     ? trimmed
-    : /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:\/|$)/i.test(trimmed)
+    : /^(localhost|127(?:\.\d{1,3}){3}|\[::1\])(?::\d+)?(?:[/?#]|$)/i.test(trimmed)
       ? `http://${trimmed}`
       : `https://${trimmed}`
   try {

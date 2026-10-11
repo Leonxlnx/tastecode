@@ -95,6 +95,21 @@ describe('CommandPalette', () => {
     expect(run).toHaveBeenCalledOnce()
   })
 
+  it('leaves Escape and arrows to an open IME composition', () => {
+    const { commands } = makeCommands()
+    const onClose = vi.fn()
+    render(<CommandPalette commands={commands} scope="all" onClose={onClose} />)
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown', isComposing: true })
+    fireEvent.keyDown(input, { key: 'Escape', isComposing: true })
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('option', { name: 'New chat' }).getAttribute('aria-selected')).toBe(
+      'true',
+    )
+  })
+
   it('keeps hover highlight and Enter target in sync', () => {
     const { commands, ran } = makeCommands()
     render(<CommandPalette commands={commands} scope="all" onClose={vi.fn()} />)
@@ -106,6 +121,31 @@ describe('CommandPalette', () => {
 
     expect(target.getAttribute('aria-selected')).toBe('true')
     expect(ran).toEqual(['settings'])
+  })
+
+  it('keeps the highlighted command when the list changes while open', () => {
+    const ran: string[] = []
+    const command = (id: string): PaletteCommand => ({
+      id,
+      title: id,
+      group: 'Actions',
+      run: () => ran.push(id),
+    })
+    const [a, stop, c, d] = [command('a'), command('stop'), command('c'), command('d')]
+    const view = render(<CommandPalette commands={[a, stop, c, d]} scope="all" onClose={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    view.rerender(<CommandPalette commands={[a, c, d]} scope="all" onClose={vi.fn()} />)
+    expect(screen.getByRole('option', { name: 'c' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'd' }))
+    view.rerender(<CommandPalette commands={[d]} scope="all" onClose={vi.fn()} />)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(ran).toEqual(['c', 'd'])
   })
 
   it('limits the projects scope to project commands', () => {

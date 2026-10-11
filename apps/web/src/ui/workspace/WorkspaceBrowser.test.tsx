@@ -155,6 +155,32 @@ describe('WorkspaceBrowser', () => {
     await waitFor(() => expect(view.loadURL).toHaveBeenLastCalledWith('http://127.0.0.1:5183/'))
   })
 
+  it('leaves an address the user is typing in place when the page navigates', async () => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement
+    fireEvent.change(address, { target: { value: 'example.com/first' } })
+    fireEvent.submit(address.closest('form')!)
+    await waitFor(() => expect(address.value).toBe('https://example.com/first'))
+
+    fireEvent.focus(address)
+    fireEvent.change(address, { target: { value: 'example.com/sec' } })
+    act(() => {
+      view.getURL.mockReturnValue('https://example.com/redirected')
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/redirected' })
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+    expect(address.value).toBe('example.com/sec')
+
+    fireEvent.blur(address)
+    act(() => {
+      view.getURL.mockReturnValue('https://example.com/later')
+      dispatchGuestEvent(view, 'did-navigate', { url: 'https://example.com/later' })
+    })
+    expect(address.value).toBe('https://example.com/later')
+  })
+
   it('shows invalid input instead of sending privileged URLs to Chromium', () => {
     render(<WorkspaceBrowser active />)
     const view = guests[0]!

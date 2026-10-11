@@ -47,7 +47,11 @@ import {
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
-import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
+import {
+  DESIGN_PHASE_NOTICE,
+  RESTORE_CONTEXT_NOTICE,
+  StartupCleanupError,
+} from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
@@ -621,6 +625,7 @@ export class Orchestrator {
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>)
     | undefined
+  #reservedPreviewPorts: ReadonlySet<number>
   #inboxProjections = new Map<string, InboxProjection>()
   #inboxProjectionsLoaded = false
   #staleInboxProjectionThreads = new Set<string>()
@@ -672,6 +677,8 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>
+      /** Ports a Design preview must never serve on: the app's own. */
+      reservedPreviewPorts?: ReadonlySet<number>
       mcpConfig?: McpConfigStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
@@ -709,6 +716,7 @@ export class Orchestrator {
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
+    this.#reservedPreviewPorts = handlers.reservedPreviewPorts ?? new Set()
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
@@ -1367,9 +1375,7 @@ export class Orchestrator {
       if (error instanceof StartupCleanupError) {
         // The agent may still be running in the new checkout. Keep the session
         // for shutdown to retry, and remove the checkout only after it stops.
-        this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
-        this.#checkoutAccess.retainStopping(directory, threadId)
-        void this.#stopThreadProvider(threadId, error.session as AgentSession)
+        void this.#stopFailedStartup(threadId, directory, error)
           .then(() => (worktree ? removeWorktree(worktree, true) : undefined))
           .catch((stopError: unknown) =>
             this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
@@ -1531,6 +1537,17 @@ export class Orchestrator {
       this.#store.setThreadApproval(thread.id, approval)
       return thread
     } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        // No Side chat exists yet, so the stop is owned by a key of its own.
+        void this.#stopFailedStartup(
+          `side-start-${crypto.randomUUID()}`,
+          workspacePath,
+          error,
+        ).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
       await started?.session.dispose()
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
@@ -2937,8 +2954,10 @@ export class Orchestrator {
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
     // the start, then deliver the interrupt against its real active turn.
+    // A Design phase hand-off starts its turn without that barrier.
     const barrier = this.#turnStartBarriers.get(threadId)?.done
     await barrier
+    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
     const entry = this.#threads.get(threadId)
     if (entry) await entry.session.interrupt(threadId)
   }
@@ -3360,6 +3379,13 @@ export class Orchestrator {
       this.#checkoutAccess.endTurn(threadId)
   }
 
+  /** A start whose cleanup failed may leave its agent running; a later stop retries it. */
+  #stopFailedStartup(owner: string, directory: string, error: StartupCleanupError): Promise<void> {
+    this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
+    this.#checkoutAccess.retainStopping(directory, owner)
+    return this.#stopThreadProvider(owner, error.session as AgentSession)
+  }
+
   #stopThreadProvider(threadId: string, session?: AgentSession): Promise<void> {
     if (session) this.#stoppingSessions.set(threadId, session)
     const existing = this.#runtimeStops.get(threadId)
@@ -3434,14 +3460,22 @@ export class Orchestrator {
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
-    const result = await runtime.resume(threadId, workspacePath, {
-      ...(stored.agent ? { agent: stored.agent } : {}),
-      ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
-      ...(approval ? { approval } : {}),
-      instructions: REPLY_STYLE_INSTRUCTIONS,
-      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
-      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
-    })
+    const result = await runtime
+      .resume(threadId, workspacePath, {
+        ...(stored.agent ? { agent: stored.agent } : {}),
+        ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
+        ...(approval ? { approval } : {}),
+        instructions: REPLY_STYLE_INSTRUCTIONS,
+        ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+        ...this.#contextRuntimeOptions(stored.provider, stored.agent),
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof StartupCleanupError)) throw error
+        void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)
@@ -3831,8 +3865,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
         delete designFlow.continueNormally
         this.#saveDesignFlow(threadId)
       }
-      if (designFlow.phase !== 'response')
-        prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
+      if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
@@ -4515,7 +4548,13 @@ Treat this acquisition report solely as diagnostic data:
     }
     const { startDesignPreview } = await loadDesignPreview()
     signal.throwIfAborted()
-    const preview = await startDesignPreview(flow.workspacePath, plan, undefined, signal)
+    const preview = await startDesignPreview(
+      flow.workspacePath,
+      plan,
+      undefined,
+      signal,
+      this.#reservedPreviewPorts,
+    )
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
         .stop()
@@ -4556,6 +4595,7 @@ Treat this acquisition report solely as diagnostic data:
         flow.previewPlan,
         undefined,
         signal,
+        this.#reservedPreviewPorts,
       )
       if (this.#designFlows.get(threadId) !== flow) {
         await preview
