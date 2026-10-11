@@ -2149,7 +2149,11 @@ export class Orchestrator {
       const issued = this.#store.providerHistoryChangedAfter(threadId, before.seq)
         ? undefined
         : this.#store.replaySnapshotAt(threadId, before.seq)
-      if (issued) return readHistoryPage(threadId, issued, { before, turnLimit: request.turnLimit })
+      if (issued) {
+        const page = readHistoryPage(threadId, issued, { before, turnLimit: request.turnLimit })
+        // A restart's newest page comes from the current replay, not the cursor's.
+        if (!page.reset) return page
+      }
     }
     const { events } = await this.#readHistory(threadId, 0)
     return readHistoryPage(threadId, events, {

@@ -45,6 +45,7 @@ import {
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
 } from '@harness/design-agent'
+import { encodeHistoryCursor } from './history-page.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { StartupCleanupError } from './provider-session.js'
@@ -2087,6 +2088,24 @@ describe('history replay', () => {
       expect(older.reset).toBeUndefined()
       expect(save).not.toHaveBeenCalled()
       expect(history).not.toHaveBeenCalled()
+      await orchestrator.disposeAll()
+    })
+
+    it('restarts from the current replay when the issuing replay lacks the cursor turn', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 4; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      appendTurn(store, thread.id, 4)
+      const unknown = encodeHistoryCursor(thread.id, {
+        seq: newest.page.snapshotSeq,
+        turnHash: 'no-such-turn',
+      })
+
+      const restarted = await orchestrator.historyPage(thread.id, { before: unknown, turnLimit: 2 })
+      expect(restarted.reset).toBe(true)
+      expect(turnIds(restarted.events)).toEqual(['turn-3', 'turn-4'])
+      expect(restarted.page.snapshotSeq).toBe(store.lastSeq(thread.id))
       await orchestrator.disposeAll()
     })
 
