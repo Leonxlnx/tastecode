@@ -1203,7 +1203,7 @@
 .workspace-side-chat__conversation .thread__col,
 .workspace-side-chat__skeleton .thread-skeleton__col {
   max-width: 720px;
-  padding-inline: clamp(14px, 3vw, 24px);
+  padding-inline: 24px;
 }
 
 .workspace-side-chat__skeleton,
