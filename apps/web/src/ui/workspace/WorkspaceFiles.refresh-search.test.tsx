@@ -58,6 +58,32 @@ describe('workspace file refresh', () => {
     expect(screen.queryByText('7 B')).toBeNull()
   })
 
+  it('keeps the open file mounted while a refresh rereads it', async () => {
+    const reread = deferred<ReturnType<typeof contents>>()
+    let reads = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'workspace.listDirectory') return { path: '', entries: [entry('file.ts')] }
+      if (method === 'workspace.readFile') {
+        reads += 1
+        return reads === 1 ? contents('file.ts', 'old') : reread.promise
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    const view = render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.click(await screen.findByTitle('file.ts'))
+    await screen.findByText('3 B')
+    const scroller = view.container.querySelector<HTMLElement>('.workspace-code')!
+    scroller.scrollTop = 400
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    expect(screen.queryByText('Opening file…')).toBeNull()
+    expect(screen.getByText('3 B')).toBeTruthy()
+    await act(async () => reread.resolve(contents('file.ts', 'updated')))
+    expect(screen.getByText('7 B')).toBeTruthy()
+    expect(view.container.querySelector('.workspace-code')).toBe(scroller)
+    expect(scroller.scrollTop).toBe(400)
+  })
+
   it('ignores an open-file refresh that finishes after selecting another file', async () => {
     const stale = deferred<ReturnType<typeof contents>>()
     let reads = 0

@@ -241,11 +241,14 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   )
 
   const readFile = useCallback(
-    async (path: string) => {
+    async (path: string, reread = false) => {
       if (!props.projectPath) return
       const mine = ++fileGeneration.current
-      setFile(undefined)
-      setLoadingFile(true)
+      // A reread keeps the open file, and with it the reader's scroll position, until it resolves.
+      if (!reread) {
+        setFile(undefined)
+        setLoadingFile(true)
+      }
       setError(undefined)
       try {
         const result = await props.transport.request('workspace.readFile', {
@@ -255,6 +258,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         if (fileGeneration.current === mine) setFile(result)
       } catch (cause) {
         if (fileGeneration.current === mine) {
+          setFile(undefined)
           setError(cause instanceof Error ? cause.message : String(cause))
         }
       } finally {
@@ -309,7 +313,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       for (const folder of folders) if (open.has(folder)) void refresh(folder)
     }
     void refresh('')
-    if (selectedPathRef.current) void readFile(selectedPathRef.current)
+    if (selectedPathRef.current) void readFile(selectedPathRef.current, true)
     setSearchRevision((current) => current + 1)
   }, [loadDirectory, readFile])
 
