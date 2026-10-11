@@ -5,6 +5,7 @@ import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread, type ThreadState } from '../thread-store.js'
 import { mockKeyboardModifierState } from '../test-keyboard.js'
+import { MAX_HISTORY_PAGE_TURNS } from './older-history.js'
 import { Thread } from './Thread.js'
 
 const ROW = 100
@@ -147,5 +148,22 @@ describe('Thread older history', () => {
 
     fireEvent.click(retry)
     expect(load).toHaveBeenCalledTimes(2)
+  })
+
+  it('loads older pages until a search jump finds its turn', () => {
+    const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
+    const load = vi.fn(() => new Promise<void>(noop))
+    const view = render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={load}
+        searchJump={{ turnId: 'turn-3', request: 1 }}
+      />,
+    )
+    expect(load).toHaveBeenLastCalledWith('thread', MAX_HISTORY_PAGE_TURNS)
+    expect(view.container.querySelector('.thread')).toBeTruthy()
   })
 })

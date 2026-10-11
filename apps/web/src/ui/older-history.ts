@@ -1,5 +1,8 @@
 import type { Item } from '@harness/contracts'
 
+/** The protocol's largest page, for reads that need the rest of the history. */
+export const MAX_HISTORY_PAGE_TURNS = 100
+
 /** Start loading older turns while this many viewports of transcript remain above. */
 export const OLDER_HISTORY_PREFETCH_VIEWPORTS = 1.5
 
