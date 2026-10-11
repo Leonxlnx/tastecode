@@ -1632,6 +1632,29 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('keeps the catalog default when the runtime reports no default row', async () => {
+    const fake = harness([
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual(['opus'])
+    adapter.dispose()
+  })
+
   it('places models the catalog does not list after the current lineup, newest first', async () => {
     const fake = harness([
       {

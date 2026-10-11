@@ -1448,10 +1448,13 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
     for (const entry of matches) used.add(entry)
     return matches.find((entry) => !entry.resolvedId.endsWith('[1m]')) ?? matches[0]
   }
+  // A live row keeps its catalog row's default flag, so an answer without a
+  // `default` row still selects the catalog default, not whichever row is first.
   const fromCatalog = (catalog: Model[]): Model[] =>
-    catalog.map(
-      (catalogModel) => takeFamily(claudeModelFamily(catalogModel.id))?.model ?? catalogModel,
-    )
+    catalog.map((catalogModel) => {
+      const selected = takeFamily(claudeModelFamily(catalogModel.id))
+      return selected ? { ...selected.model, isDefault: catalogModel.isDefault } : catalogModel
+    })
 
   const current = fromCatalog(CURRENT_CLAUDE_MODELS)
   const older = fromCatalog(OLDER_CLAUDE_MODELS)
