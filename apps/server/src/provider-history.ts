@@ -395,7 +395,9 @@ export function importedEvents(
           Math.abs(item.createdAt - native.createdAt),
           started === undefined ? Infinity : Math.abs(started - native.createdAt),
         )
-        return distance < 60_000 ? [{ local: item.turnId, native: native.turnId, distance }] : []
+        // Match prompts, not turns: a steer stays in the local turn it steered, while a
+        // provider such as Claude saves it as a turn of its own.
+        return distance < 60_000 ? [{ local: item.id, native: native.turnId, distance }] : []
       })
     })
     .sort((a, b) => a.distance - b.distance)
