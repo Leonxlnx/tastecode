@@ -7,9 +7,12 @@ const HIDE_DELAY_MS = 3_000
 export function ZoomHud() {
   const [percent, setPercent] = useState<number>()
   const hideTimer = useRef<number | undefined>(undefined)
+  // The HUD's own buttons change the zoom too; that must not hide it under the pointer.
+  const hovered = useRef(false)
 
   const hideLater = () => {
     if (hideTimer.current !== undefined) window.clearTimeout(hideTimer.current)
+    if (hovered.current) return
     hideTimer.current = window.setTimeout(() => setPercent(undefined), HIDE_DELAY_MS)
   }
 
@@ -37,9 +40,13 @@ export function ZoomHud() {
       role="status"
       aria-label={`App zoom ${percent}%`}
       onPointerEnter={() => {
+        hovered.current = true
         if (hideTimer.current !== undefined) window.clearTimeout(hideTimer.current)
       }}
-      onPointerLeave={hideLater}
+      onPointerLeave={() => {
+        hovered.current = false
+        hideLater()
+      }}
     >
       <button type="button" aria-label="Zoom out" onClick={() => void setAppZoom('out')}>
         <Minus size={14} aria-hidden />
