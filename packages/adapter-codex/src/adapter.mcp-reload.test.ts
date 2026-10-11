@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { McpServerConfig } from '@harness/contracts'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
+import { prepareMcpConfig } from './mcp.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
@@ -53,6 +54,50 @@ describe('Codex MCP changes', () => {
           },
         },
       })
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('blanks header credentials in the shell environment of every chat', async () => {
+    const rpc = new FakeCodexRpc(() => ({
+      thread: { id: 't1', createdAt: 1_700_000_000 },
+      model: 'fake-model',
+    }))
+    proc.rpc = rpc
+    const options = {
+      mcpServers: [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        } satisfies McpServerConfig,
+      ],
+      mcpCredentials: { 'mcp/docs/auth': 'Bearer secret-value' },
+    }
+    const [variable] = Object.keys(
+      prepareMcpConfig(options.mcpServers, options.mcpCredentials).environment,
+    )
+    const adapter = new CodexAdapter(options)
+    try {
+      await adapter.start()
+      await adapter.startThread(process.cwd())
+      await adapter.resumeThread('t1', process.cwd())
+
+      for (const method of ['thread/start', 'thread/resume']) {
+        expect(rpc.calls.find((call) => call.method === method)?.params).toMatchObject({
+          config: {
+            mcp_servers: { docs: { env_http_headers: { Authorization: variable } } },
+            [`shell_environment_policy.set.${variable}`]: '',
+          },
+        })
+      }
     } finally {
       await adapter.dispose()
     }

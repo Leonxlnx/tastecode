@@ -36,6 +36,7 @@ import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   mapMcpServerStatus,
   mapMcpStartupStatus,
+  mcpShellEnvironmentConfig,
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
@@ -577,6 +578,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
+  #mcpShellConfig: Record<string, JsonValue>
   #mcpLogins = new Map<string, string>()
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
@@ -606,6 +608,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
+    this.#mcpShellConfig = mcpShellEnvironmentConfig(prepared.environment)
   }
 
   get capabilities(): Capabilities {
@@ -997,6 +1000,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             mcp_servers: this.#mcpServers,
           }
         : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/start',
@@ -1041,6 +1045,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const config = {
       ...codexContextConfig(options.context),
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/resume',
