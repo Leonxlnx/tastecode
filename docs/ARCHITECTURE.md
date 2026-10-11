@@ -48,6 +48,19 @@ apply, and neither browser cookies nor signed redirect URLs are copied into rend
 _Rejected:_ everything in Electron main (forecloses the web client). tRPC on the wire (ties us
 to a TypeScript client).
 
+**Closing a terminal ends its foreground job, not everything it ever started.** node-pty's
+`kill()` only sends the shell SIGHUP, which the shell forwards to its jobs and the kernel to
+the foreground group. Before that hangup the server reads the foreground group from a shell it
+forked itself; afterwards it escalates whatever is left of that group to SIGTERM and SIGKILL,
+and SIGKILLs a shell that still ignores SIGHUP after 500 ms. Closing the pane, the chat or the
+project, and server shutdown, all wait for that. Background jobs stay the shell's business, as
+in a terminal emulator: `nohup`, `disown` and `setsid` keep working, and so does a background
+job that ignores SIGHUP, which the OS cannot tell apart from `nohup`. On Windows node-pty
+already terminates every process attached to the closed ConPTY.
+
+_Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs, and
+reading sessions needs `/proc`, so it would only work on Linux.
+
 ---
 
 ## Desktop shell: Electron
@@ -628,3 +641,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
 | 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
+| 2026-10-11 | Ended a closed terminal's foreground job and a shell that ignores SIGHUP; background jobs stay the shell's.                                                                    |
