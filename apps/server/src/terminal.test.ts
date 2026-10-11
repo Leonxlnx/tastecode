@@ -546,7 +546,9 @@ describe('TerminalManager', () => {
     }
   })
 
-  it('never signals a job group that now holds another session', async () => {
+  // Linux ps output: macOS prints 0 as every process's session, so there this
+  // guard never fires.
+  it('never signals a job group that now holds another Linux session', async () => {
     vi.useFakeTimers()
     try {
       const logs: string[] = []
