@@ -350,6 +350,7 @@
   background: var(--bg);
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
+  container: workspace-panel / inline-size;
 }
 
 .workspace-panel-skeleton[hidden] {
@@ -412,6 +413,18 @@
   width: calc((100% - 6px) / 2);
   grid-column: 1 / -1;
   justify-self: center;
+}
+
+@container workspace-panel (max-width: 380px) {
+  .workspace-panel-skeleton__tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-panel-skeleton__tool:last-child:nth-child(odd) {
+    width: auto;
+    grid-column: auto;
+    justify-self: stretch;
+  }
 }
 
 /* ---------- chat search (command-palette.css, session-search.css) ---------- */

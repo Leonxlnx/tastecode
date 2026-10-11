@@ -20,6 +20,9 @@
     opacity var(--dur-slow) var(--ease-out),
     transform var(--dur-slow) var(--ease-rail),
     visibility 0s linear var(--dur-slow);
+  /* The tools lay out against the panel's own width, which the user drags,
+     not against the window's. */
+  container: workspace-panel / inline-size;
 }
 
 .workspace-panel.is-open {
@@ -1323,6 +1326,20 @@
   color: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Below this width a two-column tile can no longer hold "Temporary chat", so
+   the five tools stack into one column instead of truncating. */
+@container workspace-panel (max-width: 380px) {
+  .workspace-selector__list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-selector__list > button:last-child:nth-child(odd) {
+    width: auto;
+    grid-column: auto;
+    justify-self: stretch;
+  }
 }
 
 @media (max-width: 900px) {
