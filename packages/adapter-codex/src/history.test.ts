@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -572,6 +572,19 @@ describe('native Codex history', () => {
       status: 'failed',
     })
     expect(events.at(-1)).toMatchObject({ turnId: 'second-turn', status: 'interrupted' })
+  })
+
+  it('opens sessions listed from a linked sessions folder', async () => {
+    const { root, source } = await store([event({ type: 'user_message', message: 'Linked chat' })])
+    const elsewhere = await mkdtemp(path.join(os.tmpdir(), 'codex-history-linked-'))
+    roots.push(elsewhere)
+    await rename(path.join(root, 'sessions'), path.join(elsewhere, 'sessions'))
+    // A junction needs no privilege on Windows; other systems ignore the type.
+    await symlink(path.join(elsewhere, 'sessions'), path.join(root, 'sessions'), 'junction')
+
+    const session = (await source.list())[0]!
+
+    expect(items(await source.read(session)).map((entry) => entry.text)).toEqual(['Linked chat'])
   })
 
   it('isolates corrupt rows, corrupt indexes, missing stores, and unfinished writes', async () => {
