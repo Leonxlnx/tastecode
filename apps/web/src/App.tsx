@@ -2892,9 +2892,15 @@ export function App() {
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
+        // A title the user typed while the chat was starting is final; only a
+        // prompt-derived one is worth replacing with a generated title.
         void transport
           .request('thread.rename', { threadId, title: canonicalTitle })
-          .then(() => generateSessionTitle(threadId, titlePrompt, canonicalTitle))
+          .then(() =>
+            canonicalTitle === title
+              ? generateSessionTitle(threadId, titlePrompt, canonicalTitle)
+              : undefined,
+          )
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
