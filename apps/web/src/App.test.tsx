@@ -3088,6 +3088,48 @@ describe('new chats', () => {
     expect(rpcCount('backgroundModel.generateTitle')).toBe(0)
   })
 
+  it('keeps a starting chat in the header across a project-list refresh', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      const result = request(method, params)
+      // The server has recorded the chat, but its reply has not arrived yet.
+      if (method === 'thread.start') await startGate
+      // Hold the follow-up refresh so the swap to the real id stays observable.
+      if (method === 'thread.rename') await new Promise(() => undefined)
+      return result
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId
+    const listed = rpcCount('projects.list')
+    act(() => transport.listeners.get('providerHistory.changed')?.({ threadIds: [] }))
+    await waitFor(() => expect(rpcCount('projects.list')).toBe(listed + 1))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+
+    expect(header().sessionId).toBe(pendingId)
+    expect(header().title).toBe('Investigate flaky checkout cleanup')
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
+    expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
+  })
+
   it('carries Stop through new-session creation and interrupts the first turn', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
