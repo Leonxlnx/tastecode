@@ -886,8 +886,8 @@ export function prependOlderHistory(
  * Places the rows a complete history orders before the first loaded row above
  * the transcript, which then needs no cursor. Loaded rows keep their live
  * state; anything newer in the history already reached them live. Undefined
- * when the history lacks the first loaded row: the transcript no longer
- * matches the server's and has to be reloaded.
+ * when the history lacks the first loaded row it can name: the transcript no
+ * longer matches the server's and has to be reloaded.
  */
 export function prependCompleteHistory(
   state: ThreadState,
@@ -895,10 +895,38 @@ export function prependCompleteHistory(
 ): ThreadState | undefined {
   const current = settleLiveItems(state)
   const complete = reduceEventLog(emptyThread, entries)
-  const first = current.items[0]
-  const end = first ? itemIndex(complete.items, first.id) : complete.items.length
+  const end = completeHistorySeam(current.items, complete.items)
   if (end < 0) return undefined
   return prependHistoryRows(current, { ...complete, items: complete.items.slice(0, end) }, null)
+}
+
+/** createThreadErrorItem gives a thread error a fresh id on every replay. */
+function isThreadErrorRow(item: Item): boolean {
+  return item.type === 'error' && item.id.startsWith('error:')
+}
+
+/**
+ * Where the loaded rows begin in a complete replay: at the first loaded row
+ * the replay also holds, less the replay's own copies of thread error rows
+ * loaded above it, which no other replay can name. -1 when no loaded row
+ * matches.
+ */
+function completeHistorySeam(loaded: readonly Item[], complete: readonly Item[]): number {
+  let errorRows = 0
+  for (const item of loaded) {
+    if (isThreadErrorRow(item)) {
+      errorRows += 1
+      continue
+    }
+    let end = itemIndex(complete, item.id)
+    if (end < 0) return -1
+    while (errorRows > 0 && end > 0 && isThreadErrorRow(complete[end - 1]!)) {
+      end -= 1
+      errorRows -= 1
+    }
+    return end
+  }
+  return loaded.length === 0 ? complete.length : -1
 }
 
 function prependHistoryRows(
