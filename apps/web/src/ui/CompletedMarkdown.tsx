@@ -28,8 +28,14 @@ import { MarkdownBlock, MarkdownPre } from './LargeCodeBlock.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
+// A command (`cat package.json`) or member access (`process.env`) is code, not a file.
+// A dotenv file is `.env` itself or sits in a folder.
+function isInlineFileReference(text: string): boolean {
+  return !/\s/.test(text) && !/^[^/\\]+\.env$/i.test(text) && isFileReference(text)
+}
+
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
-  const reference = typeof children === 'string' && isFileReference(children)
+  const reference = typeof children === 'string' && isInlineFileReference(children)
 
   if (!reference) return <code {...props}>{children}</code>
 
