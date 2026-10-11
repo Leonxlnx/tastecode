@@ -29,6 +29,12 @@ async function measureLargeActivity(contents) {
     const preparedHeapBytes = await heap()
     const collapsed = await step('mount')
     const collapsedHeapBytes = await heap()
+    // The first open pays one-time costs (lazily loaded code, caches) that
+    // stay after closing without being a leak, so retention is measured
+    // across a second cycle.
+    await step('openOne')
+    await step('close')
+    const warmedHeapBytes = await heap()
     const opened = await step('openOne')
     const closed = await step('close')
     const closedHeapBytes = await heap()
@@ -40,9 +46,10 @@ async function measureLargeActivity(contents) {
       closed,
       preparedHeapBytes,
       collapsedHeapBytes,
+      warmedHeapBytes,
       closedHeapBytes,
       mountedHeapBytes: collapsedHeapBytes - preparedHeapBytes,
-      retainedAfterCloseBytes: closedHeapBytes - collapsedHeapBytes,
+      retainedAfterCloseBytes: closedHeapBytes - warmedHeapBytes,
     }
   } finally {
     debug.detach()

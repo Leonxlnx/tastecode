@@ -42,8 +42,9 @@ After the idle capture, a fresh window mounts one finished turn with 300 tool ca
 text. The main process reads the heap through Chromium's debugger after three forced
 garbage collections between steps. The collapsed activity must stay below 200 elements and
 add less than 8 MiB of heap; opening it must mount 300 rows and exactly the one output that
-was opened, and after closing no row or output may remain and the heap must stay less than
-2 MiB above the collapsed reading. On Linux with Electron 43 the collapsed activity added
+was opened. One open and close warms up first-open costs such as lazily loaded code; after
+a second close no row or output may remain and the heap must stay less than 2 MiB above the
+reading taken before that second open. On Linux with Electron 43 the collapsed activity added
 1.4 MiB; mounting every output while collapsed, as before
 [#1013](https://github.com/Leonxlnx/tastecode/issues/1013), added 29 MiB and 4,707 elements.
 The fixture opens its own window, so the memory figures above stay unchanged.
