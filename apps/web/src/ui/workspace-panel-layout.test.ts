@@ -156,6 +156,9 @@ describe('workspace panel layout', () => {
     expect(ruleBody('.workspace-tabs__label-tail')).toMatch(
       /overflow: hidden;\s*text-overflow: ellipsis;/,
     )
+    // A zero-width word joiner leads the tail, so Chromium elides all of it to
+    // "…" instead of keeping its first letter. It is generated, not text.
+    expect(ruleBody('.workspace-tabs__label-tail::before')).toContain("content: '\\2060'")
     expect(ruleBody('.workspace-tabs__label')).toContain('white-space: pre')
   })
 

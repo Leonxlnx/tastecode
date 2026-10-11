@@ -219,8 +219,9 @@ it('keeps a readable prefix of a long title whole and names the tab in full', ()
   const long = screen.getByRole('tab', { name: 'Temporary chat' })
   expect(long.querySelector('.workspace-tabs__label--split')).toBeTruthy()
   expect(long.querySelector('.workspace-tabs__label-head')!.textContent).toBe('Tempo')
-  // Led by a zero-width word joiner, the character Chromium keeps before an ellipsis.
-  expect(long.querySelector('.workspace-tabs__label-tail')!.textContent).toBe('\u2060rary chat')
+  expect(long.querySelector('.workspace-tabs__label-tail')!.textContent).toBe('rary chat')
+  // The split adds nothing to the text: the ellipsis anchor is generated content.
+  expect(long.textContent).toBe('Temporary chat')
   const short = screen.getByRole('tab', { name: 'Browser' })
   expect(short.querySelector('.workspace-tabs__label')!.textContent).toBe('Browser')
   expect(short.querySelector('.workspace-tabs__label-head')).toBeNull()
