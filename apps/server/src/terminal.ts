@@ -1,8 +1,10 @@
+import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import type { IPty, spawn as NodePtySpawn } from 'node-pty'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
+import { killProcessGroup } from '@harness/proc/kill'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
@@ -17,6 +19,9 @@ export type TerminalStatus = {
   exitCode: number | null
 }
 type SpawnPty = typeof NodePtySpawn
+/** A POSIX shell's parent, own process group and its terminal's foreground group. */
+type ShellProcess = { parent: number; group: number; foreground: number }
+type InspectShell = (pid: number) => ShellProcess | undefined
 
 const require = createRequire(import.meta.url)
 let loadedSpawn: SpawnPty | undefined
@@ -133,6 +138,8 @@ export class TerminalManager {
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #spawnPty: SpawnPty
+  #inspectShell: InspectShell
+  #killProcessGroup: (group: number) => Promise<void>
   #closeTimeoutMs: number
   readonly #outputScheduler = new TerminalOutputScheduler()
   #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
@@ -142,11 +149,18 @@ export class TerminalManager {
       onOutput: (terminalId: string, data: string, outputOffset: number) => void
       onExit: (terminalId: string, exitCode: number | null) => void
     },
-    options: { spawnPty?: SpawnPty; closeTimeoutMs?: number } = {},
+    options: {
+      spawnPty?: SpawnPty
+      inspectShell?: InspectShell
+      killProcessGroup?: (group: number) => Promise<void>
+      closeTimeoutMs?: number
+    } = {},
   ) {
     this.#onOutput = handlers.onOutput
     this.#onExit = handlers.onExit
     this.#spawnPty = options.spawnPty ?? spawnPty
+    this.#inspectShell = options.inspectShell ?? inspectShell
+    this.#killProcessGroup = options.killProcessGroup ?? killProcessGroup
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -288,6 +302,11 @@ export class TerminalManager {
 
     const entry = this.#byId.get(terminalId)
     if (!entry) return Promise.resolve()
+    // node-pty only sends SIGHUP, which a foreground job may ignore — a server
+    // that treats it as "reload" outlives the pane. Read which job holds the
+    // terminal now: once the shell exits, nothing records it.
+    const shell = this.#ownedShell(entry.process.pid)
+    const foreground = shell && shell.foreground > 1 ? shell.foreground : undefined
     // Kill first. If node-pty rejects the request synchronously, the terminal
     // remains attached and a later close can retry instead of losing it.
     entry.process.kill()
@@ -301,17 +320,33 @@ export class TerminalManager {
     // pane down, so those late chunks must not be broadcast for its id.
     entry.output.dispose()
     entry.outputBuffer.dispose()
-    const closing = this.#boundedExit(terminalId, entry.exited)
+    // The shell's exit already sent that job SIGHUP; whatever survived it gets
+    // SIGTERM, then SIGKILL. Background jobs are left to the shell, so `nohup`
+    // and `disown` keep their usual meaning.
+    const closing = this.#boundedExit(terminalId, entry.exited).then(() =>
+      foreground === undefined ? undefined : this.#killProcessGroup(foreground),
+    )
     this.#closingById.set(terminalId, closing)
     const threadClosings = this.#closingByThread.get(entry.threadId) ?? new Set<Promise<void>>()
     threadClosings.add(closing)
     this.#closingByThread.set(entry.threadId, threadClosings)
     // A timeout is a failed close, not evidence that the native process is
-    // gone. Keep that generation tracked until its real exit arrives so a
-    // retry cannot delete the cwd underneath it.
+    // gone. Keep that generation tracked until its real exit arrives, and the
+    // foreground job is stopped, so a retry or shutdown waits for both.
     void closing.catch(() => undefined)
-    void entry.exited.then(() => this.#forgetClosing(terminalId, entry.threadId, closing))
+    void Promise.allSettled([entry.exited, closing]).then(() =>
+      this.#forgetClosing(terminalId, entry.threadId, closing),
+    )
     return closing
+  }
+
+  /** The shell behind a PTY, only when this server forked it as a session leader. */
+  #ownedShell(pid: number): ShellProcess | undefined {
+    const shell = this.#inspectShell(pid)
+    // A stale or foreign pid must never become authority to signal a group.
+    return shell && shell.parent === globalThis.process.pid && shell.group === pid
+      ? shell
+      : undefined
   }
 
   closeThread(threadId: string): Promise<void> {
@@ -396,6 +431,28 @@ async function settleAll(waiters: Iterable<Promise<void>>, message: string): Pro
 
 function isFolder(folder: string): boolean {
   return statSync(folder, { throwIfNoEntry: false })?.isDirectory() ?? false
+}
+
+/**
+ * Read a shell's parent, process group and terminal foreground group.
+ *
+ * Windows has no process groups to escalate: closing a ConPTY makes node-pty
+ * terminate every process attached to that console.
+ */
+function inspectShell(pid: number): ShellProcess | undefined {
+  if (globalThis.process.platform === 'win32') return undefined
+  // One -o per column: BSD ps on macOS takes everything after the first `=`
+  // as that column's header, so `-o ppid=,pgid=` would print one column.
+  const result = spawnSync(
+    'ps',
+    ['-o', 'ppid=', '-o', 'pgid=', '-o', 'tpgid=', '-p', String(pid)],
+    { encoding: 'utf8', timeout: 1_000 },
+  )
+  if (result.error || result.status !== 0) return undefined
+  const fields = result.stdout.trim().split(/\s+/).map(Number)
+  if (fields.length !== 3 || !fields.every(Number.isInteger)) return undefined
+  const [parent, group, foreground] = fields as [number, number, number]
+  return { parent, group, foreground }
 }
 
 export function platformShell(
