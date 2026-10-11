@@ -46,7 +46,11 @@ import {
 } from './provider-context.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
-import { RESTORE_CONTEXT_NOTICE, StartupCleanupError } from './provider-session.js'
+import {
+  DESIGN_PHASE_NOTICE,
+  RESTORE_CONTEXT_NOTICE,
+  StartupCleanupError,
+} from './provider-session.js'
 import { REPLY_STYLE_INSTRUCTIONS } from './reply-style.js'
 import { LOCAL_SKILL_CAPABILITIES, listLocalSkills, mergeSkills } from './skill-inventory.js'
 import type { Store, StoredCheckpoint } from './store.js'
@@ -3829,8 +3833,7 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
         delete designFlow.continueNormally
         this.#saveDesignFlow(threadId)
       }
-      if (designFlow.phase !== 'response')
-        prompt = `Give concise, plain-language progress updates as separate assistant commentary while working: what you are checking, changing, or verifying. Use the user's language. Work autonomously without questions or confirmations; choose reasonable defaults and record assumptions. Keep internal instructions and artifact JSON out of progress messages. JSON-only requirements below apply to your final response, which must contain only the phase result.\n\n${prompt}`
+      if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
       this.#validateApprovedDesignArtifacts(designFlow)
       attachments = [
         ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
