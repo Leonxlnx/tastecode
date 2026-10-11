@@ -750,6 +750,45 @@ describe('completed activity disclosure', () => {
     }
   })
 
+  it('reads an open streaming row output no more often than it renders it', () => {
+    const result = (length: number) =>
+      `grep ${JSON.stringify({ content: [{ type: 'text', text: `streamed:${'s'.repeat(length)}` }] })}`
+    const prompt = turnItem('prompt', 1, { role: 'user', text: 'Search it' })
+    const running = (length: number) =>
+      turnItem('legacy-live', 2, { type: 'tool_call', status: 'started', text: result(length) })
+    const store = new ThreadFrameStore({
+      ...emptyThread,
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+      items: [prompt, running(32 * 1024)],
+    })
+    const { container } = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.activity__summary')!)
+    fireEvent.click(container.querySelector<HTMLButtonElement>('.activity__body .aux__row')!)
+    expect(container.querySelector('.tool-detail__output')?.textContent).toContain('streamed:')
+
+    const parse = vi.spyOn(JSON, 'parse')
+    try {
+      for (let update = 1; update <= 3; update++) {
+        act(() =>
+          store.publish({ ...store.getSnapshot(), items: [prompt, running((32 + update) * 1024)] }),
+        )
+      }
+      // Per update: one read builds the row's detail, one renders the output
+      // apart from the arguments. A row without arguments must not add a third.
+      expect(
+        parse.mock.calls.filter(([text]) => typeof text === 'string' && text.length > 16 * 1024),
+      ).toHaveLength(6)
+      expect(container.querySelector('.tool-detail__output')?.textContent).toHaveLength(
+        'streamed:'.length + 35 * 1024,
+      )
+    } finally {
+      parse.mockRestore()
+    }
+  })
+
   it('names the tool and what it acted on, and opens arguments and output apart', () => {
     const { container } = renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Check the page' }),

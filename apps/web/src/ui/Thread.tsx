@@ -1357,7 +1357,13 @@ function lastActivityItemForRender({
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
   const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
-  const expandable = !phase && hasAuxDetail(item)
+  // An open row needs its detail anyway, so the detail answers whether it has
+  // any; a closed row asks without building it.
+  const detail = useMemo(
+    () => (!phase && disclosure.contentMounted ? auxDetail(item) : undefined),
+    [item, phase, disclosure.contentMounted],
+  )
+  const expandable = !phase && (disclosure.contentMounted ? Boolean(detail) : hasAuxDetail(item))
   const label = live ? summariseLive(item) : activityItemLabel(item)
 
   return (
@@ -1406,9 +1412,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
               disclosure.finishTransition()
           }}
         >
-          {disclosure.contentMounted ? (
+          {detail ? (
             <div className="aux__reveal-clip">
-              <AuxDetail item={item} active={disclosure.expanded} />
+              <AuxDetail item={item} detail={detail} active={disclosure.expanded} />
             </div>
           ) : null}
         </div>
@@ -1429,11 +1435,11 @@ function auxDetail(item: Item): string | undefined {
 const auxDetailPresence = new WeakMap<Item, boolean>()
 
 /**
- * Whether a row has detail to open, decided without building it. A tool's
- * output can be hundreds of kilobytes of JSON: arguments already answer for
- * almost every call, and any other row reads its output once per item rather
- * than on every render of the stack around it. Items are immutable; a live
- * update arrives as a new object.
+ * Whether a closed row has detail to open, decided without building it. A
+ * tool's output can be hundreds of kilobytes of JSON: arguments already answer
+ * for almost every call, and any other row reads its output once per item
+ * rather than on every render of the stack around it. Items are immutable; a
+ * live update arrives as a new object. An open row builds its detail instead.
  */
 function hasAuxDetail(item: Item): boolean {
   let present = auxDetailPresence.get(item)
@@ -1454,10 +1460,16 @@ function hasToolArguments(item: Item): boolean {
   )
 }
 
-/** Built only while its reveal is mounted, and not again on a parent render. */
-const AuxDetail = memo(function AuxDetail({ item, active }: { item: Item; active: boolean }) {
-  const detail = auxDetail(item)
-  if (!detail) return null
+/** Rendered only while its reveal is mounted, and not again on a parent render. */
+const AuxDetail = memo(function AuxDetail({
+  item,
+  detail,
+  active,
+}: {
+  item: Item
+  detail: string
+  active: boolean
+}) {
   return isImageView(item) && item.status === 'completed' ? (
     <ViewedImagePreview reference={detail} active={active} fallbackClassName="aux__out" />
   ) : (
