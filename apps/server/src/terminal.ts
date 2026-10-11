@@ -184,7 +184,7 @@ export class TerminalManager {
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
   #shutdownStartedAt: number | undefined
-  #listing: Promise<ProcessRow[] | undefined> | undefined
+  #listing: { startedAt: number; rows: Promise<ProcessRow[] | undefined> } | undefined
   /** Wakes every pending poll, so a starting shutdown shortens it at once. */
   #wakers = new Set<() => void>()
   /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
@@ -496,7 +496,7 @@ export class TerminalManager {
     while (true) {
       // Members that exited stay in the group as zombies until their new
       // parent reaps them, which a container's pid 1 may do only lazily.
-      const members = (await this.#listProcesses())?.filter(
+      const members = (await this.#listProcesses(startedAt))?.filter(
         (row) => row.group === job.group && !row.zombie,
       )
       if (members?.length === 0) return 'ended'
@@ -550,16 +550,20 @@ export class TerminalManager {
     })
   }
 
-  /** One ps listing, shared by every poll that asks for one while it runs. */
-  #listProcesses(): Promise<ProcessRow[] | undefined> {
-    if (this.#listing) return this.#listing
-    const listing = this.#processes.list()
+  /**
+   * One ps listing, shared by every poll that asks for one while it runs, as
+   * long as it started no earlier than `since`: a listing begun before a
+   * signal cannot show what that signal did.
+   */
+  #listProcesses(since = 0): Promise<ProcessRow[] | undefined> {
+    if (this.#listing && this.#listing.startedAt >= since) return this.#listing.rows
+    const listing = { startedAt: Date.now(), rows: this.#processes.list() }
     this.#listing = listing
     const forget = () => {
       if (this.#listing === listing) this.#listing = undefined
     }
-    void listing.then(forget, forget)
-    return listing
+    void listing.rows.then(forget, forget)
+    return listing.rows
   }
 
   closeThread(threadId: string): Promise<void> {
