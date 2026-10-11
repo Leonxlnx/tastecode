@@ -79,7 +79,7 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
-import { MAX_HISTORY_PAGE_TURNS, nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -148,6 +148,8 @@ export interface ThreadProps {
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
   /** Load turns above the transcript; needs a stable identity. */
   onLoadOlderHistory?: ((threadId: string, turnLimit?: number) => Promise<void>) | undefined
+  /** Load every turn above the transcript in one read; an aborted read is dropped. */
+  onLoadCompleteHistory?: ((threadId: string, signal: AbortSignal) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   /** Keep agent questions inside this thread instead of the main composer. */
@@ -210,9 +212,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const {
     status: olderHistory,
     loadOlder,
-    loadAllOlder,
     canLoadOnScroll,
-  } = useOlderHistory(props.threadId, props.frameStore, props.onLoadOlderHistory)
+    completeStatus,
+    loadComplete,
+    cancelComplete,
+  } = useOlderHistory(
+    props.threadId,
+    props.frameStore,
+    props.onLoadOlderHistory,
+    props.onLoadCompleteHistory,
+  )
+  const searchJumpRef = useRef(props.searchJump)
+  searchJumpRef.current = props.searchJump
+  const closeFind = useCallback(() => {
+    setFinding(false)
+    const jump = searchJumpRef.current
+    // A search jump still waiting for its turn keeps the read it shares with find.
+    if (!jump || completedSearchJump.current === jump.request) cancelComplete()
+  }, [cancelComplete])
   const liveItems = thread.liveItems
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
@@ -379,19 +396,27 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
     const index = thread.items.findIndex((item) => item.turnId === target.turnId)
     if (index < 0) {
-      if (thread.olderCursor) void loadOlder(MAX_HISTORY_PAGE_TURNS)
+      // Ask once per jump and cursor. Structural updates keep arriving while
+      // the read is out, and after a failure the retry is the reader's call.
+      const cursor = thread.olderCursor
+      const asked = searchJumpRead.current
+      if (cursor && (asked?.request !== target.request || asked.cursor !== cursor)) {
+        searchJumpRead.current = { request: target.request, cursor }
+        loadComplete()
+      }
       return
     }
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadOlder])
+  }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadComplete])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
@@ -449,8 +474,16 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useEffect(() => {
     const el = scroller.current
     if (!el || !thread.olderCursor || props.loading || thread.items.length === 0) return
-    if (olderHistory === 'idle' && nearOlderHistoryEdge(el)) void loadOlder()
-  }, [thread.olderCursor, thread.items.length, props.loading, olderHistory, loadOlder])
+    if (olderHistory !== 'idle' || completeStatus === 'loading') return
+    if (nearOlderHistoryEdge(el)) void loadOlder()
+  }, [
+    thread.olderCursor,
+    thread.items.length,
+    props.loading,
+    olderHistory,
+    completeStatus,
+    loadOlder,
+  ])
 
   // measureElement without a ResizeObserver entry returns the cached size, so
   // a disclosure that just changed its row's height has to hand over a fresh
@@ -517,6 +550,15 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       ? virtualizer.getTotalSize()
       : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
 
+  // Find shows its own read in the find bar; a search jump's read shows here.
+  const completeFailed = !finding && completeStatus === 'failed'
+  const olderPill =
+    olderHistory === 'loading' || (!finding && completeStatus === 'loading')
+      ? 'loading'
+      : olderHistory === 'failed' || completeFailed
+        ? 'failed'
+        : 'idle'
+
   return (
     // The overlays live OUTSIDE the scroller: an absolutely positioned child
     // of a scroll container scrolls away with the content — Ctrl+F used to
@@ -532,10 +574,10 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               frameStore={props.frameStore}
               threadId={props.threadId}
               hasOlder={thread.olderCursor !== undefined}
-              searchingOlder={olderHistory === 'loading'}
-              onSearchOlder={loadAllOlder}
+              olderStatus={completeStatus}
+              onLoadOlder={loadComplete}
               onJump={jumpTo}
-              onClose={() => setFinding(false)}
+              onClose={closeFind}
             />
           </Suspense>
         ) : null}
@@ -668,14 +710,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           setMode={setMode}
         />
 
-        {thread.olderCursor && olderHistory === 'loading' ? (
+        {thread.olderCursor && olderPill === 'loading' ? (
           <div className="thread__older" role="status">
             <LoaderCircle className="spinner" aria-hidden />
             Loading earlier messages
           </div>
         ) : null}
-        {thread.olderCursor && olderHistory === 'failed' ? (
-          <button className="thread__older" onClick={() => void loadOlder()}>
+        {thread.olderCursor && olderPill === 'failed' ? (
+          <button
+            className="thread__older"
+            onClick={() => (completeFailed ? loadComplete() : void loadOlder())}
+          >
             <RotateCcw size={13} aria-hidden />
             Couldn’t load earlier messages. Retry
           </button>

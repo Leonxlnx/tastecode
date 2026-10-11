@@ -3,6 +3,7 @@ import type { Item } from '@harness/contracts'
 import {
   IconChevronDown as ChevronDown,
   IconChevronUp as ChevronUp,
+  IconRotate as RotateCcw,
   IconX as X,
 } from '@tabler/icons-react'
 import type { LiveItemUpdate } from '../thread-store.js'
@@ -15,6 +16,7 @@ import {
   NO_LIVE_THREAD_SEARCH,
 } from '../thread-search-index.js'
 import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
+import type { OlderHistoryStatus } from './use-older-history.js'
 
 /**
  * Find within the open thread.
@@ -22,7 +24,7 @@ import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
  * Virtualisation means Ctrl+F does not work — the match may not exist in the
  * DOM. So the app has to own find, and owning it lets us jump by result rather
  * than by pixel. A long thread opens with only its newest turns, so the first
- * query asks for the rest; matches above appear as those pages arrive.
+ * query asks for the rest in one read; matches above appear when it lands.
  */
 export function ThreadSearch(props: {
   items: Item[]
@@ -31,8 +33,10 @@ export function ThreadSearch(props: {
   threadId?: string | undefined
   /** Older turns exist that are not loaded yet. */
   hasOlder?: boolean | undefined
-  searchingOlder?: boolean | undefined
-  onSearchOlder?: (() => void) | undefined
+  /** The read of those turns: idle until a query asks for it. */
+  olderStatus?: OlderHistoryStatus | undefined
+  /** Start that read, or retry it after a failure. */
+  onLoadOlder?: (() => void) | undefined
   onJump: (index: number) => void
   onClose: () => void
 }) {
@@ -86,10 +90,13 @@ export function ThreadSearch(props: {
   }, [hits, items])
 
   const searching = term !== ''
-  const { hasOlder, onSearchOlder } = props
+  const { hasOlder, olderStatus = 'idle', onLoadOlder } = props
+  const loadingOlder = hasOlder && olderStatus === 'loading'
+  const olderFailed = hasOlder && olderStatus === 'failed'
+  // A failed read waits for Retry instead of asking again on every keystroke.
   useEffect(() => {
-    if (searching && hasOlder) onSearchOlder?.()
-  }, [searching, hasOlder, onSearchOlder])
+    if (searching && hasOlder && olderStatus === 'idle') onLoadOlder?.()
+  }, [searching, hasOlder, olderStatus, onLoadOlder])
 
   const go = (next: number) => {
     if (hits.length === 0) return
@@ -137,11 +144,23 @@ export function ThreadSearch(props: {
         {term === ''
           ? ''
           : hits.length === 0
-            ? props.searchingOlder
+            ? loadingOlder
               ? 'Searching…'
-              : 'None'
-            : `${currentCursor + 1}/${hits.length}${props.searchingOlder ? '…' : ''}`}
+              : olderFailed
+                ? 'Failed'
+                : 'None'
+            : `${currentCursor + 1}/${hits.length}${loadingOlder ? '…' : ''}`}
       </span>
+      {searching && olderFailed ? (
+        <button
+          className="icon-btn icon-btn--always"
+          onClick={onLoadOlder}
+          title="Couldn’t search earlier messages. Retry"
+          aria-label="Retry searching earlier messages"
+        >
+          <RotateCcw size={12} aria-hidden />
+        </button>
+      ) : null}
       <button
         className="icon-btn icon-btn--always"
         onClick={() => advance(true)}
