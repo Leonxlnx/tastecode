@@ -283,12 +283,20 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       shift > 0 && offset !== null && modeRef.current !== 'follow-end'
         ? previous?.getVirtualItemForOffset(offset)
         : undefined
+    if (shift > 0) {
+      // Row indexes recorded against the old rows now name rows `shift`
+      // further down. Move them here, in render: FrameScrollFollower is a
+      // child, so its layout effect runs before this component's and would
+      // otherwise pin, measure or release the anchored turn by a stale index.
+      anchorIndex.current += shift
+      if (previous) shiftPendingScrollIndex(previous, shift)
+    }
     prepend.current =
       shift > 0
         ? {
             items: thread.items,
-            shift,
             applied: false,
+            previousSize: previous?.getTotalSize() ?? 0,
             ...(row && offset !== null
               ? { index: row.index + shift, offset: offset - row.start }
               : {}),
@@ -459,6 +467,12 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }, [props.keyboardActive, turns, virtualizer])
 
   const anchor = prepend.current
+  if (anchor && anchor.grown === undefined) {
+    // Reveal-hold reads growth past the held height as new content below;
+    // rows arriving above are not that.
+    anchor.grown = virtualizer.getTotalSize() - anchor.previousSize
+    heldHeight.current += anchor.grown
+  }
   if (anchor?.index !== undefined && anchor.top === undefined) {
     virtualizer.getTotalSize()
     const start = virtualizer.measurementsCache[anchor.index]?.start
@@ -472,7 +486,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const anchor = prepend.current
     if (!anchor || anchor.items !== thread.items || anchor.applied) return
     anchor.applied = true
-    anchorIndex.current += anchor.shift
     const el = scroller.current
     // The virtualizer may already have corrected its offset for newly
     // measured rows above the fold during this commit; follow its value.
@@ -881,11 +894,28 @@ function FrameScrollFollower({
 /** Where the viewport stood when older rows were prepended above it. */
 type PrependAnchor = {
   items: Item[]
-  shift: number
   applied: boolean
+  /** The runway height before the rows arrived. */
+  previousSize: number
+  /** How much the runway grew, once measured against the new rows. */
+  grown?: number
   index?: number
   offset?: number
   top?: number
+}
+
+/**
+ * Virtual-core keeps an in-flight scrollToIndex (a find, search or turn jump)
+ * as a row index across count changes, so rows prepended while it settles
+ * would land it `shift` rows early.
+ */
+function shiftPendingScrollIndex(
+  virtualizer: Virtualizer<HTMLDivElement, Element>,
+  shift: number,
+): void {
+  const pending = (virtualizer as unknown as { scrollState?: { index: number | null } | null })
+    .scrollState
+  if (pending && pending.index !== null) pending.index += shift
 }
 
 /** A disclosure's row height change, waiting for the runway to commit it. */

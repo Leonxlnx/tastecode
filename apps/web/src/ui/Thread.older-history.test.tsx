@@ -10,7 +10,11 @@ import { Thread } from './Thread.js'
 
 const ROW = 100
 const VIEWPORT = 200
-const layout = vi.hoisted(() => ({ count: 0, offset: null as number | null }))
+const layout = vi.hoisted(() => ({
+  count: 0,
+  offset: null as number | null,
+  scrollState: null as { index: number | null } | null,
+}))
 
 vi.mock('@tanstack/react-virtual', () => {
   // Fixed-height rows; the scroll offset is the virtualizer's own value, which
@@ -21,6 +25,10 @@ vi.mock('@tanstack/react-virtual', () => {
     },
     set scrollOffset(offset: number | null) {
       layout.offset = offset
+    },
+    // A scrollToIndex still settling, as virtual-core keeps it.
+    get scrollState() {
+      return layout.scrollState
     },
     getVirtualItems: () =>
       Array.from({ length: layout.count }, (_, index) => ({
@@ -41,7 +49,7 @@ vi.mock('@tanstack/react-virtual', () => {
       }))
     },
     measureElement: () => undefined,
-    getOffsetForIndex: () => [0],
+    getOffsetForIndex: (index: number) => [index * ROW],
     scrollToIndex: () => undefined,
   }
   return {
@@ -83,6 +91,7 @@ function scrollTo(scroller: Element, top: number) {
 beforeEach(() => {
   mockKeyboardModifierState()
   layout.offset = null
+  layout.scrollState = null
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
     () => layout.count * ROW,
   )
@@ -120,6 +129,52 @@ describe('Thread older history', () => {
     // Five rows arrived above; the same row stays 50 pixels in.
     expect(scroller.scrollTop).toBe(750)
     expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('keeps a streaming turn anchored and a pending jump on its row as older rows arrive', () => {
+    // The runway leaves a viewport below the last row, so a short turn can
+    // sit at the top of the view.
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
+      () => layout.count * ROW + VIEWPORT,
+    )
+    const prompt: Item = {
+      id: 'prompt-15',
+      turnId: 'turn-15',
+      type: 'message',
+      role: 'user',
+      status: 'completed',
+      text: 'Next question',
+      createdAt: 15,
+    }
+    const streaming = (items: Item[], olderCursor?: string): ThreadState => ({
+      ...paged([...items, prompt], olderCursor),
+      running: true,
+      activeTurn: { id: 'turn-15', startedAt: 15 },
+      liveStart: items.length,
+    })
+    const store = new ThreadFrameStore(paged(turns(5, 15), 'cursor'))
+    const view = render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={() => new Promise<void>(noop)}
+      />,
+    )
+    const scroller = view.container.querySelector('.thread')!
+
+    // Starting a turn at the bottom pins its prompt (row 10) to the top.
+    act(() => store.publish(streaming(turns(5, 15), 'cursor')))
+    expect(scroller.scrollTop).toBe(10 * ROW)
+
+    layout.scrollState = { index: 12 }
+    act(() => store.publish(streaming(turns(0, 15))))
+
+    // The prompt is row 15 now. Following the old index would measure the
+    // turn from row 10, find it taller than the viewport and let go of it.
+    expect(scroller.scrollTop).toBe(15 * ROW)
+    expect(layout.scrollState.index).toBe(17)
   })
 
   it('fills a short transcript and offers a retry when a page fails', async () => {
