@@ -435,16 +435,24 @@ disk keeps only the 64 most recently written ones, and closing a thread deletes 
 older or closed thread rebuilds its replay from the log when it is opened again.
 
 **Thread history is paged by whole turns.** A `thread.history` request with `page` cuts the
-cached compact replay: the newest page holds the last turns plus the latest usage and any
-unanswered requests from older turns, and `olderCursor` walks back. A page ends only where every
-turn inside it has emitted its last event, so a prompt recorded before its provider's turn start
-or a late tool completion never straddles a cursor; one oversized block may exceed the requested
-size. Cursors are opaque, thread-scoped and name the boundary turn. Truncation or a provider
-history rewrite after a cursor was issued answers with `reset` and the newest page. Requests
-without `page` keep the full and `afterSeq` responses. Paging the event log directly was rejected
-for now: imported provider turns display in time order rather than log order, and the replay is
-already cached in memory and on disk. A thread without a snapshot therefore still parses every
-event once, which the store benchmark puts near 60 ms for 10,000 events.
+cached compact replay: the newest page holds the last turns plus the latest usage and the
+approvals and questions older turns left open (a thread error closes them, as in the renderer),
+and `olderCursor` walks back. A page ends only where every turn inside it has emitted its last
+event, so a prompt recorded before its provider's turn start or a late tool completion never
+straddles a cursor; one oversized block may exceed the requested size. Cursors are opaque,
+thread-scoped and name the boundary turn and the replay's sequence. An older page is answered
+from the replay saved at that sequence while it still exists, so a streaming turn never makes a
+page re-compact or rewrite the snapshot; any rewrite of older history deletes that replay. The
+answer is `reset` with the newest page when the boundary turn is gone (a restore removed it), when
+the replay now ends before the cursor's sequence (a truncation with nothing written since), or
+when provider history gained events after that sequence. A truncation that keeps the boundary turn
+and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
+that only retires events is not detected, as on the `afterSeq` path. Requests without `page` keep
+the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
+reader bounded before compaction, which is still to do. Until then a thread without a saved
+replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
+events; paging the event log directly also has to keep imported provider turns, which display in
+time order rather than log order, on the right page.
 
 **Streamed turn diffs are stored only when they change.** Providers can resend the same
 working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
@@ -598,7 +606,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open (#957).                                                    |
+| 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
