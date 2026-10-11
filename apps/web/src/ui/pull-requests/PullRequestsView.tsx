@@ -89,6 +89,9 @@ export function PullRequestsView(props: {
   const [filters, setFilters] = useState<PullRequestFilters>(DEFAULT_PULL_REQUEST_FILTERS)
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string>()
+  // An action can move the open pull request out of the view (merging it under
+  // Open). It stays listed and open, with its result, until the view changes.
+  const [pinnedKey, setPinnedKey] = useState<string>()
   const [setupStarting, setSetupStarting] = useState(false)
   const [setupError, setSetupError] = useState<string>()
   const request = useRef(0)
@@ -148,6 +151,7 @@ export function PullRequestsView(props: {
   const visible = useMemo(
     () =>
       relationshipItems.filter((item) => {
+        if (pullRequestKey(item) === pinnedKey) return true
         if (!matchesPullRequestFilters(item, filters)) return false
         if (!normalizedQuery) return true
         return [
@@ -160,7 +164,7 @@ export function PullRequestsView(props: {
           listStateLabel(item),
         ].some((value) => value.toLowerCase().includes(normalizedQuery))
       }),
-    [filters, normalizedQuery, relationshipItems],
+    [filters, normalizedQuery, pinnedKey, relationshipItems],
   )
 
   useEffect(() => {
@@ -171,6 +175,7 @@ export function PullRequestsView(props: {
   }, [selectedKey, visible])
 
   const syncDetail = useCallback((next: PullRequestDetail) => {
+    setPinnedKey(pullRequestKey(next))
     setResult((current) => {
       if (!current) return current
       const key = pullRequestKey(next)
@@ -250,7 +255,10 @@ export function PullRequestsView(props: {
                 role="tab"
                 aria-selected={filter === value}
                 className={filter === value ? 'is-active' : undefined}
-                onClick={() => setFilter(value)}
+                onClick={() => {
+                  setFilter(value)
+                  setPinnedKey(undefined)
+                }}
               >
                 {capitalize(value)}
                 <span>{counts[value]}</span>
@@ -263,7 +271,10 @@ export function PullRequestsView(props: {
               <Search size={14} aria-hidden />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setPinnedKey(undefined)
+                }}
                 placeholder="Search pull requests"
                 aria-label="Search pull requests"
               />
@@ -271,7 +282,10 @@ export function PullRequestsView(props: {
             <PullRequestFilterMenu
               value={filters}
               items={relationshipItems}
-              onChange={setFilters}
+              onChange={(next) => {
+                setFilters(next)
+                setPinnedKey(undefined)
+              }}
             />
           </div>
         </header>
