@@ -114,8 +114,46 @@ describe('workspace panel layout', () => {
     expect(openToggles).toContain('right: 44px')
     expect(toggle).toContain('width: 28px')
     expect(workspaceOnly).toContain('margin-right: 76px')
-    expect(workspaceOnly).toContain('padding-right: 8px')
+    expect(workspaceOnly).toContain('padding-right: 4px')
     expect(withTerminal).toContain('margin-right: 112px')
+  })
+
+  it('shrinks tabs before scrolling so two fit beside the toggles in the narrowest panel', () => {
+    const body = (selector: string) =>
+      css.match(
+        new RegExp(`\\n${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{(?<body>[^}]*)\\}`),
+      )?.groups?.body ?? ''
+    const px = (source: string, property: string) =>
+      Number(source.match(new RegExp(`(?:^|\\s)${property}: (\\d+)px`))?.[1] ?? Number.NaN)
+    const strip = body('.workspace-tabs')
+    const tab = body('.workspace-tabs__tab')
+    const add = body('.workspace-tabs__add-button')
+    const withTerminal = css.match(
+      /\.panel-toggles__terminal\)\s+\.workspace-panel:not\(\.workspace-panel--bottom\)\s+> \.workspace-tabs \{(?<body>[^}]*)\}/,
+    )?.groups?.body
+    const workspaceOnly = css.match(
+      /is-workspace-open\)\s+\.workspace-panel:not\(\.workspace-panel--bottom\)\s+> \.workspace-tabs \{(?<body>[^}]*)\}/,
+    )?.groups?.body
+
+    expect(tab).toContain('flex: 0 1 auto')
+    expect(tab).toContain('max-width: 190px')
+    expect(body('.workspace-tabs__tab .workspace-tabs__close')).toContain('flex: none')
+    expect(css).toMatch(/\.workspace-tabs__tab button span \{[^}]*text-overflow: ellipsis;/)
+
+    // A 300px panel with both toggles: the strip's content box after the 1px
+    // panel border, the reserve and its padding holds the add button and two
+    // tabs at their floor without scrolling.
+    const gap = px(strip, 'gap')
+    const room =
+      300 -
+      1 -
+      px(withTerminal ?? '', 'margin-right') -
+      Number(strip.match(/padding: \d+px \d+px \d+px (\d+)px/)?.[1]) -
+      px(workspaceOnly ?? '', 'padding-right') -
+      px(add, 'width') -
+      gap
+    expect(2 * px(tab, 'min-width') + gap).toBeLessThanOrEqual(room)
+    expect(3 * px(tab, 'min-width') + 2 * gap).toBeGreaterThan(room)
   })
 
   it('moves the right panel Review and Files trees under their content by panel width', () => {

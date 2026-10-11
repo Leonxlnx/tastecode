@@ -1483,10 +1483,14 @@
   overflow-y: hidden;
   scrollbar-width: none;
 }
+/* Tabs give up label width before the strip has to scroll, down to their icon,
+   an ellipsis and their close button, so two tabs still fit whole beside the
+   panel toggles in a 300px panel. */
 .workspace-tabs__tab {
   display: flex;
   align-items: center;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 70px;
   max-width: 190px;
   border-radius: var(--r-md);
   color: var(--text-3);
@@ -1518,6 +1522,7 @@
   flex: none;
 }
 .workspace-tabs__tab .workspace-tabs__close {
+  flex: none;
   padding: 0 5px;
 }
 .workspace-tabs__add {
@@ -1551,12 +1556,12 @@
    left of the close button: a 44px inset plus 28px buttons and 8px gaps.
    End the strip 4px short of them rather than padding it, so tabs that
    scroll are clipped there instead of sliding under the transparent
-   buttons. */
+   buttons; the padding keeps the add button the toggles' own 8px away. */
 .shell:has(> .panel-toggles.is-workspace-open)
   .workspace-panel:not(.workspace-panel--bottom)
   > .workspace-tabs {
   margin-right: 76px;
-  padding-right: 8px;
+  padding-right: 4px;
 }
 
 .shell:has(> .panel-toggles.is-workspace-open > .panel-toggles__terminal)
