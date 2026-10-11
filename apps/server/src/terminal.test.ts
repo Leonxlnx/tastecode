@@ -533,8 +533,9 @@ describe('TerminalManager', () => {
         return pty
       })
       const inspect = vi.fn((pids: number[]) => {
-        // A ps that takes 60 ms blocks the event loop for as long...
-        vi.setSystemTime(Date.now() + 60)
+        // A ps that takes 60 ms blocks the event loop for as long, and no
+        // timer is due yet that could run meanwhile...
+        vi.advanceTimersByTime(60)
         return pids.map((pid) => ownShell(pid, pid + 1_000))
       })
       const spawned = [...ptys]
