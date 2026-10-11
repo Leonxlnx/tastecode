@@ -79,7 +79,7 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
-import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { MAX_HISTORY_PAGE_TURNS, nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 import {
@@ -233,6 +233,22 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     })
     return read
   }, [])
+  const searchingOlder = useRef(false)
+  // Find and search jumps need every turn, so fetch the rest in large pages.
+  const loadAllOlder = useCallback(async () => {
+    const threadId = threadIdRef.current
+    if (searchingOlder.current) return
+    searchingOlder.current = true
+    try {
+      while (
+        threadIdRef.current === threadId &&
+        props.frameStore.getStructureSnapshot().olderCursor &&
+        (await loadOlder(MAX_HISTORY_PAGE_TURNS))
+      );
+    } finally {
+      searchingOlder.current = false
+    }
+  }, [props.frameStore, loadOlder])
   useEffect(() => {
     olderFailed.current = false
     setOlderHistory('idle')
@@ -405,12 +421,15 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
     const index = thread.items.findIndex((item) => item.turnId === target.turnId)
-    if (index < 0) return
+    if (index < 0) {
+      if (thread.olderCursor) void loadOlder(MAX_HISTORY_PAGE_TURNS)
+      return
+    }
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [thread.items, props.searchJump, virtualizer])
+  }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadOlder])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
@@ -545,6 +564,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               liveItems={liveItems}
               frameStore={props.frameStore}
               threadId={props.threadId}
+              hasOlder={thread.olderCursor !== undefined}
+              searchingOlder={olderHistory === 'loading'}
+              onSearchOlder={loadAllOlder}
               onJump={jumpTo}
               onClose={() => setFinding(false)}
             />

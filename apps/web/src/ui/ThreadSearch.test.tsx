@@ -103,4 +103,38 @@ describe('thread search navigation', () => {
     expect(screen.getByText('1/5')).toBeTruthy()
     expect(onJump).toHaveBeenLastCalledWith(0)
   })
+
+  it('asks for unloaded turns once and keeps the shown match as they arrive above', () => {
+    const onSearchOlder = vi.fn()
+    const props = {
+      threadId: 'thread',
+      onJump: () => undefined,
+      onClose: () => undefined,
+      onSearchOlder,
+    }
+    const view = render(<ThreadSearch {...props} items={items.slice(2)} hasOlder />)
+    expect(onSearchOlder).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'match' } })
+    fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'matc' } })
+    expect(onSearchOlder).toHaveBeenCalledOnce()
+
+    const next = screen.getByRole('button', { name: 'Next match' })
+    fireEvent.click(next)
+    fireEvent.click(next)
+    view.rerender(<ThreadSearch {...props} items={items.slice(2)} hasOlder searchingOlder />)
+    expect(screen.getByText('2/3…')).toBeTruthy()
+
+    // item-3 was on screen; two older matches now come before it.
+    view.rerender(<ThreadSearch {...props} items={items} />)
+    expect(screen.getByText('4/5')).toBeTruthy()
+  })
+
+  it('says it is still searching while older turns load without a match yet', () => {
+    const props = { onJump: () => undefined, onClose: () => undefined }
+    const view = render(<ThreadSearch {...props} items={items} hasOlder searchingOlder />)
+    fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'absent' } })
+    expect(screen.getByText('Searching…')).toBeTruthy()
+    view.rerender(<ThreadSearch {...props} items={items} />)
+    expect(screen.getByText('None')).toBeTruthy()
+  })
 })
