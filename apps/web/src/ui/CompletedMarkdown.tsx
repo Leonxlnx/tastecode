@@ -6,7 +6,12 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from 'react'
-import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown'
+import {
+  Streamdown,
+  defaultRehypePlugins,
+  parseMarkdownIntoBlocks,
+  type Components,
+} from 'streamdown'
 import 'streamdown/styles.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks, projectFileReference } from '../project-file-link.js'
@@ -157,6 +162,15 @@ function normalizeImageSources(normalize: (source: string) => string) {
   }
 }
 
+const REFERENCE_DEFINITION = /^[ \t]{0,3}(?:>[ \t]*)*\[[^\]\r\n]+\]:/m
+
+// Each block is parsed on its own, so `[text][ref]` would never see a `[ref]: url`
+// in another block. Like Streamdown's own footnote handling, such a text stays one
+// block; everything else keeps per-block rendering and the large-fence fast path.
+function completedBlocks(markdown: string): string[] {
+  return REFERENCE_DEFINITION.test(markdown) ? [markdown] : parseMarkdownIntoBlocks(markdown)
+}
+
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 const STREAM_ANIMATION = {
@@ -195,7 +209,8 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
         mode="streaming"
         isAnimating={false}
         animated={STREAM_ANIMATION}
-        parseIncompleteMarkdown
+        parseIncompleteMarkdown={false}
+        parseMarkdownIntoBlocksFn={completedBlocks}
         plugins={STREAMDOWN_PLUGINS}
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}

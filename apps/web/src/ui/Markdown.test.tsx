@@ -227,6 +227,34 @@ describe('Markdown inline references', () => {
   })
 })
 
+describe('Completed Markdown', () => {
+  it.each(['Match files with **/*.ts in the repo.', 'Hold ^_foo to repeat.', 'Press the ` key.'])(
+    'does not repair finished text as if it were cut off: %s',
+    (text) => {
+      const { container } = render(<CompletedMarkdown text={`${text}\n\nZZEND`} />)
+
+      expect([...container.querySelectorAll('p')].at(-1)?.textContent).toBe('ZZEND')
+    },
+  )
+
+  it('resolves reference-style links against definitions in other blocks', () => {
+    render(
+      <CompletedMarkdown
+        text={
+          'See [the docs][docs] first.\n\n- then [the guide]\n\n[docs]: https://example.com/docs\n[the guide]: https://example.com/guide "Guide"'
+        }
+      />,
+    )
+
+    expect(screen.getByRole('link', { name: 'the docs' }).getAttribute('href')).toBe(
+      'https://example.com/docs',
+    )
+    expect(screen.getByRole('link', { name: 'the guide' }).getAttribute('href')).toBe(
+      'https://example.com/guide',
+    )
+  })
+})
+
 describe('Markdown streaming motion', () => {
   it('defers full project-file parsing until the streamed message completes', async () => {
     const preserve = vi.mocked(preserveProjectFileLinks)
