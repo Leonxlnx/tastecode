@@ -176,7 +176,8 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       return
     }
     let cancelled = false
-    setSearch({ key: searchKey })
+    // A refresh repeats the same search; its results stay up until the new ones arrive.
+    setSearch((current) => (current?.key === searchKey ? current : { key: searchKey }))
     const timer = setTimeout(() => {
       void props.transport
         .request('workspace.searchFiles', {
