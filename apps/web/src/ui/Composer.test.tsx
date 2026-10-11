@@ -421,7 +421,9 @@ describe('Composer media attachments', () => {
     renderComposer(onSend)
     const file = new File(['native file'], 'large.zip')
     Object.defineProperty(file, 'size', { value: 26 * 1024 * 1024 })
-    fireEvent.drop(document.querySelector('.composer__box')!, { dataTransfer: { files: [file] } })
+    fireEvent.drop(document.querySelector('.composer__box')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
     expect(nativeLookup).toHaveBeenCalledWith(file)
     expect(bridge.savePastedFile).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -1220,6 +1222,32 @@ describe('Composer queue', () => {
     )
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('queued-1')
     expect(onDeleteQueuedTurn).toHaveBeenCalledWith('Polish the queue')
+  })
+
+  it('keeps a queued-prompt reorder out of the file drop target', () => {
+    renderComposer(vi.fn(), {
+      running: true,
+      attachmentsSupported: false,
+      queuedTurns: [
+        { id: 'queued-1', text: 'Polish the queue', attachments: [], createdAt: 1 },
+        { id: 'queued-2', text: 'Run the tests', attachments: [], createdAt: 2 },
+      ],
+    })
+    const source = screen.getByText('Polish the queue').closest('.queue-row')!
+    const target = screen.getByText('Run the tests').closest('.queue-row')!
+    const dataTransfer = {
+      dropEffect: 'none',
+      effectAllowed: 'none',
+      files: [],
+      types: ['text/plain'],
+      setData: vi.fn(),
+    }
+
+    fireEvent.dragStart(source, { dataTransfer })
+    fireEvent.dragOver(target, { clientY: 4, dataTransfer })
+    fireEvent.drop(target, { clientY: 4, dataTransfer })
+
+    expect(screen.queryByText('Attachments aren’t supported by this source.')).toBeNull()
   })
 })
 

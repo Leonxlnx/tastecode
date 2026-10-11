@@ -1396,13 +1396,13 @@ function ComposerComponent(props: {
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
-            if (props.attachmentsSupported) setDragging(true)
+            if (props.attachmentsSupported && hasDroppedFiles(e)) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            addDroppedFiles(Array.from(e.dataTransfer.files))
+            if (hasDroppedFiles(e)) addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
           <ComposerErrors
@@ -2159,6 +2159,11 @@ export function insertTranscriptAtCursor(
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/** Queued-prompt reorders bubble up here too; only real file drags attach. */
+function hasDroppedFiles(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types ?? []).includes('Files')
 }
 
 function previewMediaType(mimeType: string, fileName: string): 'image' | 'video' | undefined {

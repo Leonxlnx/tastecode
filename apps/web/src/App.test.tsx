@@ -9238,7 +9238,9 @@ function dropFile(composer: HTMLElement, path: string) {
     },
   })
   try {
-    fireEvent.drop(composer.closest('.composer__box')!, { dataTransfer: { files: [file] } })
+    fireEvent.drop(composer.closest('.composer__box')!, {
+      dataTransfer: { files: [file], types: ['Files'] },
+    })
   } finally {
     if (descriptor) Object.defineProperty(window, 'harness', descriptor)
     else Reflect.deleteProperty(window, 'harness')
