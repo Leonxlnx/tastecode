@@ -6,6 +6,7 @@ import { Thread } from '../../../web/src/ui/Thread.js'
 import { makeFixtureThread } from '../../../web/src/ui/fixture.js'
 import { ThreadFrameStore } from '../../../web/src/thread-frame-store.js'
 import { emptyThread, reduce, threadItemAt } from '../../../web/src/thread-store.js'
+import type { LargeActivityStep } from './large-activity.js'
 import '../../../web/src/styles/tokens.css'
 import '../../../web/src/styles/app.css'
 import './style.css'
@@ -251,4 +252,6 @@ Object.assign(window, {
   runPerformanceFixture: run,
   runHighlightingFixture: () =>
     import('./highlighting.js').then(({ runHighlightingFixture }) => runHighlightingFixture()),
+  runLargeActivityStep: (step: LargeActivityStep) =>
+    import('./large-activity.js').then(({ runLargeActivityStep }) => runLargeActivityStep(step)),
 })
