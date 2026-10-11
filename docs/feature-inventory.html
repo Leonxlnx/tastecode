@@ -1445,25 +1445,26 @@
                 >Resizable bottom and right tool panels
                 <span class="d"
                   >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
-                  Temporary chat that stacks into one column in a narrow panel. Each panel has
+                  Temporary chat that stacks into one column in a narrow right panel. Each panel has
                   independent tool tabs, a + menu, and an upper-right close button. Tabs fade on add
                   and close; neighbouring tabs slide into place. Tabs support drag reordering and
                   Alt+Left/Right with the app haptic preference. Closing the panel returns to the
                   picker. No manual expansion. Bottom and right terminals have separate shells. Edge
-                  resizing takes the right panel down to 300 px, and its tools lay out by the
-                  panel's own width: Review and Files move their tree underneath below 500 px, the
-                  Browser address takes its own row below 420 px, and tabs stop short of the
-                  floating panel toggles. CSP-safe compact terminals with link detection, distinct
-                  desktop/tablet/mobile Browser controls, lazy file trees and side chat; queued and
-                  steered Side-chat turns keep their own channel across runtime restart, while a
-                  full app restart still purges temporary Side chats; New chat terminals use the
-                  selected project's current checkout, while active chats use their exact session
-                  checkout; one fixed in-chat toggle opens and closes the panel by swapping its icon
-                  in place, staying visible throughout the closing transition. Aligned square
-                  dividers and the 42 px sidebar titlebar edge stay below native window chrome,
-                  resizing keeps at least 360 px for the center chat with or without the left
-                  sidebar, missing workspace items fail without raw paths, and 390 px layouts do not
-                  overflow</span
+                  resizing takes the right panel down to 300 px, and both panels lay their tools out
+                  by the panel's own width: the Browser address takes its own row below 420 px in
+                  either panel, while only the full-height right panel moves the Review and Files
+                  tree underneath below 500 px (the short bottom panel keeps them side by side), and
+                  right tabs stop short of the floating panel toggles. CSP-safe compact terminals
+                  with link detection, distinct desktop/tablet/mobile Browser controls, lazy file
+                  trees and side chat; queued and steered Side-chat turns keep their own channel
+                  across runtime restart, while a full app restart still purges temporary Side
+                  chats; New chat terminals use the selected project's current checkout, while
+                  active chats use their exact session checkout; one fixed in-chat toggle opens and
+                  closes the panel by swapping its icon in place, staying visible throughout the
+                  closing transition. Aligned square dividers and the 42 px sidebar titlebar edge
+                  stay below native window chrome, resizing keeps at least 360 px for the center
+                  chat with or without the left sidebar, missing workspace items fail without raw
+                  paths, and 390 px layouts do not overflow</span
                 ></span
               ></label
             >
