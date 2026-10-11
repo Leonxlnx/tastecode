@@ -334,6 +334,26 @@ describe('Codex activity items', () => {
     })
   })
 
+  it('shows structured MCP content when the text content is empty', () => {
+    const raw = CodexThreadItemSchema.parse({
+      type: 'mcpToolCall',
+      id: 'mcp-2',
+      server: 'db',
+      tool: 'query',
+      status: 'completed',
+      arguments: {},
+      appContext: null,
+      pluginId: null,
+      result: { content: [], structuredContent: { rows: [[1]] }, _meta: null },
+      error: null,
+      durationMs: null,
+    })
+
+    expect(mapThreadItem(raw, context)).toMatchObject({
+      text: 'db.query\n{\n  "rows": [\n    [\n      1\n    ]\n  ]\n}',
+    })
+  })
+
   it('keeps the web search query', () => {
     expect(
       mapThreadItem(
