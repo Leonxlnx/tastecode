@@ -5,12 +5,15 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { startServer } from './server.js'
 
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
   threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
+  historyPage: vi.fn(),
+  read: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -28,6 +31,9 @@ vi.mock('./store.js', () => ({
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
+    threadApproval() {
+      return undefined
+    }
     close() {}
   },
 }))
@@ -38,12 +44,24 @@ vi.mock('./orchestrator.js', () => ({
     refreshLifecycle() {}
     async recoverWorktrees() {}
     async disposeAll() {}
+    historyPage(threadId: string, page: unknown) {
+      return state.historyPage(threadId, page) as unknown
+    }
+    isTurnRunning() {
+      return true
+    }
+    markThreadRead(threadId: string) {
+      state.read.push(threadId)
+    }
   },
 }))
 vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
     async refresh() {}
+    async load() {
+      return false
+    }
     async close() {}
   },
 }))
@@ -71,6 +89,8 @@ afterEach(async () => {
   state.servers.length = 0
   state.projects.length = 0
   state.threads.clear()
+  state.historyPage.mockReset()
+  state.read.length = 0
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -320,6 +340,71 @@ describe('workspace search requests', () => {
     const { port } = await listen()
     expect(await search(port, { projectPath, ...params })).toMatchObject({
       error: { message: 'invalid params for workspace.searchFiles' },
+    })
+  })
+})
+
+describe('paged history requests', () => {
+  async function history(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'history', method: 'thread.history', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+  const turn = {
+    seq: 7,
+    event: {
+      type: 'turn.started',
+      turn: { id: 'turn', threadId: 't', status: 'running', createdAt: 1 },
+    },
+  }
+
+  it('returns the newest page with its cursor and marks only that page read', async () => {
+    state.historyPage.mockResolvedValue({
+      events: [turn],
+      page: { olderCursor: 'older', snapshotSeq: 7 },
+    })
+    const { port } = await listen()
+    expect(await history(port, { threadId: 't', page: { turnLimit: 10 } })).toEqual({
+      id: 'history',
+      result: {
+        events: [turn],
+        running: true,
+        approval: 'ask',
+        page: { olderCursor: 'older', snapshotSeq: 7 },
+      },
+    })
+    expect(state.historyPage).toHaveBeenCalledWith('t', { turnLimit: 10 })
+    expect(state.read).toEqual(['t'])
+  })
+
+  it('passes a reset through and leaves read state alone for older pages', async () => {
+    state.historyPage.mockResolvedValue({
+      events: [turn],
+      page: { olderCursor: null, snapshotSeq: 7 },
+      reset: true,
+    })
+    const { port } = await listen()
+    expect(
+      await history(port, { threadId: 't', page: { before: 'cursor', turnLimit: 20 } }),
+    ).toMatchObject({
+      result: { reset: true, page: { olderCursor: null, snapshotSeq: 7 } },
+    })
+    expect(state.read).toEqual([])
+  })
+
+  it('answers a cursor it never issued as a bad request', async () => {
+    state.historyPage.mockRejectedValue(new InvalidHistoryCursorError())
+    const { port } = await listen()
+    expect(await history(port, { threadId: 't', page: { before: 'forged' } })).toEqual({
+      id: 'history',
+      error: { code: 'bad_request', message: 'invalid history cursor' },
     })
   })
 })
