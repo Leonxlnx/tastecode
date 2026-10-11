@@ -136,6 +136,19 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
   }
 }
 
+const COMPATIBLE_FAMILIES = {
+  stats: ['social_proof', 'about'],
+  pricing: ['feature'],
+  how_it_works: ['feature', 'about'],
+  contact: ['cta'],
+  cta: ['contact'],
+  faq: ['feature'],
+} as const satisfies Partial<Record<PageLayoutFamily, readonly PageLayoutFamily[]>>
+
+function compatibleFamilies(family: PageLayoutFamily): readonly PageLayoutFamily[] {
+  return COMPATIBLE_FAMILIES[family as keyof typeof COMPATIBLE_FAMILIES] ?? []
+}
+
 /** Content topics can use a compatible image's geometry without relabeling that image. */
 export function referenceCandidatesForFamily(
   family: PageLayoutFamily,
@@ -143,15 +156,7 @@ export function referenceCandidatesForFamily(
 ): ReferenceDirection[] {
   const native = references.filter((entry) => entry.family === family)
   if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
-  const compatible = {
-    stats: ['social_proof', 'about'],
-    pricing: ['feature'],
-    how_it_works: ['feature', 'about'],
-    contact: ['cta'],
-    cta: ['contact'],
-    faq: ['feature'],
-  } as const satisfies Partial<Record<PageLayoutFamily, readonly PageLayoutFamily[]>>
-  const alternatives = compatible[family as keyof typeof compatible] ?? []
+  const alternatives = compatibleFamilies(family)
   const pool = references.filter(
     (entry) =>
       entry.family === family || alternatives.some((candidate) => candidate === entry.family),
