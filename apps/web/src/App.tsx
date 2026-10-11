@@ -2737,9 +2737,14 @@ export function App() {
       const uniquePaths = [...new Set(paths)]
       const activePath = uniquePaths.at(-1)
       if (!activePath) return
-      await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-      for (const path of uniquePaths) removedProjectPaths.current.delete(path)
-      await refreshProjects()
+      try {
+        await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
+        for (const path of uniquePaths) removedProjectPaths.current.delete(path)
+        await refreshProjects()
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+        return
+      }
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
