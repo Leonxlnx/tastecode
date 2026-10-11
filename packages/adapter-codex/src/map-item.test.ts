@@ -76,6 +76,38 @@ describe('Codex collaboration items', () => {
     })
   })
 
+  it('does not call a timed-out wait finished while subagents still run', () => {
+    expect(mapThreadItem(collab({ tool: 'wait', prompt: null }), context)).toMatchObject({
+      status: 'completed',
+      text: 'Subagent still running',
+    })
+    expect(
+      mapThreadItem(
+        collab({
+          tool: 'wait',
+          prompt: null,
+          receiverThreadIds: ['child-1', 'child-2'],
+          agentsStates: {
+            'child-1': { status: 'completed', message: 'done' },
+            'child-2': { status: 'running', message: null },
+          },
+        }),
+        context,
+      ),
+    ).toMatchObject({ status: 'completed', text: '1 of 2 subagents still running' })
+  })
+
+  it.each([
+    ['sendInput', 'Could not send input to a subagent'],
+    ['resumeAgent', 'Could not resume a subagent'],
+    ['closeAgent', 'Could not close a subagent'],
+  ] as const)('labels a failed %s as failed', (tool, text) => {
+    expect(mapThreadItem(collab({ tool, status: 'failed', prompt: null }), context)).toMatchObject({
+      status: 'failed',
+      text,
+    })
+  })
+
   it('maps legacy subagent activity without exposing a raw provider type', () => {
     expect(
       mapThreadItem(
