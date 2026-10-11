@@ -12,6 +12,7 @@ import type {
 import {
   JsonRpcValueSchema,
   killTree,
+  ProtocolFrameError,
   readNdjson,
   spawnCli,
   type JsonRpcValue,
@@ -334,6 +335,11 @@ export class PiAdapter extends EventEmitter<Events> {
       (line) => this.emit('log', `${this.#displayName} non-JSON output: ${line.slice(0, 200)}`),
       {
         onError: (error) => {
+          // A throwing event listener leaves the stream intact; keep reading it.
+          if (!(error instanceof ProtocolFrameError)) {
+            this.emit('log', `${this.#displayName} event handling failed: ${error.message}`)
+            return
+          }
           this.#processFailed(error.message)
           void killTree(child)
         },

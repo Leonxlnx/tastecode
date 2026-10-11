@@ -179,6 +179,71 @@ describe('Antigravity turn invocation', () => {
     ])
   })
 
+  it('keeps the turn alive past a frame it cannot read', async () => {
+    const child = new FakeChild()
+    let killed = 0
+    child.kill = () => {
+      killed++
+      return true
+    }
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => events.push(event))
+    adapter.on('log', (line) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+
+    // `step_update: null` fails the schema; the frames after it are still read.
+    child.stdout.write('{"event":"step_update","step_update":null}\n')
+    for (const frame of CAPTURED_FRAMES.slice(2)) child.stdout.write(`${frame}\n`)
+    child.stdout.end()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(logs.some((line) => line.startsWith('Antigravity event handling failed'))).toBe(true)
+    expect(killed).toBe(0)
+    child.emit('close', 0)
+  })
+
+  it('logs a throwing event listener instead of failing the turn', async () => {
+    const child = new FakeChild()
+    let killed = 0
+    child.kill = () => {
+      killed++
+      return true
+    }
+    const adapter = new AntigravityAdapter({ spawn: fakeSpawn({}, child) })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    let thrown = false
+    adapter.on('event', (event) => {
+      events.push(event)
+      if (event.type === 'item.delta' && !thrown) {
+        thrown = true
+        throw new Error('listener failed')
+      }
+    })
+    adapter.on('log', (line) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+
+    for (const frame of CAPTURED_FRAMES) child.stdout.write(`${frame}\n`)
+    child.stdout.end()
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
+    expect(killed).toBe(0)
+    child.emit('close', 0)
+  })
+
   it('prepends session instructions to the first prompt only', async () => {
     const record: SpawnRecord = {}
     const child = new FakeChild()
