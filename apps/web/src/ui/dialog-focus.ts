@@ -14,6 +14,17 @@ export function useDialogFocus<T extends HTMLElement>(onClose: () => void) {
   close.current = onClose
 
   useEffect(() => {
+    // A menu returns focus to its trigger in a layout effect, after this dialog
+    // rendered from one of its items. A field that autofocused inside the
+    // panel keeps the opener read during render.
+    const active = document.activeElement
+    if (
+      active instanceof HTMLElement &&
+      active !== document.body &&
+      !panel.current?.contains(active)
+    ) {
+      previousFocus.current = active
+    }
     if (!panel.current?.contains(document.activeElement)) panel.current?.focus()
     return () => {
       if (previousFocus.current?.isConnected) previousFocus.current.focus()
