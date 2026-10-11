@@ -20,7 +20,7 @@ export function parsePullRequestPatch(patch: string): PullRequestDiffHunk[] {
   let newLine = 0
 
   for (const rawLine of patch.split('\n')) {
-    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/.exec(rawLine)
+    const header = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/s.exec(rawLine)
     if (header) {
       oldLine = Number(header[1])
       newLine = Number(header[2])
