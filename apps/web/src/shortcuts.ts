@@ -259,6 +259,20 @@ export function isConfirmEnter(event: {
   return event.key === 'Enter' && !event.nativeEvent.isComposing
 }
 
+type ComposingKeyEvent = Pick<KeyboardEvent, 'isComposing' | 'keyCode'>
+
+/**
+ * A key the IME uses for an open composition: Escape cancels the conversion,
+ * arrows pick a candidate. Safari reports the composition's last keydown only
+ * through keyCode 229.
+ */
+export function isComposingKey(
+  event: ComposingKeyEvent | { nativeEvent: ComposingKeyEvent },
+): boolean {
+  const native = 'nativeEvent' in event ? event.nativeEvent : event
+  return native.isComposing || native.keyCode === 229
+}
+
 export function matchesShortcut(
   event: ShortcutEvent,
   shortcut: Shortcut | null | undefined,

@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { IconSearch as Search } from '@tabler/icons-react'
 import '../styles/command-palette.css'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { useDialogFocus } from './dialog-focus.js'
 
 export type CommandScope = 'all' | 'projects' | 'new-thread'
@@ -153,6 +153,7 @@ function CommandPaletteComponent(props: {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isComposingKey(event)) return
               if (event.key === 'Escape') {
                 event.preventDefault()
                 props.onClose()

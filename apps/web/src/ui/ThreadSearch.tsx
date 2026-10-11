@@ -8,7 +8,7 @@ import {
 import type { LiveItemUpdate } from '../thread-store.js'
 import type { ThreadFrameStore } from '../thread-frame-store.js'
 import { createThreadSearchIndexer, findThreadSearchHits } from '../thread-search-index.js'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 
 /**
  * Find within the open thread.
@@ -93,6 +93,7 @@ export function ThreadSearch(props: {
           jumped.current = false
         }}
         onKeyDown={(e) => {
+          if (isComposingKey(e)) return
           if (e.key === 'Escape') props.onClose()
           if (isConfirmEnter(e)) advance(e.shiftKey)
         }}

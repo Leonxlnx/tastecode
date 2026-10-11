@@ -142,6 +142,7 @@ import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isComposingKey,
   type KeybindingId,
   type Keybindings,
   type Shortcut,
@@ -321,6 +322,7 @@ function SettingsComponent(props: {
       document.activeElement instanceof HTMLElement ? document.activeElement : null
     panel.current?.focus()
     const onKey = (event: KeyboardEvent) => {
+      if (isComposingKey(event)) return
       if (event.key === 'Escape' && !event.defaultPrevented) {
         event.preventDefault()
         onClose.current()
