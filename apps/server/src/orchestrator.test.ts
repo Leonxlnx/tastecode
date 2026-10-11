@@ -8337,6 +8337,33 @@ describe('rolling a session back', () => {
     await orchestrator.disposeAll()
   })
 
+  it('releases the shared checkout when a Design start throws before the agent accepts it', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const first = await orchestrator.startThread('codex', repo)
+      await orchestrator.sendTurn(first.id, 'save original')
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      const point = orchestrator.checkpoints(first.id)[0]!
+      const designer = await orchestrator.startThread('codex', repo)
+      sessions[1]!.sendTurn = () => {
+        throw new Error('provider failed before returning a promise')
+      }
+
+      await expect(
+        orchestrator.sendTurn(designer.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT]),
+      ).rejects.toThrow('provider failed before returning a promise')
+
+      // A start that never reached the agent must not keep the chat "starting"
+      // or hold the checkout that restores in other chats need.
+      expect(orchestrator.isTurnRunning(designer.id)).toBe(false)
+      writeFileSync(path.join(repo, 'file.txt'), 'changed\n')
+      await orchestrator.restoreCheckpoint(first.id, point.id)
+      expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('undoes only the patch from an edit block and keeps the conversation', async () => {
     const { orchestrator, sessions, store } = harness()
     const thread = await orchestrator.startThread('codex', repo)
