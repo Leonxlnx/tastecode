@@ -333,7 +333,7 @@ describe('TerminalManager', () => {
 
   it.each([
     { closeWith: 'a pane close', steps: [3_000, 3_000] },
-    { closeWith: 'server shutdown', steps: [500, 600] },
+    { closeWith: 'server shutdown', steps: [400, 1_400] },
   ])('gives a job time to shut down before SIGTERM and SIGKILL on $closeWith', async (test) => {
     vi.useFakeTimers()
     try {
@@ -392,7 +392,9 @@ describe('TerminalManager', () => {
       const shutdown = manager.closeAll()
       await vi.advanceTimersByTimeAsync(100)
       expect(signals).toEqual(['SIGTERM'])
-      await vi.advanceTimersByTimeAsync(600)
+      await vi.advanceTimersByTimeAsync(1_399)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(1)
       expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
       await Promise.all([closed, shutdown])
     } finally {
