@@ -176,6 +176,39 @@ describe('history pages', () => {
     expect(older.events[0]!.event.type).toBe('turn.started')
   })
 
+  it('walks back through a replay that sorts imported turns by time', () => {
+    const log = entries([
+      ...turn(1),
+      ...turn(2),
+      // Discovered after the local turns, but older than both.
+      {
+        type: 'turn.started',
+        turn: { id: 'import:a', threadId: 'thread', status: 'running', createdAt: -1 },
+      },
+      message('import-a', 'import:a', 'assistant'),
+      completed('import:a'),
+    ])
+    const replay = compactHistoryReplay(log)
+
+    const pages: Entry[][] = []
+    let page = readHistoryPage('thread', replay, { turnLimit: 1 })
+    expect(page.page.snapshotSeq).toBe(log.at(-1)!.seq)
+    pages.unshift(page.events)
+    while (page.page.olderCursor !== null) {
+      page = readHistoryPage('thread', replay, {
+        before: decodeHistoryCursor('thread', page.page.olderCursor),
+        turnLimit: 1,
+      })
+      pages.unshift(page.events)
+    }
+    expect(pages.map(pageItemIds)).toEqual([
+      ['import-a'],
+      ['prompt-1', 'reply-1'],
+      ['prompt-2', 'reply-2'],
+    ])
+    expect(pages.flat()).toEqual(replay)
+  })
+
   it('drops requests a thread error left unanswered', () => {
     const replay = entries([
       ...turn(0),
