@@ -25,6 +25,7 @@ import {
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 
@@ -309,6 +310,10 @@ export function startServer(
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
+      if (error instanceof InvalidHistoryCursorError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
       }
       respondError(
