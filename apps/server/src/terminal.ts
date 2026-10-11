@@ -181,6 +181,7 @@ export class TerminalManager {
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
   #shutdownStartedAt: number | undefined
+  #listing: Promise<ProcessRow[] | undefined> | undefined
   /** Wakes every pending poll, so a starting shutdown shortens it at once. */
   #wakers = new Set<() => void>()
   /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
@@ -352,10 +353,29 @@ export class TerminalManager {
 
     const entry = this.#byId.get(terminalId)
     if (!entry) return Promise.resolve()
+    return this.#closeEntry(terminalId, entry, this.#processes.inspect([entry.process.pid]))
+  }
+
+  /**
+   * Close several terminals with one ps for all their shells: inspecting them
+   * one by one would hold up each hangup by every inspection before it.
+   */
+  #closeEntries(entries: Array<[string, TerminalEntry]>, waits: Set<Promise<void>>): void {
+    const rows = this.#processes.inspect(entries.map(([, entry]) => entry.process.pid))
+    for (const [terminalId, entry] of entries) {
+      try {
+        waits.add(this.#closeEntry(terminalId, entry, rows))
+      } catch (error) {
+        waits.add(Promise.reject(error))
+      }
+    }
+  }
+
+  #closeEntry(terminalId: string, entry: TerminalEntry, rows: ProcessRow[]): Promise<void> {
     // node-pty only sends SIGHUP, which a foreground job may ignore — a server
     // that treats it as "reload" outlives the pane. Read which job holds the
     // terminal now: once the shell exits, nothing records it.
-    const shell = this.#ownedShell(entry.process.pid)
+    const shell = ownedShell(rows, entry.process.pid)
     const job =
       shell && shell.foreground > 1
         ? { group: shell.foreground, session: shell.session }
@@ -400,15 +420,17 @@ export class TerminalManager {
     // close at its timeout; a closed terminal emulator would at least have
     // hung up its line. Ask again first: a pid that is no longer our session
     // leader is not ours to kill.
-    if (
-      owned &&
-      !(await this.#settlesWithin(entry.exited, 'hangup')) &&
-      this.#ownedShell(entry.process.pid)
-    ) {
-      try {
-        entry.process.kill('SIGKILL')
-      } catch {
-        // The exit, or the bounded close timeout, reports the outcome.
+    let exited = false
+    void entry.exited.then(() => (exited = true))
+    if (owned && !(await this.#settlesWithin(entry.exited, 'hangup'))) {
+      const pid = entry.process.pid
+      const rows = (await this.#listProcesses()) ?? this.#processes.inspect([pid])
+      if (!exited && ownedShell(rows, pid)) {
+        try {
+          entry.process.kill('SIGKILL')
+        } catch {
+          // The exit, or the bounded close timeout, reports the outcome.
+        }
       }
     }
     await exitedInTime
@@ -461,7 +483,7 @@ export class TerminalManager {
     while (true) {
       // Members that exited stay in the group as zombies until their new
       // parent reaps them, which a container's pid 1 may do only lazily.
-      const members = (await this.#processes.list())?.filter(
+      const members = (await this.#listProcesses())?.filter(
         (row) => row.group === job.group && !row.zombie,
       )
       // A group that cannot be read is not escalated blindly.
@@ -514,13 +536,16 @@ export class TerminalManager {
     })
   }
 
-  /** The shell behind a PTY, only when this server forked it as a session leader. */
-  #ownedShell(pid: number): ProcessRow | undefined {
-    const shell = this.#processes.inspect([pid]).find((row) => row.pid === pid)
-    // A stale or foreign pid must never become authority to signal a group.
-    return shell?.leader && shell.parent === globalThis.process.pid && shell.group === pid
-      ? shell
-      : undefined
+  /** One ps listing, shared by every poll that asks for one while it runs. */
+  #listProcesses(): Promise<ProcessRow[] | undefined> {
+    if (this.#listing) return this.#listing
+    const listing = this.#processes.list()
+    this.#listing = listing
+    const forget = () => {
+      if (this.#listing === listing) this.#listing = undefined
+    }
+    void listing.then(forget, forget)
+    return listing
   }
 
   closeThread(threadId: string): Promise<void> {
@@ -547,27 +572,17 @@ export class TerminalManager {
 
   async #drainThread(threadId: string): Promise<void> {
     const waits = new Set(this.#closingByThread.get(threadId) ?? [])
-    for (const [terminalId, entry] of this.#byId) {
-      if (entry.threadId !== threadId) continue
-      try {
-        waits.add(this.close(terminalId))
-      } catch (error) {
-        waits.add(Promise.reject(error))
-      }
-    }
+    this.#closeEntries(
+      [...this.#byId].filter(([, entry]) => entry.threadId === threadId),
+      waits,
+    )
     await settleAll(waits, `terminal shutdown failed for ${threadId}`)
   }
 
   async #drainAll(): Promise<void> {
     const waits = new Set<Promise<void>>(this.#closingById.values())
     for (const closingThread of this.#closingThreads.values()) waits.add(closingThread)
-    for (const terminalId of this.#byId.keys()) {
-      try {
-        waits.add(this.close(terminalId))
-      } catch (error) {
-        waits.add(Promise.reject(error))
-      }
-    }
+    this.#closeEntries([...this.#byId], waits)
     try {
       await settleAll(waits, 'terminal shutdown failed')
     } finally {
@@ -601,6 +616,15 @@ export class TerminalManager {
     if (!entry) throw new Error(`no such terminal: ${terminalId}`)
     return entry
   }
+}
+
+/** The shell behind a PTY, only when this server forked it as a session leader. */
+function ownedShell(rows: ProcessRow[], pid: number): ProcessRow | undefined {
+  const shell = rows.find((row) => row.pid === pid)
+  // A stale or foreign pid must never become authority to signal a group.
+  return shell?.leader && shell.parent === globalThis.process.pid && shell.group === pid
+    ? shell
+    : undefined
 }
 
 async function settleAll(waiters: Iterable<Promise<void>>, message: string): Promise<void> {
