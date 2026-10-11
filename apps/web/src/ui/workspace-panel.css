@@ -201,6 +201,7 @@
 
 .workspace-review {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto auto minmax(0, 1fr);
   height: 100%;
   min-width: 0;
@@ -223,15 +224,29 @@
   gap: 7px;
 }
 
+.workspace-review__branch {
+  min-width: 0;
+}
+
+.workspace-review__branch > svg {
+  flex: none;
+}
+
 .workspace-review__branch strong {
+  min-width: 0;
+  overflow: hidden;
   color: var(--text);
   font-size: var(--t-md);
   font-weight: 540;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-review__stats {
+  flex: none;
   font-family: var(--font-mono);
   font-size: var(--t-sm);
+  white-space: nowrap;
 }
 
 .workspace-review .is-add {
@@ -243,9 +258,11 @@
 }
 
 .workspace-review__file-count {
+  flex: none;
   margin-left: auto;
   color: var(--text-3);
   font-size: var(--t-xs);
+  white-space: nowrap;
 }
 
 .workspace-review__generate-commit {
@@ -599,7 +616,8 @@
   overflow: hidden;
 }
 
-@media (max-width: 560px) {
+/* Keep room for the branch name before the commit button's label. */
+@container workspace-panel (max-width: 460px) {
   .workspace-review__generate-label {
     display: none;
   }
