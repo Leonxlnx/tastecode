@@ -427,6 +427,54 @@ describe('TerminalManager', () => {
     }
   })
 
+  it('sends SIGTERM on time at shutdown to the job of a pane still closing its shell', async () => {
+    vi.useFakeTimers()
+    try {
+      const signals: string[] = []
+      let shellKilled = false
+      // The shell ignores SIGHUP, and node-pty reports its SIGKILL 300 ms late.
+      const pty = controlledPty({
+        pid: 4100,
+        kill: (signal) => {
+          if (signal !== 'SIGKILL') return
+          shellKilled = true
+          setTimeout(() => pty.emitExit(137), 300)
+        },
+      })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => pty,
+          processes: fakeProcesses({
+            list: () =>
+              Promise.resolve([
+                ...(shellKilled ? [] : [ownShell(4100)]),
+                ...(signals.includes('SIGKILL') ? [] : [jobMember]),
+              ]),
+            signal: (_group, signal) => signals.push(signal),
+          }),
+        },
+      )
+      const closed = manager.close(manager.open('thread-stuck', os.tmpdir(), 80, 24))
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(shellKilled).toBe(false)
+
+      const shutdown = manager.closeAll()
+      await vi.advanceTimersByTimeAsync(199)
+      expect(signals).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(shellKilled).toBe(true)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(1_799)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await Promise.all([closed, shutdown])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shortens a pane close already waiting on its job when the server shuts down', async () => {
     vi.useFakeTimers()
     try {
