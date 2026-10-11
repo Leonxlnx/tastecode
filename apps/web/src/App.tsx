@@ -323,6 +323,9 @@ type AccountCheck = {
   error?: ComposerError
 }
 
+/** The counter makes a repeated request for the open section navigate again. */
+type SettingsSectionRequest = { section: SettingsSection; request: number }
+
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
   pendingPath: string | undefined
@@ -362,6 +365,10 @@ function shellStyle(width: number): ShellStyle {
 
 function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
+}
+
+function requestSettingsSection(section: SettingsSection) {
+  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
 }
 
 export function resolveSendAvailability(input: {
@@ -716,7 +723,10 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('workflows')
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
+    section: 'workflows',
+    request: 0,
+  })
   const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [pullRequestSetupRefreshRevision, setPullRequestSetupRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -3506,7 +3516,7 @@ export function App() {
     setWorkspacePanelOpen(completed.restorePanelOpen)
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
-      setSettingsSection('providers')
+      setSettingsSection(requestSettingsSection('providers'))
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -4401,7 +4411,7 @@ export function App() {
     [selectSession],
   )
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
-    setSettingsSection(section)
+    setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -4516,7 +4526,7 @@ export function App() {
       setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
-        setSettingsSection('providers')
+        setSettingsSection(requestSettingsSection('providers'))
         setSettingsOpen(true)
       }
     },
@@ -4629,7 +4639,7 @@ export function App() {
         modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
-      else if (route === 'showKeybinds') setSettingsSection('keybinds')
+      else if (route === 'showKeybinds') setSettingsSection(requestSettingsSection('keybinds'))
       else if (route === 'run') keybindingActions[action]()
     },
     [keybindingActions, modalOwnsKeyboard, onboardingPreview, settingsOpen],
@@ -5313,10 +5323,11 @@ export function App() {
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
-            fallback={<SettingsSkeleton section={settingsSection} />}
+            fallback={<SettingsSkeleton section={settingsSection.section} />}
           >
             <Settings
-              initialSection={settingsSection}
+              initialSection={settingsSection.section}
+              sectionRequest={settingsSection.request}
               showDebug={debugSettingsVisible}
               provider={provider}
               providerName={providerName(provider, sourceAgentName)}

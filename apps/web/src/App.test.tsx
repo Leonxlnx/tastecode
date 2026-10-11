@@ -1919,6 +1919,22 @@ describe('web client', () => {
     },
   )
 
+  it('returns open Settings to Keybinds when the keybinds shortcut is pressed again', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: 'Show workspace tools' })
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    const keybinds = await within(settings).findByRole('button', { name: 'Keybinds' })
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+    fireEvent.click(within(settings).getByRole('button', { name: 'Appearance' }))
+    expect(keybinds.getAttribute('aria-current')).toBeNull()
+
+    fireEvent.keyDown(window, { key: '/', metaKey: true })
+
+    expect(keybinds.getAttribute('aria-current')).toBe('page')
+  })
+
   it('mounts the deferred workspace panel for a preview capture', async () => {
     render(<App />)
 

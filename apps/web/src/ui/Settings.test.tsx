@@ -139,6 +139,19 @@ describe('settings viewport layout', () => {
     expect(screen.getByRole('heading', { name: 'General' })).toBeTruthy()
   })
 
+  it('returns to a section that is asked for again while another one is open', () => {
+    const view = renderSettings({ initialSection: 'keybinds', overrides: { sectionRequest: 1 } })
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    fireEvent.click(within(categories).getByRole('button', { name: 'Appearance' }))
+    expect(screen.getByRole('heading', { name: 'Appearance' })).toBeTruthy()
+
+    view.rerenderSettings({ initialSection: 'keybinds', sectionRequest: 2 })
+
+    expect(
+      within(categories).getByRole('button', { name: 'Keybinds' }).getAttribute('aria-current'),
+    ).toBe('page')
+  })
+
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
