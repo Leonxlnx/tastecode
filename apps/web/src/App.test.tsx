@@ -20,6 +20,9 @@ import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
 import { resetInstalls } from './provider-install.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
+import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
+
+const NEWEST_PAGE = { turnLimit: NEWEST_HISTORY_TURNS }
 
 beforeEach(mockKeyboardModifierState)
 
@@ -899,6 +902,7 @@ describe('web client', () => {
       expect(transport.state).toBe('open')
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
       const requests = shellRenders.threadFrame.mock.lastCall![0].userInputs
       expect(requests).toHaveLength(resolved ? 0 : 1)
@@ -1251,6 +1255,7 @@ describe('web client', () => {
       await act(async () => window.dispatchEvent(new Event('pagehide')))
       expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
         threadId: 'doomed-thread',
+        page: NEWEST_PAGE,
       })
       expect(transport.request).toHaveBeenCalledWith('thread.delete', {
         threadId: 'doomed-thread',
@@ -1270,11 +1275,13 @@ describe('web client', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'kept-thread',
+        page: NEWEST_PAGE,
       }),
     )
     await act(async () => window.dispatchEvent(new Event('pagehide')))
     expect(transport.request).not.toHaveBeenCalledWith('thread.history', {
       threadId: 'doomed-thread',
+      page: NEWEST_PAGE,
     })
     expect(transport.request).toHaveBeenCalledWith('thread.delete', {
       threadId: 'doomed-thread',
@@ -4074,6 +4081,7 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       }),
     )
     fireEvent.keyDown(window, { key: 'p', metaKey: true })
@@ -5012,11 +5020,11 @@ describe('new chats', () => {
         .filter(([method]) => method === 'thread.history')
         .map(([, params]) => params),
     ).toEqual([
-      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', page: NEWEST_PAGE },
       { threadId: 'thread-rollback', afterSeq: 0 },
-      { threadId: 'thread-rollback' },
+      { threadId: 'thread-rollback', page: NEWEST_PAGE },
       { threadId: 'thread-rollback', afterSeq: 0 },
-      ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback' })),
+      ...Array.from({ length: 2 }, () => ({ threadId: 'thread-rollback', page: NEWEST_PAGE })),
     ])
   })
 
@@ -8423,12 +8431,14 @@ describe('live sessions', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'background',
+        page: NEWEST_PAGE,
       }),
     )
     fireEvent.click(screen.getByRole('button', { name: /^Foreground,/ }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'foreground',
+        page: NEWEST_PAGE,
       }),
     )
 
@@ -9157,7 +9167,7 @@ describe('reopening a session', () => {
       expect(screen.getAllByText('Existing message')).toHaveLength(1)
       expect(
         transport.request.mock.calls.filter(([method]) => method === 'thread.history'),
-      ).toEqual([['thread.history', { threadId: 'untouched-thread' }]])
+      ).toEqual([['thread.history', { threadId: 'untouched-thread', page: NEWEST_PAGE }]])
     },
   )
 
@@ -9179,6 +9189,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     expect(screen.queryByText('75% left')).toBeNull()
@@ -9380,6 +9391,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     expect(await screen.findByText('Durable base')).toBeTruthy()
@@ -9462,6 +9474,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'thread-1',
+        page: NEWEST_PAGE,
       })
     })
     expect(transport.request).not.toHaveBeenCalledWith(
@@ -9551,6 +9564,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'background',
+        page: NEWEST_PAGE,
       })
     })
     expect(transport.request).not.toHaveBeenCalledWith(
@@ -9673,6 +9687,7 @@ describe('reopening a session', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       }),
     )
     const frames: FrameRequestCallback[] = []
@@ -9714,6 +9729,7 @@ describe('reopening a session', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'untouched-thread',
+        page: NEWEST_PAGE,
       })
     })
     transport.request.mockClear()
