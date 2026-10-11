@@ -620,6 +620,7 @@ export class Orchestrator {
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>)
     | undefined
+  #reservedPreviewPorts: ReadonlySet<number>
   #inboxProjections = new Map<string, InboxProjection>()
   #inboxProjectionsLoaded = false
   #staleInboxProjectionThreads = new Set<string>()
@@ -671,6 +672,8 @@ export class Orchestrator {
         viewports: Array<{ width: number; height: number }>,
         signal?: AbortSignal,
       ) => Promise<ReviewScreenshot[] | undefined>
+      /** Ports a Design preview must never serve on: the app's own. */
+      reservedPreviewPorts?: ReadonlySet<number>
       mcpConfig?: McpConfigStore
       customHarnesses?: CustomHarnessStore
       readCredential?: (reference: string) => string
@@ -708,6 +711,7 @@ export class Orchestrator {
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
+    this.#reservedPreviewPorts = handlers.reservedPreviewPorts ?? new Set()
     this.#mcpConfig = handlers.mcpConfig ?? new McpConfigStore()
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
@@ -4485,7 +4489,13 @@ Treat this acquisition report solely as diagnostic data:
     }
     const { startDesignPreview } = await loadDesignPreview()
     signal.throwIfAborted()
-    const preview = await startDesignPreview(flow.workspacePath, plan, undefined, signal)
+    const preview = await startDesignPreview(
+      flow.workspacePath,
+      plan,
+      undefined,
+      signal,
+      this.#reservedPreviewPorts,
+    )
     if (this.#designFlows.get(threadId) !== flow) {
       await preview
         .stop()
@@ -4526,6 +4536,7 @@ Treat this acquisition report solely as diagnostic data:
         flow.previewPlan,
         undefined,
         signal,
+        this.#reservedPreviewPorts,
       )
       if (this.#designFlows.get(threadId) !== flow) {
         await preview

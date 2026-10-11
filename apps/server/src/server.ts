@@ -158,6 +158,9 @@ export function startServer(
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
+    // A preview on the control port or the trusted renderer's port would pass
+    // the Origin check whenever nothing else holds that port.
+    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
@@ -1105,6 +1108,11 @@ export function allowedOrigin(
     return false
   }
   return Boolean(accessToken) || origin === rendererOrigin
+}
+
+function httpOriginPort(origin: string): number[] {
+  const url = URL.parse(origin)
+  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(

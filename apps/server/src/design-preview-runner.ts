@@ -44,13 +44,19 @@ export async function startDesignPreview(
   plan: PreviewPlan,
   timeoutMs = 30_000,
   signal?: AbortSignal,
+  /** The app's own ports: the control socket and the renderer origin it trusts. */
+  reservedPorts: ReadonlySet<number> = new Set(),
 ): Promise<RunningPreview> {
   signal?.throwIfAborted()
   const workspace = realpathSync(workspacePath)
   const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+  // A command preview that is still booting has not bound its port yet, and
+  // a page served on one of the app's ports would pass its Origin check.
+  const unavailable = {
+    has: (port: number) => startingPreviewPorts.has(port) || reservedPorts.has(port),
+  }
   if (plan.kind === 'static') {
-    // A command preview that is still booting has not bound its port yet.
-    const preview = await startStaticDesignPreview(cwd, plan, startingPreviewPorts)
+    const preview = await startStaticDesignPreview(cwd, plan, unavailable)
     if (signal?.aborted) {
       await preview.stop()
       signal.throwIfAborted()
@@ -62,7 +68,7 @@ export async function startDesignPreview(
     throw new Error('preview command argument is unsafe')
   }
   assertRunsWorkspaceCode(workspace, cwd, plan)
-  const { url, releaseStart } = await claimPreviewStart(plan.url)
+  const { url, releaseStart } = await claimPreviewStart(plan.url, unavailable)
   const port = new URL(url).port
   const args = plan.args.map((arg, index) => {
     if (/^--port=\d+$/.test(arg)) return `--port=${port}`
@@ -120,14 +126,12 @@ export async function startDesignPreview(
   }
 }
 
-async function claimPreviewStart(url: string) {
+async function claimPreviewStart(url: string, unavailable: Pick<ReadonlySet<number>, 'has'>) {
   const previewUrl = new URL(url)
   let requestedPort = Number(previewUrl.port)
   for (let attempt = 0; attempt < 10; attempt++) {
-    const port = await availablePreviewPort(
-      startingPreviewPorts.has(requestedPort) ? 0 : requestedPort,
-    )
-    if (port !== undefined && !startingPreviewPorts.has(port)) {
+    const port = await availablePreviewPort(unavailable.has(requestedPort) ? 0 : requestedPort)
+    if (port !== undefined && !unavailable.has(port)) {
       startingPreviewPorts.add(port)
       previewUrl.port = String(port)
       return {

@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
   threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
+  reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
 }))
 const temporary: string[] = []
 
@@ -34,6 +35,9 @@ vi.mock('./store.js', () => ({
 vi.mock('./orchestrator.js', () => ({
   resolveWorkspacePath: (workspace: string) => workspace,
   Orchestrator: class {
+    constructor(_store: unknown, handlers: { reservedPreviewPorts?: ReadonlySet<number> }) {
+      state.reservedPreviewPorts.push(handlers.reservedPreviewPorts)
+    }
     async protectStoredCheckpoints() {}
     refreshLifecycle() {}
     async recoverWorktrees() {}
@@ -71,6 +75,7 @@ afterEach(async () => {
   state.servers.length = 0
   state.projects.length = 0
   state.threads.clear()
+  state.reservedPreviewPorts.length = 0
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -164,6 +169,17 @@ describe('rejected websocket connections', () => {
         client.terminate()
       }
     }
+  })
+
+  it('keeps Design previews off the control port and the trusted renderer port', async () => {
+    vi.stubEnv('HARNESS_RENDERER_ORIGIN', 'http://127.0.0.1:6100')
+    await listen()
+    await running?.close()
+    vi.stubEnv('HARNESS_RENDERER_ORIGIN', 'file://')
+    await listen()
+
+    // `listen` asks for port 0, so that is the control port reserved here.
+    expect(state.reservedPreviewPorts).toEqual([new Set([0, 6100]), new Set([0])])
   })
 
   it('rejects a malformed authentication URL without throwing from the listener', async () => {
