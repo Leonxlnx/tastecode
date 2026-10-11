@@ -1552,6 +1552,29 @@
   position: relative;
 }
 
+/* A crowded strip scrolls to show its newest tab. Fade the start edge once
+   tabs have scrolled past it, so a tab clipped there reads as more tabs that
+   way instead of a stray close button. The fade follows the strip's own
+   scroll position, so an unscrolled strip has none. */
+@property --workspace-tabs-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+@keyframes workspace-tabs-fade {
+  to {
+    --workspace-tabs-fade: 32px;
+  }
+}
+@supports (animation-timeline: scroll()) {
+  .workspace-tabs {
+    mask-image: linear-gradient(to right, transparent, #000 var(--workspace-tabs-fade));
+    animation: workspace-tabs-fade linear both;
+    animation-timeline: scroll(self inline);
+    animation-range: 0 24px;
+  }
+}
+
 /* On the chat surface the stage's panel toggles stay fixed over this strip,
    left of the close button: a 44px inset plus 28px buttons and 8px gaps.
    End the strip 4px short of them rather than padding it, so tabs that

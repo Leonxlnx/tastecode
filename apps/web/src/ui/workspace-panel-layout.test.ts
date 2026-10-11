@@ -5,6 +5,19 @@ const appCss = readFileSync(new URL('../styles/app.css', import.meta.url), 'utf8
 const css = readFileSync(new URL('./workspace-panel.css', import.meta.url), 'utf8')
 const skeletonCss = readFileSync(new URL('../styles/surface-skeleton.css', import.meta.url), 'utf8')
 
+/** The first block that opens with `prelude {`, braces balanced. */
+function atRuleBlock(source: string, prelude: string): string {
+  const start = source.indexOf(`${prelude} {`)
+  if (start < 0) return ''
+  let depth = 0
+  let end = source.indexOf('{', start)
+  for (; end < source.length; end += 1) {
+    if (source[end] === '{') depth += 1
+    else if (source[end] === '}' && (depth -= 1) === 0) break
+  }
+  return source.slice(start, end + 1)
+}
+
 /** Every `@container <query>` block in a stylesheet, joined, so a test can read its rules. */
 function containerBlocks(source: string, query: string): string {
   const blocks: string[] = []
@@ -154,6 +167,22 @@ describe('workspace panel layout', () => {
       gap
     expect(2 * px(tab, 'min-width') + gap).toBeLessThanOrEqual(room)
     expect(3 * px(tab, 'min-width') + 2 * gap).toBeGreaterThan(room)
+  })
+
+  it('fades the tab strip start only once tabs have scrolled past it', () => {
+    const fade = atRuleBlock(css, '@supports (animation-timeline: scroll())')
+
+    expect(css).toMatch(
+      /@property --workspace-tabs-fade \{[^}]*syntax: '<length>';[^}]*initial-value: 0px;/,
+    )
+    expect(css).toMatch(/@keyframes workspace-tabs-fade \{\s*to \{\s*--workspace-tabs-fade: 32px;/)
+    expect(fade).toMatch(
+      /\.workspace-tabs \{[^}]*mask-image: linear-gradient\(to right, transparent, #000 var\(--workspace-tabs-fade\)\);/,
+    )
+    // The shorthand resets the timeline, so the timeline has to follow it.
+    expect(fade).toMatch(
+      /animation: workspace-tabs-fade linear both;\s*animation-timeline: scroll\(self inline\);\s*animation-range: 0 24px;/,
+    )
   })
 
   it('moves the right panel Review and Files trees under their content by panel width', () => {
