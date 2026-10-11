@@ -1,6 +1,6 @@
 import { bench, describe } from 'vitest'
 import { methods, type DomainEvent, type ResultOf } from '@harness/contracts'
-import { emptyThread, reduceEventLog } from './thread-store.js'
+import { emptyThread, prependOlderHistory, reduceEventLog } from './thread-store.js'
 import { parseMethodResult } from './transport-validation.js'
 
 const OPTIONS = { iterations: 10, time: 0, warmupIterations: 3, warmupTime: 0 }
@@ -72,6 +72,72 @@ describe('three-megabyte long-thread open stages', () => {
     () => {
       if (reduceEventLog(emptyThread, events).items.length !== ENTRY_COUNT) {
         throw new Error('missing replayed history')
+      }
+    },
+    OPTIONS,
+  )
+})
+
+// The same three megabytes as one hundred ten-entry turns. A paged open
+// parses, validates and replays only the newest ten; scrolling up adds twenty.
+const TURN_ENTRIES = 10
+const NEWEST_TURNS = 10
+const OLDER_TURNS = 20
+const turnEntries = events.map(({ seq, event }) =>
+  event.type === 'item.completed'
+    ? {
+        seq,
+        event: {
+          ...event,
+          item: { ...event.item, turnId: `turn-${Math.floor((seq - 1) / TURN_ENTRIES)}` },
+        },
+      }
+    : { seq, event },
+)
+const newestStart = ENTRY_COUNT - NEWEST_TURNS * TURN_ENTRIES
+const olderStart = newestStart - OLDER_TURNS * TURN_ENTRIES
+const page = { olderCursor: 'cursor', snapshotSeq: ENTRY_COUNT }
+const fullText = JSON.stringify({ events: turnEntries, running: false })
+const newestText = JSON.stringify({
+  events: turnEntries.slice(newestStart),
+  running: false,
+  page,
+})
+const olderText = JSON.stringify({
+  events: turnEntries.slice(olderStart, newestStart),
+  running: false,
+  page,
+})
+const openText = (text: string) =>
+  reduceEventLog(emptyThread, parseMethodResult('thread.history', JSON.parse(text)).events)
+const newestState = openText(newestText)
+
+describe('paged long-thread open', () => {
+  bench(
+    'opens all one hundred turns',
+    () => {
+      if (openText(fullText).items.length !== ENTRY_COUNT) throw new Error('missing turns')
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'opens the newest ten turns',
+    () => {
+      if (openText(newestText).items.length !== NEWEST_TURNS * TURN_ENTRIES) {
+        throw new Error('missing newest turns')
+      }
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'prepends twenty older turns',
+    () => {
+      const older = parseMethodResult('thread.history', JSON.parse(olderText))
+      const state = prependOlderHistory(newestState, older.events, 'cursor')
+      if (state.items.length !== (NEWEST_TURNS + OLDER_TURNS) * TURN_ENTRIES) {
+        throw new Error('missing older turns')
       }
     },
     OPTIONS,
