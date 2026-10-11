@@ -283,7 +283,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       <header className="workspace-review__toolbar">
         <span className="workspace-review__branch">
           <GitBranch size={14} aria-hidden />
-          <strong>{props.branch ?? 'Workspace'}</strong>
+          <strong title={props.branch}>{props.branch ?? 'Workspace'}</strong>
         </span>
         <span className="workspace-review__stats" aria-label="Diff statistics">
           <span className="is-add">+{stats.added.toLocaleString()}</span>

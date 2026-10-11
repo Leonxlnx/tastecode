@@ -59,6 +59,20 @@ describe('WorkspaceReview', () => {
     expect(screen.queryByText(/isolated session/i)).toBeNull()
   })
 
+  it('names the whole branch on its truncated toolbar label', async () => {
+    const branch = 'feature/a-branch-name-long-enough-to-truncate-in-a-narrow-panel'
+    render(
+      <WorkspaceReview
+        transport={new TestTransport(async () => ({ threadId: 'w', version: 'v', files: [] }))}
+        projectPath="/repo"
+        branch={branch}
+        theme="dark"
+      />,
+    )
+
+    expect((await screen.findByText(branch)).getAttribute('title')).toBe(branch)
+  })
+
   it('drafts a commit message through the configured background model', async () => {
     const diff = {
       threadId: 'thread-1',
