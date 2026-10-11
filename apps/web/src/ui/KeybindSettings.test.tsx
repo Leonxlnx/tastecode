@@ -260,6 +260,16 @@ describe('keybind settings', () => {
     expect(commandPalette.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+G')
   })
 
+  it('lets Tab and Shift+Tab move focus out of an active recorder', () => {
+    render(<StatefulKeybindSettings />)
+    const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })
+    fireEvent.click(recorder)
+
+    expect(fireEvent.keyDown(recorder, { key: 'Tab' })).toBe(true)
+    expect(fireEvent.keyDown(recorder, { key: 'Tab', shiftKey: true })).toBe(true)
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('refuses a dead key and the Windows key instead of saving them', () => {
     render(<StatefulKeybindSettings macOS={false} />)
     const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })

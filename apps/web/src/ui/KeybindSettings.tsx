@@ -164,9 +164,9 @@ export function KeybindSettings(props: {
   }
 
   const record = (action: KeybindingId, event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    // A bare Tab still moves on, to the row's own actions.
+    // Tab and Shift+Tab still move on, to the row's own actions or back out.
     const bare = !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey
-    if (event.key === 'Tab' && bare) return
+    if (event.key === 'Tab' && !event.metaKey && !event.ctrlKey && !event.altKey) return
     event.preventDefault()
     event.stopPropagation()
     if (event.key === 'Escape') {
