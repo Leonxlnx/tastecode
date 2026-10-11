@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
@@ -275,35 +275,34 @@ describe('TerminalManager', () => {
 
   it('keeps a closing chat and shutdown waiting until the foreground job stops', async () => {
     const pty = controlledPty({ pid: 4100 })
-    let stopJob: () => void = () => {}
-    const killProcessGroup = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          stopJob = resolve
-        }),
-    )
+    let jobRunning = true
+    const jobControl = {
+      members: vi.fn(() => Promise.resolve(jobRunning ? [{ pid: 4243, zombie: false }] : [])),
+      signal: vi.fn(),
+    }
     const manager = new TerminalManager(
       { onOutput: () => {}, onExit: () => {} },
       {
         spawnPty: () => pty,
         inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
-        killProcessGroup,
+        jobControl,
       },
     )
     const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
     const settled: string[] = []
     const closed = manager.close(terminalId).then(() => settled.push('close'))
     pty.emitExit(0)
-    await vi.waitFor(() => expect(killProcessGroup).toHaveBeenCalledWith(4242))
+    await vi.waitFor(() => expect(jobControl.members).toHaveBeenCalledWith(4242))
     const threadClosed = manager.closeThread('thread-job').then(() => settled.push('thread'))
     const shutdown = manager.closeAll().then(() => settled.push('shutdown'))
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(settled).toEqual([])
 
-    stopJob()
+    // A job that shuts down on its own after the hangup is never signalled.
+    jobRunning = false
     await Promise.all([closed, threadClosed, shutdown])
     expect(settled.sort()).toEqual(['close', 'shutdown', 'thread'])
-    expect(killProcessGroup).toHaveBeenCalledOnce()
+    expect(jobControl.signal).not.toHaveBeenCalled()
   })
 
   it('never signals a group named by a process this server did not fork', async () => {
@@ -313,18 +312,93 @@ describe('TerminalManager', () => {
       { parent: process.pid, group: 4100, foreground: 1 },
       { parent: process.pid, group: 4100, foreground: -1 },
     ]
-    const killProcessGroup = vi.fn(() => Promise.resolve())
+    const jobControl = {
+      members: vi.fn(() => Promise.resolve([{ pid: 4243, zombie: false }])),
+      signal: vi.fn(),
+    }
     for (const report of reports) {
       const pty = controlledPty({ pid: 4100 })
       const manager = new TerminalManager(
         { onOutput: () => {}, onExit: () => {} },
-        { spawnPty: () => pty, inspectShell: () => report, killProcessGroup },
+        { spawnPty: () => pty, inspectShell: () => report, jobControl },
       )
       const closed = manager.close(manager.open('thread-foreign', os.tmpdir(), 80, 24))
       pty.emitExit(0)
       await closed
     }
-    expect(killProcessGroup).not.toHaveBeenCalled()
+    expect(jobControl.members).not.toHaveBeenCalled()
+    expect(jobControl.signal).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    { closeWith: 'a pane close', steps: [3_000, 3_000] },
+    { closeWith: 'server shutdown', steps: [500, 600] },
+  ])('gives a job time to shut down before SIGTERM and SIGKILL on $closeWith', async (test) => {
+    vi.useFakeTimers()
+    try {
+      const signals: string[] = []
+      const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => pty,
+          inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+          jobControl: {
+            members: () =>
+              Promise.resolve(signals.includes('SIGKILL') ? [] : [{ pid: 4243, zombie: false }]),
+            signal: (group, signal) => signals.push(group === 4242 ? signal : `${group}:${signal}`),
+          },
+        },
+      )
+      const terminalId = manager.open('thread-slow', os.tmpdir(), 80, 24)
+      const closed =
+        test.closeWith === 'server shutdown' ? manager.closeAll() : manager.close(terminalId)
+      const [hangup, terminate] = test.steps as [number, number]
+
+      await vi.advanceTimersByTimeAsync(hangup - 1)
+      expect(signals).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(terminate - 1)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await closed
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shortens a pane close already waiting on its job when the server shuts down', async () => {
+    vi.useFakeTimers()
+    try {
+      const signals: string[] = []
+      const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => pty,
+          inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+          jobControl: {
+            members: () =>
+              Promise.resolve(signals.includes('SIGKILL') ? [] : [{ pid: 4243, zombie: false }]),
+            signal: (_group, signal) => signals.push(signal),
+          },
+        },
+      )
+      const closed = manager.close(manager.open('thread-slow', os.tmpdir(), 80, 24))
+      await vi.advanceTimersByTimeAsync(1_000)
+      expect(signals).toEqual([])
+
+      const shutdown = manager.closeAll()
+      await vi.advanceTimersByTimeAsync(100)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(600)
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await Promise.all([closed, shutdown])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('kills only an owned shell that is still running after the hangup grace', async () => {
@@ -353,13 +427,13 @@ describe('TerminalManager', () => {
             group: pid,
             foreground: pid,
           }),
-          killProcessGroup: () => Promise.resolve(),
+          jobControl: { members: () => Promise.resolve([]), signal: () => {} },
         },
       )
       const ids = ['a', 'b', 'c'].map((key) => manager.open(`thread-${key}`, os.tmpdir(), 80, 24))
       const closing = Promise.all(ids.map((id) => manager.close(id)))
 
-      await vi.advanceTimersByTimeAsync(499)
+      await vi.advanceTimersByTimeAsync(2_999)
       expect(signals).toEqual([undefined, 'exiting:undefined', 'foreign:undefined'])
       await vi.advanceTimersByTimeAsync(1)
       expect(signals).toEqual([undefined, 'exiting:undefined', 'foreign:undefined', 'SIGKILL'])
@@ -486,6 +560,45 @@ describe('TerminalManager', () => {
 
         await shell.manager.close(terminalId)
 
+        expect(isRunning(job)).toBe(false)
+      } finally {
+        if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
+        await shell.manager.closeAll()
+        removeTemporaryDirectory(cwd)
+      }
+    }, 15_000)
+
+    it('lets a foreground job finish a clean shutdown', async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-clean-'))
+      const marker = path.join(cwd, 'cleaned-up')
+      // Shuts down on SIGHUP or SIGTERM like a dev server that flushes state,
+      // taking a second and a half before it writes the marker and exits.
+      writeFileSync(
+        path.join(cwd, 'job.cjs'),
+        [
+          "const fs = require('node:fs')",
+          'let stopping = false',
+          'const stop = () => {',
+          '  if (stopping) return',
+          '  stopping = true',
+          "  setTimeout(() => { fs.writeFileSync(process.argv[2], 'done'); process.exit(0) }, 1500)",
+          '}',
+          "process.on('SIGHUP', stop)",
+          "process.on('SIGTERM', stop)",
+          "console.log('JOB_READY ' + process.pid)",
+          'setInterval(() => {}, 1000)',
+        ].join('\n'),
+      )
+      const shell = watchedShell(/JOB_READY (\d+)/)
+      let job: number | undefined
+      try {
+        const terminalId = shell.manager.open('thread-clean', cwd, 120, 24)
+        shell.manager.write(terminalId, `'${process.execPath}' job.cjs '${marker}'\r`)
+        job = await within(shell.match)
+
+        await shell.manager.close(terminalId)
+
+        expect(existsSync(marker)).toBe(true)
         expect(isRunning(job)).toBe(false)
       } finally {
         if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
