@@ -679,6 +679,57 @@ describe('TerminalManager', () => {
       }
     }, 15_000)
 
+    it('keeps a shutting-down server alive until its foreground job is stopped', () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-exit-'))
+      writeFileSync(
+        path.join(cwd, 'job.cjs'),
+        "process.on('SIGHUP', () => {}); console.log('JOB_READY ' + process.pid); " +
+          'setInterval(() => {}, 1000)',
+      )
+      const terminalModule = new URL('./terminal.ts', import.meta.url).href
+      let job: number | undefined
+      try {
+        // A server process with nothing else left to do: only the close itself
+        // can keep it running until the job is gone.
+        const result = spawnSync(
+          process.execPath,
+          [
+            '--import',
+            'tsx',
+            '--input-type=module',
+            '-e',
+            `
+              const { TerminalManager } = await import(${JSON.stringify(terminalModule)})
+              let output = ''
+              const manager = new TerminalManager({
+                onOutput: (_terminalId, data) => (output += data),
+                onExit: () => {},
+              })
+              const terminalId = manager.open('thread-exit', ${JSON.stringify(cwd)}, 120, 24)
+              manager.write(terminalId, ${JSON.stringify(`'${process.execPath}' job.cjs\r`)})
+              const ready = setInterval(() => {
+                const match = /JOB_READY (\\d+)/.exec(output)
+                if (!match) return
+                clearInterval(ready)
+                console.log('JOB ' + match[1])
+                void manager.closeAll().then(() => console.log('CLOSED'))
+              }, 20)
+            `,
+          ],
+          { encoding: 'utf8', timeout: 10_000 },
+        )
+        const started = /JOB (\d+)/.exec(result.stdout)
+        if (started) job = Number(started[1])
+
+        expect(result.stdout, result.stderr).toContain('CLOSED')
+        expect(job).toBeDefined()
+        expect(isRunning(job!)).toBe(false)
+      } finally {
+        if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
+        removeTemporaryDirectory(cwd)
+      }
+    }, 15_000)
+
     it('ends a shell that ignores hangup', async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-trap-'))
       const shell = watchedShell(/SHELL_READY (\d+)/, { closeTimeoutMs: 5_000 })

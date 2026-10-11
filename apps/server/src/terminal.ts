@@ -557,9 +557,13 @@ async function settleAll(waiters: Iterable<Promise<void>>, message: string): Pro
   if (errors.length > 0) throw new AggregateError(errors, message)
 }
 
-/** A poll sleep that never keeps a closing server alive on its own. */
+/**
+ * A poll sleep that keeps the process alive: once a shutting-down server has
+ * closed everything else, an unreferenced timer would let it exit mid-close
+ * and leave the job running.
+ */
 function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms).unref())
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 const processGroups: JobControl = {
