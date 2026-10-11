@@ -327,6 +327,51 @@ describe('TerminalManager', () => {
     expect(killProcessGroup).not.toHaveBeenCalled()
   })
 
+  it('kills only an owned shell that is still running after the hangup grace', async () => {
+    vi.useFakeTimers()
+    try {
+      const signals: Array<string | undefined> = []
+      const ignoring = controlledPty({ pid: 4100, kill: (signal) => signals.push(signal) })
+      const exiting = controlledPty({
+        pid: 4200,
+        kill: (signal) => {
+          signals.push(`exiting:${String(signal)}`)
+          queueMicrotask(() => exiting.emitExit(0))
+        },
+      })
+      const foreign = controlledPty({
+        pid: 4300,
+        kill: (signal) => signals.push(`foreign:${String(signal)}`),
+      })
+      const ptys = [ignoring, exiting, foreign]
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => ptys.shift()!,
+          inspectShell: (pid) => ({
+            parent: pid === 4300 ? process.pid + 1 : process.pid,
+            group: pid,
+            foreground: pid,
+          }),
+          killProcessGroup: () => Promise.resolve(),
+        },
+      )
+      const ids = ['a', 'b', 'c'].map((key) => manager.open(`thread-${key}`, os.tmpdir(), 80, 24))
+      const closing = Promise.all(ids.map((id) => manager.close(id)))
+
+      await vi.advanceTimersByTimeAsync(499)
+      expect(signals).toEqual([undefined, 'exiting:undefined', 'foreign:undefined'])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toEqual([undefined, 'exiting:undefined', 'foreign:undefined', 'SIGKILL'])
+
+      ignoring.emitExit(137)
+      foreign.emitExit(0)
+      await closing
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('runs one real PTY in the session checkout and reports its exit', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-'))
     const previousDisableAutoUpdate = process.env['DISABLE_AUTO_UPDATE']
@@ -449,6 +494,25 @@ describe('TerminalManager', () => {
       }
     }, 15_000)
 
+    it('ends a shell that ignores hangup', async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-trap-'))
+      const shell = watchedShell(/SHELL_READY (\d+)/, { closeTimeoutMs: 5_000 })
+      let pid: number | undefined
+      try {
+        const terminalId = shell.manager.open('thread-trap', cwd, 120, 24)
+        shell.manager.write(terminalId, "trap '' HUP; echo SHELL_READY $$\r")
+        pid = await within(shell.match)
+
+        await shell.manager.close(terminalId)
+
+        expect(isRunning(pid)).toBe(false)
+      } finally {
+        if (pid !== undefined && isRunning(pid)) process.kill(pid, 'SIGKILL')
+        await shell.manager.closeAll().catch(() => undefined)
+        removeTemporaryDirectory(cwd)
+      }
+    }, 15_000)
+
     it('leaves a nohup background job to the shell', async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-nohup-'))
       const shell = watchedShell(/NOHUP_READY (\d+)/)
@@ -473,20 +537,23 @@ describe('TerminalManager', () => {
 })
 
 /** A manager whose PTY output resolves `match` with the first number captured. */
-function watchedShell(pattern: RegExp) {
+function watchedShell(pattern: RegExp, options: { closeTimeoutMs?: number } = {}) {
   let output = ''
   let found: (value: number) => void = () => {}
   const match = new Promise<number>((resolve) => {
     found = resolve
   })
-  const manager = new TerminalManager({
-    onOutput: (_terminalId, data) => {
-      output += data
-      const result = pattern.exec(output)
-      if (result) found(Number(result[1]))
+  const manager = new TerminalManager(
+    {
+      onOutput: (_terminalId, data) => {
+        output += data
+        const result = pattern.exec(output)
+        if (result) found(Number(result[1]))
+      },
+      onExit: () => {},
     },
-    onExit: () => {},
-  })
+    options,
+  )
   return { manager, match }
 }
 
@@ -561,7 +628,7 @@ function removeTemporaryDirectory(directory: string): void {
   rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
 }
 
-function controlledPty(options: { kill?: () => void; pid?: number } = {}): IPty & {
+function controlledPty(options: { kill?: (signal?: string) => void; pid?: number } = {}): IPty & {
   emitData(data: string): void
   emitExit(exitCode: number): void
 } {
@@ -584,7 +651,7 @@ function controlledPty(options: { kill?: () => void; pid?: number } = {}): IPty 
     write: () => {},
     resize: () => {},
     clear: () => {},
-    kill: () => options.kill?.(),
+    kill: (signal) => options.kill?.(signal),
     pause: () => {},
     resume: () => {},
     emitData: (data) => onData(data),
