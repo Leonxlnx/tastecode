@@ -18,6 +18,9 @@ describe('provider-neutral briefing workflow', () => {
       expect(prompt).toContain(
         'marketing website about a dashboard product is still pageType "landing_page"',
       )
+      expect(prompt).toContain(
+        'a site, one-pager, microsite, homepage, launch page, Webseite or Seite for an app',
+      )
       expect(prompt).toContain('do not impose marketing sections or an eight-section minimum')
       expect(prompt).toContain('Never ask questions')
     }
