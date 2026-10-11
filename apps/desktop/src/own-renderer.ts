@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { fileURLToPath, format } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 /**
  * Whether `url` is the renderer file the app itself loaded. Chromium reports
@@ -20,7 +20,10 @@ export function isRendererFileUrl(
   return windows ? path.win32.relative(file, indexPath) === '' : file === indexPath
 }
 
-/** The URL the renderer file is loaded from; Electron's `loadFile` builds it this way. */
-export function rendererFileUrl(indexPath: string): string {
-  return format({ protocol: 'file', slashes: true, pathname: indexPath })
+/**
+ * The URL the renderer file is loaded from. Electron's `loadFile` leaves a `%`
+ * in the install path unescaped, so the reported URL no longer decodes to it.
+ */
+export function rendererFileUrl(indexPath: string, windows = process.platform === 'win32'): string {
+  return pathToFileURL(indexPath, { windows }).href
 }
