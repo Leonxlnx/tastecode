@@ -1449,7 +1449,9 @@
                   independent tool tabs, a + menu, and an upper-right close button. Tabs fade on add
                   and close; neighbouring tabs slide into place. Tabs support drag reordering and
                   Alt+Left/Right with the app haptic preference. Closing the panel returns to the
-                  picker. No manual expansion. Bottom and right terminals have separate shells. Edge
+                  picker. No manual expansion. Bottom and right terminals have separate shells;
+                  closing one, its chat or project, or the app also ends a foreground job or shell
+                  that ignores SIGHUP, while nohup and background jobs stay the shell's. Edge
                   resizing takes the right panel down to 300 px, and both panels lay their tools out
                   by the panel's own width: the Browser address takes its own row below 420 px in
                   either panel, while only the full-height right panel moves the Review and Files
