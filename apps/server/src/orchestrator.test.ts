@@ -3126,6 +3126,38 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('delivers Stop to a Design phase whose provider start is still pending', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-stop-handoff-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.release = () => {}
+      const malformed = JSON.stringify({
+        status: 'complete',
+        message: 'Brief ready',
+        questions: [],
+        brief: { version: 1 },
+      })
+      session.emit(message(malformed, 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+
+      // The correction turn starts on its own. An interrupt that reaches the
+      // adapter before it accepted the start finds no turn to stop.
+      const stopping = orchestrator.interrupt(thread.id)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(session.interrupted).toBe(false)
+      session.release?.()
+      await expect(stopping).resolves.toBeUndefined()
+      expect(session.interrupted).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects supplied references when the selected session cannot inspect images', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-no-images-'))
     const reference = path.join(workspace, 'reference.png')
