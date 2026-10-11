@@ -4,6 +4,7 @@ import { ThreadFrameStore } from './thread-frame-store.js'
 import {
   appendUserMessage,
   emptyThread,
+  prependCompleteHistory,
   prependOlderHistory,
   reduce,
   reduceEventLog,
@@ -498,6 +499,32 @@ export class ThreadController {
     if (base?.state.olderCursor === cursor)
       base.state = prependOlderHistory(base.state, events, olderCursor)
     const next = prependOlderHistory(current, events, olderCursor)
+    this.update(id, next)
+    if (id === this.#activeId) this.frames.publish(next)
+  }
+  /**
+   * Load every turn above the loaded transcript in one unpaged read, for find
+   * and search jumps. Loaded rows keep their live state, so nothing streamed
+   * meanwhile needs replaying, and older pages landing first only leave fewer
+   * rows to add. An aborted read is dropped.
+   */
+  async loadCompleteHistory(id: string, signal?: AbortSignal): Promise<void> {
+    if (!this.snapshot(id)?.olderCursor) return
+    const { events } = await this.transport.request('thread.history', { threadId: id })
+    if (signal?.aborted || !this.snapshot(id)?.olderCursor) return
+    const current = this.flush(id)
+    // Flushing can compact a background thread, which drops its rows and cursor.
+    if (!current.olderCursor) return
+    const next = prependCompleteHistory(current, events)
+    if (!next) {
+      this.invalidateHistory(id)
+      await this.loadHistory(id)
+      return
+    }
+    // A recovery read in flight replays onto its base; complete it there too.
+    const base = this.#historyBases.get(id)
+    if (base?.state.olderCursor)
+      base.state = prependCompleteHistory(base.state, events) ?? base.state
     this.update(id, next)
     if (id === this.#activeId) this.frames.publish(next)
   }
