@@ -107,12 +107,9 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
       !activity ||
       activity.toolCalls < 300 ||
       activity.outputCharacters < 300 * 128 * 1024 ||
-      activity.collapsed?.toolRows !== 0 ||
-      activity.collapsed?.openDetails !== 0 ||
-      activity.opened?.toolRows !== activity.toolCalls ||
-      activity.opened?.openDetails !== 1 ||
-      activity.closed?.toolRows !== 0 ||
-      activity.closed?.openDetails !== 0
+      !activity.collapsed ||
+      !activity.closed ||
+      activity.opened?.toolRows !== activity.toolCalls
     ) {
       failures.push(`${label}: missing large activity coverage`)
     } else {
@@ -131,6 +128,14 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
         activity.retainedAfterCloseBytes,
         budgets.largeActivityRetainedBytes,
       )
+      if (
+        activity.collapsed.toolRows !== 0 ||
+        activity.collapsed.openDetails !== 0 ||
+        activity.opened.openDetails !== 1 ||
+        activity.closed.toolRows !== 0 ||
+        activity.closed.openDetails !== 0
+      )
+        failures.push(`${label}: large activity mounted rows or output it was not showing`)
     }
   }
   for (const [index, startup] of startups.entries()) {
