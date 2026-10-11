@@ -3815,6 +3815,11 @@ export function App() {
       threadController.loadOlderHistory(threadId, turnLimit),
     [threadController],
   )
+  const loadCompleteHistory = useCallback(
+    (threadId: string, signal: AbortSignal) =>
+      threadController.loadCompleteHistory(threadId, signal),
+    [threadController],
+  )
 
   const undoTurnChanges = useCallback(
     async (threadId: string, turnId: string, expectedDiff: string) => {
@@ -5146,6 +5151,7 @@ export function App() {
                           onRevertCheckpoint={revertCheckpoint}
                           onUndoChanges={undoTurnChanges}
                           onLoadOlderHistory={loadOlderHistory}
+                          onLoadCompleteHistory={loadCompleteHistory}
                         />
                       </Suspense>
                     ) : (

@@ -105,36 +105,48 @@ describe('thread search navigation', () => {
   })
 
   it('asks for unloaded turns once and keeps the shown match as they arrive above', () => {
-    const onSearchOlder = vi.fn()
+    const onLoadOlder = vi.fn()
     const props = {
       threadId: 'thread',
       onJump: () => undefined,
       onClose: () => undefined,
-      onSearchOlder,
+      onLoadOlder,
     }
     const view = render(<ThreadSearch {...props} items={items.slice(2)} hasOlder />)
-    expect(onSearchOlder).not.toHaveBeenCalled()
+    expect(onLoadOlder).not.toHaveBeenCalled()
     fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'match' } })
+    expect(onLoadOlder).toHaveBeenCalledOnce()
+    view.rerender(<ThreadSearch {...props} items={items.slice(2)} hasOlder olderStatus="loading" />)
     fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'matc' } })
-    expect(onSearchOlder).toHaveBeenCalledOnce()
+    expect(onLoadOlder).toHaveBeenCalledOnce()
 
     const next = screen.getByRole('button', { name: 'Next match' })
     fireEvent.click(next)
     fireEvent.click(next)
-    view.rerender(<ThreadSearch {...props} items={items.slice(2)} hasOlder searchingOlder />)
     expect(screen.getByText('2/3…')).toBeTruthy()
 
     // item-3 was on screen; two older matches now come before it.
     view.rerender(<ThreadSearch {...props} items={items} />)
     expect(screen.getByText('4/5')).toBeTruthy()
+    expect(onLoadOlder).toHaveBeenCalledOnce()
   })
 
-  it('says it is still searching while older turns load without a match yet', () => {
-    const props = { onJump: () => undefined, onClose: () => undefined }
-    const view = render(<ThreadSearch {...props} items={items} hasOlder searchingOlder />)
+  it('says when older turns are still loading or failed, and retries only on request', () => {
+    const onLoadOlder = vi.fn()
+    const props = { onJump: () => undefined, onClose: () => undefined, onLoadOlder }
+    const view = render(<ThreadSearch {...props} items={items} hasOlder olderStatus="loading" />)
     fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'absent' } })
     expect(screen.getByText('Searching…')).toBeTruthy()
+
+    view.rerender(<ThreadSearch {...props} items={items} hasOlder olderStatus="failed" />)
+    expect(screen.getByText('Failed')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'absen' } })
+    expect(onLoadOlder).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry searching earlier messages' }))
+    expect(onLoadOlder).toHaveBeenCalledOnce()
+
     view.rerender(<ThreadSearch {...props} items={items} />)
     expect(screen.getByText('None')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Retry searching earlier messages' })).toBeNull()
   })
 })
