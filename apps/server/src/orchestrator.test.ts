@@ -2035,6 +2035,137 @@ describe('history replay', () => {
     await orchestrator.disposeAll()
   })
 
+  describe('older history pages', () => {
+    function appendTurn(store: Store, threadId: string, index: number, done = true): void {
+      const turnId = `turn-${index}`
+      const reply = {
+        id: `reply-${index}`,
+        turnId,
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'started' as const,
+        text: '',
+        createdAt: index,
+      }
+      store.append(threadId, {
+        type: 'turn.started',
+        turn: { id: turnId, threadId, status: 'running', createdAt: index },
+      })
+      store.append(threadId, { type: 'item.started', item: reply })
+      store.append(threadId, { type: 'item.delta', turnId, itemId: reply.id, textDelta: 'Hel' })
+      if (!done) return
+      store.append(threadId, {
+        type: 'item.completed',
+        item: { ...reply, status: 'completed', text: 'Hello' },
+      })
+      store.append(threadId, { type: 'turn.completed', turnId, status: 'completed' })
+    }
+    const turnIds = (events: Array<{ event: DomainEvent }>) =>
+      events.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : []))
+
+    it('serves older pages from the issuing replay without rewriting it while a turn streams', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 4; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      appendTurn(store, thread.id, 4, false)
+      store.append(thread.id, {
+        type: 'item.delta',
+        turnId: 'turn-4',
+        itemId: 'reply-4',
+        textDelta: 'lo',
+      })
+
+      const save = vi.spyOn(store, 'saveReplaySnapshot')
+      const history = vi.spyOn(store, 'history')
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 2,
+      })
+      expect(turnIds(older.events)).toEqual(['turn-0', 'turn-1'])
+      expect(older.reset).toBeUndefined()
+      expect(save).not.toHaveBeenCalled()
+      expect(history).not.toHaveBeenCalled()
+      await orchestrator.disposeAll()
+    })
+
+    it('restarts older pages when imported turns arrive after the cursor', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 1; index < 5; index += 1) appendTurn(store, thread.id, index)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      store.mergeProviderHistory(thread.id, 'revision', [
+        {
+          key: 'old-start',
+          event: {
+            type: 'turn.started',
+            turn: { id: 'import:old', threadId: thread.id, status: 'running', createdAt: 0 },
+          },
+        },
+        {
+          key: 'old-end',
+          event: { type: 'turn.completed', turnId: 'import:old', status: 'completed' },
+        },
+      ])
+
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 2,
+      })
+      expect(older.reset).toBe(true)
+      expect(turnIds(older.events)).toEqual(['turn-3', 'turn-4'])
+      await orchestrator.disposeAll()
+    })
+
+    it('restarts after a truncation until newer events follow the kept cursor turn', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 3; index += 1) appendTurn(store, thread.id, index)
+      const kept = store.lastSeq(thread.id)
+      appendTurn(store, thread.id, 3)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+      const before = newest.page.olderCursor!
+
+      // turn-2, the cursor's turn, survives; the replay now ends before the cursor.
+      store.saveRestoreUndo(thread.id, kept, 'commit')
+      const truncated = await orchestrator.historyPage(thread.id, { before, turnLimit: 2 })
+      expect(truncated.reset).toBe(true)
+      expect(turnIds(truncated.events)).toEqual(['turn-1', 'turn-2'])
+
+      appendTurn(store, thread.id, 5)
+      const continued = await orchestrator.historyPage(thread.id, { before, turnLimit: 2 })
+      expect(continued.reset).toBeUndefined()
+      expect(turnIds(continued.events)).toEqual(['turn-0', 'turn-1'])
+      await orchestrator.disposeAll()
+    })
+
+    it('opens a running turn from the newest page plus the catch-up after its snapshot', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 3; index += 1) appendTurn(store, thread.id, index)
+      appendTurn(store, thread.id, 3, false)
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 1 })
+      store.append(thread.id, {
+        type: 'item.delta',
+        turnId: 'turn-3',
+        itemId: 'reply-3',
+        textDelta: 'lo',
+      })
+
+      const catchUp = await orchestrator.history(thread.id, newest.page.snapshotSeq)
+      const opened = reduceEventLog(
+        reduceEventLog(emptyThread, newest.events),
+        catchUp,
+        newest.page.snapshotSeq,
+      )
+      const full = reduceEventLog(emptyThread, await orchestrator.history(thread.id))
+      expect(catchUp).toHaveLength(1)
+      expect(opened.items).toEqual(full.items.slice(-opened.items.length))
+      expect(opened.items.at(-1)).toMatchObject({ id: 'reply-3', text: 'Hello' })
+      await orchestrator.disposeAll()
+    })
+  })
+
   it('hands fresh compact replay JSON to the response path once', async () => {
     const { orchestrator, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
