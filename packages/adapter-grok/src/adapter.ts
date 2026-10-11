@@ -13,7 +13,13 @@ import type {
   ProviderContextSettings,
   Thread,
 } from '@harness/contracts'
-import { JsonRpcValueSchema, killTree, spawnOwned, readNdjson } from '@harness/proc'
+import {
+  JsonRpcValueSchema,
+  killTree,
+  ProtocolFrameError,
+  spawnOwned,
+  readNdjson,
+} from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import { GROK_CAPABILITIES } from './capabilities.js'
@@ -607,43 +613,46 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
         if (frame.type === 'end') {
           if (terminal) return
           terminal = true
-          if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
           const status = frame.stopReason === 'end_turn' ? 'completed' : 'failed'
-          finishItems(status, status === 'completed' ? 'final_answer' : undefined)
-          const usage = frame.usage
-          if (usage) {
-            const reasoningTokens = usage.reasoning_tokens ?? 0
-            this.emit('event', {
-              type: 'usage.updated',
-              usage: {
-                ...(this.#options.model
-                  ? {
-                      model: this.#options.model,
-                    }
-                  : {}),
-                inputTokens: usage.input_tokens ?? 0,
-                cachedInputTokens: usage.cache_read_input_tokens ?? 0,
-                outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
-                reasoningTokens,
-                totalTokens: usage.total_tokens ?? 0,
-                inputIncludesCached: false,
-                ...(frame.total_cost_usd !== undefined
-                  ? {
-                      costUsd: frame.total_cost_usd,
-                    }
-                  : {}),
-              },
-            })
-          }
-          if (frame.stopReason === 'end_turn') {
-            this.emit('event', { type: 'turn.completed', turnId, status: 'completed' })
-          } else {
-            this.emit('event', {
-              type: 'thread.error',
-              threadId,
-              message: `Grok finished with stop reason ${frame.stopReason ?? 'unknown'}`,
-            })
-            this.emit('event', { type: 'turn.completed', turnId, status: 'failed' })
+          // close skips a turn whose end frame was seen, so a throwing listener
+          // must not keep turn.completed from going out.
+          try {
+            if (this.#child === child) this.#announceProviderSessionId(frame.sessionId)
+            finishItems(status, status === 'completed' ? 'final_answer' : undefined)
+            const usage = frame.usage
+            if (usage) {
+              const reasoningTokens = usage.reasoning_tokens ?? 0
+              this.emit('event', {
+                type: 'usage.updated',
+                usage: {
+                  ...(this.#options.model
+                    ? {
+                        model: this.#options.model,
+                      }
+                    : {}),
+                  inputTokens: usage.input_tokens ?? 0,
+                  cachedInputTokens: usage.cache_read_input_tokens ?? 0,
+                  outputTokens: (usage.output_tokens ?? 0) + reasoningTokens,
+                  reasoningTokens,
+                  totalTokens: usage.total_tokens ?? 0,
+                  inputIncludesCached: false,
+                  ...(frame.total_cost_usd !== undefined
+                    ? {
+                        costUsd: frame.total_cost_usd,
+                      }
+                    : {}),
+                },
+              })
+            }
+            if (status === 'failed') {
+              this.emit('event', {
+                type: 'thread.error',
+                threadId,
+                message: `Grok finished with stop reason ${frame.stopReason ?? 'unknown'}`,
+              })
+            }
+          } finally {
+            this.emit('event', { type: 'turn.completed', turnId, status })
           }
         }
         // usage snapshots and available_commands are noise between turns.
@@ -651,6 +660,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
       {
         onError: (error) => {
+          // A throwing event listener leaves the stream intact; keep reading it.
+          if (!(error instanceof ProtocolFrameError)) {
+            this.emit('log', `Grok event handling failed: ${error.message}`)
+            return
+          }
           finishProcess(error.message)
           void killTree(child)
         },

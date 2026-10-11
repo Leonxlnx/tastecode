@@ -211,6 +211,27 @@ describe('readNdjson', () => {
     await new Promise((resolve) => stream.on('end', resolve))
     expect(values).toEqual([{ first: 1 }, { second: 2 }])
   })
+
+  it('reports a throwing handler as an error and keeps reading', async () => {
+    const stream = new PassThrough()
+    const values: unknown[] = []
+    const unparsable: string[] = []
+    const errors: Error[] = []
+    readNdjson(
+      stream,
+      (value) => {
+        values.push(value)
+        if (values.length === 1) throw new Error('listener failed')
+      },
+      (line) => unparsable.push(line),
+      { onError: (error) => errors.push(error) },
+    )
+    stream.end('{"first":1}\n{"second":2}\n')
+    await new Promise((resolve) => stream.on('end', resolve))
+    expect(values).toEqual([{ first: 1 }, { second: 2 }])
+    expect(unparsable).toEqual([])
+    expect(errors.map(({ message }) => message)).toEqual(['listener failed'])
+  })
 })
 
 describe('killTree', () => {
