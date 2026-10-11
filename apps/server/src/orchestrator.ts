@@ -715,6 +715,7 @@ export class Orchestrator {
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
       onExit: handlers.onTerminalExit ?? (() => {}),
+      onLog: (message) => this.#onLog(message),
     })
     this.#runtimeFor =
       handlers.runtimeFor ??
