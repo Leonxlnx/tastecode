@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { StrictMode } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Item } from '@harness/contracts'
@@ -262,6 +263,29 @@ describe('Thread older history', () => {
     })
     expect(layout.jumps).toEqual([3])
     expect(loadComplete).toHaveBeenCalledOnce()
+  })
+
+  it('asks again for a search jump read that StrictMode cancelled while replaying effects', () => {
+    const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
+    const loadComplete = vi.fn((_threadId: string, _signal: AbortSignal) => new Promise<void>(noop))
+    render(
+      <StrictMode>
+        <Thread
+          frameStore={store}
+          threadId="thread"
+          onDecide={noop}
+          onAnswerUserInput={noop}
+          onLoadOlderHistory={() => new Promise<void>(noop)}
+          onLoadCompleteHistory={loadComplete}
+          searchJump={{ turnId: 'turn-3', request: 1 }}
+        />
+      </StrictMode>,
+    )
+    const signals = loadComplete.mock.calls.map(([, signal]) => signal)
+    expect(signals).toHaveLength(2)
+    expect(signals[0]!.aborted).toBe(true)
+    expect(signals[1]!.aborted).toBe(false)
+    expect(screen.getByRole('status').textContent).toContain('Loading earlier messages')
   })
 
   it('offers a retry instead of asking again when a search jump read fails', async () => {
