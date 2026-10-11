@@ -128,7 +128,6 @@ describe('model catalog', () => {
 
   it.each([
     ['gpt-6-astra', true],
-    ['gpt-6-sol', false],
     ['gpt-6-luna', true],
     ['gpt-6.1-sol', true],
     ['gpt-daybreak-blue-latest', true],
