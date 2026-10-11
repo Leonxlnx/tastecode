@@ -17,7 +17,7 @@ const CLOSE_STEPS = { hangup: 3_000, terminate: 3_000, kill: 1_000 }
 // three-second force stop. Most of it belongs to SIGTERM: servers such as
 // gunicorn, nginx or postgres reload on SIGHUP and shut down cleanly only on
 // SIGTERM.
-const SHUTDOWN_STEP_ENDS = { hangup: 200, terminate: 1_800, kill: 2_100 }
+const SHUTDOWN_STEP_ENDS = { hangup: 200, terminate: 2_000, kill: 2_300 }
 const CLOSE_POLL_MS = 100
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
