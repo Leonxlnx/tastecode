@@ -123,6 +123,31 @@ describe('CommandPalette', () => {
     expect(ran).toEqual(['settings'])
   })
 
+  it('keeps the highlighted command when the list changes while open', () => {
+    const ran: string[] = []
+    const command = (id: string): PaletteCommand => ({
+      id,
+      title: id,
+      group: 'Actions',
+      run: () => ran.push(id),
+    })
+    const [a, stop, c, d] = [command('a'), command('stop'), command('c'), command('d')]
+    const view = render(<CommandPalette commands={[a, stop, c, d]} scope="all" onClose={vi.fn()} />)
+    const input = screen.getByRole('textbox', { name: 'Search commands' })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    view.rerender(<CommandPalette commands={[a, c, d]} scope="all" onClose={vi.fn()} />)
+    expect(screen.getByRole('option', { name: 'c' }).getAttribute('aria-selected')).toBe('true')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    fireEvent.mouseEnter(screen.getByRole('option', { name: 'd' }))
+    view.rerender(<CommandPalette commands={[d]} scope="all" onClose={vi.fn()} />)
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(ran).toEqual(['c', 'd'])
+  })
+
   it('limits the projects scope to project commands', () => {
     const { commands } = makeCommands()
     render(<CommandPalette commands={commands} scope="projects" onClose={vi.fn()} />)
