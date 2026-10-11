@@ -291,7 +291,7 @@ export function mapThreadItem(
         type: 'tool_call',
         status,
         text: toolCallText(
-          collabAgentLabel(item.tool, status, targets, failed),
+          collabAgentLabel(item.tool, status, targets, failed, runningAgentCount(item)),
           undefined,
           item.prompt,
         ),
@@ -429,11 +429,21 @@ function failedAgentCount(item: Extract<CodexThreadItem, { type: 'collabAgentToo
   ).length
 }
 
+/** A wait that timed out completes with its subagents still pending or running. */
+function runningAgentCount(
+  item: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>,
+): number {
+  return Object.values(item.agentsStates).filter(
+    (state) => state?.status === 'pendingInit' || state?.status === 'running',
+  ).length
+}
+
 function collabAgentLabel(
   tool: Extract<CodexThreadItem, { type: 'collabAgentToolCall' }>['tool'],
   status: ItemStatus,
   targets: number,
   failed: number,
+  running: number,
 ): string {
   if (failed > 0) {
     return targets > 1 ? `${failed} of ${targets} subagents failed` : 'Subagent failed'
@@ -448,12 +458,20 @@ function collabAgentLabel(
     case 'wait':
       if (status === 'failed') return 'Subagent wait failed'
       if (status === 'started') return 'Waiting for subagents'
+      if (running > 0) {
+        return plural
+          ? `${running} of ${targets} subagents still running`
+          : 'Subagent still running'
+      }
       return plural ? `${targets} subagents finished` : 'Subagent finished'
     case 'sendInput':
+      if (status === 'failed') return 'Could not send input to a subagent'
       return status === 'started' ? 'Sending input to a subagent' : 'Sent input to a subagent'
     case 'resumeAgent':
+      if (status === 'failed') return 'Could not resume a subagent'
       return status === 'started' ? 'Resuming a subagent' : 'Resumed a subagent'
     case 'closeAgent':
+      if (status === 'failed') return 'Could not close a subagent'
       return status === 'started' ? 'Closing a subagent' : 'Closed a subagent'
   }
 }
