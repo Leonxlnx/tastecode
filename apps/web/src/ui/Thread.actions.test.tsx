@@ -683,6 +683,73 @@ describe('completed activity disclosure', () => {
     expect(document.activeElement).toBe(disclosure)
   })
 
+  it('reads no hidden tool output while the activity opens, closes and reopens', () => {
+    const output = (text: string) => JSON.stringify({ content: [{ type: 'text', text }] })
+    const items: Item[] = [turnItem('prompt', 1, { role: 'user', text: 'Inspect JSON tools' })]
+    for (let index = 0; index < 40; index++) {
+      items.push(
+        turnItem(`json-tool-${index}`, index + 2, {
+          type: 'tool_call',
+          text: `fixture.mcp\n{"index":${index}}\n${output(`json-output-${index}:${'y'.repeat(32 * 1024)}`)}`,
+        }),
+      )
+    }
+    // Rows persisted in the older inline shape carry no arguments, so only
+    // their output can say whether they have anything to open.
+    for (let index = 0; index < 10; index++) {
+      items.push(
+        turnItem(`legacy-tool-${index}`, index + 100, {
+          type: 'tool_call',
+          text: `grep ${output(`legacy-output-${index}:${'z'.repeat(32 * 1024)}`)}`,
+        }),
+      )
+    }
+    items.push(
+      turnItem('legacy-empty', 200, {
+        type: 'tool_call',
+        text: `grep ${output(' '.repeat(32 * 1024))}`,
+      }),
+      turnItem('answer', 1000, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    )
+    const parse = vi.spyOn(JSON, 'parse')
+    const largeParses = () =>
+      parse.mock.calls.filter(([text]) => typeof text === 'string' && text.length > 16 * 1024)
+        .length
+    try {
+      const { container } = renderCompleted(items)
+      expect(largeParses()).toBe(0)
+
+      const disclosure = screen.getByRole('button', { name: /Worked for/ })
+      const reveal = container.querySelector('.activity__reveal')!
+      fireEvent.click(disclosure)
+      const rows = () =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>('.activity__body .aux__row'))
+      expect(rows()).toHaveLength(51)
+      expect(rows().filter((row) => row.disabled)).toHaveLength(1)
+      // Arguments already make a call openable; each argument-less row reads
+      // its output once to decide, and nothing reads it again on re-render.
+      expect(largeParses()).toBe(11)
+
+      fireEvent.click(disclosure)
+      fireEvent(
+        reveal,
+        Object.assign(new Event('transitionend', { bubbles: true }), { propertyName: 'transform' }),
+      )
+      fireEvent.click(disclosure)
+      expect(rows().filter((row) => row.disabled)).toHaveLength(1)
+      expect(largeParses()).toBe(11)
+      expect(container.querySelector('.tool-detail__output')).toBeNull()
+
+      fireEvent.click(rows()[0]!)
+      expect(largeParses()).toBeGreaterThan(11)
+      expect(container.querySelector('.tool-detail__output')?.textContent).toContain(
+        'json-output-0:',
+      )
+    } finally {
+      parse.mockRestore()
+    }
+  })
+
   it('names the tool and what it acted on, and opens arguments and output apart', () => {
     const { container } = renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Check the page' }),
