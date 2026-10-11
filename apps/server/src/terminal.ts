@@ -41,7 +41,10 @@ type ProcessRow = {
   parent: number
   group: number
   foreground: number
-  /** Not every ps prints the session as its leader's pid: only ever compared. */
+  /**
+   * Only ever compared. Linux prints the session id; macOS prints 0 for every
+   * process, so there the session re-check of a job guards nothing.
+   */
   session: string
   leader: boolean
   zombie: boolean
@@ -487,7 +490,8 @@ export class TerminalManager {
         (row) => row.group === job.group && !row.zombie,
       )
       if (members?.length === 0) return 'ended'
-      // A recycled group id now names someone else's processes.
+      // A recycled group id now names someone else's processes. Linux only:
+      // on macOS every member and the shell report session 0.
       if (members?.some((member) => member.session !== job.session)) return 'foreign'
       const left = this.#stepEnd(step, startedAt) - Date.now()
       // A failed listing is retried on the next poll, but a group that still
