@@ -662,6 +662,12 @@ type MaxSequenceRow = { seq: SqliteInteger | null }
 type MinTimestampRow = { at: SqliteInteger | null }
 type ReplaySnapshotRow = { seq: SqliteInteger; payload: string }
 type ReplayEntry = { seq: number; event: DomainEvent }
+type CachedReplaySnapshot = {
+  seq: number
+  entries: ReplayEntry[]
+  characters: number
+  tail: boolean
+}
 
 /** Keep hot thread metadata without retaining every thread in a large workspace. */
 const THREAD_CACHE_LIMIT = 128
@@ -786,10 +792,11 @@ export class Store {
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
   #providerContextSettingsCache: ProviderContextSettingsMap | undefined
-  #replaySnapshotCache = new Map<
-    string,
-    { seq: number; entries: ReplayEntry[]; characters: number }
-  >()
+  /**
+   * Compact replays by thread. `tail` is false once an event lands after the
+   * snapshot: the entry still serves as a base and for older history pages.
+   */
+  #replaySnapshotCache = new Map<string, CachedReplaySnapshot>()
   #replaySnapshotCacheCharacters = 0
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
@@ -2692,7 +2699,8 @@ export class Store {
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
-    if (this.#replaySnapshotCache.size > 0) this.#deleteCachedReplaySnapshot(threadId)
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) cached.tail = false
     return Number(this.#insertEvent.run(threadId, at, payload).lastInsertRowid)
   }
 
@@ -2740,8 +2748,30 @@ export class Store {
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row) return undefined
     const seq = Number(row.seq)
-    const entries = this.#cacheReplaySnapshot(threadId, seq, row.payload)
+    const entries = this.#cacheReplaySnapshot(
+      threadId,
+      seq,
+      row.payload,
+      seq === this.lastSeq(threadId),
+    )
     return entries ? { seq, entries } : undefined
+  }
+
+  /**
+   * The saved replay exactly as it stood at `seq`, even when newer events have
+   * landed since. Every rewrite of older history deletes the snapshot, so a
+   * replay still saved at that sequence describes the same older turns.
+   */
+  replaySnapshotAt(threadId: string, seq: number): ReplayEntry[] | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      if (cached.seq !== seq) return undefined
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return cached.entries
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
+    if (!row || Number(row.seq) !== seq) return undefined
+    return this.#cacheReplaySnapshot(threadId, seq, row.payload, seq === this.lastSeq(threadId))
   }
 
   /** Preserve SQLite's JSON for the first response after a process restart. */
@@ -2749,20 +2779,27 @@ export class Store {
     threadId: string,
   ): { entries: ReplayEntry[]; serializedEntries?: string | undefined } | undefined {
     const cached = this.#replaySnapshotCache.get(threadId)
+    // The saved row holds the same replay, so it is no tail either.
+    if (cached && !cached.tail) return undefined
     if (cached) {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { entries: cached.entries }
     }
     const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
     if (!row) return undefined
-    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload)
+    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload, true)
     return entries ? { entries, serializedEntries: row.payload } : undefined
   }
 
-  #cacheReplaySnapshot(threadId: string, seq: number, payload: string): ReplayEntry[] | undefined {
+  #cacheReplaySnapshot(
+    threadId: string,
+    seq: number,
+    payload: string,
+    tail: boolean,
+  ): ReplayEntry[] | undefined {
     try {
       const entries = ReplaySnapshotSchema.parse(JSON.parse(payload))
-      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length)
+      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length, tail)
       return entries
     } catch {
       this.#deleteReplaySnapshot.run(threadId)
@@ -2771,10 +2808,7 @@ export class Store {
     }
   }
 
-  #promoteCachedReplaySnapshot(
-    threadId: string,
-    cached: { seq: number; entries: ReplayEntry[]; characters: number },
-  ): void {
+  #promoteCachedReplaySnapshot(threadId: string, cached: CachedReplaySnapshot): void {
     this.#replaySnapshotCache.delete(threadId)
     this.#replaySnapshotCache.set(threadId, cached)
   }
@@ -2784,6 +2818,7 @@ export class Store {
     seq: number,
     entries: ReplayEntry[],
     characters: number,
+    tail: boolean,
   ): void {
     this.#deleteCachedReplaySnapshot(threadId)
     if (characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT) return
@@ -2795,7 +2830,7 @@ export class Store {
       if (oldestThreadId === undefined) break
       this.#deleteCachedReplaySnapshot(oldestThreadId)
     }
-    this.#replaySnapshotCache.set(threadId, { seq, entries, characters })
+    this.#replaySnapshotCache.set(threadId, { seq, entries, characters, tail })
     this.#replaySnapshotCacheCharacters += characters
   }
 
@@ -2815,7 +2850,13 @@ export class Store {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
     this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
-    this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
+    this.#rememberReplaySnapshot(
+      threadId,
+      seq,
+      entries as ReplayEntry[],
+      payload.length,
+      seq === this.lastSeq(threadId),
+    )
     return payload
   }
 
