@@ -136,8 +136,13 @@ export function PullRequestsView(props: {
     }
   }, [load])
 
+  // Only a setup that finishes after mount forces a refresh; a revisit keeps the cache.
+  const setupRevision = useRef(props.setupRefreshRevision ?? 0)
   useEffect(() => {
-    if ((props.setupRefreshRevision ?? 0) > 0) void load(true)
+    const revision = props.setupRefreshRevision ?? 0
+    if (revision <= setupRevision.current) return
+    setupRevision.current = revision
+    void load(true)
   }, [load, props.setupRefreshRevision])
 
   const normalizedQuery = query.trim().toLowerCase()
