@@ -63,6 +63,7 @@ import {
   McpToolApprovalParamsSchema,
   ModelListResponseSchema,
   PermissionsRequestApprovalParamsSchema,
+  ReasoningSummaryPartAddedNotificationSchema,
   SkillsConfigWriteResponseSchema,
   SkillsListResponseSchema,
   ThreadResumeResponseSchema,
@@ -126,6 +127,8 @@ const IGNORABLE_NOTIFICATIONS = new Set([
   // The app-server writes the same warning to stderr, which is already
   // forwarded to the log; mapping this too would print every warning twice.
   'configWarning',
+  // Experimental, and not guaranteed to add up to the plan item that completes it.
+  'item/plan/delta',
 ])
 
 /** Provider state TasteCode either does not expose or already derives from shared events. */
@@ -1538,6 +1541,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'item/reasoning/textDelta': {
         const p = ItemDeltaNotificationSchema.parse(params)
         emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: p.delta })
+        return
+      }
+
+      // The completed item joins summary parts with a blank line; match it live.
+      case 'item/reasoning/summaryPartAdded': {
+        const p = ReasoningSummaryPartAddedNotificationSchema.parse(params)
+        if (p.summaryIndex > 0) {
+          emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: '\n\n' })
+        }
         return
       }
 
