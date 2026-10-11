@@ -847,6 +847,69 @@ describe('MCP settings', () => {
     ).toHaveLength(1)
   })
 
+  it('keeps a row locked until its own change settles', async () => {
+    Object.defineProperty(window, 'confirm', { configurable: true, value: () => true })
+    const finishRemove = new Map<string, () => void>()
+    const server = (id: string) => ({
+      id,
+      scope: 'project',
+      enabled: true,
+      auth: { status: 'not_required' },
+      startup: { state: 'ready' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    })
+    const transport = client(async (method, params) => {
+      if (method === 'mcp.list') {
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: false,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [server('alpha'), server('beta')],
+        }
+      }
+      if (method === 'mcp.remove') {
+        return new Promise<void>((resolve) =>
+          finishRemove.set((params as { serverId: string }).serverId, resolve),
+        )
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('beta')).toBeTruthy()
+    const [alphaRemove, betaRemove] = screen.getAllByRole('button', { name: 'Remove' })
+    fireEvent.click(alphaRemove!)
+    fireEvent.click(betaRemove!)
+    expect((alphaRemove as HTMLButtonElement).disabled).toBe(true)
+    act(() => finishRemove.get('alpha')?.())
+
+    await waitFor(() => expect((alphaRemove as HTMLButtonElement).disabled).toBe(false))
+    expect((betaRemove as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(betaRemove!)
+    expect(
+      vi
+        .mocked(transport.request)
+        .mock.calls.filter(([method]) => method === 'mcp.remove')
+        .map(([, params]) => (params as { serverId: string }).serverId),
+    ).toEqual(['alpha', 'beta'])
+  })
+
   it('adds and removes project servers', async () => {
     Object.defineProperty(window, 'confirm', { configurable: true, value: () => true })
     const transport = client(async (method) => {
