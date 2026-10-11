@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTabDrag } from './useTabDrag.js'
 import { performAppHaptic } from '../../haptics.js'
 import { IconX } from '@tabler/icons-react'
@@ -39,6 +39,26 @@ function TabLabel(props: { title: string }) {
   )
 }
 
+export type WorkspaceTabsFit = 'labels' | 'compact'
+
+/**
+ * Chooses how a tab strip fits and records it on the strip's data-fit:
+ * "labels" while every tab fits with at least its readable prefix, otherwise
+ * "compact", where inactive tabs keep only their icon; only a compact strip
+ * that still overflows scrolls. The labelled layout is what gets measured, in
+ * either mode, so the choice depends on the strip's width and tabs alone and
+ * cannot flip back and forth at a boundary. A compact strip is measured by
+ * switching it to labels for one synchronous layout, before anything paints;
+ * the attribute only ends up changed when the mode does.
+ */
+export function fitWorkspaceTabs(strip: HTMLElement): WorkspaceTabsFit {
+  if (strip.dataset['fit'] === 'compact') strip.dataset['fit'] = 'labels'
+  // A pixel of slack absorbs subpixel rounding in scrollWidth.
+  const fit: WorkspaceTabsFit = strip.scrollWidth - strip.clientWidth > 1 ? 'compact' : 'labels'
+  if (strip.dataset['fit'] !== fit) strip.dataset['fit'] = fit
+  return fit
+}
+
 /** Animate live tabs and their neighbours without resizing text or repainting widths. */
 export function WorkspaceTabs(props: {
   tabs: WorkspaceTabLabel[]
@@ -56,6 +76,22 @@ export function WorkspaceTabs(props: {
   const [closing, setClosing] = useState(new Set<string>())
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
+
+  // Stable, so the observer below is created once per mount. It runs when the
+  // strip resizes or its tabs change, never per streamed message: the tab list
+  // is memoized on the panel's tabs.
+  const fit = useCallback(() => {
+    if (host.current) fitWorkspaceTabs(host.current)
+  }, [])
+  useLayoutEffect(() => {
+    const strip = host.current
+    if (!strip || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(fit)
+    observer.observe(strip)
+    return () => observer.disconnect()
+  }, [fit])
+  // Before the motion effect below, so tabs animate into the chosen mode.
+  useLayoutEffect(fit, [fit, props.tabs])
 
   useLayoutEffect(() => {
     const container = host.current

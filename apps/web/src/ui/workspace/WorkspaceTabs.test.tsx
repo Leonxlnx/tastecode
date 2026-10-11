@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { WorkspaceTabs } from './WorkspaceTabs.js'
+import { WorkspaceTabs, fitWorkspaceTabs } from './WorkspaceTabs.js'
 
 const motions: Array<{ frames: Keyframe[]; finish: () => void; cancel: ReturnType<typeof vi.fn> }> =
   []
@@ -199,4 +199,108 @@ it('keeps a readable prefix of a long title whole and names the tab in full', ()
   const short = screen.getByRole('tab', { name: 'Browser' })
   expect(short.querySelector('.workspace-tabs__label')!.textContent).toBe('Browser')
   expect(short.querySelector('.workspace-tabs__label-head')).toBeNull()
+})
+
+function fitStrip(widths: { client: number; labels: number; compact: number }) {
+  const strip = document.createElement('div')
+  Object.defineProperty(strip, 'clientWidth', { get: () => widths.client })
+  Object.defineProperty(strip, 'scrollWidth', {
+    get: () => (strip.dataset['fit'] === 'compact' ? widths.compact : widths.labels),
+  })
+  return strip
+}
+
+it('keeps labels while they fit and goes compact once even readable prefixes do not', () => {
+  const widths = { client: 400, labels: 380, compact: 200 }
+  const strip = fitStrip(widths)
+  expect(fitWorkspaceTabs(strip)).toBe('labels')
+  expect(strip.dataset['fit']).toBe('labels')
+  widths.client = 300
+  expect(fitWorkspaceTabs(strip)).toBe('compact')
+  expect(strip.dataset['fit']).toBe('compact')
+  // A pixel of rounding is not an overflow.
+  widths.client = 379
+  expect(fitWorkspaceTabs(strip)).toBe('labels')
+})
+
+it('decides from the labelled layout in either mode, so it cannot flip at a boundary', () => {
+  const widths = { client: 300, labels: 320, compact: 150 }
+  const strip = fitStrip(widths)
+  // Compact fits easily, but labels still overflow, so it stays compact every time.
+  for (let pass = 0; pass < 3; pass += 1) expect(fitWorkspaceTabs(strip)).toBe('compact')
+  widths.client = 320
+  for (let pass = 0; pass < 3; pass += 1) expect(fitWorkspaceTabs(strip)).toBe('labels')
+})
+
+it('writes data-fit only when the mode changes', async () => {
+  const widths = { client: 400, labels: 380, compact: 200 }
+  const strip = fitStrip(widths)
+  fitWorkspaceTabs(strip)
+  const changes: Array<string | null> = []
+  const observer = new MutationObserver((records) => {
+    for (const record of records) changes.push(strip.getAttribute(record.attributeName!))
+  })
+  observer.observe(strip, { attributes: true, attributeFilter: ['data-fit'] })
+  fitWorkspaceTabs(strip)
+  fitWorkspaceTabs(strip)
+  await new Promise((resolve) => setTimeout(resolve))
+  expect(changes).toEqual([])
+  widths.client = 300
+  fitWorkspaceTabs(strip)
+  await new Promise((resolve) => setTimeout(resolve))
+  expect(changes).toEqual(['compact'])
+  observer.disconnect()
+})
+
+it('refits the strip from one observer as it resizes and as its tabs change', () => {
+  let resize: ResizeObserverCallback | undefined
+  const created = vi.fn()
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      constructor(callback: ResizeObserverCallback) {
+        created()
+        resize = callback
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  )
+  let client = 400
+  let labels = 380
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains('workspace-tabs') ? client : 0
+  })
+  vi.spyOn(Element.prototype, 'scrollWidth', 'get').mockImplementation(function (this: Element) {
+    if (!(this instanceof HTMLElement) || !this.classList.contains('workspace-tabs')) return 0
+    return this.dataset['fit'] === 'compact' ? 200 : labels
+  })
+  const strip = (titles: string[]) => (
+    <WorkspaceTabs
+      tabs={titles.map((title) => ({ id: title, title, icon: null }))}
+      activeId="Review"
+      onSelect={() => {}}
+      onClose={() => {}}
+    >
+      <span />
+    </WorkspaceTabs>
+  )
+  const view = render(strip(['Temporary chat', 'Review']))
+  const tablist = screen.getByRole('tablist')
+  expect(tablist.dataset['fit']).toBe('labels')
+  client = 300
+  act(() => resize!([], {} as ResizeObserver))
+  expect(tablist.dataset['fit']).toBe('compact')
+  client = 400
+  labels = 520
+  view.rerender(strip(['Temporary chat', 'Review', 'Files']))
+  expect(tablist.dataset['fit']).toBe('compact')
+  labels = 380
+  view.rerender(strip(['Temporary chat', 'Review']))
+  expect(tablist.dataset['fit']).toBe('labels')
+  // A stable callback: re-rendering never recreates the observer.
+  expect(created).toHaveBeenCalledOnce()
 })
