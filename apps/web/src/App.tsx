@@ -3810,6 +3810,12 @@ export function App() {
     [inspectCheckpoint],
   )
 
+  const loadOlderHistory = useCallback(
+    (threadId: string, turnLimit?: number) =>
+      threadController.loadOlderHistory(threadId, turnLimit),
+    [threadController],
+  )
+
   const undoTurnChanges = useCallback(
     async (threadId: string, turnId: string, expectedDiff: string) => {
       setNotice(undefined)
@@ -5139,6 +5145,7 @@ export function App() {
                           onEditMessage={editMessage}
                           onRevertCheckpoint={revertCheckpoint}
                           onUndoChanges={undoTurnChanges}
+                          onLoadOlderHistory={loadOlderHistory}
                         />
                       </Suspense>
                     ) : (
