@@ -512,6 +512,40 @@ describe('TerminalManager', () => {
     }
   })
 
+  it('retries a failed process listing on the next poll', async () => {
+    vi.useFakeTimers()
+    try {
+      const logs: string[] = []
+      const signals: string[] = []
+      let listings = 0
+      const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {}, onLog: (line) => logs.push(line) },
+        {
+          spawnPty: () => pty,
+          processes: fakeProcesses({
+            // ps fails once, right after the hangup.
+            list: () =>
+              Promise.resolve(
+                (listings += 1) === 1 ? undefined : signals.includes('SIGKILL') ? [] : [jobMember],
+              ),
+            signal: (_group, signal) => signals.push(signal),
+          }),
+        },
+      )
+      await manager.close(manager.open('thread-flaky', os.tmpdir(), 80, 24))
+
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(3_000)
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await manager.closeAll()
+      expect(logs).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('never signals a job group that now holds another session', async () => {
     vi.useFakeTimers()
     try {
