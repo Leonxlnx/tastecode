@@ -80,6 +80,7 @@ import {
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { shiftPendingScrollIndex } from './pending-scroll.js'
 import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
@@ -924,21 +925,6 @@ type PrependAnchor = {
   index?: number
   offset?: number
   top?: number
-}
-
-/**
- * Virtual-core keeps an in-flight scrollToIndex (a find, search or turn jump)
- * as a row index across count changes, so rows prepended while it settles
- * would land it `shift` rows early.
- */
-function shiftPendingScrollIndex(
-  virtualizer: Virtualizer<HTMLDivElement, Element>,
-  shift: number,
-): void {
-  // A private field, so read it without claiming a type for the whole instance.
-  const pending: unknown = Reflect.get(virtualizer, 'scrollState')
-  if (typeof pending !== 'object' || pending === null || !('index' in pending)) return
-  if (typeof pending.index === 'number') pending.index += shift
 }
 
 /** A disclosure's row height change, waiting for the runway to commit it. */
