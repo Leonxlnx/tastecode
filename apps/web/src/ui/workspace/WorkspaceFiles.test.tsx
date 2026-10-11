@@ -43,6 +43,24 @@ describe('WorkspaceFiles', () => {
     expect(screen.queryByTitle('src/stale.ts')).toBeNull()
   })
 
+  it('keeps the listed files without placeholder rows while the root refreshes', async () => {
+    const pending: Array<(value: unknown) => void> = []
+    const transport = new TestTransport((method) => {
+      if (method !== 'workspace.listDirectory') throw new Error('Unexpected request')
+      return new Promise((resolve) => pending.push(resolve))
+    })
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    await waitFor(() => expect(pending).toHaveLength(1))
+    expect(screen.getByText('Loading files…')).toBeTruthy()
+    await act(async () => pending[0]!({ path: '', entries: [file('index.ts')] }))
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await waitFor(() => expect(pending).toHaveLength(2))
+    expect(screen.getByTitle('index.ts')).toBeTruthy()
+    expect(screen.queryByText('Loading files…')).toBeNull()
+    await act(async () => pending[1]!({ path: '', entries: [file('index.ts'), file('new.ts')] }))
+    expect(screen.getByTitle('new.ts')).toBeTruthy()
+  })
+
   it('coalesces completion and reconnect refreshes without reading on token deltas', async () => {
     const transport = new TestTransport(() => ({ path: '', entries: [] }))
     render(<WorkspaceFiles transport={transport} projectPath="/project" threadId="thread" />)
