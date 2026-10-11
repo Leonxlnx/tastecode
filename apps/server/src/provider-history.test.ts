@@ -8,7 +8,7 @@ import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
-import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -264,6 +264,58 @@ describe('provider history integration', () => {
       'Story',
       'Steer',
       'Answer to the steer',
+    ])
+  })
+
+  it('hides Design phase prompts that the provider saved as turns of their own', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const message = (id: string, turnId: string, role: 'user' | 'assistant', text: string) =>
+      ({
+        type: 'item.completed',
+        item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: 1000 },
+      }) satisfies DomainEvent
+    const started = (id: string, threadId: string) =>
+      ({
+        type: 'turn.started',
+        turn: { id, threadId, status: 'running', createdAt: 1000 },
+      }) satisfies DomainEvent
+    // Locally, a Design run shows the request and each phase as Design activity.
+    for (const event of [
+      started('local-brief', 'local'),
+      message('request', 'local-brief', 'user', 'A bakery page'),
+      { type: 'turn.completed', turnId: 'local-brief', status: 'completed' },
+      started('local-page', 'local'),
+      { type: 'turn.completed', turnId: 'local-page', status: 'interrupted' },
+    ] satisfies DomainEvent[])
+      store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([
+      transcript()[0]!,
+      started('native-brief', 'native'),
+      message('brief', 'native-brief', 'user', `${DESIGN_PHASE_NOTICE}Brief: A bakery page`),
+      message('brief-json', 'native-brief', 'assistant', '{"status":"complete"}'),
+      { type: 'turn.completed', turnId: 'native-brief', status: 'completed' },
+      started('native-page', 'native'),
+      message('page', 'native-page', 'user', `${RESTORE_CONTEXT_NOTICE}${DESIGN_PHASE_NOTICE}Page`),
+      message('page-json', 'native-page', 'assistant', '{"version":1}'),
+      { type: 'turn.completed', turnId: 'native-page', status: 'interrupted' },
+      started('native-outside', 'native'),
+      message('outside', 'native-outside', 'user', 'Asked outside TasteCode'),
+      message('outside-answer', 'native-outside', 'assistant', 'Outside answer'),
+      { type: 'turn.completed', turnId: 'native-outside', status: 'completed' },
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'A bakery page',
+      'Asked outside TasteCode',
+      'Outside answer',
     ])
   })
 
