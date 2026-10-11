@@ -1180,7 +1180,6 @@ describe('web client', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('thread.history', {
         threadId: 'second-thread',
-        page: NEWEST_PAGE,
       }),
     )
     await act(async () => failFirst?.(new Error('history read failed')))
