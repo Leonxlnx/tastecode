@@ -101,7 +101,8 @@ function ProviderMcpSettings(props: {
   const [inventory, setInventory] = useState<Inventory>()
   const [loading, setLoading] = useState(false)
   const [editor, setEditor] = useState<Editor>()
-  const [busy, setBusy] = useState<string>()
+  // Per id: one row settling must not unlock another row still in flight.
+  const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string>()
   const [notice, setNotice] = useState<string>()
   const inventoryContext = useRef<Context | undefined>(undefined)
@@ -163,7 +164,7 @@ function ProviderMcpSettings(props: {
   const completeOAuth = useCallback(
     (result: OAuthCompletion) => {
       pendingOAuth.current = undefined
-      setBusy((current) => (current === result.serverId ? undefined : current))
+      setBusy(without(result.serverId))
       if (result.success) {
         setNotice('MCP sign-in completed.')
         setError(undefined)
@@ -185,7 +186,7 @@ function ProviderMcpSettings(props: {
     setNotice(undefined)
     setEditor(undefined)
     pendingOAuth.current = undefined
-    setBusy(undefined)
+    setBusy(new Set())
     if (!props.projectPath) {
       setLoading(false)
       return
@@ -229,9 +230,11 @@ function ProviderMcpSettings(props: {
   }, [props.transport, props.provider, props.projectPath, refresh, completeOAuth])
 
   async function applyChange<Result>(
+    busyId: string,
     action: () => Promise<Result>,
     success: string,
   ): Promise<boolean> {
+    setBusy((current) => new Set(current).add(busyId))
     setError(undefined)
     setNotice(undefined)
     try {
@@ -260,13 +263,13 @@ function ProviderMcpSettings(props: {
       if (isCurrentContext()) setError(message(cause))
       return false
     } finally {
-      if (isCurrentContext()) setBusy(undefined)
+      if (isCurrentContext()) setBusy(without(busyId))
     }
   }
 
   async function save(event: FormEvent): Promise<void> {
     event.preventDefault()
-    if (!editor || !props.projectPath || busy !== undefined) return
+    if (!editor || !props.projectPath || busy.has('editor')) return
     const projectPath = props.projectPath
     let server: McpServerConfig
     try {
@@ -295,8 +298,8 @@ function ProviderMcpSettings(props: {
       )
       return
     }
-    setBusy('editor')
     const saved = await applyChange(
+      'editor',
       () =>
         props.transport.request(editor.mode === 'edit' ? 'mcp.update' : 'mcp.add', {
           provider: props.provider,
@@ -314,8 +317,8 @@ function ProviderMcpSettings(props: {
 
   function toggle(server: McpServer): void {
     if (!props.projectPath) return
-    setBusy(server.id)
     void applyChange(
+      server.id,
       () =>
         server.enabled
           ? props.transport.request('mcp.add', {
@@ -334,8 +337,8 @@ function ProviderMcpSettings(props: {
 
   function remove(server: McpServer): void {
     if (!props.projectPath || !window.confirm(`Remove ${name(server)} from this project?`)) return
-    setBusy(server.id)
     void applyChange(
+      server.id,
       () =>
         props.transport.request('mcp.remove', {
           provider: props.provider,
@@ -349,7 +352,7 @@ function ProviderMcpSettings(props: {
   async function signIn(server: McpServer): Promise<void> {
     if (!props.projectPath || pendingOAuth.current) return
     pendingOAuth.current = { serverId: server.id, loginId: undefined }
-    setBusy(server.id)
+    setBusy((current) => new Set(current).add(server.id))
     setError(undefined)
     try {
       const result = await props.transport.request('mcp.startOAuth', {
@@ -375,7 +378,7 @@ function ProviderMcpSettings(props: {
     } catch (cause) {
       if (isCurrentContext()) {
         pendingOAuth.current = undefined
-        setBusy((current) => (current === server.id ? undefined : current))
+        setBusy(without(server.id))
         setError(message(cause))
       }
     }
@@ -428,7 +431,7 @@ function ProviderMcpSettings(props: {
             <button
               className="settings__action is-secondary"
               type="button"
-              disabled={busy !== undefined}
+              disabled={busy.size > 0}
               onClick={(event) =>
                 setEditor({
                   mode: 'hide',
@@ -446,7 +449,7 @@ function ProviderMcpSettings(props: {
             <button
               className="settings__action"
               type="button"
-              disabled={busy !== undefined}
+              disabled={busy.size > 0}
               onClick={(event) =>
                 setEditor({
                   mode: 'add',
@@ -488,7 +491,7 @@ function ProviderMcpSettings(props: {
         <ServerEditor
           key={editor.mode === 'edit' ? `edit:${editor.id}` : editor.mode}
           editor={editor}
-          busy={busy === 'editor'}
+          busy={busy.has('editor')}
           onChange={setEditor}
           onCancel={() => setEditor(undefined)}
           onSubmit={(event) => void save(event)}
@@ -501,7 +504,7 @@ function ProviderMcpSettings(props: {
               key={server.id}
               server={server}
               capabilities={currentInventory.capabilities}
-              busy={busy === server.id}
+              busy={busy.has(server.id)}
               onSignIn={() => void signIn(server)}
               onToggle={() => toggle(server)}
               onEdit={(opener) =>
@@ -725,6 +728,14 @@ function transportLabel(transport: McpTransport | undefined): string {
   return transport.type === 'http'
     ? transport.url
     : [transport.command, ...(transport.args ?? [])].join(' ')
+}
+
+function without(id: string) {
+  return (current: ReadonlySet<string>) => {
+    const next = new Set(current)
+    next.delete(id)
+    return next
+  }
 }
 
 function message(cause: unknown): string {
