@@ -435,16 +435,28 @@ describe('TerminalManager', () => {
     try {
       const count = 6
       const jobKilledAt = new Map<number, number>()
+      const shellKilledAt: number[] = []
+      const killedShells = new Set<number>()
       let startedAt = 0
+      let listing = 0
+      let mostListings = 0
       const ptys = Array.from({ length: count }, (_, index) => {
         const pty = controlledPty({
           pid: 4100 + index,
           // Each shell ignores SIGHUP, and node-pty reports its SIGKILL 200 ms late.
           kill: (signal) => {
-            if (signal === 'SIGKILL') setTimeout(() => pty.emitExit(137), 200)
+            if (signal !== 'SIGKILL') return
+            shellKilledAt.push(Date.now() - startedAt)
+            killedShells.add(4_100 + index)
+            setTimeout(() => pty.emitExit(137), 200)
           },
         })
         return pty
+      })
+      const inspect = vi.fn((pids: number[]) => {
+        // A ps that takes 60 ms blocks the event loop for as long...
+        vi.setSystemTime(Date.now() + 60)
+        return pids.map((pid) => ownShell(pid, pid + 1_000))
       })
       const spawned = [...ptys]
       const manager = new TerminalManager(
@@ -452,27 +464,27 @@ describe('TerminalManager', () => {
         {
           spawnPty: () => spawned.shift()!,
           processes: {
-            // A ps that takes 60 ms blocks the event loop for as long...
-            inspect: (pids) => {
-              vi.setSystemTime(Date.now() + 60)
-              return pids.map((pid) => ownShell(pid, pid + 1_000))
-            },
+            inspect,
             // ...and lists every process 100 ms after it was asked.
             list: () =>
-              new Promise((resolve) =>
+              new Promise((resolve) => {
+                listing += 1
+                mostListings = Math.max(mostListings, listing)
                 setTimeout(() => {
-                  const groups = ptys.map((_, index) => 5_100 + index)
-                  const live = groups.filter((group) => !jobKilledAt.has(group))
+                  listing -= 1
                   resolve(
-                    live.map((group) => ({
-                      ...jobMember,
-                      pid: group,
-                      group,
-                      session: String(group - 1_000),
-                    })),
+                    ptys.flatMap((_, index) => {
+                      const shell = 4_100 + index
+                      const group = shell + 1_000
+                      const job = { ...jobMember, pid: group, group, session: String(shell) }
+                      return [
+                        ...(killedShells.has(shell) ? [] : [ownShell(shell, group)]),
+                        ...(jobKilledAt.has(group) ? [] : [job]),
+                      ]
+                    }),
                   )
-                }, 100),
-              ),
+                }, 100)
+              }),
             // Every job ignores SIGHUP and SIGTERM.
             signal: (group, signal) => {
               if (signal === 'SIGKILL') jobKilledAt.set(group, Date.now() - startedAt)
@@ -491,6 +503,10 @@ describe('TerminalManager', () => {
       expect(finished).toBe(true)
       expect(jobKilledAt.size).toBe(count)
       expect(Math.max(...jobKilledAt.values())).toBeLessThanOrEqual(2_200)
+      // One ps for every shell, then listings that every poll shares.
+      expect(inspect).toHaveBeenCalledOnce()
+      expect(Math.max(...shellKilledAt)).toBeLessThanOrEqual(400)
+      expect(mostListings).toBe(1)
     } finally {
       vi.useRealTimers()
     }
@@ -587,16 +603,18 @@ describe('TerminalManager', () => {
         kill: (signal) => signals.push(`foreign:${String(signal)}`),
       })
       const ptys = [ignoring, exiting, foreign]
+      const shells = (pids: number[]) =>
+        pids.map((pid) => ({
+          ...ownShell(pid, pid),
+          parent: pid === 4300 ? process.pid + 1 : process.pid,
+        }))
       const manager = new TerminalManager(
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => ptys.shift()!,
           processes: fakeProcesses({
-            inspect: (pids) =>
-              pids.map((pid) => ({
-                ...ownShell(pid, pid),
-                parent: pid === 4300 ? process.pid + 1 : process.pid,
-              })),
+            inspect: shells,
+            list: () => Promise.resolve(shells([4100])),
           }),
         },
       )
