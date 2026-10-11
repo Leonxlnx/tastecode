@@ -47,11 +47,14 @@ const CONTENT_TYPES = new Map([
 
 export const STATIC_PREVIEW_HEADER = 'x-harness-preview-id'
 
-/** `reservedPorts` are claimed by command previews that have not bound them yet. */
+/**
+ * `reservedPorts` are claimed by command previews that have not bound them
+ * yet, or belong to the app itself.
+ */
 export async function startStaticDesignPreview(
   root: string,
   plan: StaticPlan,
-  reservedPorts: ReadonlySet<number> = new Set(),
+  reservedPorts: Pick<ReadonlySet<number>, 'has'> = new Set(),
 ) {
   const previewUrl = new URL(plan.url)
   const previewId = randomUUID()

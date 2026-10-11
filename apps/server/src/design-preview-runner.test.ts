@@ -511,6 +511,40 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     )
   })
 
+  it('never serves a preview on a port the app reserves for itself', async () => {
+    // With no renderer running, a page served on its port would pass the
+    // control socket's Origin check.
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'command'))
+    const reserved = new Set([port])
+
+    const staticPreview = await startDesignPreview(
+      workspace,
+      staticPreviewPlan(port),
+      undefined,
+      undefined,
+      reserved,
+    )
+    previews.push(staticPreview)
+    const commandPreview = await startDesignPreview(
+      workspace,
+      plan(port),
+      5_000,
+      undefined,
+      reserved,
+    )
+    previews.push(commandPreview)
+
+    expect(new URL(staticPreview.url).port).not.toBe(String(port))
+    expect(new URL(commandPreview.url).port).not.toBe(String(port))
+    await expect(fetch(commandPreview.url).then((response) => response.text())).resolves.toBe(
+      'command',
+    )
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects a stop while an escaped process still holds the preview port',
     async () => {
