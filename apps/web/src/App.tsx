@@ -585,6 +585,7 @@ export function App() {
         promise: Promise<string | undefined>
         threadId?: string | undefined
         title: string
+        pinned?: boolean | undefined
       }
     | undefined
   >(undefined)
@@ -2898,6 +2899,13 @@ export function App() {
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
+        // A pin made while the chat was starting has only been shown locally.
+        // Send it ahead of the rename so the refresh below already includes it.
+        if (pending?.pinned !== undefined) {
+          void transport
+            .request('thread.pin', { threadId, pinned: pending.pinned })
+            .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        }
         // A title the user typed while the chat was starting is final; only a
         // prompt-derived one is worth replacing with a generated title.
         void transport
@@ -4287,6 +4295,14 @@ export function App() {
     (id: string) => {
       const pinned = !findSession(projectsRef.current, id)?.session.pinned
       setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
+      const pending = pendingSession.current
+      if (pending?.id === id) {
+        pending.pinned = pinned
+        if (!pending.threadId) return
+        id = pending.threadId
+      }
+      // A provisional chat whose start failed has no thread to pin.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:pinned`,
         () => transport.request('thread.pin', { threadId: id, pinned }),
