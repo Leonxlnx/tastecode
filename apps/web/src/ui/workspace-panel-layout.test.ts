@@ -107,6 +107,23 @@ describe('workspace panel layout', () => {
     expect(withTerminal).toContain('margin-right: 112px')
   })
 
+  it('moves the Review and Files trees under their content by panel width, not window width', () => {
+    const narrow = containerBlocks(css, 'workspace-panel (max-width: 500px)')
+    const windowQueries = [...css.matchAll(/@media \(max-width: \d+px\) \{[\s\S]*?\n\}/g)]
+      .map((match) => match[0])
+      .join('\n')
+
+    expect(narrow).toMatch(
+      /\.workspace-review__split \{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*grid-template-rows: minmax\(0, 1fr\) 210px;/,
+    )
+    expect(narrow).toMatch(
+      /\.workspace-files__split \{[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*grid-template-rows: minmax\(0, 1fr\) 220px;/,
+    )
+    expect(narrow).toMatch(/\.workspace-review__diff \{[^}]*border-right: 0;/)
+    expect(narrow).toMatch(/\.workspace-files__viewer \{[^}]*border-right: 0;/)
+    expect(windowQueries).not.toContain('__split')
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =

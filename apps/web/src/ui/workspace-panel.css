@@ -603,7 +603,11 @@
   .workspace-review__generate-label {
     display: none;
   }
+}
 
+/* Narrower than its default width the panel cannot give the diff a readable
+   column beside a 230px tree, so the tree moves underneath. */
+@container workspace-panel (max-width: 500px) {
   .workspace-review__split {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 210px;
@@ -901,7 +905,7 @@
   white-space: pre;
 }
 
-@media (max-width: 560px) {
+@container workspace-panel (max-width: 500px) {
   .workspace-files__split {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) 220px;
