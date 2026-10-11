@@ -396,6 +396,37 @@ describe('TerminalManager', () => {
     }
   })
 
+  it('sends SIGTERM on time at shutdown although node-pty reports the shell late', async () => {
+    vi.useFakeTimers()
+    try {
+      const signals: string[] = []
+      // The job holds the terminal open, so node-pty reports the exit 300 ms late.
+      const pty = controlledPty({ pid: 4100, kill: () => setTimeout(() => pty.emitExit(0), 300) })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => pty,
+          processes: fakeProcesses({
+            list: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
+            signal: (_group, signal) => signals.push(signal),
+          }),
+        },
+      )
+      manager.open('thread-late', os.tmpdir(), 80, 24)
+      const shutdown = manager.closeAll()
+
+      await vi.advanceTimersByTimeAsync(199)
+      expect(signals).toEqual([])
+      await vi.advanceTimersByTimeAsync(1)
+      expect(signals).toEqual(['SIGTERM'])
+      await vi.advanceTimersByTimeAsync(1_600)
+      expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
+      await shutdown
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('shortens a pane close already waiting on its job when the server shuts down', async () => {
     vi.useFakeTimers()
     try {

@@ -425,6 +425,16 @@ export class TerminalManager {
     // leader is not ours to kill.
     let exited = false
     void entry.exited.then(() => (exited = true))
+    // During shutdown the job's steps end at fixed times anyway, and node-pty
+    // may report the shell's exit 200 ms late while the job holds the
+    // terminal open: hand the job over at once so its SIGTERM is not late.
+    let handedOver = false
+    const handOver = () => {
+      if (job === undefined || handedOver) return
+      handedOver = true
+      this.#trackJob(job)
+    }
+    if (this.#shutdownStartedAt !== undefined) handOver()
     if (owned && !(await this.#settlesWithin(entry.exited, 'hangup'))) {
       const pid = entry.process.pid
       const rows = (await this.#listProcesses()) ?? this.#processes.inspect([pid])
@@ -441,7 +451,7 @@ export class TerminalManager {
     // left to the shell, as a terminal emulator leaves them. The close is done
     // once the shell is gone: the job may take seconds to shut down, and the
     // chat may already open a new terminal meanwhile.
-    if (job !== undefined) this.#trackJob(job)
+    handOver()
   }
 
   #trackJob(job: Job): void {
