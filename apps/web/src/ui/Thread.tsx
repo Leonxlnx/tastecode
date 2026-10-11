@@ -79,6 +79,7 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
+import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 import {
@@ -144,6 +145,8 @@ export interface ThreadProps {
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onUndoChanges?:
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
+  /** Load turns above the transcript; needs a stable identity. */
+  onLoadOlderHistory?: ((threadId: string, turnLimit?: number) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   /** Keep agent questions inside this thread instead of the main composer. */
@@ -203,6 +206,37 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  const [olderHistory, setOlderHistory] = useState<'idle' | 'loading' | 'failed'>('idle')
+  const olderRead = useRef<{ threadId: string; read: Promise<boolean> } | undefined>(undefined)
+  const olderFailed = useRef(false)
+  const threadIdRef = useRef(props.threadId)
+  threadIdRef.current = props.threadId
+  const loadOlderRef = useRef(props.onLoadOlderHistory)
+  loadOlderRef.current = props.onLoadOlderHistory
+  const loadOlder = useCallback((turnLimit?: number): Promise<boolean> => {
+    const threadId = threadIdRef.current
+    const load = loadOlderRef.current
+    if (!threadId || !load) return Promise.resolve(false)
+    if (olderRead.current?.threadId === threadId) return olderRead.current.read
+    olderFailed.current = false
+    setOlderHistory('loading')
+    const read = load(threadId, turnLimit).then(
+      () => true,
+      () => false,
+    )
+    olderRead.current = { threadId, read }
+    void read.then((loaded) => {
+      if (olderRead.current?.read !== read) return
+      olderRead.current = undefined
+      olderFailed.current = !loaded
+      if (threadIdRef.current === threadId) setOlderHistory(loaded ? 'idle' : 'failed')
+    })
+    return read
+  }, [])
+  useEffect(() => {
+    olderFailed.current = false
+    setOlderHistory('idle')
+  }, [props.threadId])
   const liveItems = thread.liveItems
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
@@ -216,6 +250,35 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       overscanVisibleRows(range, (index) => virtualizerRef.current?.measurementsCache[index]?.size),
     [],
   )
+
+  // Older rows arrived above: remember which row sits at the top of the
+  // viewport and how far into it, so the same pixels stay there after the
+  // virtualizer lays the new rows out. Computed once per items array, so a
+  // repeated render never re-reads measurements that already include them.
+  const committedItems = useRef({ threadId: props.threadId, items: thread.items })
+  const prepend = useRef<PrependAnchor | undefined>(undefined)
+  if (prepend.current?.items !== thread.items) {
+    const committed = committedItems.current
+    const shift =
+      committed.threadId === props.threadId ? prependedRowCount(committed.items, thread.items) : 0
+    const previous = virtualizerRef.current
+    const offset = previous?.scrollOffset ?? null
+    const row =
+      shift > 0 && offset !== null && modeRef.current !== 'follow-end'
+        ? previous?.getVirtualItemForOffset(offset)
+        : undefined
+    prepend.current =
+      shift > 0
+        ? {
+            items: thread.items,
+            shift,
+            applied: false,
+            ...(row && offset !== null
+              ? { index: row.index + shift, offset: offset - row.start }
+              : {}),
+          }
+        : undefined
+  }
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
@@ -281,7 +344,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       modeRef.current = nextMode
       setMode(nextMode)
     }
-  }, [])
+    if (
+      props.frameStore.getStructureSnapshot().olderCursor &&
+      olderRead.current === undefined &&
+      !olderFailed.current &&
+      nearOlderHistoryEdge(el)
+    )
+      void loadOlder()
+  }, [props.frameStore, loadOlder])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -369,7 +439,32 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [props.keyboardActive, turns, virtualizer])
 
+  const anchor = prepend.current
+  if (anchor?.index !== undefined && anchor.top === undefined) {
+    virtualizer.getTotalSize()
+    const start = virtualizer.measurementsCache[anchor.index]?.start
+    if (start !== undefined) anchor.top = Math.max(0, start + anchor.offset!)
+  }
+  if (anchor?.top !== undefined && !anchor.applied) virtualizer.scrollOffset = anchor.top
   const rows = virtualizer.getVirtualItems()
+
+  useLayoutEffect(() => {
+    committedItems.current = { threadId: props.threadId, items: thread.items }
+    const anchor = prepend.current
+    if (!anchor || anchor.items !== thread.items || anchor.applied) return
+    anchor.applied = true
+    anchorIndex.current += anchor.shift
+    const el = scroller.current
+    // The virtualizer may already have corrected its offset for newly
+    // measured rows above the fold during this commit; follow its value.
+    if (el && anchor.top !== undefined) writeScrollTop(el, virtualizer.scrollOffset ?? anchor.top)
+  }, [props.threadId, thread.items, virtualizer, writeScrollTop])
+
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || !thread.olderCursor || props.loading || thread.items.length === 0) return
+    if (olderHistory === 'idle' && nearOlderHistoryEdge(el)) void loadOlder()
+  }, [thread.olderCursor, thread.items.length, props.loading, olderHistory, loadOlder])
 
   // measureElement without a ResizeObserver entry returns the cached size, so
   // a disclosure that just changed its row's height has to hand over a fresh
@@ -584,6 +679,19 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           setMode={setMode}
         />
 
+        {thread.olderCursor && olderHistory === 'loading' ? (
+          <div className="thread__older" role="status">
+            <LoaderCircle className="spinner" aria-hidden />
+            Loading earlier messages
+          </div>
+        ) : null}
+        {thread.olderCursor && olderHistory === 'failed' ? (
+          <button className="thread__older" onClick={() => void loadOlder()}>
+            <RotateCcw size={13} aria-hidden />
+            Couldn’t load earlier messages. Retry
+          </button>
+        ) : null}
+
         {mode === 'free' ? (
           <button
             className="jump"
@@ -746,6 +854,16 @@ function FrameScrollFollower({
   })
 
   return null
+}
+
+/** Where the viewport stood when older rows were prepended above it. */
+type PrependAnchor = {
+  items: Item[]
+  shift: number
+  applied: boolean
+  index?: number
+  offset?: number
+  top?: number
 }
 
 /** A disclosure's row height change, waiting for the runway to commit it. */

@@ -37,6 +37,13 @@ describe('thread entry rows', () => {
     expect(enteringThreadItems([first], [first, second])).toEqual([second])
   })
 
+  it('does not animate the newest rows when an older page is prepended', () => {
+    const latest = message('latest')
+    expect(enteringThreadItems([latest], [message('older-1'), message('older-2'), latest])).toEqual(
+      [],
+    )
+  })
+
   it('does not animate an optimistic id reconciliation', () => {
     const local = message('local:1', 'hello')
     const durable = message('durable', 'hello')
