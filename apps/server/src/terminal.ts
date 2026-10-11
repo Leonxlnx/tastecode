@@ -183,6 +183,7 @@ export class TerminalManager {
   #closingByThread = new Map<string, Set<Promise<void>>>()
   #closingThreads = new Map<string, Promise<void>>()
   #closingAll: Promise<void> | undefined
+  /** When closeAll() began. Steps run on performance.now(), which a clock change cannot move. */
   #shutdownStartedAt: number | undefined
   #listing: { startedAt: number; rows: Promise<ProcessRow[] | undefined> } | undefined
   /** Wakes every pending poll, so a starting shutdown shortens it at once. */
@@ -501,7 +502,7 @@ export class TerminalManager {
    * closed shell's job, read just now, so the caller may signal it.
    */
   async #awaitJob(job: Job, step: CloseStep): Promise<JobState> {
-    const startedAt = Date.now()
+    const startedAt = performance.now()
     while (true) {
       // Members that exited stay in the group as zombies until their new
       // parent reaps them, which a container's pid 1 may do only lazily.
@@ -512,7 +513,7 @@ export class TerminalManager {
       // A recycled group id now names someone else's processes. Linux only:
       // on macOS every member and the shell report session 0.
       if (members?.some((member) => member.session !== job.session)) return 'foreign'
-      const left = this.#stepEnd(step, startedAt) - Date.now()
+      const left = this.#stepEnd(step, startedAt) - performance.now()
       // A failed listing is retried on the next poll, but a group that still
       // cannot be read when the step ends is not escalated blindly.
       if (left <= 0) return members ? 'running' : 'unreadable'
@@ -524,9 +525,9 @@ export class TerminalManager {
   async #settlesWithin(promise: Promise<void>, step: CloseStep): Promise<boolean> {
     let settled = false
     void promise.then(() => (settled = true))
-    const startedAt = Date.now()
+    const startedAt = performance.now()
     while (!settled) {
-      const left = this.#stepEnd(step, startedAt) - Date.now()
+      const left = this.#stepEnd(step, startedAt) - performance.now()
       if (left <= 0) return false
       await this.#pause(left, promise)
     }
@@ -566,7 +567,7 @@ export class TerminalManager {
    */
   #listProcesses(since = 0): Promise<ProcessRow[] | undefined> {
     if (this.#listing && this.#listing.startedAt >= since) return this.#listing.rows
-    const listing = { startedAt: Date.now(), rows: this.#processes.list() }
+    const listing = { startedAt: performance.now(), rows: this.#processes.list() }
     this.#listing = listing
     const forget = () => {
       if (this.#listing === listing) this.#listing = undefined
@@ -590,7 +591,7 @@ export class TerminalManager {
 
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
-    this.#shutdownStartedAt = Date.now()
+    this.#shutdownStartedAt = performance.now()
     // Each hand-over and waker removes itself; a Set iterator tolerates that.
     for (const handOver of this.#pendingHandOvers) handOver()
     for (const wake of this.#wakers) wake()
