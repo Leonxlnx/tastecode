@@ -147,6 +147,14 @@ describe('shortcuts', () => {
     expect(shortcutFromKeyboardEvent(ctrlEvent)).toEqual(shortcut)
   })
 
+  it('does not record a dead key it cannot resolve to a base key', () => {
+    expect(
+      shortcutFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'Dead', code: 'Equal', ctrlKey: true }),
+      ),
+    ).toBeUndefined()
+  })
+
   it('preserves keyboard-layout letters and existing symbol bindings', () => {
     expect(
       shortcutFromKeyboardEvent(

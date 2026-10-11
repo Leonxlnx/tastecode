@@ -260,6 +260,26 @@ describe('keybind settings', () => {
     expect(commandPalette.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+G')
   })
 
+  it('refuses a dead key and the Windows key instead of saving them', () => {
+    render(<StatefulKeybindSettings macOS={false} />)
+    const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })
+    fireEvent.click(recorder)
+    const held = () =>
+      [...recorder.querySelectorAll('.keybind-shortcut__modifier[data-held]')].map(
+        (modifier) => modifier.textContent,
+      )
+
+    fireEvent.keyDown(recorder, { key: 'Meta', metaKey: true })
+    expect(held()).toEqual([])
+    fireEvent.keyDown(recorder, { key: 'g', code: 'KeyG', metaKey: true })
+    expect(recorder.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toContain('Add Ctrl or Alt')
+
+    fireEvent.keyDown(recorder, { key: 'Dead', code: 'Equal', ctrlKey: true })
+    expect(recorder.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('alert').textContent).toContain('Add Ctrl or Alt')
+  })
+
   it('records the base key for a macOS Option symbol', () => {
     render(<StatefulKeybindSettings />)
     const recorder = screen.getByRole('button', { name: 'Change Command palette keybind' })
