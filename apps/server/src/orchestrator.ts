@@ -1532,6 +1532,17 @@ export class Orchestrator {
       this.#store.setThreadApproval(thread.id, approval)
       return thread
     } catch (error) {
+      if (error instanceof StartupCleanupError) {
+        // No Side chat exists yet, so the stop is owned by a key of its own.
+        void this.#stopFailedStartup(
+          `side-start-${crypto.randomUUID()}`,
+          workspacePath,
+          error,
+        ).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      }
       await started?.session.dispose()
       const sideThreadId = started?.thread.id
       if (sideThreadId) {
@@ -3413,14 +3424,22 @@ export class Orchestrator {
     }
     const workspacePath = stored.worktreePath ?? resolveWorkspacePath(stored.projectPath)
     const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
-    const result = await runtime.resume(threadId, workspacePath, {
-      ...(stored.agent ? { agent: stored.agent } : {}),
-      ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
-      ...(approval ? { approval } : {}),
-      instructions: REPLY_STYLE_INSTRUCTIONS,
-      ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
-      ...this.#contextRuntimeOptions(stored.provider, stored.agent),
-    })
+    const result = await runtime
+      .resume(threadId, workspacePath, {
+        ...(stored.agent ? { agent: stored.agent } : {}),
+        ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
+        ...(approval ? { approval } : {}),
+        instructions: REPLY_STYLE_INSTRUCTIONS,
+        ...this.#mcpRuntimeOptions(stored.provider, stored.projectPath),
+        ...this.#contextRuntimeOptions(stored.provider, stored.agent),
+      })
+      .catch((error: unknown) => {
+        if (!(error instanceof StartupCleanupError)) throw error
+        void this.#stopFailedStartup(threadId, workspacePath, error).catch((stopError: unknown) =>
+          this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
+        )
+        throw error.startError
+      })
     if (result.thread.id !== threadId) {
       this.#checkoutAccess.retainStopping(workspacePath, threadId)
       await this.#stopThreadProvider(threadId, result.session)

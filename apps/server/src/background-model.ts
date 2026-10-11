@@ -11,6 +11,7 @@ import type {
   SessionDiff,
 } from '@harness/contracts'
 import type { ProviderRuntime, TurnOptions } from './adapters.js'
+import { StartupCleanupError } from './provider-session.js'
 
 const BACKGROUND_TIMEOUT_MS = 45_000
 const MAX_COMMIT_DIFF_CHARS = 80_000
@@ -256,10 +257,10 @@ export async function runBackgroundCompletion(input: {
         BACKGROUND_INTERRUPT_MS,
       )
     }
-    throw error
+    throw error instanceof StartupCleanupError ? error.startError : error
   } finally {
     if (timer) clearTimeout(timer)
-    const release = async (owned: typeof session) => {
+    const release = async (owned: Pick<NonNullable<typeof session>, 'dispose'> | undefined) => {
       try {
         await owned?.dispose()
       } catch (error) {
@@ -270,10 +271,14 @@ export async function runBackgroundCompletion(input: {
     }
     if (session) await release(session)
     // A start that outlives the deadline still owns a process; stop it when it lands.
+    // So does a failed start whose own cleanup could not stop it.
     else
       void starting.then(
         (late) => release(late.session),
-        () => rm(temporary, { recursive: true, force: true }).catch(() => undefined),
+        (error: unknown) =>
+          error instanceof StartupCleanupError
+            ? release(error.session)
+            : rm(temporary, { recursive: true, force: true }).catch(() => undefined),
       )
   }
 }
