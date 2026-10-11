@@ -189,6 +189,8 @@ export class TerminalManager {
   #wakers = new Set<() => void>()
   /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
   #stoppingJobs = new Set<Promise<void>>()
+  /** Closes still waiting on their shell; a starting shutdown hands their jobs over. */
+  #pendingHandOvers = new Set<() => void>()
   #onOutput: (terminalId: string, data: string, outputOffset: number) => void
   #onExit: (terminalId: string, exitCode: number | null) => void
   #onLog: (message: string) => void
@@ -427,26 +429,33 @@ export class TerminalManager {
     void entry.exited.then(() => (exited = true))
     // During shutdown the job's steps end at fixed times anyway, and node-pty
     // may report the shell's exit 200 ms late while the job holds the
-    // terminal open: hand the job over at once so its SIGTERM is not late.
+    // terminal open: hand the job over as soon as shutdown starts, even while
+    // this close still waits on its shell, so its SIGTERM is not late.
     let handedOver = false
     const handOver = () => {
+      this.#pendingHandOvers.delete(handOver)
       if (job === undefined || handedOver) return
       handedOver = true
       this.#trackJob(job)
     }
     if (this.#shutdownStartedAt !== undefined) handOver()
-    if (owned && !(await this.#settlesWithin(entry.exited, 'hangup'))) {
-      const pid = entry.process.pid
-      const rows = (await this.#listProcesses()) ?? this.#processes.inspect([pid])
-      if (!exited && ownedShell(rows, pid)) {
-        try {
-          entry.process.kill('SIGKILL')
-        } catch {
-          // The exit, or the bounded close timeout, reports the outcome.
+    else if (job !== undefined) this.#pendingHandOvers.add(handOver)
+    try {
+      if (owned && !(await this.#settlesWithin(entry.exited, 'hangup'))) {
+        const pid = entry.process.pid
+        const rows = (await this.#listProcesses()) ?? this.#processes.inspect([pid])
+        if (!exited && ownedShell(rows, pid)) {
+          try {
+            entry.process.kill('SIGKILL')
+          } catch {
+            // The exit, or the bounded close timeout, reports the outcome.
+          }
         }
       }
+      await exitedInTime
+    } finally {
+      this.#pendingHandOvers.delete(handOver)
     }
-    await exitedInTime
     // The shell's exit sent its foreground job SIGHUP. Background jobs are
     // left to the shell, as a terminal emulator leaves them. The close is done
     // once the shell is gone: the job may take seconds to shut down, and the
@@ -582,7 +591,8 @@ export class TerminalManager {
   closeAll(): Promise<void> {
     if (this.#closingAll) return this.#closingAll
     this.#shutdownStartedAt = Date.now()
-    // Each waker removes itself; a Set iterator tolerates that.
+    // Each hand-over and waker removes itself; a Set iterator tolerates that.
+    for (const handOver of this.#pendingHandOvers) handOver()
     for (const wake of this.#wakers) wake()
     this.#closingAll = this.#drainAll()
     return this.#closingAll
