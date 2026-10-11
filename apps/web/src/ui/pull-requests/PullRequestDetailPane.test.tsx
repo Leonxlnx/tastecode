@@ -348,6 +348,32 @@ describe('PullRequestDetailPane metadata controls', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('asks GitHub again when a failed metadata option list is retried', async () => {
+    const { request } = setup()
+    const resolve = request.getMockImplementation()!
+    let optionRequests = 0
+    request.mockImplementation(async (method, params) => {
+      if (method === 'pullRequests.metadataOptions' && ++optionRequests === 1) {
+        throw new Error('GitHub is unreachable')
+      }
+      return resolve(method, params)
+    })
+
+    expect(await screen.findByText('Editable pull request')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Manage labels' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'GitHub is unreachable · Retry' }))
+
+    await waitFor(() => {
+      const optionRequests = request.mock.calls
+        .filter(([method]) => method === 'pullRequests.metadataOptions')
+        .map(([, params]) => methods['pullRequests.metadataOptions'].params.parse(params))
+      expect(optionRequests).toEqual([
+        { repository: 'Blueemi/harness' },
+        { repository: 'Blueemi/harness', refresh: true },
+      ])
+    })
+  })
+
   it('keeps mutation progress beside the selected metadata row and revalidates silently', async () => {
     const action = deferred<{ message: string }>()
     const revalidation = deferred<PullRequestDetail>()
