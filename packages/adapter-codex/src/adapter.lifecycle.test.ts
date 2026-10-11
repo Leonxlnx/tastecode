@@ -1,7 +1,7 @@
 import { ChildProcess } from 'node:child_process'
 import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { DomainEvent } from '@harness/contracts'
+import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
 import type { JsonRpcValue } from '@harness/proc'
 import { CodexAdapter } from './adapter.js'
 
@@ -322,5 +322,70 @@ describe('Codex provider-resolved requests', () => {
       { jsonrpc: '2.0', id: 10, result: { decision: 'decline' } },
       { jsonrpc: '2.0', id: 11, result: { decision: 'accept' } },
     ])
+  })
+})
+
+describe('Codex user-input requests', () => {
+  const asked = {
+    id: 'palette',
+    header: 'Colour',
+    question: 'Do you already have a palette?',
+    isOther: false,
+    isSecret: false,
+    options: [{ label: 'Decide for me', description: 'Infer the strongest direction.' }],
+  }
+  const ask = (
+    remote: ReturnType<typeof peer>,
+    rpcId: number,
+    itemId: string,
+    questions: unknown[],
+    autoResolutionMs: number | null = null,
+  ) =>
+    remote.send({
+      id: rpcId,
+      method: 'item/tool/requestUserInput',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId, questions, autoResolutionMs },
+    })
+  const replies = (remote: ReturnType<typeof peer>) =>
+    remote.writes.filter((frame) => !frame.method)
+
+  it('shows a question with blank wire text and an out-of-range timeout', async () => {
+    const { adapter, first, events } = fixture()
+    await adapter.start()
+    ask(
+      first,
+      20,
+      'blank-text',
+      [{ ...asked, header: '', options: [{ label: 'Decide for me', description: '' }] }],
+      30_000,
+    )
+    const requested = events.filter((event) => event.type === 'user_input.requested')
+    expect(requested).toHaveLength(1)
+    expect(DomainEventSchema.safeParse(requested[0]).success).toBe(true)
+    expect(replies(first)).toEqual([])
+    adapter.respondToUserInput('blank-text', { palette: ['Decide for me'] })
+    expect(replies(first)).toEqual([
+      {
+        jsonrpc: '2.0',
+        id: 20,
+        result: { answers: { palette: { answers: ['Decide for me'] } } },
+      },
+    ])
+  })
+
+  it.each([
+    ['no questions', []],
+    ['a question without an id', [{ ...asked, id: '' }]],
+    ['a question without any text', [{ ...asked, header: '', question: '' }]],
+  ])('answers Codex instead of holding %s', async (_label, questions) => {
+    const { adapter, first, events } = fixture()
+    await adapter.start()
+    ask(first, 21, 'unusable', questions)
+    await vi.waitFor(() =>
+      expect(replies(first)).toEqual([{ jsonrpc: '2.0', id: 21, result: { answers: {} } }]),
+    )
+    expect(events.filter((event) => event.type.startsWith('user_input.'))).toEqual([])
+    adapter.respondToUserInput('unusable', { palette: ['Decide for me'] })
+    expect(replies(first)).toHaveLength(1)
   })
 })
