@@ -277,14 +277,14 @@ describe('TerminalManager', () => {
     const pty = controlledPty({ pid: 4100 })
     let jobRunning = true
     const jobControl = {
-      members: vi.fn(() => Promise.resolve(jobRunning ? [{ pid: 4243, zombie: false }] : [])),
+      members: vi.fn(() => Promise.resolve(jobRunning ? [jobMember] : [])),
       signal: vi.fn(),
     }
     const manager = new TerminalManager(
       { onOutput: () => {}, onExit: () => {} },
       {
         spawnPty: () => pty,
-        inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+        inspectShell: (pid) => ownShell(pid),
         jobControl,
       },
     )
@@ -307,13 +307,14 @@ describe('TerminalManager', () => {
 
   it('never signals a group named by a process this server did not fork', async () => {
     const reports = [
-      { parent: process.pid + 1, group: 4100, foreground: 4242 },
-      { parent: process.pid, group: 4101, foreground: 4242 },
-      { parent: process.pid, group: 4100, foreground: 1 },
-      { parent: process.pid, group: 4100, foreground: -1 },
+      { ...ownShell(4100), parent: process.pid + 1 },
+      { ...ownShell(4100), group: 4101 },
+      { ...ownShell(4100), leader: false },
+      ownShell(4100, 1),
+      ownShell(4100, -1),
     ]
     const jobControl = {
-      members: vi.fn(() => Promise.resolve([{ pid: 4243, zombie: false }])),
+      members: vi.fn(() => Promise.resolve([jobMember])),
       signal: vi.fn(),
     }
     for (const report of reports) {
@@ -342,10 +343,9 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => pty,
-          inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+          inspectShell: (pid) => ownShell(pid),
           jobControl: {
-            members: () =>
-              Promise.resolve(signals.includes('SIGKILL') ? [] : [{ pid: 4243, zombie: false }]),
+            members: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
             signal: (group, signal) => signals.push(group === 4242 ? signal : `${group}:${signal}`),
           },
         },
@@ -378,10 +378,9 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => pty,
-          inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+          inspectShell: (pid) => ownShell(pid),
           jobControl: {
-            members: () =>
-              Promise.resolve(signals.includes('SIGKILL') ? [] : [{ pid: 4243, zombie: false }]),
+            members: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
             signal: (_group, signal) => signals.push(signal),
           },
         },
@@ -396,6 +395,32 @@ describe('TerminalManager', () => {
       await vi.advanceTimersByTimeAsync(600)
       expect(signals).toEqual(['SIGTERM', 'SIGKILL'])
       await Promise.all([closed, shutdown])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never signals a job group that now holds another session', async () => {
+    vi.useFakeTimers()
+    try {
+      const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+      const jobControl = {
+        // The job's group id was recycled: a stranger joined it.
+        members: vi.fn(() =>
+          Promise.resolve([jobMember, { pid: 5000, session: '4900', zombie: false }]),
+        ),
+        signal: vi.fn(),
+      }
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        { spawnPty: () => pty, inspectShell: (pid) => ownShell(pid), jobControl },
+      )
+      const closed = manager.close(manager.open('thread-recycled', os.tmpdir(), 80, 24))
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await closed
+      expect(jobControl.members).toHaveBeenCalledWith(4242)
+      expect(jobControl.signal).not.toHaveBeenCalled()
     } finally {
       vi.useRealTimers()
     }
@@ -423,9 +448,8 @@ describe('TerminalManager', () => {
         {
           spawnPty: () => ptys.shift()!,
           inspectShell: (pid) => ({
+            ...ownShell(pid, pid),
             parent: pid === 4300 ? process.pid + 1 : process.pid,
-            group: pid,
-            foreground: pid,
           }),
           jobControl: { members: () => Promise.resolve([]), signal: () => {} },
         },
@@ -736,6 +760,14 @@ it('closing a stale terminal id does not unmap a newer pty under the same key', 
     removeTemporaryDirectory(cwd)
   }
 }, 15_000)
+
+/** What ps reports for a shell this server forked, with `foreground` holding its terminal. */
+function ownShell(pid: number, foreground = 4242) {
+  return { parent: process.pid, group: pid, foreground, session: String(pid), leader: true }
+}
+
+/** A live process in the job that the fake shell with pid 4100 leaves behind. */
+const jobMember = { pid: 4243, session: '4100', zombie: false }
 
 function removeTemporaryDirectory(directory: string): void {
   rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
