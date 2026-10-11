@@ -95,6 +95,12 @@ it('retains a closing tab until its fade ends, then slides its neighbours into p
   expect(motions.some((motion) => motion.frames[0]?.opacity === 0)).toBe(true)
 })
 
+it('names the whole tab on hover, since a crowded strip cuts labels to an ellipsis', () => {
+  render(<Harness />)
+  expect(screen.getByRole('tab', { name: 'Terminal 1' }).getAttribute('title')).toBe('Terminal 1')
+  expect(screen.getByRole('tab', { name: 'Browser' }).getAttribute('title')).toBe('Browser')
+})
+
 it('adds and removes tabs immediately under reduced motion', () => {
   reduced = true
   render(<Harness />)

@@ -159,6 +159,7 @@ export function WorkspaceTabs(props: {
             type="button"
             role="tab"
             aria-selected={tab.id === props.activeId}
+            title={tab.title}
             onClick={() => props.onSelect(tab.id)}
             onKeyDown={(event) => {
               if (!event.altKey || !props.onReorder) return
