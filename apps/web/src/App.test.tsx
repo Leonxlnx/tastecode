@@ -1092,6 +1092,97 @@ describe('web client', () => {
     },
   )
 
+  it('keeps the next project workspace when a restore Undo finishes after a switch', async () => {
+    serverProjects.push(
+      serverProject('/work/other', 'other', [{ id: 'other-thread', title: 'Other chat' }]),
+    )
+    const request = transport.request.getMockImplementation()!
+    let undone = false
+    const finishInfo: Array<(info: ResultOf<'workspace.info'>) => void> = []
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'thread.undoRestore') undone = true
+      if (method === 'workspace.info') {
+        const { path } = methods[method].params.parse(params)
+        if (path === '/work/other')
+          return Promise.resolve({ branch: 'other-branch', added: 0, removed: 0, dirtyFiles: 0 })
+        if (undone) return new Promise((resolve) => finishInfo.push(resolve))
+      }
+      return request(method, params)
+    })
+    await openNewSession()
+    await openCheckpointHistory()
+    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
+    await waitFor(() => expect(finishInfo.length).toBeGreaterThan(0))
+
+    act(() => sidebarProps().onSelectSession('other-thread'))
+    await waitFor(() => expect(composerProps().branch).toBe('other-branch'))
+    await act(async () => {
+      for (const finish of finishInfo)
+        finish({ branch: 'project-branch', added: 0, removed: 0, dirtyFiles: 0 })
+    })
+
+    expect(composerProps().branch).toBe('other-branch')
+  })
+
+  it('keeps the next chat restore points when the previous chat read fails late', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.checkpoints' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+    await openNewSession()
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() => expect(header().checkpointCount).toBe(1))
+    await act(async () => failFirst?.(new Error('checkpoints failed')))
+
+    expect(header().sessionId).toBe('second-thread')
+    expect(header().checkpointCount).toBe(1)
+  })
+
+  it('does not report a history failure for a chat the user already left', async () => {
+    serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+    const request = transport.request.getMockImplementation()!
+    let failFirst: ((error: Error) => void) | undefined
+    transport.request.mockImplementation((method, params) => {
+      if (
+        method === 'thread.history' &&
+        methods[method].params.parse(params).threadId === 'untouched-thread'
+      )
+        return new Promise((_, reject) => {
+          failFirst = reject
+        })
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    await waitFor(() => expect(failFirst).toBeDefined())
+
+    fireEvent.click(screen.getByRole('button', { name: /^Second chat,/ }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.history', {
+        threadId: 'second-thread',
+      }),
+    )
+    await act(async () => failFirst?.(new Error('history read failed')))
+
+    expect(screen.queryByText('history read failed')).toBeNull()
+  })
+
   it('does not offer the previous restore target while inspecting another checkpoint', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
