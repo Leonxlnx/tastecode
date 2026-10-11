@@ -4536,7 +4536,10 @@ describe('provider-neutral design briefing', () => {
 
       await vi.waitFor(() => expect(store.designRun(threadId)).toMatchObject({ phase: 'brand' }))
       expect(store.designRun(threadId)).toMatchObject({
-        referenceDeck: [{ id: 'reviewed-hero' }, { id: 'reviewed-pricing' }],
+        referenceDeck: [
+          { id: 'reviewed-hero', site: 'example.com', role: 'anchor' },
+          { id: 'reviewed-pricing', site: 'example.com', role: 'same-site' },
+        ],
       })
       await vi.waitFor(() =>
         expect(sessions[0]?.sent.at(-1)).toContain('selected-reference-workflow'),

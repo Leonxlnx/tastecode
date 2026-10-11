@@ -6,9 +6,22 @@ import { fileURLToPath } from 'node:url'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { PAGE_LAYOUT_FAMILIES, WEBSITE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
-import { REFERENCE_ROLES, type ReferenceDirection } from './reference-directions.js'
+import {
+  REFERENCE_ROLES,
+  type ReferenceDirection,
+  type ReferenceRole,
+} from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
 import { generatedReferenceCandidates } from './reference-library-index.js'
+import {
+  isStyleOutlier,
+  loadReferenceStyleProfiles,
+  referenceSite,
+  styleProfileSummary,
+  styleSimilarity,
+  type ReferenceStyleProfile,
+  type ReferenceStyleProfiles,
+} from './reference-style-profiles.js'
 import { containedWorkspaceFile, readWorkspaceFile } from './workspace-files.js'
 
 export function parseReferenceDeck(value: unknown): ReferenceDirection[] {
@@ -193,51 +206,167 @@ function containsSource(text: string, source: string): boolean {
   return false
 }
 
+function groupOf(entry: ReferenceDirection): string {
+  return entry.group ?? entry.id
+}
+
+/** Revisions share a vote: choose a group first, then one of its revisions. */
+function drawGroupFirst(
+  pool: readonly ReferenceDirection[],
+  chooseIndex: (length: number) => number,
+): ReferenceDirection {
+  const groupNames = [...new Set(pool.map(groupOf))]
+  const chosenGroup = groupNames[chooseIndex(groupNames.length)]
+  const revisions = pool.filter((entry) => groupOf(entry) === chosenGroup)
+  return revisions[chooseIndex(revisions.length)]!
+}
+
+/** How many of the most similar profiled sites may supply a section the anchor site lacks. */
+const SIMILAR_SITE_COUNT = 3
+
+function configuredStyleProfiles(): ReferenceStyleProfiles {
+  try {
+    return loadReferenceStyleProfiles(referenceLibraryRoot())
+  } catch {
+    return new Map()
+  }
+}
+
+/**
+ * One page keeps one design language (owner decision, 2026-10-12). The first drawn section is the
+ * anchor, chosen uniformly by group like before; its source site defines the page's language.
+ * Every later section comes from the first non-empty tier: the anchor site's own family, the
+ * anchor site's compatible families, the most similar profiled sites, then the uniform pool.
+ */
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
   chooseIndex: (length: number) => number = randomInt,
+  styleProfiles?: ReferenceStyleProfiles,
 ): ReferenceDirection[] {
   const request =
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   if (!references.length) throw new Error('No Design references are available')
   const dashboard = isDashboardBrief(brief)
   const families: readonly PageLayoutFamily[] = dashboard ? ['dashboard'] : WEBSITE_LAYOUT_FAMILIES
+  // Site profiles describe marketing pages; a dashboard deck is a single screen.
+  const profiles: ReferenceStyleProfiles = dashboard
+    ? new Map()
+    : (styleProfiles ?? configuredStyleProfiles())
   const sectionReferences = references.filter((entry) => !entry.tags?.includes('native-component'))
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
+  const unused = (entry: ReferenceDirection) => !groups.has(groupOf(entry))
+  const siteOf = (entry: ReferenceDirection) => referenceSite(entry.source)
+  const consistent = (entry: ReferenceDirection) =>
+    !isStyleOutlier(profiles.get(siteOf(entry) ?? ''), entry)
+  let anchor: { site?: string | undefined; profile?: ReferenceStyleProfile | undefined } | undefined
+
+  // Unused, site-consistent entries that could fill a slot of this family.
+  const slotCandidates = (family: PageLayoutFamily) =>
+    sectionReferences.filter(
+      (entry) =>
+        unused(entry) &&
+        consistent(entry) &&
+        (entry.family === family || compatibleFamilies(family).includes(entry.family)),
+    )
+  // The best few other profiled sites by similarity to the anchor, ties included.
+  const similarSites = (candidates: readonly ReferenceDirection[]): Set<string> => {
+    const anchorProfile = anchor?.profile
+    if (!anchorProfile) return new Set()
+    const scores = new Map<string, number>()
+    for (const entry of candidates) {
+      const site = siteOf(entry)
+      const profile = site && site !== anchor?.site ? profiles.get(site) : undefined
+      if (site && profile && !scores.has(site))
+        scores.set(site, styleSimilarity(anchorProfile, profile))
+    }
+    const ranked = [...scores.values()].filter((score) => score > 0).sort((a, b) => b - a)
+    const cutoff = ranked[Math.min(SIMILAR_SITE_COUNT, ranked.length) - 1]
+    return new Set(
+      [...scores]
+        .filter(([, score]) => cutoff !== undefined && score > 0 && score >= cutoff)
+        .map(([site]) => site),
+    )
+  }
+  const drawRelated = (
+    family: PageLayoutFamily,
+    uniformPool: readonly ReferenceDirection[],
+  ): { entry: ReferenceDirection; role: ReferenceRole } | undefined => {
+    const native = (entry: ReferenceDirection) => entry.family === family
+    const compatible = (entry: ReferenceDirection) =>
+      compatibleFamilies(family).includes(entry.family)
+    const candidates = slotCandidates(family)
+    const sameSite = anchor?.site
+      ? candidates.filter((entry) => siteOf(entry) === anchor?.site)
+      : []
+    const similar = similarSites(candidates)
+    const related = candidates.filter((entry) => similar.has(siteOf(entry) ?? ''))
+    const tiers: [ReferenceDirection[], ReferenceRole][] = [
+      [sameSite.filter(native), 'same-site'],
+      [sameSite.filter(compatible), 'same-site'],
+      [related.filter(native), 'similar-site'],
+      [related.filter(compatible), 'similar-site'],
+      [uniformPool.filter(unused), 'fallback'],
+    ]
+    const tier = tiers.find(([pool]) => pool.length)
+    return tier && { entry: drawGroupFirst(tier[0], chooseIndex), role: tier[1] }
+  }
+  const relation = (family: PageLayoutFamily, entry: ReferenceDirection): ReferenceRole =>
+    anchor?.site && siteOf(entry) === anchor.site
+      ? 'same-site'
+      : similarSites(slotCandidates(family)).has(siteOf(entry) ?? '')
+        ? 'similar-site'
+        : 'fallback'
+
   for (const family of families) {
     // Section titles are free-form and multilingual. Let Page choose the needed
     // compositions from a complete deck instead of discarding families by keywords.
-    // Each composition gets the same chance, regardless of source site or style tags.
-    const familyEntries = referenceCandidatesForFamily(family, sectionReferences).filter(
-      (entry) => !groups.has(entry.group ?? entry.id),
-    )
+    const familyEntries = referenceCandidatesForFamily(family, sectionReferences).filter(unused)
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => containsId(request, entry.id.toLowerCase()))
     const explicitSource = familyEntries.filter(
       (entry) => entry.source && containsSource(request, entry.source),
     )
-    // Revisions share a vote: choose a group first, then its eligible revision.
-    const pool = explicit.length ? explicit : explicitSource.length ? explicitSource : familyEntries
-    const groupNames = [...new Set(pool.map((entry) => entry.group ?? entry.id))]
+    const explicitPool = explicit.length ? explicit : explicitSource
+    const pool = explicitPool.length ? explicitPool : familyEntries
     // Repeated content sections need distinct compositions within the same page too.
-    const count = Math.min(groupNames.length, family === 'feature' ? 3 : family === 'about' ? 2 : 1)
+    const count = Math.min(
+      new Set(pool.map(groupOf)).size,
+      family === 'feature' ? 3 : family === 'about' ? 2 : 1,
+    )
     for (let index = 0; index < count; index++) {
-      const [chosenGroup] = groupNames.splice(chooseIndex(groupNames.length), 1)
-      const revisions = pool.filter((entry) => (entry.group ?? entry.id) === chosenGroup)
-      const entry = revisions[chooseIndex(revisions.length)]!
-      const group = entry.group ?? entry.id
-      if (groups.has(group)) continue
-      groups.add(group)
-      selected.push(
-        entry.family === family
-          ? entry
+      let pick: { entry: ReferenceDirection; role: ReferenceRole } | undefined
+      if (explicitPool.length) {
+        const entry = drawGroupFirst(explicitPool.filter(unused), chooseIndex)
+        pick = { entry, role: anchor ? relation(family, entry) : 'anchor' }
+      } else if (!anchor) {
+        // Outliers do not share their site's language, so they cannot define the page's.
+        const eligible = pool.filter(unused)
+        const coherent = eligible.filter(consistent)
+        pick = {
+          entry: drawGroupFirst(coherent.length ? coherent : eligible, chooseIndex),
+          role: 'anchor',
+        }
+      } else pick = drawRelated(family, pool)
+      if (!pick) break
+      const { entry, role } = pick
+      const site = siteOf(entry)
+      if (role === 'anchor') anchor = { site, profile: site ? profiles.get(site) : undefined }
+      groups.add(groupOf(entry))
+      const { site: _site, role: _role, style: _style, ...base } = entry
+      const style = role === 'anchor' ? styleProfileSummary(anchor?.profile) : undefined
+      selected.push({
+        ...base,
+        ...(entry.family === family
+          ? {}
           : {
-              ...entry,
               cue: `${entry.cue} Sampled for ${family} content from compatible compositions; retain its actual ${entry.family} layout family and image geometry.`,
-            },
-      )
+            }),
+        ...(site ? { site } : {}),
+        role,
+        ...(style ? { style } : {}),
+      })
     }
   }
   if (!selected.length)
