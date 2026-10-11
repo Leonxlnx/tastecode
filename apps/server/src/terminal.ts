@@ -185,7 +185,9 @@ export class TerminalManager {
   #closingAll: Promise<void> | undefined
   /** When closeAll() began. Steps run on performance.now(), which a clock change cannot move. */
   #shutdownStartedAt: number | undefined
-  #listing: { startedAt: number; rows: Promise<ProcessRow[] | undefined> } | undefined
+  /** How many ps listings have started; orders each listing against a step's start. */
+  #listingsStarted = 0
+  #listing: { number: number; rows: Promise<ProcessRow[] | undefined> } | undefined
   /** Wakes every pending poll, so a starting shutdown shortens it at once. */
   #wakers = new Set<() => void>()
   /** Jobs of closed terminals still being stopped; only shutdown waits for them. */
@@ -428,6 +430,8 @@ export class TerminalManager {
     // leader is not ours to kill.
     let exited = false
     void entry.exited.then(() => (exited = true))
+    // The shell's grace starts now, right after its hangup.
+    const listedBefore = this.#listingsStarted
     // During shutdown the job's steps end at fixed times anyway, and node-pty
     // may report the shell's exit 200 ms late while the job holds the
     // terminal open: hand the job over as soon as shutdown starts, even while
@@ -444,7 +448,7 @@ export class TerminalManager {
     try {
       if (owned && !(await this.#settlesWithin(entry.exited, 'hangup'))) {
         const pid = entry.process.pid
-        const rows = (await this.#listProcesses()) ?? this.#processes.inspect([pid])
+        const rows = (await this.#listProcesses(listedBefore)) ?? this.#processes.inspect([pid])
         if (!exited && ownedShell(rows, pid)) {
           try {
             entry.process.kill('SIGKILL')
@@ -503,10 +507,11 @@ export class TerminalManager {
    */
   async #awaitJob(job: Job, step: CloseStep): Promise<JobState> {
     const startedAt = performance.now()
+    const listedBefore = this.#listingsStarted
     while (true) {
       // Members that exited stay in the group as zombies until their new
       // parent reaps them, which a container's pid 1 may do only lazily.
-      const members = (await this.#listProcesses(startedAt))?.filter(
+      const members = (await this.#listProcesses(listedBefore))?.filter(
         (row) => row.group === job.group && !row.zombie,
       )
       if (members?.length === 0) return 'ended'
@@ -562,12 +567,15 @@ export class TerminalManager {
 
   /**
    * One ps listing, shared by every poll that asks for one while it runs, as
-   * long as it started no earlier than `since`: a listing begun before a
-   * signal cannot show what that signal did.
+   * long as it is not among the first `listedBefore` listings: one begun
+   * before a step started cannot show what the signal opening that step did.
+   * Counting listings, not milliseconds, also keeps out one begun in the same
+   * millisecond as the signal.
    */
-  #listProcesses(since = 0): Promise<ProcessRow[] | undefined> {
-    if (this.#listing && this.#listing.startedAt >= since) return this.#listing.rows
-    const listing = { startedAt: performance.now(), rows: this.#processes.list() }
+  #listProcesses(listedBefore: number): Promise<ProcessRow[] | undefined> {
+    if (this.#listing && this.#listing.number > listedBefore) return this.#listing.rows
+    this.#listingsStarted += 1
+    const listing = { number: this.#listingsStarted, rows: this.#processes.list() }
     this.#listing = listing
     const forget = () => {
       if (this.#listing === listing) this.#listing = undefined
