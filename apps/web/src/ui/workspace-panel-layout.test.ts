@@ -124,6 +124,33 @@ describe('workspace panel layout', () => {
     expect(windowQueries).not.toContain('__split')
   })
 
+  it('keeps the Review toolbar on one line inside the panel', () => {
+    // A rule of its own, not one selector in a shared list.
+    const rule = (selector: string) =>
+      css.match(
+        new RegExp(`\\n\\n${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{(?<body>[^}]*)\\}`),
+      )?.groups?.body ?? ''
+    const narrow = containerBlocks(css, 'workspace-panel (max-width: 460px)')
+
+    expect(rule('.workspace-review')).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(rule('.workspace-review__branch')).toContain('min-width: 0')
+    expect(rule('.workspace-review__branch > svg')).toContain('flex: none')
+    for (const property of [
+      'min-width: 0',
+      'overflow: hidden',
+      'text-overflow: ellipsis',
+      'white-space: nowrap',
+    ]) {
+      expect(rule('.workspace-review__branch strong')).toContain(property)
+    }
+    for (const selector of ['.workspace-review__stats', '.workspace-review__file-count']) {
+      expect(rule(selector)).toContain('flex: none')
+      expect(rule(selector)).toContain('white-space: nowrap')
+    }
+    expect(narrow).toMatch(/\.workspace-review__generate-label \{[^}]*display: none;/)
+    expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__generate-label/)
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =
