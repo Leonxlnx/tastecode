@@ -153,13 +153,13 @@ it('keeps keyboard focus on a tab moved with Alt+Arrow', () => {
   const terminal = screen.getByRole('tab', { name: 'Terminal 1' })
   act(() => terminal.focus())
   fireEvent.keyDown(terminal, { key: 'ArrowRight', altKey: true })
-  expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
     'Browser',
     'Terminal 1',
   ])
   expect(document.activeElement).toBe(terminal)
   fireEvent.keyDown(terminal, { key: 'ArrowLeft', altKey: true })
-  expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
     'Terminal 1',
     'Browser',
   ])

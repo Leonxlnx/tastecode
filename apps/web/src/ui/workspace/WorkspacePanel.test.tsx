@@ -231,7 +231,7 @@ describe('WorkspacePanel', () => {
     const surfaces = Array.from(body.children)
     const observer = new MutationObserver(() => undefined)
     observer.observe(body, { childList: true })
-    const tabTitles = () => screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))
+    const tabTitles = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
 
     view.rerender(
       <WorkspacePanel
