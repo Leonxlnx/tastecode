@@ -208,6 +208,37 @@ describe('workspace file search', () => {
     ).toHaveLength(2)
   })
 
+  it('keeps search results on screen while a refresh searches again', async () => {
+    vi.useFakeTimers()
+    const reply = deferred<{ entries: ReturnType<typeof entry>[]; truncated: boolean }>()
+    let searches = 0
+    const transport = new TestTransport((method) => {
+      if (method === 'workspace.listDirectory') return { path: '', entries: [] }
+      if (method === 'workspace.searchFiles') {
+        searches += 1
+        return searches === 1
+          ? { entries: [entry('src/needle.ts')], truncated: false }
+          : reply.promise
+      }
+      throw new Error(`Unexpected ${method}`)
+    })
+    render(<WorkspaceFiles transport={transport} projectPath="/project" />)
+    fireEvent.change(screen.getByLabelText('Filter workspace files'), {
+      target: { value: 'needle' },
+    })
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(screen.getByTitle('src/needle.ts')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh files' }))
+    await act(() => vi.advanceTimersByTimeAsync(200))
+    expect(searches).toBe(2)
+    expect(screen.getByTitle('src/needle.ts')).toBeTruthy()
+    expect(screen.queryByText('Searching files…')).toBeNull()
+    await act(async () => reply.resolve({ entries: [entry('lib/needle.ts')], truncated: false }))
+    expect(screen.getByTitle('lib/needle.ts')).toBeTruthy()
+    expect(screen.queryByTitle('src/needle.ts')).toBeNull()
+  })
+
   it('ignores stale query and project replies and restores the tree on clear', async () => {
     vi.useFakeTimers()
     const pending: Array<
