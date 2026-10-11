@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
 import { retainCheckpoint } from './checkpoint.js'
@@ -220,5 +220,20 @@ describe('history maintenance', () => {
     await expect(prune()).rejects.toThrow(/checkpoint refs could not be removed/)
     expect(thread('old')).toBeUndefined()
     expect(refs()).toEqual([commits.old, commits.active, commits.kept].sort())
+  })
+  it('keeps the checkpoint refs of a retained task whose project path starts with ~', async () => {
+    const { root, store, commits, checkpoint, refs, prune, thread } = await checkpointed()
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(root)
+    try {
+      store.addProject('~/repo')
+      store.addThread({ id: 'home', projectPath: '~/repo', provider: 'codex', title: 'home' })
+      await checkpoint('home')
+      store.close()
+      await prune()
+      expect(thread('old')).toBeUndefined()
+      expect(refs()).toEqual([commits.active, commits.home].sort())
+    } finally {
+      homedir.mockRestore()
+    }
   })
 })
