@@ -176,6 +176,11 @@ function carriedState(entries: readonly HistoryEntry[], end: number): HistoryEnt
     else if (event.type === 'turn.completed') approvals.clear()
     else if (event.type === 'user_input.requested') userInputs.set(event.request.id, index)
     else if (event.type === 'user_input.resolved') userInputs.delete(event.id)
+    else if (event.type === 'thread.error') {
+      // A failed thread can no longer answer anything it was asked.
+      approvals.clear()
+      userInputs.clear()
+    }
   }
   const carried = [...approvals.values(), ...userInputs.values()]
   if (usage !== undefined) carried.push(usage)
