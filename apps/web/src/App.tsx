@@ -2400,7 +2400,9 @@ export function App() {
 
   useEffect(() => {
     if (!activeId || thread.running) return
-    void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
+    void refreshCheckpoints(activeId).catch(() => {
+      if (activeIdRef.current === activeId) setCheckpoints([])
+    })
   }, [activeId, thread.running, refreshCheckpoints])
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
@@ -3674,7 +3676,8 @@ export function App() {
       try {
         await loadHistory(id, cached ? threadController.cursor(id) : undefined)
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
+        if (activeIdRef.current === id)
+          reportError(error instanceof Error ? error.message : String(error))
       } finally {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
@@ -3859,7 +3862,11 @@ export function App() {
       })
       await loadHistory(undoRestore.threadId)
       await refreshCheckpoints(undoRestore.threadId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === undoRestore.threadId)
+          setWorkspace(info)
+      }
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
