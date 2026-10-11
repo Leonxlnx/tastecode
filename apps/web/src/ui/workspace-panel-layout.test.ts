@@ -151,6 +151,19 @@ describe('workspace panel layout', () => {
     expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__generate-label/)
   })
 
+  it('wraps the browser address onto its own row instead of cutting off the preview sizes', () => {
+    const browser = css.match(/\n\.workspace-browser \{(?<body>[^}]*)\}/)?.groups?.body ?? ''
+    const narrow = containerBlocks(css, 'workspace-panel (max-width: 420px)')
+
+    expect(browser).toContain('grid-template-columns: minmax(0, 1fr)')
+    expect(narrow).toMatch(/\.workspace-browser__toolbar \{[^}]*flex-wrap: wrap;[^}]*row-gap: 6px;/)
+    expect(narrow).toMatch(
+      /\.workspace-browser__address \{[^}]*order: 1;[^}]*min-width: 0;[^}]*flex-basis: 100%;[^}]*margin: 0;/,
+    )
+    expect(narrow).toMatch(/\.workspace-browser__viewports \{[^}]*margin-left: auto;/)
+    expect(css).not.toMatch(/\.workspace-browser__viewports \{[^}]*display: none;/)
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =
