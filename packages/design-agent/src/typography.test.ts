@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DESIGN_FONT_POOLS,
   selectTypographyCandidates,
+  typographyGuidance,
   validateTypographySelection,
 } from './typography.js'
 import type { BrandSystem } from './brand.js'
@@ -22,6 +23,35 @@ describe('typography draw', () => {
       expect(first).toEqual(new Set(pool))
     }
   })
+  it('matches the draw to the anchor reference only', () => {
+    const guidance = typographyGuidance(
+      selectTypographyCandidates(() => 0),
+      {
+        pageType: 'landing_page',
+        originalRequest: 'Build a one-pager site for my analytics app',
+      },
+    )
+    expect(guidance).toContain('hierarchy of the anchor reference (the deck entry whose role is')
+    expect(guidance).toContain('in a deck without roles, the hero reference')
+    expect(guidance).toContain('Ignore the typography of the other references')
+    expect(guidance).toContain('choose the matching category (sans, serif, display or mono)')
+    expect(guidance).toContain('only when the anchor itself sets text in monospace')
+  })
+
+  it('keeps dashboards to one sans family plus optional monospace data', () => {
+    const guidance = typographyGuidance(
+      selectTypographyCandidates(() => 0),
+      {
+        pageType: 'dashboard',
+        originalRequest: 'Create an analytics dashboard',
+      },
+    )
+    expect(guidance).toContain('use the FIRST drawn sans family for the whole interface')
+    expect(guidance).toContain('optionally the FIRST drawn mono family for data')
+    expect(guidance).toContain('Never use a display or serif draw for a dashboard')
+    expect(guidance).not.toContain('choose the matching category')
+  })
+
   it('keeps the draw while honoring explicit typography and existing brands', () => {
     const candidates = selectTypographyCandidates(() => 0)
     const brief = {

@@ -44,7 +44,7 @@ ${DESIGN_CONTENT_GUIDANCE}
 
 ${designMotionGuidance(brief)}
 
-${typographyCandidates ? typographyGuidance(typographyCandidates) : ''}
+${typographyCandidates ? typographyGuidance(typographyCandidates, brief) : ''}
 
 ${BRAND_PROTOCOL}
 
