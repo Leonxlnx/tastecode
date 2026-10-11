@@ -489,12 +489,15 @@ export class ThreadController {
       await this.loadHistory(id)
       return
     }
+    const current = this.flush(id)
+    // Flushing can compact a background thread, which drops its rows and cursor.
+    if (current.olderCursor !== cursor) return
     const olderCursor = page?.olderCursor ?? null
     // A recovery read in flight replays onto its base; keep the page there too.
     const base = this.#historyBases.get(id)
     if (base?.state.olderCursor === cursor)
       base.state = prependOlderHistory(base.state, events, olderCursor)
-    const next = prependOlderHistory(this.flush(id), events, olderCursor)
+    const next = prependOlderHistory(current, events, olderCursor)
     this.update(id, next)
     if (id === this.#activeId) this.frames.publish(next)
   }
