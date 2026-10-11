@@ -350,7 +350,7 @@
   background: var(--bg);
   border-top: 1px solid var(--line);
   border-left: 1px solid var(--line);
-  container: workspace-panel / inline-size;
+  container: workspace-panel workspace-panel-right / inline-size;
 }
 
 .workspace-panel-skeleton[hidden] {
@@ -359,6 +359,7 @@
 
 .workspace-panel-skeleton--bottom {
   border-left: 0;
+  container-name: workspace-panel;
 }
 
 .workspace-panel-skeleton__tabs {
@@ -415,7 +416,7 @@
   justify-self: center;
 }
 
-@container workspace-panel (max-width: 380px) {
+@container workspace-panel-right (max-width: 380px) {
   .workspace-panel-skeleton__tools {
     grid-template-columns: minmax(0, 1fr);
   }

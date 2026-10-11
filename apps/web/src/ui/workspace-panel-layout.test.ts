@@ -60,13 +60,24 @@ describe('workspace panel layout', () => {
 
   it('lays the tools out against the panel width and stacks the launcher when it is narrow', () => {
     const panel = css.match(/\.workspace-panel \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
+    const bottom =
+      css.match(/\.workspace-panel\.workspace-panel--bottom \{(?<body>[\s\S]*?)\n\}/)?.groups
+        ?.body ?? ''
     const skeleton =
       skeletonCss.match(/\.workspace-panel-skeleton \{(?<body>[\s\S]*?)\n\}/)?.groups?.body ?? ''
-    const narrow = containerBlocks(css, 'workspace-panel (max-width: 380px)')
-    const narrowSkeleton = containerBlocks(skeletonCss, 'workspace-panel (max-width: 380px)')
+    const bottomSkeleton =
+      skeletonCss.match(/\.workspace-panel-skeleton--bottom \{(?<body>[\s\S]*?)\n\}/)?.groups
+        ?.body ?? ''
+    const narrow = containerBlocks(css, 'workspace-panel-right (max-width: 380px)')
+    const narrowSkeleton = containerBlocks(skeletonCss, 'workspace-panel-right (max-width: 380px)')
 
-    expect(panel).toContain('container: workspace-panel / inline-size')
-    expect(skeleton).toContain('container: workspace-panel / inline-size')
+    expect(panel).toContain('container: workspace-panel workspace-panel-right / inline-size')
+    expect(skeleton).toContain('container: workspace-panel workspace-panel-right / inline-size')
+    // The short bottom host answers only the shared width rules, never the stacking ones.
+    expect(bottom).toContain('container-name: workspace-panel;')
+    expect(bottomSkeleton).toContain('container-name: workspace-panel;')
+    expect(containerBlocks(css, 'workspace-panel (max-width: 380px)')).toBe('')
+    expect(containerBlocks(skeletonCss, 'workspace-panel (max-width: 380px)')).toBe('')
     expect(narrow).toMatch(
       /\.workspace-selector__list \{[^}]*grid-template-columns: minmax\(0, 1fr\);/,
     )
@@ -107,8 +118,8 @@ describe('workspace panel layout', () => {
     expect(withTerminal).toContain('margin-right: 112px')
   })
 
-  it('moves the Review and Files trees under their content by panel width, not window width', () => {
-    const narrow = containerBlocks(css, 'workspace-panel (max-width: 500px)')
+  it('moves the right panel Review and Files trees under their content by panel width', () => {
+    const narrow = containerBlocks(css, 'workspace-panel-right (max-width: 500px)')
     const windowQueries = [...css.matchAll(/@media \(max-width: \d+px\) \{[\s\S]*?\n\}/g)]
       .map((match) => match[0])
       .join('\n')
@@ -122,6 +133,7 @@ describe('workspace panel layout', () => {
     expect(narrow).toMatch(/\.workspace-review__diff \{[^}]*border-right: 0;/)
     expect(narrow).toMatch(/\.workspace-files__viewer \{[^}]*border-right: 0;/)
     expect(windowQueries).not.toContain('__split')
+    expect(containerBlocks(css, 'workspace-panel (max-width: 500px)')).toBe('')
   })
 
   it('keeps the Review toolbar on one line inside the panel', () => {
