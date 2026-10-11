@@ -254,7 +254,9 @@ export function mapThreadItem(
         text: toolCallText(
           `${item.server}.${item.tool}`,
           item.arguments,
-          item.error?.message ?? readable(item.result?.content ?? item.result?.structuredContent),
+          item.error?.message ??
+            readable(item.result?.content) ??
+            readable(item.result?.structuredContent),
         ),
         ...(item.durationMs === null ? {} : { durationMs: item.durationMs }),
       }
