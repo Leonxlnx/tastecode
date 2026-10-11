@@ -289,7 +289,8 @@ export function matchesShortcut(
 export function shortcutFromKeyboardEvent(event: ShortcutEvent): Shortcut | undefined {
   if (!isShortcutInput(event)) return undefined
   const key = shortcutEventKey(event)
-  if (!key || MODIFIER_KEYS.has(key)) return undefined
+  // An unresolved dead key would be saved as "dead" and match every dead key.
+  if (!key || key === 'dead' || MODIFIER_KEYS.has(key)) return undefined
 
   const primary = event.metaKey || event.ctrlKey
   const functionKey = /^f(?:[1-9]|1[0-9]|2[0-4])$/.test(key)
