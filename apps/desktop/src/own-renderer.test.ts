@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isRendererFileUrl } from './own-renderer.js'
+import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 
 describe('isRendererFileUrl', () => {
   it('matches the loaded renderer whatever case Windows started it with', () => {
@@ -24,5 +24,14 @@ describe('isRendererFileUrl', () => {
     const index = '/Applications/TasteCode.app/Contents/Resources/web/index.html'
     expect(isRendererFileUrl(`file://${index}`, index, false)).toBe(true)
     expect(isRendererFileUrl(`file://${index.toLowerCase()}`, index, false)).toBe(false)
+  })
+
+  it('recognizes the URL it loads the renderer from', () => {
+    // Chromium reports the canonical form of whatever URL was loaded.
+    const loaded = (index: string) => new URL(rendererFileUrl(index)).href
+    const windows = 'C:\\Program Files\\TasteCode\\resources\\web\\index.html'
+    const posix = '/Applications/TasteCode.app/Contents/Resources/web/index.html'
+    expect(isRendererFileUrl(loaded(windows), windows, true)).toBe(true)
+    expect(isRendererFileUrl(loaded(posix), posix, false)).toBe(true)
   })
 })
