@@ -1791,6 +1791,26 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it.each(['projects.add', 'projects.list'])(
+    'reports a failed %s when adding a project',
+    async (failedMethod) => {
+      serverProjects = []
+      pickFolder.mockResolvedValue('/work/new-project')
+      const request = transport.request.getMockImplementation()!
+      let adding = false
+      transport.request.mockImplementation((method, params) => {
+        if (method === 'projects.add') adding = true
+        if (adding && method === failedMethod) return Promise.reject(new Error('connection lost'))
+        return request(method, params)
+      })
+
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+      expect(await screen.findByText('connection lost')).toBeTruthy()
+    },
+  )
+
   it('adds one or many dropped folders without adding duplicates twice', async () => {
     serverProjects = []
     droppedProjectFolderPaths.mockResolvedValue([
