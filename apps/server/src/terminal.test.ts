@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
@@ -833,13 +833,18 @@ describe('TerminalManager', () => {
 
     it('keeps a shutting-down server alive until its foreground job is stopped', () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-exit-'))
+      // The job records its pid first, so it is killed below whatever happens
+      // to the server process.
+      const pidFile = path.join(cwd, 'job.pid')
       writeFileSync(
         path.join(cwd, 'job.cjs'),
-        "process.on('SIGHUP', () => {}); console.log('JOB_READY ' + process.pid); " +
+        "require('node:fs').writeFileSync('job.pid', String(process.pid)); " +
+          "process.on('SIGHUP', () => {}); console.log('JOB_READY ' + process.pid); " +
           'setInterval(() => {}, 1000)',
       )
       const terminalModule = new URL('./terminal.ts', import.meta.url).href
-      let job: number | undefined
+      const recordedJob = () =>
+        existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8')) : undefined
       try {
         // A server process with nothing else left to do: only the close itself
         // can keep it running until the job is gone.
@@ -870,13 +875,12 @@ describe('TerminalManager', () => {
           ],
           { encoding: 'utf8', timeout: 10_000 },
         )
-        const started = /JOB (\d+)/.exec(result.stdout)
-        if (started) job = Number(started[1])
-
         expect(result.stdout, result.stderr).toContain('CLOSED')
+        const job = recordedJob()
         expect(job).toBeDefined()
         expect(isRunning(job!)).toBe(false)
       } finally {
+        const job = recordedJob()
         if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
         removeTemporaryDirectory(cwd)
       }
