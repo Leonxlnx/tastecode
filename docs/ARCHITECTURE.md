@@ -557,6 +557,7 @@ The rules that solve it:
 | Switch sessions                         | < 100 ms                 |
 | Idle memory, 5 sessions                 | < 500 MB                 |
 | Collapsed 300-call activity, 37.5 MiB   | < 8 MiB, < 200 elements  |
+| Same activity, reopened and closed      | < 2 MiB retained         |
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
