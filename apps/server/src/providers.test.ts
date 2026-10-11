@@ -162,6 +162,12 @@ describe('detectProviders', () => {
 
     expect(providers.map((entry) => entry.id).sort()).toEqual(['claude-code', 'codex', 'grok'])
   })
+
+  it('lists Claude Code first, then Codex, then Grok', async () => {
+    const providers = await detectProviders(system())
+
+    expect(providers.map((entry) => entry.id)).toEqual(['claude-code', 'codex', 'grok'])
+  })
 })
 
 describe('install command resolution', () => {

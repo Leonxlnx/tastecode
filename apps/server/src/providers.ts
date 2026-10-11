@@ -37,21 +37,12 @@ type Probe = {
   unbuilt?: string
 }
 
+/**
+ * The order here is the order `providers.list` reports, and the renderer
+ * builds its catalog, first-run choice and update list from that answer.
+ * Claude Code leads, then Codex, then Grok.
+ */
 const PROBES: Probe[] = [
-  {
-    id: 'codex',
-    updater: CODEX_UPDATES,
-    displayName: 'Codex',
-    command: 'codex',
-    capabilities: CODEX_CAPABILITIES,
-    setup: {
-      installUrl: 'https://developers.openai.com/codex/cli',
-      installCommand: codexInstallCommand(),
-      login: 'provider',
-      loginOpensBrowser: true,
-    },
-    loginCommand: 'codex login',
-  },
   {
     id: 'claude-code',
     updater: CLAUDE_UPDATES,
@@ -65,6 +56,20 @@ const PROBES: Probe[] = [
       loginOpensBrowser: true,
     },
     loginCommand: 'claude auth login',
+  },
+  {
+    id: 'codex',
+    updater: CODEX_UPDATES,
+    displayName: 'Codex',
+    command: 'codex',
+    capabilities: CODEX_CAPABILITIES,
+    setup: {
+      installUrl: 'https://developers.openai.com/codex/cli',
+      installCommand: codexInstallCommand(),
+      login: 'provider',
+      loginOpensBrowser: true,
+    },
+    loginCommand: 'codex login',
   },
   {
     id: 'grok',
@@ -83,7 +88,7 @@ const PROBES: Probe[] = [
 ]
 
 /**
- * main ships exactly three subscription plans: Codex, Claude Code and Grok.
+ * main ships exactly three subscription plans: Claude Code, Codex and Grok.
  * Every other provider lives on the nightly branch only — see AGENTS.md.
  */
 
