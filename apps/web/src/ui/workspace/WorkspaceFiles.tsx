@@ -496,7 +496,8 @@ const WorkspaceFileTree = memo(function WorkspaceFileTree(props: {
           onSelect={props.onSelect}
         />
       ))}
-      {props.loadingDirectories.has('') ? (
+      {/* As for a folder, only a first listing gets placeholder rows; a refresh keeps the rows. */}
+      {props.loadingDirectories.has('') && props.entries.length === 0 ? (
         <SkeletonStatus label="Loading files…" className="workspace-files__tree-skeleton">
           <SkeletonRows rows={9} icon widths={TREE_SKELETON_WIDTHS} />
         </SkeletonStatus>
