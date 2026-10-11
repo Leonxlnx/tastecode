@@ -1370,9 +1370,7 @@ export class Orchestrator {
       if (error instanceof StartupCleanupError) {
         // The agent may still be running in the new checkout. Keep the session
         // for shutdown to retry, and remove the checkout only after it stops.
-        this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
-        this.#checkoutAccess.retainStopping(directory, threadId)
-        void this.#stopThreadProvider(threadId, error.session as AgentSession)
+        void this.#stopFailedStartup(threadId, directory, error)
           .then(() => (worktree ? removeWorktree(worktree, true) : undefined))
           .catch((stopError: unknown) =>
             this.#onLog(`[startup] agent still not stopped: ${errorMessage(stopError)}`),
@@ -3332,6 +3330,13 @@ export class Orchestrator {
   #releaseCheckoutIfIdle(threadId: string): void {
     if (!this.isTurnRunning(threadId) && !this.#stoppingSessions.has(threadId))
       this.#checkoutAccess.endTurn(threadId)
+  }
+
+  /** A start whose cleanup failed may leave its agent running; a later stop retries it. */
+  #stopFailedStartup(owner: string, directory: string, error: StartupCleanupError): Promise<void> {
+    this.#onLog(`[startup] agent cleanup failed: ${errorMessage(error.cleanupError)}`)
+    this.#checkoutAccess.retainStopping(directory, owner)
+    return this.#stopThreadProvider(owner, error.session as AgentSession)
   }
 
   #stopThreadProvider(threadId: string, session?: AgentSession): Promise<void> {
