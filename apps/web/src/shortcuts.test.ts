@@ -4,6 +4,7 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import {
   createDefaultKeybindings,
   findKeybindingConflict,
+  isComposingKey,
   isConfirmEnter,
   isEditableTarget,
   KEYBINDING_STORAGE_KEY,
@@ -176,6 +177,19 @@ describe('shortcuts', () => {
     expect(enter('Enter', false)).toBe(true)
     expect(enter('Enter', true)).toBe(false)
     expect(enter('a', false)).toBe(false)
+  })
+
+  it('recognises keys that belong to an open IME composition', () => {
+    const composing = (init: KeyboardEventInit) =>
+      isComposingKey(new KeyboardEvent('keydown', { key: 'Escape', ...init }))
+    expect(composing({ isComposing: true })).toBe(true)
+    expect(composing({ keyCode: 229 })).toBe(true)
+    expect(composing({})).toBe(false)
+    expect(
+      isComposingKey({
+        nativeEvent: new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }),
+      }),
+    ).toBe(true)
   })
 
   it('does not capture AltGr, composition, or unsupported mixed primary modifiers', () => {

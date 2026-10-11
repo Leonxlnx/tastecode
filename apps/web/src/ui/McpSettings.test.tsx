@@ -129,6 +129,25 @@ describe('MCP settings', () => {
     expect(document.activeElement).toBe(action)
   })
 
+  it('keeps the form open when Escape cancels an IME composition', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }))
+    fireEvent.keyDown(screen.getByLabelText('Server ID'), { key: 'Escape', isComposing: true })
+    expect(screen.getByRole('form')).toBeTruthy()
+  })
+
   it('returns focus to the last action when switching between editor modes', async () => {
     const transport = client(async () => ({
       capabilities: { inventory: true, add: true },

@@ -14,6 +14,7 @@ import {
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { useProviderWatch } from '../provider-watch.js'
+import { isComposingKey } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
 
@@ -651,6 +652,7 @@ function ServerEditor(props: {
       aria-label={`${hiding ? 'Hide inherited' : props.editor.mode === 'add' ? 'Add' : 'Edit'} MCP server`}
       onSubmit={props.onSubmit}
       onKeyDown={(event) => {
+        if (isComposingKey(event)) return
         if (event.key === 'Escape' && !props.busy) {
           event.stopPropagation()
           props.onCancel()

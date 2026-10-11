@@ -62,6 +62,7 @@ import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-pref
 import { sidebarRail } from '../sidebar-order.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isComposingKey,
   isConfirmEnter,
   shortcutAria,
   type Keybindings,
@@ -1945,6 +1946,7 @@ function InlineRename(props: {
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
+        if (isComposingKey(e)) return
         if (isConfirmEnter(e)) commit()
         if (e.key === 'Escape') props.onCancel()
       }}
