@@ -10,9 +10,11 @@ const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
 // How long each step of a close may take. After SIGHUP the shell and its
 // foreground job get `hangup` to finish a clean shutdown on their own; what is
 // left then gets SIGTERM and `terminate`, then SIGKILL and `kill`. Server
-// shutdown has to end inside the desktop's three-second force stop.
+// shutdown has to end inside the desktop's three-second force stop, so it
+// signals sooner but still leaves a job that began a clean shutdown on SIGHUP
+// almost two seconds before SIGKILL.
 const CLOSE_STEPS = { hangup: 3_000, terminate: 3_000, kill: 1_000 }
-const SHUTDOWN_STEPS = { hangup: 500, terminate: 600, kill: 300 }
+const SHUTDOWN_STEPS = { hangup: 400, terminate: 1_400, kill: 300 }
 const CLOSE_POLL_MS = 100
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
