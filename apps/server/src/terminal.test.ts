@@ -273,7 +273,7 @@ describe('TerminalManager', () => {
     expect(secondKilled).toBe(true)
   })
 
-  it('keeps a closing chat and shutdown waiting until the foreground job stops', async () => {
+  it('closes once the shell is gone and keeps only shutdown waiting for its job', async () => {
     const pty = controlledPty({ pid: 4100 })
     let jobRunning = true
     const processes = fakeProcesses({
@@ -285,20 +285,51 @@ describe('TerminalManager', () => {
       { spawnPty: () => pty, processes },
     )
     const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
-    const settled: string[] = []
-    const closed = manager.close(terminalId).then(() => settled.push('close'))
+    const closed = manager.close(terminalId)
     pty.emitExit(0)
+    await closed
+    await manager.closeThread('thread-job')
     await vi.waitFor(() => expect(processes.list).toHaveBeenCalled())
-    const threadClosed = manager.closeThread('thread-job').then(() => settled.push('thread'))
-    const shutdown = manager.closeAll().then(() => settled.push('shutdown'))
+
+    let shutDown = false
+    const shutdown = manager.closeAll().then(() => (shutDown = true))
     await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(settled).toEqual([])
+    expect(shutDown).toBe(false)
 
     // A job that shuts down on its own after the hangup is never signalled.
     jobRunning = false
-    await Promise.all([closed, threadClosed, shutdown])
-    expect(settled.sort()).toEqual(['close', 'shutdown', 'thread'])
+    await shutdown
     expect(processes.signal).not.toHaveBeenCalled()
+  })
+
+  it('lets a chat open a new terminal while its old job still shuts down', async () => {
+    const ptys = [controlledPty({ pid: 4100 }), controlledPty({ pid: 4200 })]
+    const [first, second] = ptys as [
+      ReturnType<typeof controlledPty>,
+      ReturnType<typeof controlledPty>,
+    ]
+    let jobRunning = true
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      {
+        spawnPty: () => ptys.shift()!,
+        processes: fakeProcesses({
+          list: () => Promise.resolve(jobRunning ? [jobMember] : []),
+        }),
+      },
+    )
+    const old = manager.open('thread-reopen', os.tmpdir(), 80, 24)
+    const closing = manager.closeThread('thread-reopen')
+    first.emitExit(0)
+    await closing
+
+    const reopened = manager.open('thread-reopen', os.tmpdir(), 80, 24)
+    expect(reopened).not.toBe(old)
+
+    const shutdown = manager.closeAll()
+    second.emitExit(0)
+    jobRunning = false
+    await shutdown
   })
 
   it('never signals a group named by a process this server did not fork', async () => {
@@ -631,7 +662,8 @@ describe('TerminalManager', () => {
 
         await shell.manager.close(terminalId)
 
-        expect(isRunning(job)).toBe(false)
+        // Only the escalation after the hangup grace can end it.
+        await waitUntil(() => !isRunning(job!))
       } finally {
         if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
         await shell.manager.closeAll()
@@ -639,7 +671,7 @@ describe('TerminalManager', () => {
       }
     }, 15_000)
 
-    it('lets a foreground job finish a clean shutdown', async () => {
+    it('closes a pane while its foreground job finishes a clean shutdown', async () => {
       const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-clean-'))
       const marker = path.join(cwd, 'cleaned-up')
       // Shuts down on SIGHUP or SIGTERM like a dev server that flushes state,
@@ -668,9 +700,10 @@ describe('TerminalManager', () => {
         job = await within(shell.match)
 
         await shell.manager.close(terminalId)
+        expect(isRunning(job)).toBe(true)
 
+        await waitUntil(() => !isRunning(job!))
         expect(existsSync(marker)).toBe(true)
-        expect(isRunning(job)).toBe(false)
       } finally {
         if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
         await shell.manager.closeAll()
