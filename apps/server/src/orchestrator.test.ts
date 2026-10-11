@@ -7878,6 +7878,57 @@ describe('isolated sessions', () => {
     }
   })
 
+  it('keeps uncommitted work when a nested project folder was deleted from its checkout', async () => {
+    const nested = path.join(repo, 'apps', 'web')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(nested, 'index.ts'), 'export {}\n')
+    execFileSync('git', ['add', '.'], { cwd: repo, windowsHide: true })
+    execFileSync('git', ['commit', '-m', 'nested'], { cwd: repo, windowsHide: true })
+    const { orchestrator, store } = harness(trees)
+    try {
+      const thread = await orchestrator.startThread('codex', nested, { isolate: true })
+      const workPath = store.thread(thread.id)!.worktreePath!
+      const checkout = path.dirname(path.dirname(workPath))
+      writeFileSync(path.join(checkout, 'file.txt'), 'agent work\n')
+      rmSync(workPath, { recursive: true, force: true })
+
+      expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(true)
+      await expect(orchestrator.discardWorktree(thread.id)).rejects.toThrow(/uncommitted/i)
+      expect(readFileSync(path.join(checkout, 'file.txt'), 'utf8')).toBe('agent work\n')
+      expect(store.thread(thread.id)?.worktreePath).toBe(workPath)
+
+      await orchestrator.discardWorktree(thread.id, true)
+      expect(existsSync(checkout)).toBe(false)
+      expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('forgets a fully deleted nested checkout without inspecting a repository above it', async () => {
+    const host = path.join(path.dirname(repo), 'host')
+    execFileSync('git', ['init', '-b', 'main', host], { windowsHide: true })
+    writeFileSync(path.join(host, 'notes.txt'), 'unrelated work\n')
+    const nested = path.join(repo, 'apps', 'web')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(nested, 'index.ts'), 'export {}\n')
+    execFileSync('git', ['add', '.'], { cwd: repo, windowsHide: true })
+    execFileSync('git', ['commit', '-m', 'nested'], { cwd: repo, windowsHide: true })
+    const { orchestrator, store } = harness(path.join(host, 'trees'))
+    try {
+      const thread = await orchestrator.startThread('codex', nested, { isolate: true })
+      const workPath = store.thread(thread.id)!.worktreePath!
+      rmSync(path.dirname(path.dirname(workPath)), { recursive: true, force: true })
+
+      expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(false)
+      await orchestrator.discardWorktree(thread.id)
+      expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
+      expect(readFileSync(path.join(host, 'notes.txt'), 'utf8')).toBe('unrelated work\n')
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('cleans a private checkout when MCP credential resolution fails before provider startup', async () => {
     const { orchestrator, store, credentialFailure } = harness(trees)
     orchestrator.addMcpServer('codex', repo, {

@@ -22,7 +22,7 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './runtime-loader.js'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -317,6 +317,22 @@ export function resolveWorkspacePath(workspacePath: string): string {
     return path.join(os.homedir(), workspacePath.slice(2))
   }
   return workspacePath
+}
+
+/**
+ * The private checkout a chat's stored folder belongs to.
+ *
+ * A nested project's chat stores a folder inside its checkout, but git reports
+ * on and removes a worktree only by its root. Deleting that folder leaves the
+ * checkout, and any uncommitted work in it, behind, so the root is still the
+ * answer. Only a linked worktree (a `.git` file) counts: once the whole
+ * checkout is gone, the walk up can reach an unrelated repository above the
+ * worktree directory.
+ */
+function privateCheckoutPath(worktreePath: string): string {
+  const root = canonicalCheckoutRoot(worktreePath)
+  const marker = statSync(path.join(root, '.git'), { throwIfNoEntry: false })
+  return marker?.isFile() ? root : worktreePath
 }
 
 const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
@@ -3244,7 +3260,7 @@ export class Orchestrator {
   async hasUnsavedWork(threadId: string): Promise<boolean> {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath) return false
-    return hasUncommittedChanges(stored.worktreePath)
+    return hasUncommittedChanges(privateCheckoutPath(stored.worktreePath))
   }
 
   /**
@@ -3258,10 +3274,8 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
     const root = canonicalCheckoutRoot(stored.worktreePath)
-    // A nested project's chat stores its folder inside the checkout; git only
-    // removes a worktree by its root.
     const worktree = {
-      path: existsSync(stored.worktreePath) ? root : stored.worktreePath,
+      path: privateCheckoutPath(stored.worktreePath),
       branch: stored.worktreeBranch,
       repoPath: resolveWorkspacePath(stored.projectPath),
     }
