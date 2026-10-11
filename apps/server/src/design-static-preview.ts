@@ -61,6 +61,13 @@ export async function startStaticDesignPreview(
   const server = createServer((request, response) => {
     response.setHeader(STATIC_PREVIEW_HEADER, previewId)
     response.setHeader('cache-control', 'no-store')
+    // A site that rebinds its own name to 127.0.0.1 still sends that name as
+    // Host, and a cross-site fetch names its page in Origin.
+    const { host, origin } = request.headers
+    if (host !== previewUrl.host || (origin !== undefined && origin !== previewUrl.origin)) {
+      response.statusCode = 403
+      return response.end()
+    }
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       response.statusCode = 405
       return response.end()
