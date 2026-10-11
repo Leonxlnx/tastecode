@@ -109,6 +109,91 @@ describe('brand system handoff', () => {
     expect(parseBrandSystem(legacy).creativeDirection.signatureDevice.status).toBe('candidate')
   })
 
+  it('keeps brand systems approved before design tokens readable without inventing tokens', () => {
+    expect('designTokens' in parseBrandSystem(brand)).toBe(false)
+    expect('designTokens' in parseBrandSystem({ ...brand, designTokens: null })).toBe(false)
+  })
+
+  it('round-trips page-wide design tokens and normalizes their format leniently', () => {
+    const designTokens = {
+      typeScale: {
+        display: 'clamp(3.5rem, 2rem + 6vw, 7.5rem)',
+        h1: 'clamp(2.5rem, 5vw, 4rem)',
+        h2: '2.25rem',
+        h3: '1.5rem',
+        body: '1.0625rem',
+        small: '0.875rem',
+        label: 12,
+      },
+      radius: ['4px', '12px', 24, '9999px'],
+      spacing: { section: 'clamp(4rem, 10vw, 9rem)', gutter: '1.5rem', stack: 0 },
+      buttons: { primary: 'Solid accent pill, 48px tall.', secondary: 'Text link with arrow.' },
+      surfaces: 'Warm paper canvas; one dark espresso band before the footer.',
+    }
+    const parsed = parseBrandSystem({ ...brand, designTokens })
+    expect(parsed.designTokens).toEqual({
+      ...designTokens,
+      typeScale: { ...designTokens.typeScale, label: '12px' },
+      radius: { scale: ['4px', '12px', '24px'], pill: '9999px' },
+      spacing: { ...designTokens.spacing, stack: '0' },
+    })
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-brand-tokens-'))
+    try {
+      writeBrandSystem(workspace, parsed)
+      expect(readBrandSystem(workspace)).toEqual(parsed)
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+    expect(
+      parseBrandSystem({
+        ...brand,
+        designTokens: { ...designTokens, radius: { values: ['2px', '8px'] } },
+      }).designTokens?.radius,
+    ).toEqual({ scale: ['2px', '8px'], pill: '999px' })
+  })
+
+  it('rejects design tokens that later phases could not apply as one shared scale', () => {
+    const designTokens = {
+      typeScale: {
+        display: '6rem',
+        h1: '4rem',
+        h2: '3rem',
+        h3: '2rem',
+        body: '1rem',
+        small: '0.875rem',
+        label: '0.75rem',
+      },
+      radius: { scale: ['4px', '8px', '16px'], pill: '999px' },
+      spacing: { section: '8rem', gutter: '2rem', stack: '1rem' },
+      buttons: { primary: 'Solid accent.', secondary: 'Outline.' },
+      surfaces: 'Light canvas throughout.',
+    }
+    expect(() =>
+      parseBrandSystem({
+        ...brand,
+        designTokens: {
+          ...designTokens,
+          typeScale: { ...designTokens.typeScale, h2: '3rem; } body { display: none' },
+        },
+      }),
+    ).toThrow('designTokens.typeScale.h2 must be a CSS length')
+    expect(() =>
+      parseBrandSystem({
+        ...brand,
+        designTokens: { ...designTokens, typeScale: { ...designTokens.typeScale, h3: undefined } },
+      }),
+    ).toThrow('designTokens.typeScale.h3')
+    expect(() =>
+      parseBrandSystem({
+        ...brand,
+        designTokens: { ...designTokens, radius: ['2px', '4px', '8px', '16px', '32px'] },
+      }),
+    ).toThrow('one to four radii')
+    expect(() =>
+      parseBrandSystem({ ...brand, designTokens: { ...designTokens, buttons: { primary: 'x' } } }),
+    ).toThrow('designTokens.buttons.secondary')
+  })
+
   it('allows a new brand to have no existing asset decisions', () => {
     expect(
       parseBrandSystem({
