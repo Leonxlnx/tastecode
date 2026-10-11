@@ -274,32 +274,39 @@ describe('TerminalManager', () => {
   })
 
   it('closes once the shell is gone and keeps only shutdown waiting for its job', async () => {
-    const pty = controlledPty({ pid: 4100 })
-    let jobRunning = true
-    const processes = fakeProcesses({
-      list: vi.fn(() => Promise.resolve(jobRunning ? [jobMember] : [])),
-      signal: vi.fn(),
-    })
-    const manager = new TerminalManager(
-      { onOutput: () => {}, onExit: () => {} },
-      { spawnPty: () => pty, processes },
-    )
-    const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
-    const closed = manager.close(terminalId)
-    pty.emitExit(0)
-    await closed
-    await manager.closeThread('thread-job')
-    await vi.waitFor(() => expect(processes.list).toHaveBeenCalled())
+    vi.useFakeTimers()
+    try {
+      const pty = controlledPty({ pid: 4100 })
+      let jobRunning = true
+      const processes = fakeProcesses({
+        list: vi.fn(() => Promise.resolve(jobRunning ? [jobMember] : [])),
+        signal: vi.fn(),
+      })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        { spawnPty: () => pty, processes },
+      )
+      const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
+      const closed = manager.close(terminalId)
+      pty.emitExit(0)
+      await closed
+      await manager.closeThread('thread-job')
+      expect(processes.list).toHaveBeenCalled()
 
-    let shutDown = false
-    const shutdown = manager.closeAll().then(() => (shutDown = true))
-    await new Promise((resolve) => setTimeout(resolve, 10))
-    expect(shutDown).toBe(false)
+      let shutDown = false
+      const shutdown = manager.closeAll().then(() => (shutDown = true))
+      await vi.advanceTimersByTimeAsync(150)
+      expect(shutDown).toBe(false)
 
-    // A job that shuts down on its own after the hangup is never signalled.
-    jobRunning = false
-    await shutdown
-    expect(processes.signal).not.toHaveBeenCalled()
+      // A job that shuts down on its own after the hangup is never signalled.
+      jobRunning = false
+      await vi.advanceTimersByTimeAsync(100)
+      expect(shutDown).toBe(true)
+      await shutdown
+      expect(processes.signal).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('lets a chat open a new terminal while its old job still shuts down', async () => {
