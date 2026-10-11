@@ -2477,6 +2477,15 @@ export class Orchestrator {
     await this.#terminals.close(terminalId)
   }
 
+  /**
+   * Start closing every terminal. Server shutdown calls this before anything
+   * else: terminal jobs get a fixed budget inside the desktop's force stop,
+   * and disposeAll later waits for this same close.
+   */
+  closeAllTerminals(): Promise<void> {
+    return this.#terminals.closeAll()
+  }
+
   terminalStatus(terminalId: string) {
     return this.#terminals.status(terminalId)
   }
