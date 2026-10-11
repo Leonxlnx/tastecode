@@ -76,7 +76,8 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
   const [errors, setErrors] = useState<Partial<Record<ProviderId, string>>>({})
   const confirmed = useRef<ProviderContextSettingsMap>({})
   const loads = useRef(0)
-  const updates = useRef(0)
+  // Per provider: saving one provider must not drop another's answer.
+  const updates = useRef<Partial<Record<ProviderId, number>>>({})
 
   useEffect(() => {
     if (!enabled) return
@@ -99,12 +100,15 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
 
   const update = useCallback(
     (provider: ProviderId, settings: ProviderContextSettings) => {
-      const request = ++updates.current
-      setState((current) =>
-        current.phase === 'ready'
-          ? { phase: 'ready', settings: withProviderSettings(current.settings, provider, settings) }
-          : current,
-      )
+      const show = (shown: ProviderContextSettings = {}) =>
+        setState((current) =>
+          current.phase === 'ready'
+            ? { phase: 'ready', settings: withProviderSettings(current.settings, provider, shown) }
+            : current,
+        )
+      const request = (updates.current[provider] ?? 0) + 1
+      updates.current[provider] = request
+      show(settings)
       setErrors((current) => {
         if (current[provider] === undefined) return current
         const next = { ...current }
@@ -118,10 +122,10 @@ export function useProviderContextSettings(transport: Transport, enabled: boolea
             settings,
           })
           confirmed.current = saved
-          if (updates.current === request) setState({ phase: 'ready', settings: saved })
+          if (updates.current[provider] === request) show(saved[provider])
         } catch (cause) {
-          if (updates.current !== request) return
-          setState({ phase: 'ready', settings: confirmed.current })
+          if (updates.current[provider] !== request) return
+          show(confirmed.current[provider])
           setErrors((current) => ({ ...current, [provider]: errorMessage(cause) }))
         }
       })()
