@@ -31,6 +31,7 @@ import type {
 } from './WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
+import { MIN_WORKSPACE_PANEL_WIDTH } from './workspace-panel-width.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { RowIssue } from '../RowIssue.js'
 import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
@@ -107,7 +108,6 @@ const TOOLS: Array<{
   },
 ]
 
-const MIN_PANEL_WIDTH = 360
 const MIN_CHAT_WIDTH = 360
 const DESIGN_PREVIEW_TAB_ID = 'design-preview'
 
@@ -273,10 +273,13 @@ function WorkspacePanelComponent(props: {
     resizeCleanup.current = beginPanelResize(event, {
       axis: bottom ? 'clientY' : 'clientX',
       initialSize: props.width,
-      minSize: bottom ? 200 : MIN_PANEL_WIDTH,
+      minSize: bottom ? 200 : MIN_WORKSPACE_PANEL_WIDTH,
       maxSize: bottom
         ? Math.max(200, (layout?.parentElement?.clientHeight || window.innerHeight) - 80)
-        : Math.max(MIN_PANEL_WIDTH, (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH),
+        : Math.max(
+            MIN_WORKSPACE_PANEL_WIDTH,
+            (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH,
+          ),
       style: layout?.style,
       property: bottom ? 'height' : '--workspace-panel-w',
       onFinish: (size, commit) => {
