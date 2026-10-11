@@ -178,6 +178,26 @@ describe('Thread older history', () => {
     expect(layout.scrollState.index).toBe(17)
   })
 
+  it('stops filling when a page read leaves the same cursor behind', async () => {
+    const store = new ThreadFrameStore(paged(turns(0, 1), 'cursor'))
+    // Resolves without publishing anything, as a read dropped for a stale
+    // cursor does.
+    const load = vi.fn(() => Promise.resolve())
+    render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={load}
+      />,
+    )
+    await act(async () => undefined)
+    await act(async () => undefined)
+    expect(load).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: /Couldn’t load earlier messages/ })).toBeTruthy()
+  })
+
   it('fills a short transcript and offers a retry when a page fails', async () => {
     const store = new ThreadFrameStore(paged(turns(0, 1), 'cursor'))
     let fail: (error: Error) => void = noop
