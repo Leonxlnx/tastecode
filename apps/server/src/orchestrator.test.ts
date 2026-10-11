@@ -1977,6 +1977,64 @@ describe('durable turn timing', () => {
 })
 
 describe('history replay', () => {
+  it('pages the compact replay and restarts when a restore removes the cursor turn', async () => {
+    const { orchestrator, store } = harness()
+    const thread = await orchestrator.startThread('codex', '/repo')
+    const starts: number[] = []
+    for (let index = 0; index < 4; index += 1) {
+      const turnId = `turn-${index}`
+      const reply = {
+        id: `reply-${index}`,
+        turnId,
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'started' as const,
+        text: '',
+        createdAt: index,
+      }
+      starts.push(
+        store.append(thread.id, {
+          type: 'turn.started',
+          turn: { id: turnId, threadId: thread.id, status: 'running', createdAt: index },
+        }),
+      )
+      store.append(thread.id, { type: 'item.started', item: reply })
+      store.append(thread.id, { type: 'item.delta', turnId, itemId: reply.id, textDelta: 'Hi' })
+      store.append(thread.id, {
+        type: 'item.completed',
+        item: { ...reply, status: 'completed', text: 'Hi' },
+      })
+      store.append(thread.id, { type: 'turn.completed', turnId, status: 'completed' })
+    }
+    const turnIds = (events: Array<{ event: DomainEvent }>) =>
+      events.flatMap(({ event }) => (event.type === 'turn.started' ? [event.turn.id] : []))
+
+    const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+    expect(turnIds(newest.events)).toEqual(['turn-2', 'turn-3'])
+    expect(newest.events.some(({ event }) => event.type === 'item.delta')).toBe(false)
+    expect(newest.page.snapshotSeq).toBe(store.lastSeq(thread.id))
+
+    const older = await orchestrator.historyPage(thread.id, {
+      before: newest.page.olderCursor!,
+      turnLimit: 2,
+    })
+    expect(turnIds(older.events)).toEqual(['turn-0', 'turn-1'])
+    expect(older.page.olderCursor).toBeNull()
+
+    store.saveRestoreUndo(thread.id, starts[2]! - 1, 'commit')
+    const restarted = await orchestrator.historyPage(thread.id, {
+      before: newest.page.olderCursor!,
+      turnLimit: 2,
+    })
+    expect(restarted.reset).toBe(true)
+    expect(turnIds(restarted.events)).toEqual(['turn-0', 'turn-1'])
+    await expect(orchestrator.historyPage(thread.id, { before: 'not-a-cursor' })).rejects.toThrow(
+      'invalid history cursor',
+    )
+
+    await orchestrator.disposeAll()
+  })
+
   it('hands fresh compact replay JSON to the response path once', async () => {
     const { orchestrator, store } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')

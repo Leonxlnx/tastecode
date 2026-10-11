@@ -785,6 +785,19 @@ export function startServer(
       case 'thread.history': {
         const p = parseParams(method, params)
         await loadProviderHistory(p.threadId)
+        if (p.page) {
+          const history = await orchestrator.historyPage(p.threadId, p.page)
+          const running = orchestrator.isTurnRunning(p.threadId)
+          const approval = store.threadApproval(p.threadId) ?? 'ask'
+          if (p.page.before === undefined) orchestrator.markThreadRead(p.threadId)
+          return {
+            events: history.events,
+            running,
+            approval,
+            ...(history.reset ? { reset: true } : {}),
+            page: history.page,
+          }
+        }
         const reset =
           p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
         const history = await orchestrator.historyForResponse(
