@@ -1273,6 +1273,18 @@ describe('Composer prompts', () => {
     expect(onSend).toHaveBeenCalledWith('/side', [])
   })
 
+  it('sends on the first Enter when the resource picker has nothing to select', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: populatedResourceTransport() })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: 'echo $HOME', selectionStart: 10 } })
+    await screen.findByText('No skills or MCP servers match “HOME”.')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('echo $HOME', [])
+  })
+
   it('opens the resource picker from slash and invokes the selected skill canonically', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })

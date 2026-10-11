@@ -1817,9 +1817,12 @@ function ComposerComponent(props: {
                         return
                       }
                       if (e.key === 'Enter') {
-                        e.preventDefault()
-                        if (!resourcePicker.current?.selectActive()) setResourceTrigger(undefined)
-                        return
+                        if (resourcePicker.current?.selectActive()) {
+                          e.preventDefault()
+                          return
+                        }
+                        // Nothing to pick ("echo $HOME"): Enter keeps its usual meaning.
+                        setResourceTrigger(undefined)
                       }
                       if (e.key === 'Escape') {
                         e.preventDefault()
