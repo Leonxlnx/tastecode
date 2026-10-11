@@ -910,8 +910,8 @@ export class Orchestrator {
     const builtIns = await Promise.all(
       (
         [
-          ['codex', 'Codex'],
           ['claude-code', 'Claude Code'],
+          ['codex', 'Codex'],
           ['grok', 'Grok'],
         ] as const
       ).map(async ([provider, displayName]) => {

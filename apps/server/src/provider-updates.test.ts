@@ -21,8 +21,8 @@ afterEach(() => vi.useRealTimers())
 describe('provider update service', () => {
   it('covers every shipped provider through its adapter', () => {
     expect(providerUpdateSources().map((entry) => entry.provider)).toEqual([
-      'codex',
       'claude-code',
+      'codex',
       'grok',
     ])
   })
