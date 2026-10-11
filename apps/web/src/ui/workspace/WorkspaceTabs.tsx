@@ -59,6 +59,25 @@ export function fitWorkspaceTabs(strip: HTMLElement): WorkspaceTabsFit {
   return fit
 }
 
+/**
+ * Scrolls an overflowing strip just far enough to show the active tab whole,
+ * and the add button too when the active tab is the last one, which is where
+ * a newly opened tab lands. A strip that fits is left alone.
+ */
+export function revealActiveTab(strip: HTMLElement): void {
+  if (strip.scrollWidth <= strip.clientWidth) return
+  const active = strip.querySelector<HTMLElement>('.workspace-tabs__tab.is-active')
+  if (!active) return
+  const next = active.nextElementSibling
+  const last =
+    next instanceof HTMLElement && next.classList.contains('workspace-tabs__add') ? next : active
+  const style = getComputedStyle(strip)
+  const start = active.offsetLeft - (Number.parseFloat(style.paddingLeft) || 0)
+  const end = last.offsetLeft + last.offsetWidth + (Number.parseFloat(style.paddingRight) || 0)
+  if (start < strip.scrollLeft) strip.scrollLeft = start
+  else if (end > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = end - strip.clientWidth
+}
+
 /** Animate live tabs and their neighbours without resizing text or repainting widths. */
 export function WorkspaceTabs(props: {
   tabs: WorkspaceTabLabel[]
@@ -81,7 +100,9 @@ export function WorkspaceTabs(props: {
   // strip resizes or its tabs change, never per streamed message: the tab list
   // is memoized on the panel's tabs.
   const fit = useCallback(() => {
-    if (host.current) fitWorkspaceTabs(host.current)
+    if (!host.current) return
+    fitWorkspaceTabs(host.current)
+    revealActiveTab(host.current)
   }, [])
   useLayoutEffect(() => {
     const strip = host.current
@@ -90,8 +111,9 @@ export function WorkspaceTabs(props: {
     observer.observe(strip)
     return () => observer.disconnect()
   }, [fit])
-  // Before the motion effect below, so tabs animate into the chosen mode.
-  useLayoutEffect(fit, [fit, props.tabs])
+  // Before the motion effect below, so tabs animate into the chosen mode. The
+  // active tab matters for what is revealed, not for the mode.
+  useLayoutEffect(fit, [fit, props.tabs, props.activeId])
 
   useLayoutEffect(() => {
     const container = host.current
