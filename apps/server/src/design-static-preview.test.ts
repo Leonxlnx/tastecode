@@ -119,6 +119,24 @@ describe('static Design media preview', () => {
     await unsupported.text()
   })
 
+  it('refuses another site that reaches the preview by rebinding its name or cross-origin', async () => {
+    const { url } = await preview()
+    const status = (headers: Record<string, string>) =>
+      new Promise<number | undefined>((resolve, reject) =>
+        get(new URL('index.html', url), { headers }, (response) => {
+          response.resume()
+          resolve(response.statusCode)
+        }).once('error', reject),
+      )
+    const { host, origin, port } = new URL(url)
+    expect(await status({ host: `attacker.example:${port}` })).toBe(403)
+    expect(await status({ host: `localhost:${port}` })).toBe(403)
+    expect(await status({ host, origin: 'http://attacker.example' })).toBe(403)
+    expect(await status({ host, origin: 'http://127.0.0.1:5183' })).toBe(403)
+    expect(await status({ host })).toBe(200)
+    expect(await status({ host, origin })).toBe(200)
+  })
+
   it('stops while a client holds a media response open', async () => {
     const { root, url } = await preview()
     // Large enough that the socket buffers fill and the response keeps streaming.
