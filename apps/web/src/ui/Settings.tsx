@@ -299,6 +299,8 @@ function SettingsComponent(props: {
   onAccountChange: (provider: ProviderId, account: Account) => void
   authRefreshRevision?: number | undefined
   initialSection?: SettingsSection | undefined
+  /** Bumped with every request, so asking for the same section again still navigates. */
+  sectionRequest?: number | undefined
   showDebug?: boolean | undefined
   onReset: () => void
   onForceOnboarding?: (() => void) | undefined
@@ -312,7 +314,7 @@ function SettingsComponent(props: {
 
   useEffect(() => {
     setSection(props.initialSection ?? 'workflows')
-  }, [props.initialSection])
+  }, [props.initialSection, props.sectionRequest])
 
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
