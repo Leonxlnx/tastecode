@@ -117,17 +117,31 @@ describe('real Electron performance gates', () => {
     ])
   })
 
-  it('requires the large activity to stay collapsed, open one output and release it', () => {
+  it('requires a real 300-call activity that opened every row', () => {
     for (const change of [
       { toolCalls: 30 },
-      { collapsed: { activityElements: 6, toolRows: 300, openDetails: 0 } },
-      { opened: { activityElements: 3_300, toolRows: 300, openDetails: 0 } },
-      { closed: { activityElements: 6, toolRows: 0, openDetails: 1 } },
+      { outputCharacters: 1024 },
+      { opened: { activityElements: 6, toolRows: 0, openDetails: 0 } },
     ]) {
       const samples = Array.from({ length: 3 }, goodSample)
       Object.assign(samples[0]!.largeActivity, change)
       expect(performanceFailures(samples, startups())).toEqual([
         'renderer 1: missing large activity coverage',
+      ])
+    }
+  })
+
+  it('fails rows or output mounted while collapsed, beyond the one opened, or after closing', () => {
+    for (const change of [
+      { collapsed: { activityElements: 6, toolRows: 300, openDetails: 0 } },
+      { collapsed: { activityElements: 6, toolRows: 0, openDetails: 300 } },
+      { opened: { activityElements: 3_300, toolRows: 300, openDetails: 2 } },
+      { closed: { activityElements: 6, toolRows: 0, openDetails: 1 } },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.largeActivity, change)
+      expect(performanceFailures(samples, startups())).toEqual([
+        'renderer 1: large activity mounted rows or output it was not showing',
       ])
     }
   })
