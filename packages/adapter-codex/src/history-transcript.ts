@@ -30,12 +30,14 @@ export function parseCodexHistory(
   const turns: SavedTurn[] = []
   const nativeTurns = new Map<string, SavedTurn>()
   let current: SavedTurn | undefined
-  function turn(id: unknown, createdAt: number): SavedTurn {
+  function turn(id: unknown, createdAt: number, start = false): SavedTurn {
     const nativeId = typeof id === 'string' ? id : undefined
     const existing = nativeId ? nativeTurns.get(nativeId) : undefined
     if (existing) {
-      current = existing
-      return current
+      // A late item or end of an earlier turn joins it, but the records
+      // without a turn ID that follow still belong to the current turn.
+      if (start) current = existing
+      return existing
     }
     if (current && !nativeId) return current
     if (current && !current.status) {
@@ -58,7 +60,7 @@ export function parseCodexHistory(
       record.type === 'turn_context' ||
       (record.type === 'event_msg' && payload.type === 'task_started')
     ) {
-      turn(payload.turn_id, timestamp(payload.started_at, createdAt))
+      turn(payload.turn_id, timestamp(payload.started_at, createdAt), true)
       return
     }
     if (
