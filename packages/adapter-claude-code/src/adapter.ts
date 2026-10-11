@@ -332,6 +332,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
+  /** Steers sent during the current run, so a stop receipt can tell which of them still run. */
+  readonly #turnSteers = new Set<string>()
+  /** A stop left steers queued: the SDK runs them next, still inside the turn they steered. */
+  #steersOutliveRun = false
+  /** Settles once a stop receipt is read; the stopped run's result may overtake it. */
+  #stopReceipt: Promise<void> | undefined
   /** The SDK's `total_cost_usd` is a running total for the current query. */
   #queryCostUsd = 0
   #disposed = false
@@ -435,6 +441,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const turnId = `${this.#threadId}-turn-${crypto.randomUUID()}`
     this.#activeTurnId = turnId
     this.#interruptRequested = false
+    this.#turnSteers.clear()
+    this.#steersOutliveRun = false
     this.emit('event', {
       type: 'turn.started',
       turn: { id: turnId, threadId: this.#threadId, status: 'running', createdAt: Date.now() },
@@ -445,23 +453,42 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
     this.#assertThread(threadId)
     if (!this.#activeTurnId) throw new Error('there is no running Claude turn to steer')
-    this.#requirePromptQueue().push({
-      ...claudeUserMessage(text, attachments, this.#sessionId),
-      priority: 'now',
-    })
+    const message = claudeUserMessage(text, attachments, this.#sessionId)
+    this.#requirePromptQueue().push({ ...message, priority: 'now' })
+    this.#turnSteers.add(message.uuid!)
   }
 
   async interrupt(): Promise<void> {
-    if (!this.#activeTurnId || !this.#query) return
+    const turnId = this.#activeTurnId
+    if (!turnId || !this.#query) return
     const query = this.#query
     const redactor = this.#redactor
     this.#interruptRequested = true
+    // The SDK keeps queued async messages through an interrupt and lists them in its receipt.
+    const stopping = query.interrupt().then((receipt) => {
+      if (
+        this.#query === query &&
+        this.#activeTurnId === turnId &&
+        receipt?.still_queued.some((uuid) => this.#turnSteers.has(uuid))
+      )
+        this.#steersOutliveRun = true
+    })
+    const receipt =
+      this.#turnSteers.size > 0
+        ? stopping.then(
+            () => undefined,
+            () => undefined,
+          )
+        : undefined
+    if (receipt) this.#stopReceipt = receipt
     try {
-      await query.interrupt()
+      await stopping
     } catch (error) {
       // The turn keeps running, so a later error result is real and must still surface.
       if (this.#query === query) this.#interruptRequested = false
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    } finally {
+      if (receipt && this.#stopReceipt === receipt) this.#stopReceipt = undefined
     }
   }
 
@@ -799,6 +826,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       for await (const message of query) {
         if (generation !== this.#queryGeneration || this.#disposed) return
+        if (message.type === 'result' && this.#stopReceipt) {
+          await this.#stopReceipt
+          if (generation !== this.#queryGeneration || this.#disposed) return
+        }
         this.#onMessage(message)
       }
       if (generation === this.#queryGeneration && !this.#disposed && this.#activeTurnId) {
@@ -828,10 +859,6 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
 
     if (message.type === 'assistant') {
-      if (!this.#activeTurnId) {
-        this.emit('log', 'ignored Claude assistant replay outside an active turn')
-        return
-      }
       // Subagent (Task) snapshots belong to the sidechain. Saved history leaves them out, so
       // the live transcript must too, and they must not touch the main plan or model label.
       if (message.parent_tool_use_id) return
@@ -841,6 +868,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#log(`ignored malformed Claude assistant event: ${parsed.error.message}`)
         return
       }
+      // Output that no turn waits for, such as a steer that outlived its turn, gets its own.
+      const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
       this.#reportedModel = event.message?.model
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
@@ -856,7 +885,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               },
             }
           : event
-      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId, this.#toolCalls))
+      this.#emitDomainEvents(toDomainEvents(filtered, turnId, this.#toolCalls))
       this.#emitTodoPlan(event)
       return
     }
@@ -904,12 +933,19 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           ? 'failed'
           : 'completed'
       this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
-      this.emit('event', {
-        type: 'turn.completed',
-        turnId,
-        status,
-      })
-      this.#activeTurnId = undefined
+      // Only the stopped run ended. The steers it left queued run next, and their answer
+      // and result belong to the turn they steered, not to whichever prompt comes after.
+      if (this.#steersOutliveRun) {
+        this.#steersOutliveRun = false
+        this.#turnSteers.clear()
+      } else {
+        this.emit('event', {
+          type: 'turn.completed',
+          turnId,
+          status,
+        })
+        this.#activeTurnId = undefined
+      }
       this.#interruptRequested = false
       this.#settlePending('Claude turn ended before the request was answered.')
       this.#clearStreamingState()
@@ -944,10 +980,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   }
 
   #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
-    const turnId = this.#activeTurnId
-    if (!turnId || message.parent_tool_use_id) return
+    if (message.parent_tool_use_id) return
     const event = message.event
     const type = event.type
+    const turnId =
+      this.#activeTurnId ??
+      (type === 'message_start' || type === 'content_block_start' ? this.#startTurn() : undefined)
+    if (!turnId) return
     if (type === 'message_start') {
       this.#streamMessageId = event.message.id
       return
