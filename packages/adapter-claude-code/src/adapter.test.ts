@@ -7,6 +7,7 @@ import type {
   McpServerStatus,
   Options,
   SDKControlInitializeResponse,
+  SDKControlInterruptResponse,
   SDKMessage,
   SDKPartialAssistantMessage,
   SDKUserMessage,
@@ -36,6 +37,8 @@ class FakeQuery implements ClaudeQueryRuntime {
   readonly models: ModelInfo[]
   closed = false
   interrupts = 0
+  /** Async messages the CLI reports as surviving the next interrupt; older CLIs send none. */
+  stillQueued: string[] | undefined
   readonly modelsSet: Array<string | undefined> = []
   readonly permissionModes: string[] = []
   readonly mcpConfigurations: Record<string, McpServerConfig>[] = []
@@ -57,8 +60,9 @@ class FakeQuery implements ClaudeQueryRuntime {
     for (const waiter of this.#waiters.splice(0)) waiter({ value: undefined, done: true })
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(): Promise<SDKControlInterruptResponse | undefined> {
     this.interrupts += 1
+    return this.stillQueued && { still_queued: this.stillQueued }
   }
 
   async setModel(model?: string): Promise<void> {
@@ -1151,6 +1155,122 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each(['receipt first', 'result first'] as const)(
+    'keeps a stopped turn open for a steer that outlives it (%s)',
+    async (order) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      const logs: string[] = []
+      adapter.on('event', (event) => events.push(event))
+      adapter.on('log', (line) => logs.push(line))
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+        const first = await adapter.sendTurn(thread.id, 'A')
+        await prompts.next()
+        await adapter.steer(thread.id, 'B')
+        const steer = (await prompts.next()).value!
+        // The SDK documents that queued async messages survive an interrupt and run next.
+        const stopped = { ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage
+        if (order === 'receipt first') {
+          query.stillQueued = [steer.uuid!]
+          await adapter.interrupt()
+          query.emitMessage(stopped)
+        } else {
+          let receipt!: (value: SDKControlInterruptResponse) => void
+          vi.spyOn(query, 'interrupt').mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                receipt = resolve
+              }),
+          )
+          const stopping = adapter.interrupt()
+          query.emitMessage(stopped)
+          await tick()
+          receipt({ still_queued: [steer.uuid!] })
+          await stopping
+        }
+        await tick()
+        await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+
+        query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+        const next = await adapter.sendTurn(thread.id, 'C')
+        query.emitMessage(assistantMessage('message-c', 'Answer to C'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+
+        expect(
+          events.flatMap((event) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? [{ turnId: event.item.turnId, text: event.item.text }]
+              : [],
+          ),
+        ).toEqual([
+          { turnId: first, text: 'Answer to B' },
+          { turnId: next, text: 'Answer to C' },
+        ])
+        expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+        expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+          { type: 'turn.completed', turnId: first, status: 'completed' },
+          { type: 'turn.completed', turnId: next, status: 'completed' },
+        ])
+        expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+        expect(logs.filter((line) => line.includes('outside an active turn'))).toEqual([])
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('opens a turn for output that arrives after its own turn ended', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await adapter.steer(thread.id, 'B')
+      // An older CLI sends no interrupt receipt, so nothing says the steer still runs.
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      query.emitMessage(
+        streamEvent('wire-b', {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: 'Answer to B', citations: null },
+        }),
+      )
+      query.emitMessage(streamEvent('wire-b-stop', { type: 'content_block_stop', index: 0 }))
+      await tick()
+      await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+      query.emitMessage(resultMessage(false))
+      await tick()
+
+      const started = events.flatMap((event) =>
+        event.type === 'turn.started' ? [event.turn.id] : [],
+      )
+      expect(started).toHaveLength(2)
+      expect(started[0]).toBe(first)
+      expect(events).toContainEqual({
+        type: 'item.completed',
+        item: expect.objectContaining({ turnId: started[1], text: 'Answer to B' }),
+      })
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'interrupted' },
+        { type: 'turn.completed', turnId: started[1], status: 'completed' },
+      ])
+      await expect(adapter.sendTurn(thread.id, 'C')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('still reports a real error when the stop request itself failed', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -1424,6 +1544,23 @@ function streamEvent(
     session_id: 'session-1',
     parent_tool_use_id: null,
   }
+}
+
+function assistantMessage(id: string, text: string): SDKMessage {
+  // SAFETY: The adapter reads only the envelope, message id, model and content of this fixture.
+  return {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+    message: {
+      id,
+      role: 'assistant',
+      model: 'claude-opus-5',
+      type: 'message',
+      content: [{ type: 'text', text }],
+    },
+  } as unknown as SDKMessage
 }
 
 function resultMessage(isError: boolean): SDKMessage {
