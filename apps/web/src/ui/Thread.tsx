@@ -867,9 +867,10 @@ function shiftPendingScrollIndex(
   virtualizer: Virtualizer<HTMLDivElement, Element>,
   shift: number,
 ): void {
-  const pending = (virtualizer as unknown as { scrollState?: { index: number | null } | null })
-    .scrollState
-  if (pending && pending.index !== null) pending.index += shift
+  // A private field, so read it without claiming a type for the whole instance.
+  const pending: unknown = Reflect.get(virtualizer, 'scrollState')
+  if (typeof pending !== 'object' || pending === null || !('index' in pending)) return
+  if (typeof pending.index === 'number') pending.index += shift
 }
 
 /** A disclosure's row height change, waiting for the runway to commit it. */
