@@ -710,8 +710,20 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           setMode={setMode}
         />
 
+        {/* Mounted for as long as older turns exist: a live region announces
+            changes to its text, not its own arrival. The pills below stay
+            out of the reading. */}
+        {thread.olderCursor ? (
+          <div className="visually-hidden" role="status">
+            {olderPill === 'loading'
+              ? 'Loading earlier messages'
+              : olderPill === 'failed'
+                ? 'Couldn’t load earlier messages'
+                : ''}
+          </div>
+        ) : null}
         {thread.olderCursor && olderPill === 'loading' ? (
-          <div className="thread__older" role="status">
+          <div className="thread__older" aria-hidden>
             <LoaderCircle className="spinner" aria-hidden />
             Loading earlier messages
           </div>

@@ -137,9 +137,11 @@ describe('thread search navigation', () => {
     const view = render(<ThreadSearch {...props} items={items} hasOlder olderStatus="loading" />)
     fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'absent' } })
     expect(screen.getByText('Searching…')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toBe('Searching earlier messages')
 
     view.rerender(<ThreadSearch {...props} items={items} hasOlder olderStatus="failed" />)
     expect(screen.getByText('Failed')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toBe('Couldn’t search earlier messages')
     fireEvent.change(screen.getByLabelText('Find in thread'), { target: { value: 'absen' } })
     expect(onLoadOlder).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Retry searching earlier messages' }))
