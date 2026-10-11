@@ -4,17 +4,18 @@ import { readWorkspaceFile } from './workspace-files.js'
 
 /** Design language of one reference source site, from `style-profiles.json`. */
 export interface ReferenceStyleProfile {
-  theme?: string
-  headingType?: string
-  bodyType?: string
-  typefaceGuess?: string
-  radius?: string
-  density?: string
-  imagery?: string
+  // Each field is optional on its own: a partly malformed site still contributes what it has.
+  theme?: string | undefined
+  headingType?: string | undefined
+  bodyType?: string | undefined
+  typefaceGuess?: string | undefined
+  radius?: string | undefined
+  density?: string | undefined
+  imagery?: string | undefined
   mood: readonly string[]
   /** Entry ids or groups of this site that do not share its design language. */
   outliers: ReadonlySet<string>
-  summary?: string
+  summary?: string | undefined
 }
 
 /** Profiles keyed by {@link referenceSite}. Empty when the library ships none. */
