@@ -51,14 +51,24 @@ to a TypeScript client).
 **Closing a terminal ends its foreground job, not everything it ever started.** node-pty's
 `kill()` only sends the shell SIGHUP; bash and zsh forward it to their jobs, and when the shell
 exits the kernel sends it to the terminal's foreground process group. Before that hangup the
-server reads the foreground group from a shell it forked as a session leader. The group then
-gets a grace period to exit on its own, then SIGTERM, then SIGKILL: three seconds per step when
-a pane or chat closes, shorter steps on server shutdown so it ends inside the desktop's
-three-second force stop. A signal goes out only while every live member of the group is still
-in the closed shell's session, and a job that cannot be stopped is logged instead of failing the
-close. A shell that still ignores SIGHUP after the grace period is SIGKILLed. Closing the pane
-or the chat, and server shutdown, wait for all of this; removing a project starts it without
-waiting.
+server reads the foreground group from a shell it forked as a session leader. A shell still
+running after a grace period is SIGKILLed, and the close is done once the shell is gone. The
+manager then stops the foreground job in the background, so a chat can open a new terminal at
+once: the job gets a grace period to exit on its own, then SIGTERM, then SIGKILL, and a job that
+still cannot be stopped is logged rather than failing anything. On a pane or chat close the
+shell's grace, the job's grace and the wait after SIGTERM are three seconds each, and the wait
+after SIGKILL is one second. Server shutdown waits for every job, under one deadline counted from
+the start of the close: a shell still running is SIGKILLed and jobs get SIGTERM from 0.2 s, jobs
+get SIGKILL at 1.8 s, and the close gives up at 2.1 s. That keeps the last SIGKILL inside the
+desktop's three-second force stop, and leaves most of the time to SIGTERM, on which servers that
+reload on SIGHUP (gunicorn, nginx, postgres) shut down cleanly. Closing or deleting a chat,
+removing a project's chats and discarding a worktree wait only for the shells; a project's own
+terminal is closed without waiting.
+
+Before each signal the group is listed again. On Linux the job is only signalled while every live
+member is still in the closed shell's session, which keeps a recycled group id from being
+signalled. macOS `ps` prints 0 as every process's session, so there that re-check guards nothing
+and only the shell's session-leader check holds.
 
 Only processes outside the foreground group survive. A job put in the background from the
 interactive prompt gets its own group through job control and stays the shell's business, as in
@@ -72,7 +82,8 @@ not yet tried on Windows).
 
 _Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs that
 a terminal emulator leaves running. SIGTERM straight after the hangup: it cut off jobs that need
-more than a moment to shut down cleanly.
+more than a moment to shut down cleanly. Waiting for the job in the close itself: closing a chat
+took up to nine seconds and its terminal could not be reopened meanwhile.
 
 ---
 
