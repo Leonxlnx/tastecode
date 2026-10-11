@@ -23,26 +23,32 @@ export function useOlderHistory(
   loadOlderRef.current = onLoadOlderHistory
   const loadCompleteRef = useRef(onLoadCompleteHistory)
   loadCompleteRef.current = onLoadCompleteHistory
-  const loadOlder = useCallback((turnLimit?: number): Promise<boolean> => {
-    const threadId = threadIdRef.current
-    const load = loadOlderRef.current
-    if (!threadId || !load) return Promise.resolve(false)
-    if (olderRead.current?.threadId === threadId) return olderRead.current.read
-    olderFailed.current = false
-    setStatus('loading')
-    const read = load(threadId, turnLimit).then(
-      () => true,
-      () => false,
-    )
-    olderRead.current = { threadId, read }
-    void read.then((loaded) => {
-      if (olderRead.current?.read !== read) return
-      olderRead.current = undefined
-      olderFailed.current = !loaded
-      if (threadIdRef.current === threadId) setStatus(loaded ? 'idle' : 'failed')
-    })
-    return read
-  }, [])
+  const loadOlder = useCallback(
+    (turnLimit?: number): Promise<boolean> => {
+      const threadId = threadIdRef.current
+      const load = loadOlderRef.current
+      if (!threadId || !load) return Promise.resolve(false)
+      if (olderRead.current?.threadId === threadId) return olderRead.current.read
+      olderFailed.current = false
+      setStatus('loading')
+      const cursor = frameStore.getStructureSnapshot().olderCursor
+      const read = load(threadId, turnLimit).then(
+        // A read that leaves the same cursor behind would only be asked again,
+        // by the next scroll or fill, forever.
+        () => frameStore.getStructureSnapshot().olderCursor !== cursor,
+        () => false,
+      )
+      olderRead.current = { threadId, read }
+      void read.then((loaded) => {
+        if (olderRead.current?.read !== read) return
+        olderRead.current = undefined
+        olderFailed.current = !loaded
+        if (threadIdRef.current === threadId) setStatus(loaded ? 'idle' : 'failed')
+      })
+      return read
+    },
+    [frameStore],
+  )
 
   const [completeStatus, setCompleteStatus] = useState<OlderHistoryStatus>('idle')
   const completeRead = useRef<{ threadId: string; abort: AbortController } | undefined>(undefined)
