@@ -2120,6 +2120,19 @@ export class Orchestrator {
   ): Promise<HistoryPage> {
     const before =
       request.before === undefined ? undefined : decodeHistoryCursor(threadId, request.before)
+    if (before) {
+      await this.#restoringThreads.get(threadId)
+      this.#touchThreadRuntime(threadId)
+      // Older pages come from the replay that issued the cursor while it is
+      // still saved. Appended events, a streaming turn's deltas included,
+      // reach older rows only as late updates the client already received
+      // live; reading the current replay instead would flush, re-compact and
+      // re-save the whole thread for every page.
+      const issued = this.#store.providerHistoryChangedAfter(threadId, before.seq)
+        ? undefined
+        : this.#store.replaySnapshotAt(threadId, before.seq)
+      if (issued) return readHistoryPage(threadId, issued, { before, turnLimit: request.turnLimit })
+    }
     const { events } = await this.#readHistory(threadId, 0)
     return readHistoryPage(threadId, events, {
       before,
