@@ -886,7 +886,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         models.push(compatibilityModel)
       }
     }
-    const preferred = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
+    // Codex's own catalog priority (codex-cli 0.154). Unlisted rows keep their
+    // model/list order after these, and the legacy fallback stays last.
+    const preferred = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
     return models.sort((left, right) => {
       const leftRank = preferred.indexOf(left.id)
       const rightRank = preferred.indexOf(right.id)
