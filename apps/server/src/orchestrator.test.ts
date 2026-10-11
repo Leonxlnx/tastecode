@@ -48,6 +48,7 @@ import {
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { StartupCleanupError } from './provider-session.js'
+import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
 import * as checkpoint from './checkpoint.js'
 import { beginOptimisticTurn, emptyThread, reduceEventLog } from '../../web/src/thread-store.js'
@@ -2087,6 +2088,37 @@ describe('history replay', () => {
       expect(save).not.toHaveBeenCalled()
       expect(history).not.toHaveBeenCalled()
       await orchestrator.disposeAll()
+    })
+
+    it('keeps a replay that read past an unreadable newest row for warm opens', async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-unreadable-tail-'))
+      const database = path.join(directory, 'state.db')
+      const store = new Store(database)
+      try {
+        const { orchestrator } = harness(undefined, store)
+        const thread = await orchestrator.startThread('codex', '/repo')
+        for (let index = 0; index < 3; index += 1) appendTurn(store, thread.id, index)
+        const readable = store.lastSeq(thread.id)
+        // A row a newer build wrote: stored, counted, but skipped by history.
+        const raw = new DatabaseSync(database)
+        raw
+          .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+          .run(thread.id, 4, 'not json at all')
+        raw.close()
+        expect(store.lastSeq(thread.id)).toBeGreaterThan(readable)
+
+        const save = vi.spyOn(store, 'saveReplaySnapshot')
+        const opened = await orchestrator.history(thread.id)
+        const newest = await orchestrator.historyPage(thread.id, { turnLimit: 2 })
+        expect(await orchestrator.history(thread.id)).toEqual(opened)
+        expect(save).toHaveBeenCalledTimes(1)
+        expect(newest.page.snapshotSeq).toBe(readable)
+        expect(turnIds(newest.events)).toEqual(['turn-1', 'turn-2'])
+        await orchestrator.disposeAll()
+      } finally {
+        store.close()
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
 
     it('restarts older pages when imported turns arrive after the cursor', async () => {
