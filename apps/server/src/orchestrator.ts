@@ -2905,8 +2905,10 @@ export class Orchestrator {
     // that window used to hit an idle adapter and disappear, after which the
     // turn started anyway. Wait until the adapter has accepted or rejected
     // the start, then deliver the interrupt against its real active turn.
+    // A Design phase hand-off starts its turn without that barrier.
     const barrier = this.#turnStartBarriers.get(threadId)?.done
     await barrier
+    await this.#designProviderStarts.get(threadId)?.catch(() => undefined)
     const entry = this.#threads.get(threadId)
     if (entry) await entry.session.interrupt(threadId)
   }
