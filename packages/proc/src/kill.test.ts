@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import { killTree, spawnCli, spawnOwned } from './index.js'
+import { killProcessGroup, killTree, spawnCli, spawnOwned } from './index.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -132,5 +132,17 @@ describe('owned process tree termination', () => {
     const child = { pid: undefined, exitCode: null, signalCode: null, kill }
     await killTree(child)
     expect(kill).toHaveBeenCalledTimes(1)
+  })
+
+  it('never signals every process or its own group', async () => {
+    const signal = vi.spyOn(process, 'kill')
+    try {
+      for (const group of [-1, 0, 1, Number.NaN]) {
+        await expect(killProcessGroup(group)).rejects.toThrow(/Refusing to signal/)
+      }
+      expect(signal).not.toHaveBeenCalled()
+    } finally {
+      signal.mockRestore()
+    }
   })
 })
