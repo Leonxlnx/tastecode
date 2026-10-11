@@ -7,6 +7,8 @@ import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { killProcessGroup } from '@harness/proc/kill'
 
 const DEFAULT_CLOSE_TIMEOUT_MS = 10_000
+// Long enough for a shell to save its history on SIGHUP.
+const HANGUP_GRACE_MS = 500
 const DEFAULT_OUTPUT_BATCH_DELAY_MS = 4
 const DEFAULT_OUTPUT_BATCH_SIZE = 64 * 1024
 const RETAINED_OUTPUT_SIZE = 200_000
@@ -310,6 +312,7 @@ export class TerminalManager {
     // Kill first. If node-pty rejects the request synchronously, the terminal
     // remains attached and a later close can retry instead of losing it.
     entry.process.kill()
+    if (shell) this.#killIfHangupIgnored(entry)
     this.#byId.delete(terminalId)
     // Only unmap the key if it still points at this terminal — closing a
     // stale id must not orphan a newer pty spawned under the same key.
@@ -338,6 +341,25 @@ export class TerminalManager {
       this.#forgetClosing(terminalId, entry.threadId, closing),
     )
     return closing
+  }
+
+  /**
+   * A shell that ignores SIGHUP would keep its PTY and job alive and fail the
+   * close at its timeout; a closed terminal emulator would at least have
+   * hung up its line. End it once the grace period has passed.
+   */
+  #killIfHangupIgnored(entry: TerminalEntry): void {
+    const timer = setTimeout(() => {
+      // Ask again: a pid that is no longer our session leader is not ours to kill.
+      if (!this.#ownedShell(entry.process.pid)) return
+      try {
+        entry.process.kill('SIGKILL')
+      } catch {
+        // The exit, or the bounded close timeout, reports the outcome.
+      }
+    }, HANGUP_GRACE_MS)
+    timer.unref()
+    void entry.exited.then(() => clearTimeout(timer))
   }
 
   /** The shell behind a PTY, only when this server forked it as a session leader. */
