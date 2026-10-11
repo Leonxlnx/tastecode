@@ -46,6 +46,7 @@ import {
 } from './provider-context.js'
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
 import {
   DESIGN_PHASE_NOTICE,
   RESTORE_CONTEXT_NOTICE,
@@ -2128,6 +2129,24 @@ export class Orchestrator {
   /** Preserve fresh snapshot JSON so the server does not encode a long replay twice. */
   async historyForResponse(threadId: string, afterSeq = 0): Promise<HistoryRead> {
     return this.#readHistory(threadId, afterSeq)
+  }
+
+  /** Newest whole turns first; `before` walks back through the same compact replay. */
+  async historyPage(
+    threadId: string,
+    request: { before?: string | undefined; turnLimit?: number | undefined },
+  ): Promise<HistoryPage> {
+    const before =
+      request.before === undefined ? undefined : decodeHistoryCursor(threadId, request.before)
+    const { events } = await this.#readHistory(threadId, 0)
+    return readHistoryPage(threadId, events, {
+      before,
+      turnLimit: request.turnLimit,
+      // Truncation or a provider rewrite since the cursor was issued may have
+      // moved turns across its boundary; the client restarts from the newest page.
+      isStale: (cursor, snapshotSeq) =>
+        cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
+    })
   }
 
   async #readHistory(threadId: string, afterSeq: number): Promise<HistoryRead> {
