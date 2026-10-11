@@ -1226,6 +1226,99 @@ describe('Claude Agent SDK session', () => {
     },
   )
 
+  it.each(['without Stop', 'with Stop after the steer started'] as const)(
+    'keeps a steered turn open until the steer has run (%s)',
+    async (variant) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+        query.emitMessage(initMessage(['interrupt_receipt_v1', 'msg_lifecycle_v1']))
+        const first = await adapter.sendTurn(thread.id, 'A')
+        const prompt = (await prompts.next()).value!
+        await adapter.steer(thread.id, 'B')
+        const steer = (await prompts.next()).value!
+        // Captured order: the steer cuts run A short, and A's result comes before A's cancel
+        // and before the steer starts. A Stop sent after that start finds nothing queued.
+        query.emitMessage(lifecycle(steer.uuid!, 'queued'))
+        query.emitMessage(assistantMessage('message-a', 'Story'))
+        query.emitMessage(resultMessage(false))
+        query.emitMessage(lifecycle(prompt.uuid!, 'cancelled'))
+        query.emitMessage(lifecycle(steer.uuid!, 'started'))
+        await tick()
+        await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+        if (variant === 'without Stop') {
+          query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+          query.emitMessage(resultMessage(false))
+        } else {
+          query.stillQueued = []
+          await adapter.interrupt()
+          query.emitMessage({
+            ...(resultMessage(true) as object),
+            errors: ['aborted'],
+          } as SDKMessage)
+        }
+        query.emitMessage(lifecycle(steer.uuid!, 'completed'))
+        await tick()
+        const next = await adapter.sendTurn(thread.id, 'C')
+        query.emitMessage(assistantMessage('message-c', 'Answer to C'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+
+        expect(messageTexts(events)).toEqual([
+          { turnId: first, text: 'Story' },
+          ...(variant === 'without Stop' ? [{ turnId: first, text: 'Answer to B' }] : []),
+          { turnId: next, text: 'Answer to C' },
+        ])
+        expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+        expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+          {
+            type: 'turn.completed',
+            turnId: first,
+            status: variant === 'without Stop' ? 'completed' : 'interrupted',
+          },
+          { type: 'turn.completed', turnId: next, status: 'completed' },
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('ends a held turn when its waiting steer is cancelled without a run', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+      query.emitMessage(initMessage(['msg_lifecycle_v1']))
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await prompts.next()
+      await adapter.steer(thread.id, 'B')
+      const steer = (await prompts.next()).value!
+      query.emitMessage(lifecycle(steer.uuid!, 'queued'))
+      query.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([])
+
+      query.emitMessage(lifecycle(steer.uuid!, 'cancelled'))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'completed' },
+      ])
+      await expect(adapter.sendTurn(thread.id, 'C')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('opens a turn for output that arrives after its own turn ended', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -1588,4 +1681,35 @@ function resultMessage(isError: boolean): SDKMessage {
     uuid: crypto.randomUUID(),
     session_id: 'session-1',
   } as SDKMessage
+}
+
+function initMessage(capabilities: string[]): SDKMessage {
+  // SAFETY: The adapter reads only the model, version and capabilities of this fixture.
+  return {
+    type: 'system',
+    subtype: 'init',
+    model: 'claude-opus-5',
+    capabilities,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+  } as unknown as SDKMessage
+}
+
+/** Captured from claude 2.1.296; the SDK's message union does not declare this type. */
+function lifecycle(commandUuid: string, state: string): SDKMessage {
+  return {
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+  } as unknown as SDKMessage
+}
+
+function messageTexts(events: DomainEvent[]) {
+  return events.flatMap((event) =>
+    event.type === 'item.completed' && event.item.type === 'message'
+      ? [{ turnId: event.item.turnId, text: event.item.text }]
+      : [],
+  )
 }
