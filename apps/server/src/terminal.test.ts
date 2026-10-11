@@ -276,23 +276,19 @@ describe('TerminalManager', () => {
   it('keeps a closing chat and shutdown waiting until the foreground job stops', async () => {
     const pty = controlledPty({ pid: 4100 })
     let jobRunning = true
-    const jobControl = {
-      members: vi.fn(() => Promise.resolve(jobRunning ? [jobMember] : [])),
+    const processes = fakeProcesses({
+      list: vi.fn(() => Promise.resolve(jobRunning ? [jobMember] : [])),
       signal: vi.fn(),
-    }
+    })
     const manager = new TerminalManager(
       { onOutput: () => {}, onExit: () => {} },
-      {
-        spawnPty: () => pty,
-        inspectShell: (pid) => ownShell(pid),
-        jobControl,
-      },
+      { spawnPty: () => pty, processes },
     )
     const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
     const settled: string[] = []
     const closed = manager.close(terminalId).then(() => settled.push('close'))
     pty.emitExit(0)
-    await vi.waitFor(() => expect(jobControl.members).toHaveBeenCalledWith(4242))
+    await vi.waitFor(() => expect(processes.list).toHaveBeenCalled())
     const threadClosed = manager.closeThread('thread-job').then(() => settled.push('thread'))
     const shutdown = manager.closeAll().then(() => settled.push('shutdown'))
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -302,7 +298,7 @@ describe('TerminalManager', () => {
     jobRunning = false
     await Promise.all([closed, threadClosed, shutdown])
     expect(settled.sort()).toEqual(['close', 'shutdown', 'thread'])
-    expect(jobControl.signal).not.toHaveBeenCalled()
+    expect(processes.signal).not.toHaveBeenCalled()
   })
 
   it('never signals a group named by a process this server did not fork', async () => {
@@ -313,22 +309,23 @@ describe('TerminalManager', () => {
       ownShell(4100, 1),
       ownShell(4100, -1),
     ]
-    const jobControl = {
-      members: vi.fn(() => Promise.resolve([jobMember])),
-      signal: vi.fn(),
-    }
+    const list = vi.fn(() => Promise.resolve([jobMember]))
+    const signal = vi.fn()
     for (const report of reports) {
       const pty = controlledPty({ pid: 4100 })
       const manager = new TerminalManager(
         { onOutput: () => {}, onExit: () => {} },
-        { spawnPty: () => pty, inspectShell: () => report, jobControl },
+        {
+          spawnPty: () => pty,
+          processes: fakeProcesses({ inspect: () => [report], list, signal }),
+        },
       )
       const closed = manager.close(manager.open('thread-foreign', os.tmpdir(), 80, 24))
       pty.emitExit(0)
       await closed
     }
-    expect(jobControl.members).not.toHaveBeenCalled()
-    expect(jobControl.signal).not.toHaveBeenCalled()
+    expect(list).not.toHaveBeenCalled()
+    expect(signal).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -343,11 +340,10 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => pty,
-          inspectShell: (pid) => ownShell(pid),
-          jobControl: {
-            members: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
+          processes: fakeProcesses({
+            list: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
             signal: (group, signal) => signals.push(group === 4242 ? signal : `${group}:${signal}`),
-          },
+          }),
         },
       )
       const terminalId = manager.open('thread-slow', os.tmpdir(), 80, 24)
@@ -378,11 +374,10 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => pty,
-          inspectShell: (pid) => ownShell(pid),
-          jobControl: {
-            members: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
+          processes: fakeProcesses({
+            list: () => Promise.resolve(signals.includes('SIGKILL') ? [] : [jobMember]),
             signal: (_group, signal) => signals.push(signal),
-          },
+          }),
         },
       )
       const closed = manager.close(manager.open('thread-slow', os.tmpdir(), 80, 24))
@@ -407,23 +402,23 @@ describe('TerminalManager', () => {
     try {
       const logs: string[] = []
       const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
-      const jobControl = {
+      const processes = fakeProcesses({
         // The job's group id was recycled: a stranger joined it.
-        members: vi.fn(() =>
-          Promise.resolve([jobMember, { pid: 5000, session: '4900', zombie: false }]),
+        list: vi.fn(() =>
+          Promise.resolve([jobMember, { ...jobMember, pid: 5000, session: '4900' }]),
         ),
         signal: vi.fn(),
-      }
+      })
       const manager = new TerminalManager(
         { onOutput: () => {}, onExit: () => {}, onLog: (line) => logs.push(line) },
-        { spawnPty: () => pty, inspectShell: (pid) => ownShell(pid), jobControl },
+        { spawnPty: () => pty, processes },
       )
       const closed = manager.close(manager.open('thread-recycled', os.tmpdir(), 80, 24))
 
       await vi.advanceTimersByTimeAsync(10_000)
       await closed
-      expect(jobControl.members).toHaveBeenCalledWith(4242)
-      expect(jobControl.signal).not.toHaveBeenCalled()
+      expect(processes.list).toHaveBeenCalled()
+      expect(processes.signal).not.toHaveBeenCalled()
       expect(logs).toEqual([expect.stringMatching(/left job 4242 .*another session/)])
     } finally {
       vi.useRealTimers()
@@ -433,22 +428,23 @@ describe('TerminalManager', () => {
   it.each([
     {
       problem: 'a member it may not signal',
-      jobControl: () => ({
-        members: () => Promise.resolve([jobMember]),
-        signal: () => {
-          throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
-        },
-      }),
+      processes: () =>
+        fakeProcesses({
+          list: () => Promise.resolve([jobMember]),
+          signal: () => {
+            throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+          },
+        }),
       log: /could not stop job 4242 .*EPERM/,
     },
     {
       problem: 'a member that survives SIGKILL',
-      jobControl: () => ({ members: () => Promise.resolve([jobMember]), signal: () => {} }),
+      processes: () => fakeProcesses({ list: () => Promise.resolve([jobMember]) }),
       log: /left job 4242 .*survived SIGKILL/,
     },
     {
       problem: 'members it cannot list',
-      jobControl: () => ({ members: () => Promise.resolve(undefined), signal: () => {} }),
+      processes: () => fakeProcesses({ list: () => Promise.resolve(undefined) }),
       log: /left job 4242 .*could not be listed/,
     },
   ])('logs instead of failing a close whose job has $problem', async (test) => {
@@ -460,8 +456,7 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {}, onLog: (line) => logs.push(line) },
         {
           spawnPty: () => pty,
-          inspectShell: (pid) => ownShell(pid),
-          jobControl: test.jobControl(),
+          processes: test.processes(),
         },
       )
       const closed = manager.close(manager.open('thread-stuck', os.tmpdir(), 80, 24))
@@ -497,11 +492,13 @@ describe('TerminalManager', () => {
         { onOutput: () => {}, onExit: () => {} },
         {
           spawnPty: () => ptys.shift()!,
-          inspectShell: (pid) => ({
-            ...ownShell(pid, pid),
-            parent: pid === 4300 ? process.pid + 1 : process.pid,
+          processes: fakeProcesses({
+            inspect: (pids) =>
+              pids.map((pid) => ({
+                ...ownShell(pid, pid),
+                parent: pid === 4300 ? process.pid + 1 : process.pid,
+              })),
           }),
-          jobControl: { members: () => Promise.resolve([]), signal: () => {} },
         },
       )
       const ids = ['a', 'b', 'c'].map((key) => manager.open(`thread-${key}`, os.tmpdir(), 80, 24))
@@ -862,13 +859,44 @@ it('closing a stale terminal id does not unmap a newer pty under the same key', 
   }
 }, 15_000)
 
+type Processes = NonNullable<
+  NonNullable<ConstructorParameters<typeof TerminalManager>[1]>['processes']
+>
+type ProcessRow = ReturnType<Processes['inspect']>[number]
+
+/** A process table in which every inspected pid is a shell this server forked. */
+function fakeProcesses(table: Partial<Processes> = {}): Processes {
+  return {
+    inspect: (pids) => pids.map((pid) => ownShell(pid)),
+    list: () => Promise.resolve([]),
+    signal: () => {},
+    ...table,
+  }
+}
+
 /** What ps reports for a shell this server forked, with `foreground` holding its terminal. */
-function ownShell(pid: number, foreground = 4242) {
-  return { parent: process.pid, group: pid, foreground, session: String(pid), leader: true }
+function ownShell(pid: number, foreground = 4242): ProcessRow {
+  return {
+    pid,
+    parent: process.pid,
+    group: pid,
+    foreground,
+    session: String(pid),
+    leader: true,
+    zombie: false,
+  }
 }
 
 /** A live process in the job that the fake shell with pid 4100 leaves behind. */
-const jobMember = { pid: 4243, session: '4100', zombie: false }
+const jobMember: ProcessRow = {
+  pid: 4243,
+  parent: 1,
+  group: 4242,
+  foreground: -1,
+  session: '4100',
+  leader: false,
+  zombie: false,
+}
 
 function removeTemporaryDirectory(directory: string): void {
   rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })

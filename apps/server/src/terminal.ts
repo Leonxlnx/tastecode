@@ -29,34 +29,40 @@ export type TerminalStatus = {
 }
 type SpawnPty = typeof NodePtySpawn
 /**
- * A POSIX shell's parent, own process group, its terminal's foreground group,
- * its session as `ps` prints it, and whether it leads that session.
+ * One POSIX process as `ps` reports it: its parent, process group, its
+ * terminal's foreground group, its session, whether it leads that session, and
+ * whether it has exited and only waits to be reaped.
  */
-type ShellProcess = {
+type ProcessRow = {
+  pid: number
   parent: number
   group: number
   foreground: number
+  /** Not every ps prints the session as its leader's pid: only ever compared. */
   session: string
   leader: boolean
+  zombie: boolean
 }
-type InspectShell = (pid: number) => ShellProcess | undefined
+/** Reads and signals POSIX processes; injectable so tests need no real job. */
+type Processes = {
+  /**
+   * These processes, read synchronously: a close has to learn which job holds
+   * the terminal before node-pty hangs it up.
+   */
+  inspect(pids: number[]): ProcessRow[]
+  /** Every process, or undefined when they cannot be listed. */
+  list(): Promise<ProcessRow[] | undefined>
+  signal(group: number, signal: NodeJS.Signals): void
+}
 type CloseStep = keyof typeof CLOSE_STEPS
 /** The foreground process group of a closed shell, and that shell's session. */
 type Job = { group: number; session: string }
-type GroupMember = { pid: number; session: string; zombie: boolean }
 type JobState = 'ended' | 'running' | 'foreign' | 'unreadable'
 const JOB_LEFT = {
   running: 'it survived SIGKILL',
   foreign: 'its group now holds another session',
   unreadable: 'its processes could not be listed',
 } satisfies Record<Exclude<JobState, 'ended'>, string>
-/** Reads and signals POSIX process groups; injectable so tests need no real job. */
-type JobControl = {
-  /** The group's members, or undefined when they cannot be read. */
-  members(group: number): Promise<GroupMember[] | undefined>
-  signal(group: number, signal: NodeJS.Signals): void
-}
-
 const execFileAsync = promisify(execFile)
 
 const require = createRequire(import.meta.url)
@@ -175,8 +181,7 @@ export class TerminalManager {
   #onExit: (terminalId: string, exitCode: number | null) => void
   #onLog: (message: string) => void
   #spawnPty: SpawnPty
-  #inspectShell: InspectShell
-  #jobControl: JobControl
+  #processes: Processes
   #closeTimeoutMs: number
   readonly #outputScheduler = new TerminalOutputScheduler()
   #status = new Map<string, TerminalStatus & { finishedAt?: number }>()
@@ -189,8 +194,7 @@ export class TerminalManager {
     },
     options: {
       spawnPty?: SpawnPty
-      inspectShell?: InspectShell
-      jobControl?: JobControl
+      processes?: Processes
       closeTimeoutMs?: number
     } = {},
   ) {
@@ -198,8 +202,7 @@ export class TerminalManager {
     this.#onExit = handlers.onExit
     this.#onLog = handlers.onLog ?? (() => {})
     this.#spawnPty = options.spawnPty ?? spawnPty
-    this.#inspectShell = options.inspectShell ?? inspectShell
-    this.#jobControl = options.jobControl ?? processGroups
+    this.#processes = options.processes ?? processTable
     this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS
   }
 
@@ -415,11 +418,11 @@ export class TerminalManager {
     try {
       let state = await this.#awaitJob(job, 'hangup')
       if (state === 'running') {
-        this.#jobControl.signal(job.group, 'SIGTERM')
+        this.#processes.signal(job.group, 'SIGTERM')
         state = await this.#awaitJob(job, 'terminate')
       }
       if (state === 'running') {
-        this.#jobControl.signal(job.group, 'SIGKILL')
+        this.#processes.signal(job.group, 'SIGKILL')
         state = await this.#awaitJob(job, 'kill')
       }
       if (state !== 'ended') {
@@ -441,8 +444,8 @@ export class TerminalManager {
     while (true) {
       // Members that exited stay in the group as zombies until their new
       // parent reaps them, which a container's pid 1 may do only lazily.
-      const members = (await this.#jobControl.members(job.group))?.filter(
-        (member) => !member.zombie,
+      const members = (await this.#processes.list())?.filter(
+        (row) => row.group === job.group && !row.zombie,
       )
       // A group that cannot be read is not escalated blindly.
       if (!members) return 'unreadable'
@@ -471,8 +474,8 @@ export class TerminalManager {
   }
 
   /** The shell behind a PTY, only when this server forked it as a session leader. */
-  #ownedShell(pid: number): ShellProcess | undefined {
-    const shell = this.#inspectShell(pid)
+  #ownedShell(pid: number): ProcessRow | undefined {
+    const shell = this.#processes.inspect([pid]).find((row) => row.pid === pid)
     // A stale or foreign pid must never become authority to signal a group.
     return shell?.leader && shell.parent === globalThis.process.pid && shell.group === pid
       ? shell
@@ -568,31 +571,34 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-const processGroups: JobControl = {
-  async members(group) {
+// One -o per column: BSD ps on macOS takes everything after the first `=` as
+// that column's header, so `-o pid=,ppid=` would print one column.
+const PS_COLUMNS = ['pid=', 'ppid=', 'pgid=', 'tpgid=', 'sess=', 'stat='].flatMap((column) => [
+  '-o',
+  column,
+])
+
+/**
+ * Windows has no process groups to escalate: closing a ConPTY makes node-pty
+ * terminate every process attached to that console.
+ */
+const processTable: Processes = {
+  inspect(pids) {
+    if (globalThis.process.platform === 'win32' || pids.length === 0) return []
+    const result = spawnSync('ps', [...PS_COLUMNS, '-p', pids.join(',')], {
+      encoding: 'utf8',
+      timeout: 1_000,
+    })
+    return result.error ? [] : processRows(result.stdout)
+  },
+  async list() {
     try {
-      globalThis.process.kill(-group, 0)
-    } catch (error) {
-      if (errorCode(error) === 'ESRCH') return []
-    }
-    try {
-      // One -o per column: BSD ps on macOS takes everything after the first
-      // `=` as that column's header.
-      const { stdout } = await execFileAsync(
-        'ps',
-        ['-A', '-o', 'pid=', '-o', 'pgid=', '-o', 'sess=', '-o', 'stat='],
-        {
-          encoding: 'utf8',
-          timeout: 1_000,
-          maxBuffer: 4 * 1024 * 1024,
-        },
-      )
-      return stdout.split('\n').flatMap((line) => {
-        const row = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\S+)/.exec(line)
-        return row && Number(row[2]) === group
-          ? [{ pid: Number(row[1]), session: row[3]!, zombie: row[4]!.startsWith('Z') }]
-          : []
+      const { stdout } = await execFileAsync('ps', ['-A', ...PS_COLUMNS], {
+        encoding: 'utf8',
+        timeout: 1_000,
+        maxBuffer: 4 * 1024 * 1024,
       })
+      return processRows(stdout)
     } catch {
       return undefined
     }
@@ -606,6 +612,27 @@ const processGroups: JobControl = {
   },
 }
 
+function processRows(stdout: string): ProcessRow[] {
+  return stdout.split('\n').flatMap((line) => {
+    const fields = line.trim().split(/\s+/)
+    if (fields.length !== 6) return []
+    const [pid, parent, group, foreground] = fields.slice(0, 4).map(Number)
+    const [session = '', state = ''] = fields.slice(4)
+    if (![pid, parent, group, foreground].every(Number.isInteger)) return []
+    return [
+      {
+        pid: pid!,
+        parent: parent!,
+        group: group!,
+        foreground: foreground!,
+        session,
+        leader: state.includes('s'),
+        zombie: state.startsWith('Z'),
+      },
+    ]
+  })
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -616,32 +643,6 @@ function errorCode(error: unknown): unknown {
 
 function isFolder(folder: string): boolean {
   return statSync(folder, { throwIfNoEntry: false })?.isDirectory() ?? false
-}
-
-/**
- * Read a shell's parent, process group, terminal foreground group and session.
- *
- * Windows has no process groups to escalate: closing a ConPTY makes node-pty
- * terminate every process attached to that console.
- */
-function inspectShell(pid: number): ShellProcess | undefined {
-  if (globalThis.process.platform === 'win32') return undefined
-  // One -o per column: BSD ps on macOS takes everything after the first `=`
-  // as that column's header, so `-o ppid=,pgid=` would print one column.
-  const result = spawnSync(
-    'ps',
-    ['-o', 'ppid=', '-o', 'pgid=', '-o', 'tpgid=', '-o', 'sess=', '-o', 'stat=', '-p', String(pid)],
-    { encoding: 'utf8', timeout: 1_000 },
-  )
-  if (result.error || result.status !== 0) return undefined
-  const fields = result.stdout.trim().split(/\s+/)
-  if (fields.length !== 5) return undefined
-  const [parent, group, foreground] = fields.slice(0, 3).map(Number) as [number, number, number]
-  if (![parent, group, foreground].every(Number.isInteger)) return undefined
-  // Not every ps prints the session as its leader's pid, so it is only ever
-  // compared, never parsed.
-  const [session, state] = fields.slice(3) as [string, string]
-  return { parent, group, foreground, session, leader: state.includes('s') }
 }
 
 export function platformShell(
