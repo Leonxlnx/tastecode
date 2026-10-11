@@ -621,7 +621,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#starting) return this.#starting
     const generation = this.#startupGeneration
     this.#starting = (async () => {
-      await this.#processStop
+      await this.#settleProcessStop()
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (generation !== this.#startupGeneration) throw new Error('Codex startup was cancelled')
         try {
@@ -683,7 +683,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       )
     } catch (error) {
       this.#processStop = Promise.resolve(rpc.dispose())
-      await this.#processStop
+      await this.#settleProcessStop()
       if (this.#rpc === rpc) this.#rpc = undefined
       throw error
     }
@@ -692,6 +692,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
     this.#started = true
     this.#restartNeeded = false
+  }
+
+  /** A process that refused to stop is reported once, never left to block every restart. */
+  async #settleProcessStop(): Promise<void> {
+    const stopping = this.#processStop
+    try {
+      await stopping
+    } catch (cause) {
+      this.emit(
+        'log',
+        `Previous Codex process did not stop: ${cause instanceof Error ? cause.message : String(cause)}`,
+      )
+      if (this.#processStop === stopping) this.#processStop = Promise.resolve()
+    }
   }
 
   #onFailure(rpc: CodexRpc, error: Error): void {
