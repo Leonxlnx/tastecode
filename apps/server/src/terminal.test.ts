@@ -519,6 +519,7 @@ describe('TerminalManager', () => {
       let startedAt = 0
       let listing = 0
       let mostListings = 0
+      let listings = 0
       const ptys = Array.from({ length: count }, (_, index) => {
         const pty = controlledPty({
           pid: 4100 + index,
@@ -549,6 +550,7 @@ describe('TerminalManager', () => {
             list: () =>
               new Promise((resolve) => {
                 listing += 1
+                listings += 1
                 mostListings = Math.max(mostListings, listing)
                 setTimeout(() => {
                   listing -= 1
@@ -583,10 +585,64 @@ describe('TerminalManager', () => {
       expect(finished).toBe(true)
       expect(jobKilledAt.size).toBe(count)
       expect(Math.max(...jobKilledAt.values())).toBeLessThanOrEqual(2_200)
-      // One ps for every shell, then listings that every poll shares.
+      // One ps for every shell. After that, each job's first poll after its
+      // own SIGTERM or SIGKILL needs a listing begun after that signal, and
+      // every other poll shares one. Listing on every poll would take nearly
+      // three times as many.
       expect(inspect).toHaveBeenCalledOnce()
       expect(Math.max(...shellKilledAt)).toBeLessThanOrEqual(400)
-      expect(mostListings).toBe(1)
+      expect(mostListings).toBe(count)
+      expect(listings).toBeLessThanOrEqual(30)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never judges a signal by a listing begun before it in the same millisecond', async () => {
+    vi.useFakeTimers()
+    try {
+      const killedAt = new Map<number, number>()
+      const ptys = [4100, 4200].map((pid) => {
+        const pty = controlledPty({ pid, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+        return pty
+      })
+      // Two jobs that only SIGKILL ends, read by a ps that takes 50 ms and
+      // shows the processes as they were when it started.
+      const jobs = ptys.map(({ pid }) => ({
+        ...jobMember,
+        pid: pid + 1_001,
+        group: pid + 1_000,
+        session: String(pid),
+      }))
+      const spawned = [...ptys]
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        {
+          spawnPty: () => spawned.shift()!,
+          processes: fakeProcesses({
+            inspect: (pids) => pids.map((pid) => ownShell(pid, pid + 1_000)),
+            list: () => {
+              const rows = jobs.filter((job) => !killedAt.has(job.group))
+              return new Promise((resolve) => setTimeout(() => resolve(rows), 50))
+            },
+            signal: (group, signal) => {
+              if (signal === 'SIGKILL') killedAt.set(group, Date.now())
+            },
+          }),
+        },
+      )
+      manager.open('thread-a', os.tmpdir(), 80, 24)
+      manager.open('thread-b', os.tmpdir(), 80, 24)
+      let finishedAt: number | undefined
+      void manager.closeAll().then(() => (finishedAt = Date.now()))
+
+      await vi.advanceTimersByTimeAsync(2_500)
+      // Both SIGKILLs go out in the same millisecond, the second after the
+      // first job's listing began. That listing still shows the second job,
+      // so judging by it would cost the second job another poll.
+      expect(killedAt.size).toBe(2)
+      expect(new Set(killedAt.values()).size).toBe(1)
+      expect(finishedAt! - Math.max(...killedAt.values())).toBeLessThanOrEqual(50)
     } finally {
       vi.useRealTimers()
     }
