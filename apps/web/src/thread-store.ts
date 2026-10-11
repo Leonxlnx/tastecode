@@ -875,8 +875,18 @@ export function prependOlderHistory(
   entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
   olderCursor: string | null,
 ): ThreadState {
-  const current = settleLiveItems(state)
-  const older = reduceEventLog(emptyThread, entries)
+  return prependHistoryRows(
+    settleLiveItems(state),
+    reduceEventLog(emptyThread, entries),
+    olderCursor,
+  )
+}
+
+function prependHistoryRows(
+  current: ThreadState,
+  older: ThreadState,
+  olderCursor: string | null,
+): ThreadState {
   const rows = older.items.filter((item) => itemIndex(current.items, item.id) < 0)
   const next: ThreadState = {
     ...current,
