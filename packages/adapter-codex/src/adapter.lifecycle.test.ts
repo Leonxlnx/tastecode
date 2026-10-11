@@ -142,7 +142,16 @@ function question(remote: ReturnType<typeof peer>, rpcId: number | string, itemI
       threadId: 'thread-1',
       turnId: 'turn-1',
       itemId,
-      questions: [],
+      questions: [
+        {
+          id: 'palette',
+          header: 'Colour',
+          question: 'Do you already have a palette?',
+          isOther: true,
+          isSecret: false,
+          options: null,
+        },
+      ],
       autoResolutionMs: null,
     },
   })
