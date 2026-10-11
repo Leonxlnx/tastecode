@@ -403,6 +403,7 @@ describe('TerminalManager', () => {
   it('never signals a job group that now holds another session', async () => {
     vi.useFakeTimers()
     try {
+      const logs: string[] = []
       const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
       const jobControl = {
         // The job's group id was recycled: a stranger joined it.
@@ -412,7 +413,7 @@ describe('TerminalManager', () => {
         signal: vi.fn(),
       }
       const manager = new TerminalManager(
-        { onOutput: () => {}, onExit: () => {} },
+        { onOutput: () => {}, onExit: () => {}, onLog: (line) => logs.push(line) },
         { spawnPty: () => pty, inspectShell: (pid) => ownShell(pid), jobControl },
       )
       const closed = manager.close(manager.open('thread-recycled', os.tmpdir(), 80, 24))
@@ -421,6 +422,53 @@ describe('TerminalManager', () => {
       await closed
       expect(jobControl.members).toHaveBeenCalledWith(4242)
       expect(jobControl.signal).not.toHaveBeenCalled()
+      expect(logs).toEqual([expect.stringMatching(/left job 4242 .*another session/)])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it.each([
+    {
+      problem: 'a member it may not signal',
+      jobControl: () => ({
+        members: () => Promise.resolve([jobMember]),
+        signal: () => {
+          throw Object.assign(new Error('kill EPERM'), { code: 'EPERM' })
+        },
+      }),
+      log: /could not stop job 4242 .*EPERM/,
+    },
+    {
+      problem: 'a member that survives SIGKILL',
+      jobControl: () => ({ members: () => Promise.resolve([jobMember]), signal: () => {} }),
+      log: /left job 4242 .*survived SIGKILL/,
+    },
+    {
+      problem: 'members it cannot list',
+      jobControl: () => ({ members: () => Promise.resolve(undefined), signal: () => {} }),
+      log: /left job 4242 .*could not be listed/,
+    },
+  ])('logs instead of failing a close whose job has $problem', async (test) => {
+    vi.useFakeTimers()
+    try {
+      const logs: string[] = []
+      const pty = controlledPty({ pid: 4100, kill: () => queueMicrotask(() => pty.emitExit(0)) })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {}, onLog: (line) => logs.push(line) },
+        {
+          spawnPty: () => pty,
+          inspectShell: (pid) => ownShell(pid),
+          jobControl: test.jobControl(),
+        },
+      )
+      const closed = manager.close(manager.open('thread-stuck', os.tmpdir(), 80, 24))
+      const shutdown = manager.closeAll()
+
+      await vi.advanceTimersByTimeAsync(10_000)
+      await expect(closed).resolves.toBeUndefined()
+      await expect(shutdown).resolves.toBeUndefined()
+      expect(logs).toEqual([expect.stringMatching(test.log)])
     } finally {
       vi.useRealTimers()
     }
