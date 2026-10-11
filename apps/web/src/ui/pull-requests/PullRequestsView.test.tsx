@@ -295,6 +295,34 @@ describe('PullRequestsView', () => {
     expect(listPane().queryByRole('alert')).toBeNull()
   })
 
+  it('refreshes once a GitHub setup finishes, not on every later visit', async () => {
+    const transport = pullRequestTransport()
+    const listRefreshes = () =>
+      transport.requests.flatMap(({ method, params }) =>
+        method === 'pullRequests.list' ? [(params as { refresh: boolean }).refresh] : [],
+      )
+    const view = (setupRefreshRevision: number) => (
+      <PullRequestsView
+        transport={transport}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+        setupRefreshRevision={setupRefreshRevision}
+      />
+    )
+
+    const first = render(view(1))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false])
+
+    first.rerender(view(2))
+    await waitFor(() => expect(listRefreshes()).toEqual([false, true]))
+
+    first.unmount()
+    render(view(2))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false, true, false])
+  })
+
   it('keeps a pull request the viewer authored and reviewed on Reviewing after its detail refreshes', async () => {
     const both: PullRequestListItem = {
       ...result.items[0]!,
