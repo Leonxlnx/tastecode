@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ThreadFrameStore } from '../thread-frame-store.js'
-import { MAX_HISTORY_PAGE_TURNS } from './older-history.js'
 
 export type OlderHistoryStatus = 'idle' | 'loading' | 'failed'
 
 /**
- * Loads the turns above a paged transcript and reports how that is going.
- * `onLoadOlderHistory` may change identity; the latest one is used.
+ * Loads the turns above a paged transcript and reports how that is going:
+ * page by page while the reader scrolls up, or all at once for find and
+ * search jumps. The latest callbacks are used whatever their identity.
  */
 export function useOlderHistory(
   threadId: string | undefined,
   frameStore: ThreadFrameStore,
   onLoadOlderHistory: ((threadId: string, turnLimit?: number) => Promise<void>) | undefined,
+  onLoadCompleteHistory: ((threadId: string, signal: AbortSignal) => Promise<void>) | undefined,
 ) {
   const [status, setStatus] = useState<OlderHistoryStatus>('idle')
   const olderRead = useRef<{ threadId: string; read: Promise<boolean> } | undefined>(undefined)
@@ -20,6 +21,8 @@ export function useOlderHistory(
   threadIdRef.current = threadId
   const loadOlderRef = useRef(onLoadOlderHistory)
   loadOlderRef.current = onLoadOlderHistory
+  const loadCompleteRef = useRef(onLoadCompleteHistory)
+  loadCompleteRef.current = onLoadCompleteHistory
   const loadOlder = useCallback((turnLimit?: number): Promise<boolean> => {
     const threadId = threadIdRef.current
     const load = loadOlderRef.current
@@ -40,33 +43,51 @@ export function useOlderHistory(
     })
     return read
   }, [])
-  const searchingOlder = useRef(false)
-  // Find and search jumps need every turn, so fetch the rest in large pages.
-  const loadAllOlder = useCallback(async () => {
+
+  const [completeStatus, setCompleteStatus] = useState<OlderHistoryStatus>('idle')
+  const completeRead = useRef<{ threadId: string; abort: AbortController } | undefined>(undefined)
+  /** Every remaining turn in one read; a call while it is out joins it. */
+  const loadComplete = useCallback(() => {
     const threadId = threadIdRef.current
-    if (searchingOlder.current) return
-    searchingOlder.current = true
-    try {
-      while (
-        threadIdRef.current === threadId &&
-        frameStore.getStructureSnapshot().olderCursor &&
-        (await loadOlder(MAX_HISTORY_PAGE_TURNS))
-      );
-    } finally {
-      searchingOlder.current = false
-    }
-  }, [frameStore, loadOlder])
+    const load = loadCompleteRef.current
+    const cursor = frameStore.getStructureSnapshot().olderCursor
+    if (!threadId || !load || !cursor || completeRead.current?.threadId === threadId) return
+    const abort = new AbortController()
+    completeRead.current = { threadId, abort }
+    setCompleteStatus('loading')
+    void load(threadId, abort.signal)
+      .then(
+        () => true,
+        () => false,
+      )
+      .then((loaded) => {
+        if (completeRead.current?.abort !== abort) return
+        completeRead.current = undefined
+        // A read that leaves the same cursor behind would only repeat itself.
+        const stalled = frameStore.getStructureSnapshot().olderCursor === cursor
+        setCompleteStatus(loaded && !stalled ? 'idle' : 'failed')
+      })
+  }, [frameStore])
+  /** Stop waiting for the complete read; its reply is dropped. */
+  const cancelComplete = useCallback(() => {
+    completeRead.current?.abort.abort()
+    completeRead.current = undefined
+    setCompleteStatus('idle')
+  }, [])
+
   useEffect(() => {
     olderFailed.current = false
     setStatus('idle')
-  }, [threadId])
+    return cancelComplete
+  }, [threadId, cancelComplete])
   /** Whether scrolling near the top may start a page read now. */
   const canLoadOnScroll = useCallback(
     () =>
       Boolean(frameStore.getStructureSnapshot().olderCursor) &&
       olderRead.current === undefined &&
+      completeRead.current === undefined &&
       !olderFailed.current,
     [frameStore],
   )
-  return { status, loadOlder, loadAllOlder, canLoadOnScroll }
+  return { status, loadOlder, canLoadOnScroll, completeStatus, loadComplete, cancelComplete }
 }

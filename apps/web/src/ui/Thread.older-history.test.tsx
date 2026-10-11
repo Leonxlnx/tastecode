@@ -5,7 +5,6 @@ import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread, type ThreadState } from '../thread-store.js'
 import { mockKeyboardModifierState } from '../test-keyboard.js'
-import { MAX_HISTORY_PAGE_TURNS } from './older-history.js'
 import { Thread } from './Thread.js'
 
 const ROW = 100
@@ -14,6 +13,7 @@ const layout = vi.hoisted(() => ({
   count: 0,
   offset: null as number | null,
   scrollState: null as { index: number | null } | null,
+  jumps: [] as number[],
 }))
 
 vi.mock('@tanstack/react-virtual', () => {
@@ -50,7 +50,7 @@ vi.mock('@tanstack/react-virtual', () => {
     },
     measureElement: () => undefined,
     getOffsetForIndex: (index: number) => [index * ROW],
-    scrollToIndex: () => undefined,
+    scrollToIndex: (index: number) => layout.jumps.push(index),
   }
   return {
     useVirtualizer: ({ count }: { count: number }) => {
@@ -92,6 +92,7 @@ beforeEach(() => {
   mockKeyboardModifierState()
   layout.offset = null
   layout.scrollState = null
+  layout.jumps = []
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
     () => layout.count * ROW,
   )
@@ -205,20 +206,94 @@ describe('Thread older history', () => {
     expect(load).toHaveBeenCalledTimes(2)
   })
 
-  it('loads older pages until a search jump finds its turn', () => {
+  it('reads the complete history once for a search jump and lands on its turn', async () => {
     const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
-    const load = vi.fn(() => new Promise<void>(noop))
-    const view = render(
+    let finish: () => void = noop
+    const loadComplete = vi.fn(
+      (_threadId: string, _signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+    )
+    render(
       <Thread
         frameStore={store}
         threadId="thread"
         onDecide={noop}
         onAnswerUserInput={noop}
-        onLoadOlderHistory={load}
+        onLoadOlderHistory={() => new Promise<void>(noop)}
+        onLoadCompleteHistory={loadComplete}
         searchJump={{ turnId: 'turn-3', request: 1 }}
       />,
     )
-    expect(load).toHaveBeenLastCalledWith('thread', MAX_HISTORY_PAGE_TURNS)
-    expect(view.container.querySelector('.thread')).toBeTruthy()
+    expect(loadComplete).toHaveBeenCalledExactlyOnceWith('thread', expect.any(AbortSignal))
+    expect(screen.getByRole('status').textContent).toContain('Loading earlier messages')
+
+    // Live updates while the read is out do not ask again.
+    act(() => store.publish(paged(turns(150, 161), 'cursor')))
+    expect(loadComplete).toHaveBeenCalledOnce()
+    expect(layout.jumps).toEqual([])
+
+    await act(async () => {
+      store.publish(paged(turns(0, 161)))
+      finish()
+    })
+    expect(layout.jumps).toEqual([3])
+    expect(loadComplete).toHaveBeenCalledOnce()
+  })
+
+  it('offers a retry instead of asking again when a search jump read fails', async () => {
+    const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
+    let fail: (error: Error) => void = noop
+    const loadComplete = vi.fn(
+      () =>
+        new Promise<void>((_, reject) => {
+          fail = reject
+        }),
+    )
+    render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={() => new Promise<void>(noop)}
+        onLoadCompleteHistory={loadComplete}
+        searchJump={{ turnId: 'turn-3', request: 1 }}
+      />,
+    )
+    await act(async () => fail(new Error('offline')))
+    const retry = screen.getByRole('button', { name: /Couldn’t load earlier messages/ })
+    act(() => store.publish(paged(turns(150, 161), 'cursor')))
+    expect(loadComplete).toHaveBeenCalledOnce()
+
+    fireEvent.click(retry)
+    expect(loadComplete).toHaveBeenCalledTimes(2)
+  })
+
+  it('stops waiting for the complete read when find closes', async () => {
+    const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
+    const loadComplete = vi.fn((_threadId: string, _signal: AbortSignal) => new Promise<void>(noop))
+    render(
+      <Thread
+        frameStore={store}
+        threadId="thread"
+        onDecide={noop}
+        onAnswerUserInput={noop}
+        onLoadOlderHistory={() => new Promise<void>(noop)}
+        onLoadCompleteHistory={loadComplete}
+      />,
+    )
+    fireEvent.keyDown(window, { key: 'f', ctrlKey: true })
+    const find = await screen.findByLabelText('Find in thread')
+    fireEvent.change(find, { target: { value: 'Answer 3' } })
+    expect(loadComplete).toHaveBeenCalledOnce()
+    expect(screen.getByText('Searching…')).toBeTruthy()
+    const signal = loadComplete.mock.calls[0]![1]
+    expect(signal.aborted).toBe(false)
+
+    fireEvent.keyDown(find, { key: 'Escape' })
+    expect(signal.aborted).toBe(true)
+    expect(screen.queryByLabelText('Find in thread')).toBeNull()
   })
 })
