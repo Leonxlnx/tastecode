@@ -39,20 +39,36 @@ async function listedModels(data = [providerModel]) {
 }
 
 describe('Codex models', () => {
-  it('places newly advertised GPT-6 models first without inventing missing ones', async () => {
+  it("orders the current lineup by Codex's own priority without inventing missing ones", async () => {
+    // The rows codex-cli 0.154 lists, shuffled; Astra is its default.
     const models = await listedModels([
-      providerModel,
-      { ...providerModel, id: 'gpt-6-luna', displayName: 'GPT-6 Luna', isDefault: false },
-      { ...providerModel, id: 'gpt-6-astra', displayName: 'GPT-6 Astra', isDefault: false },
-      { ...providerModel, id: 'gpt-6-sol', displayName: 'GPT-6 Sol', isDefault: false },
+      { ...providerModel, id: 'gpt-5.6-luna', displayName: 'GPT-5.6-Luna', isDefault: false },
+      { ...providerModel, id: 'gpt-5.6-terra', displayName: 'GPT-5.6-Terra', isDefault: false },
+      { ...providerModel, isDefault: false },
+      { ...providerModel, id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: true },
     ])
-    expect(models.slice(0, 4).map((model) => model.id)).toEqual([
+    expect(models.map((model) => model.id)).toEqual([
       'gpt-6-astra',
-      'gpt-6-sol',
-      'gpt-6-luna',
       'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      'gpt-5.5',
     ])
-    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.6-sol')
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6-astra')
+  })
+
+  it('keeps a newly advertised model after the known lineup and before the legacy row', async () => {
+    const models = await listedModels([
+      { ...providerModel, id: 'gpt-6-nova', displayName: 'GPT-6-Nova', isDefault: false },
+      providerModel,
+      { ...providerModel, id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: false },
+    ])
+    expect(models.map((model) => model.id)).toEqual([
+      'gpt-6-astra',
+      'gpt-5.6-sol',
+      'gpt-6-nova',
+      'gpt-5.5',
+    ])
   })
 
   it('keeps the hidden legacy GPT-5.5 selectable and drops models Codex no longer ships', async () => {
