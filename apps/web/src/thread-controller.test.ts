@@ -547,4 +547,90 @@ describe('paged history', () => {
     expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
     expect(controller.snapshot('thread')!.olderCursor).toBe('second')
   })
+
+  it('drops an older page when flushing compacts its background thread', async () => {
+    let reply!: (value: ResultOf<'thread.history'>) => void
+    const transport = new TestTransport((_, params) =>
+      pageOf(params)?.before
+        ? new Promise((resolve) => (reply = resolve))
+        : {
+            events: [
+              turn(2, 7),
+              {
+                seq: 8,
+                event: {
+                  type: 'turn.started',
+                  turn: { id: 'turn-4', threadId: 'thread', status: 'running', createdAt: 4 },
+                },
+              },
+              {
+                seq: 9,
+                event: {
+                  type: 'item.started',
+                  item: {
+                    id: 'long',
+                    turnId: 'turn-4',
+                    type: 'message',
+                    role: 'assistant',
+                    status: 'started',
+                    // Past the running-transcript budget a background thread may keep.
+                    text: 'x'.repeat(300 * 1024),
+                    createdAt: 4,
+                  },
+                },
+              },
+            ],
+            running: true,
+            page: { olderCursor: 'cursor', snapshotSeq: 9 },
+          },
+    )
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    controller.activate('other')
+    const read = controller.loadOlderHistory('thread')
+    const unprotected = () => false
+    const delta = (seq: number, characters: number) =>
+      controller.receive(
+        {
+          threadId: 'thread',
+          seq,
+          event: {
+            type: 'item.delta',
+            turnId: 'turn-4',
+            itemId: 'long',
+            textDelta: 'y'.repeat(characters),
+          },
+        },
+        unprotected,
+      )
+    // 63 KB of streamed text is flushed by the next structural event; the
+    // 2 KB after it stay buffered until the page arrives and flushes them.
+    delta(10, 63 * 1024)
+    controller.receive(
+      {
+        threadId: 'thread',
+        seq: 11,
+        event: {
+          type: 'usage.updated',
+          usage: {
+            inputTokens: 1,
+            cachedInputTokens: 0,
+            outputTokens: 1,
+            reasoningTokens: 0,
+            totalTokens: 2,
+          },
+        },
+      },
+      unprotected,
+    )
+    delta(12, 2 * 1024)
+    expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+
+    reply(older)
+    await read
+    // That flush crossed the compaction check and dropped the rows the cursor
+    // pointed above, so the page has nowhere to go.
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    expect(texts(controller)).not.toContain('Answer 0')
+  })
 })
