@@ -55,28 +55,31 @@ describe('Codex models', () => {
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.6-sol')
   })
 
-  it('keeps the complete known Codex roster selectable when model/list omits rows', async () => {
+  it('keeps the hidden legacy GPT-5.5 selectable and drops models Codex no longer ships', async () => {
     const models = await listedModels()
-    expect(models.map((model) => model.id)).toEqual([
-      'gpt-5.6-sol',
-      'gpt-5.5',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex-spark',
-    ])
-    expect(models.at(-1)).toMatchObject({
-      displayName: 'GPT-5.3-Codex-Spark',
-      defaultReasoningEffort: 'high',
+    // codex-cli 0.154 still runs gpt-5.5 but hides it from model/list; it no
+    // longer has gpt-5.4, gpt-5.4-mini or gpt-5.3-codex-spark at all.
+    expect(models.map((model) => model.id)).toEqual(['gpt-5.6-sol', 'gpt-5.5'])
+    expect(models.at(-1)).toEqual({
+      id: 'gpt-5.5',
+      displayName: 'GPT-5.5',
+      description: 'Legacy coding model.',
+      isDefault: false,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'medium',
+      serviceTiers: [],
     })
   })
 
-  it('does not duplicate Spark when Codex lists it again', async () => {
+  it('lets a live GPT-5.5 row win over the legacy fallback without duplicating it', async () => {
     const models = await listedModels([
       providerModel,
-      { ...providerModel, id: 'gpt-5.3-codex-spark', displayName: 'Spark', isDefault: false },
+      { ...providerModel, id: 'gpt-5.5', displayName: 'GPT-5.5 live', isDefault: false },
     ])
 
-    expect(models.filter((model) => model.id === 'gpt-5.3-codex-spark')).toHaveLength(1)
+    expect(models.filter((model) => model.id === 'gpt-5.5')).toEqual([
+      expect.objectContaining({ displayName: 'GPT-5.5 live' }),
+    ])
   })
 
   it('removes the superseded GPT-5.2 row from the catalog', async () => {
