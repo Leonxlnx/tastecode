@@ -1556,6 +1556,43 @@
   }
 }
 
+/* Compact, once even readable prefixes do not fit (data-fit is set by
+   fitWorkspaceTabs): inactive tabs keep only their icon, and their aria-label
+   and title still name them. The active tab keeps its label and close button
+   and takes the room that is left. */
+.workspace-tabs[data-fit='compact'] .workspace-tabs__tab:not(.is-active) {
+  flex: none;
+}
+.workspace-tabs[data-fit='compact'] .workspace-tabs__tab:not(.is-active) .workspace-tabs__label,
+.workspace-tabs[data-fit='compact'] .workspace-tabs__tab:not(.is-active) .workspace-tabs__close {
+  display: none;
+}
+/* Hovered or reached by keyboard, an inactive icon tab shows its close button
+   on a pill that reaches over the gap after it. The select button gives up 6px
+   and the close button adds 16px, so the 30px tab becomes 40px: 10px more,
+   which covers the 4px gap and 6px of the next tab's padding and leaves its
+   icon clear. The negative margin keeps the 30px footprint, so nothing beside
+   it moves. */
+.workspace-tabs[data-fit='compact']
+  .workspace-tabs__tab:not(.is-active):is(:hover, :has(:focus-visible)) {
+  position: relative;
+  z-index: 1;
+  margin-right: -10px;
+  background: linear-gradient(var(--control-hover) 0 0), var(--bg);
+  color: var(--text);
+}
+.workspace-tabs[data-fit='compact']
+  .workspace-tabs__tab:not(.is-active):is(:hover, :has(:focus-visible))
+  > [role='tab'] {
+  padding-right: 2px;
+}
+.workspace-tabs[data-fit='compact']
+  .workspace-tabs__tab:not(.is-active):is(:hover, :has(:focus-visible))
+  .workspace-tabs__close {
+  display: flex;
+  padding: 0 3px 0 0;
+}
+
 .workspace-tabs {
   position: relative;
 }

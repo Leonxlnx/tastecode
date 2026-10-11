@@ -159,6 +159,45 @@ describe('workspace panel layout', () => {
     expect(ruleBody('.workspace-tabs__label')).toContain('white-space: pre')
   })
 
+  it('reduces inactive tabs to their icon in a compact strip and shows their close on a pill', () => {
+    const compact = ".workspace-tabs[data-fit='compact'] .workspace-tabs__tab:not(.is-active)"
+    const shown = `${compact}:is(:hover, :has(:focus-visible))`
+    const flat = css.replace(/\s+/g, ' ')
+    const rule = (selector: string) =>
+      flat.match(
+        new RegExp(
+          `(?:^|\\} |\\*/ )${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{(?<body>[^}]*)\\}`,
+        ),
+      )?.groups?.body ?? ''
+    const px = (source: string, pattern: RegExp) => Number(source.match(pattern)?.[1] ?? Number.NaN)
+
+    expect(rule(compact)).toContain('flex: none')
+    expect(rule(`${compact} .workspace-tabs__label, ${compact} .workspace-tabs__close`)).toContain(
+      'display: none',
+    )
+    // Every compact rule leaves the active tab, its label and its close alone.
+    expect(
+      flat.match(/\[data-fit='compact'\] \.workspace-tabs__tab(?!:not\(\.is-active\))/g),
+    ).toBeNull()
+    expect(rule(`${shown} .workspace-tabs__close`)).toContain('display: flex')
+
+    // The pill must keep the tab's footprint and stop short of the next icon.
+    // Icons are 14px (WorkspacePanel) and the close icon 13px (WorkspaceTabs).
+    const select = ruleBody('.workspace-tabs__tab button')
+    const side = px(select, /padding: 0 (\d+)px/)
+    const idle = side + 14 + side
+    const pill =
+      side +
+      14 +
+      px(rule(`${shown} > [role='tab']`), /padding-right: (\d+)px/) +
+      13 +
+      px(rule(`${shown} .workspace-tabs__close`), /padding: 0 (\d+)px 0 0/)
+    const reach = -px(rule(shown), /margin-right: (-\d+)px/)
+    expect(pill - reach).toBe(idle)
+    const gap = px(ruleBody('.workspace-tabs'), /gap: (\d+)px/)
+    expect(reach).toBeLessThan(gap + side)
+  })
+
   it('fades the tab strip start only once tabs have scrolled past it', () => {
     const fade = atRuleBlock(css, '@supports (animation-timeline: scroll())')
 
