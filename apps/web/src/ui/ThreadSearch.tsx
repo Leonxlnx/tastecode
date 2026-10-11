@@ -15,13 +15,18 @@ import { isConfirmEnter } from '../shortcuts.js'
  *
  * Virtualisation means Ctrl+F does not work — the match may not exist in the
  * DOM. So the app has to own find, and owning it lets us jump by result rather
- * than by pixel.
+ * than by pixel. A long thread opens with only its newest turns, so the first
+ * query asks for the rest; matches above appear as those pages arrive.
  */
 export function ThreadSearch(props: {
   items: Item[]
   liveItems?: ReadonlyMap<number, LiveItemUpdate> | undefined
   frameStore?: ThreadFrameStore | undefined
   threadId?: string | undefined
+  /** Older turns exist that are not loaded yet. */
+  hasOlder?: boolean | undefined
+  searchingOlder?: boolean | undefined
+  onSearchOlder?: (() => void) | undefined
   onJump: (index: number) => void
   onClose: () => void
 }) {
@@ -29,6 +34,7 @@ export function ThreadSearch(props: {
   const [cursor, setCursor] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const jumped = useRef(false)
+  const selected = useRef<string | undefined>(undefined)
   const subscribeFrame = useCallback(
     (listener: () => void) => props.frameStore?.subscribe(listener) ?? (() => undefined),
     [props.frameStore],
@@ -58,6 +64,19 @@ export function ThreadSearch(props: {
     if (hits.length === 0) jumped.current = false
   }, [hits.length])
 
+  // Older pages shift every index; keep the counter on the match last shown.
+  useEffect(() => {
+    if (selected.current === undefined) return
+    const index = hits.findIndex((hit) => items[hit]?.id === selected.current)
+    if (index >= 0) setCursor(index)
+  }, [hits, items])
+
+  const searching = term !== ''
+  const { hasOlder, onSearchOlder } = props
+  useEffect(() => {
+    if (searching && hasOlder) onSearchOlder?.()
+  }, [searching, hasOlder, onSearchOlder])
+
   const go = (next: number) => {
     if (hits.length === 0) return
     // Wraps in both directions: reaching the end of results and being told
@@ -65,6 +84,7 @@ export function ThreadSearch(props: {
     const wrapped = (next + hits.length) % hits.length
     setCursor(wrapped)
     const target = hits[wrapped]
+    selected.current = target === undefined ? undefined : items[target]?.id
     if (target !== undefined) props.onJump(target)
   }
 
@@ -91,6 +111,7 @@ export function ThreadSearch(props: {
           setQuery(e.target.value)
           setCursor(0)
           jumped.current = false
+          selected.current = undefined
         }}
         onKeyDown={(e) => {
           if (e.key === 'Escape') props.onClose()
@@ -98,7 +119,13 @@ export function ThreadSearch(props: {
         }}
       />
       <span className="find__count">
-        {term === '' ? '' : hits.length === 0 ? 'None' : `${currentCursor + 1}/${hits.length}`}
+        {term === ''
+          ? ''
+          : hits.length === 0
+            ? props.searchingOlder
+              ? 'Searching…'
+              : 'None'
+            : `${currentCursor + 1}/${hits.length}${props.searchingOlder ? '…' : ''}`}
       </span>
       <button
         className="icon-btn icon-btn--always"
