@@ -1043,6 +1043,9 @@ export function startServer(
     close: async () => {
       historyClosing = true
       clearInterval(providerHistoryTimer)
+      // Terminal jobs get a fixed shutdown budget; waiting on provider history
+      // first would spend it. disposeAll below waits for the same close.
+      void orchestrator.closeAllTerminals().catch(() => undefined)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
