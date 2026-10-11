@@ -506,7 +506,8 @@ export class ThreadController {
    * Load every turn above the loaded transcript in one unpaged read, for find
    * and search jumps. Loaded rows keep their live state, so nothing streamed
    * meanwhile needs replaying, and older pages landing first only leave fewer
-   * rows to add. An aborted read is dropped.
+   * rows to add. An aborted read is dropped. A history that no longer matches
+   * the loaded rows reopens the thread and rejects.
    */
   async loadCompleteHistory(id: string, signal?: AbortSignal): Promise<void> {
     if (!this.snapshot(id)?.olderCursor) return
@@ -517,9 +518,11 @@ export class ThreadController {
     if (!current.olderCursor) return
     const next = prependCompleteHistory(current, events)
     if (!next) {
+      // The loaded rows no longer match the server's. Reopening adds nothing
+      // older, so the caller must not count this read as done.
       this.invalidateHistory(id)
       await this.loadHistory(id)
-      return
+      throw new Error('thread history changed while reading it')
     }
     // A recovery read in flight replays onto its base; complete it there too.
     const base = this.#historyBases.get(id)

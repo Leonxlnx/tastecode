@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { emptyThread, reduceEventLog, threadItems } from '../../web/src/thread-store.js'
+import {
+  emptyThread,
+  prependCompleteHistory,
+  reduceEventLog,
+  threadItems,
+} from '../../web/src/thread-store.js'
 import {
   DEFAULT_HISTORY_PAGE_TURNS,
   InvalidHistoryCursorError,
@@ -446,6 +451,34 @@ function rendered(events: ReadonlyArray<{ event: DomainEvent }>) {
 }
 
 describe('history pages against the renderer', () => {
+  it('completes a newest page that starts with a turn that failed before any item', () => {
+    const replay = compactHistoryReplay(
+      entries([
+        ...turn(0),
+        started('turn-1'),
+        { type: 'thread.error', threadId: 'thread', message: 'Provider exited' },
+        ...turn(2),
+        ...turn(3),
+      ]),
+    )
+    const newest = readHistoryPage('thread', replay, { turnLimit: 3 })
+    const loaded = {
+      ...reduceEventLog(emptyThread, newest.events),
+      olderCursor: newest.page.olderCursor!,
+    }
+    expect(threadItems(loaded)[0]?.type).toBe('error')
+
+    const completed = prependCompleteHistory(loaded, replay)
+    // Error rows get a fresh renderer-local id on every replay.
+    const rows = (state: typeof loaded) =>
+      threadItems(state).map(({ id, type, text }) => ({
+        id: type === 'error' ? 'error' : id,
+        text,
+      }))
+    expect(completed && rows(completed)).toEqual(rows(reduceEventLog(emptyThread, replay)))
+    expect(completed?.olderCursor).toBeUndefined()
+  })
+
   it('opens to the same thread state from the newest page as from the whole replay', () => {
     for (let seed = 1; seed <= 1_500; seed += 1) {
       const replay = compactHistoryReplay(entries(randomHistory(seed)))

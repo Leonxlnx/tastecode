@@ -621,13 +621,14 @@ describe('paged history', () => {
       expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
     })
 
-    it('reopens from the newest page when the history lacks the first loaded row', async () => {
+    it('reopens from the newest page and fails when the history lacks the first loaded row', async () => {
       const { transport, reply } = deferred()
       const controller = new ThreadController(transport)
       await controller.loadHistory('thread')
       const read = controller.loadCompleteHistory('thread')
       reply({ events: [turn(0, 2), turn(3, 9)], running: false })
-      await read
+      // Nothing older was added, so find must not count the read as done.
+      await expect(read).rejects.toThrow('thread history changed while reading it')
       expect(transport.requests.map((request) => pageOf(request.params))).toEqual([
         { turnLimit: NEWEST_HISTORY_TURNS },
         undefined,
