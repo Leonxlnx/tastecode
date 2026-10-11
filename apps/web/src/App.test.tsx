@@ -3036,6 +3036,58 @@ describe('new chats', () => {
     })
   })
 
+  it('keeps a title the user typed while the chat was starting', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      if (method !== 'backgroundModel.generateTitle') return request(method, params)
+      // Like the server, only replace a title that still matches the expected one.
+      const { threadId, expectedTitle } =
+        methods['backgroundModel.generateTitle'].params.parse(params)
+      const current = serverProjects
+        .flatMap((entry) => entry.sessions)
+        .find((session) => session.id === threadId)
+      if (current?.title !== expectedTitle) return { title: current?.title ?? '', applied: false }
+      serverProjects = serverProjects.map((entry) => ({
+        ...entry,
+        sessions: entry.sessions.map((session) =>
+          session.id === threadId ? { ...session, title: 'Generated title' } : session,
+        ),
+      }))
+      return { title: 'Generated title', applied: true }
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    act(() => header().onRenameSession(header().sessionId!, 'My checkout notes'))
+    await act(async () => releaseStart?.())
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('thread.rename', {
+        threadId: 'thread-1',
+        title: 'My checkout notes',
+      })
+      const calls = transport.request.mock.calls.map(([method]) => method)
+      expect(calls.lastIndexOf('projects.list')).toBeGreaterThan(calls.indexOf('thread.rename'))
+    })
+    expect(header().title).toBe('My checkout notes')
+    expect(rpcCount('backgroundModel.generateTitle')).toBe(0)
+  })
+
   it('carries Stop through new-session creation and interrupts the first turn', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
