@@ -1,8 +1,9 @@
+import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import type { IPty } from 'node-pty'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   platformShell,
   terminalEnvironment,
@@ -272,6 +273,60 @@ describe('TerminalManager', () => {
     expect(secondKilled).toBe(true)
   })
 
+  it('keeps a closing chat and shutdown waiting until the foreground job stops', async () => {
+    const pty = controlledPty({ pid: 4100 })
+    let stopJob: () => void = () => {}
+    const killProcessGroup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          stopJob = resolve
+        }),
+    )
+    const manager = new TerminalManager(
+      { onOutput: () => {}, onExit: () => {} },
+      {
+        spawnPty: () => pty,
+        inspectShell: (pid) => ({ parent: process.pid, group: pid, foreground: 4242 }),
+        killProcessGroup,
+      },
+    )
+    const terminalId = manager.open('thread-job', os.tmpdir(), 80, 24)
+    const settled: string[] = []
+    const closed = manager.close(terminalId).then(() => settled.push('close'))
+    pty.emitExit(0)
+    await vi.waitFor(() => expect(killProcessGroup).toHaveBeenCalledWith(4242))
+    const threadClosed = manager.closeThread('thread-job').then(() => settled.push('thread'))
+    const shutdown = manager.closeAll().then(() => settled.push('shutdown'))
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(settled).toEqual([])
+
+    stopJob()
+    await Promise.all([closed, threadClosed, shutdown])
+    expect(settled.sort()).toEqual(['close', 'shutdown', 'thread'])
+    expect(killProcessGroup).toHaveBeenCalledOnce()
+  })
+
+  it('never signals a group named by a process this server did not fork', async () => {
+    const reports = [
+      { parent: process.pid + 1, group: 4100, foreground: 4242 },
+      { parent: process.pid, group: 4101, foreground: 4242 },
+      { parent: process.pid, group: 4100, foreground: 1 },
+      { parent: process.pid, group: 4100, foreground: -1 },
+    ]
+    const killProcessGroup = vi.fn(() => Promise.resolve())
+    for (const report of reports) {
+      const pty = controlledPty({ pid: 4100 })
+      const manager = new TerminalManager(
+        { onOutput: () => {}, onExit: () => {} },
+        { spawnPty: () => pty, inspectShell: () => report, killProcessGroup },
+      )
+      const closed = manager.close(manager.open('thread-foreign', os.tmpdir(), 80, 24))
+      pty.emitExit(0)
+      await closed
+    }
+    expect(killProcessGroup).not.toHaveBeenCalled()
+  })
+
   it('runs one real PTY in the session checkout and reports its exit', async () => {
     const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-'))
     const previousDisableAutoUpdate = process.env['DISABLE_AUTO_UPDATE']
@@ -360,7 +415,104 @@ describe('TerminalManager', () => {
       removeTemporaryDirectory(cwd)
     }
   })
+
+  describe.skipIf(process.platform === 'win32')('closing a POSIX shell', () => {
+    const previousDisableAutoUpdate = process.env['DISABLE_AUTO_UPDATE']
+    beforeAll(() => {
+      process.env['DISABLE_AUTO_UPDATE'] = 'true'
+    })
+    afterAll(() => {
+      if (previousDisableAutoUpdate === undefined) delete process.env['DISABLE_AUTO_UPDATE']
+      else process.env['DISABLE_AUTO_UPDATE'] = previousDisableAutoUpdate
+    })
+
+    it('stops a foreground job that ignores hangup', async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-job-'))
+      const shell = watchedShell(/JOB_READY (\d+)/)
+      let job: number | undefined
+      try {
+        const terminalId = shell.manager.open('thread-job', cwd, 120, 24)
+        shell.manager.write(
+          terminalId,
+          `'${process.execPath}' -e "process.on('SIGHUP', () => {}); ` +
+            `console.log('JOB_READY ' + process.pid); setInterval(() => {}, 1000)"\r`,
+        )
+        job = await within(shell.match)
+
+        await shell.manager.close(terminalId)
+
+        expect(isRunning(job)).toBe(false)
+      } finally {
+        if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
+        await shell.manager.closeAll()
+        removeTemporaryDirectory(cwd)
+      }
+    }, 15_000)
+
+    it('leaves a nohup background job to the shell', async () => {
+      const cwd = mkdtempSync(path.join(os.tmpdir(), 'harness-terminal-nohup-'))
+      const shell = watchedShell(/NOHUP_READY (\d+)/)
+      let job: number | undefined
+      try {
+        const terminalId = shell.manager.open('thread-nohup', cwd, 120, 24)
+        shell.manager.write(terminalId, 'nohup sleep 30 >/dev/null 2>&1 & echo NOHUP_READY $!\r')
+        job = await within(shell.match)
+        // nohup ignores SIGHUP before it execs sleep; close only after that.
+        await waitUntil(() => processName(job!) === 'sleep')
+
+        await shell.manager.close(terminalId)
+
+        expect(isRunning(job)).toBe(true)
+      } finally {
+        if (job !== undefined && isRunning(job)) process.kill(job, 'SIGKILL')
+        await shell.manager.closeAll()
+        removeTemporaryDirectory(cwd)
+      }
+    }, 15_000)
+  })
 })
+
+/** A manager whose PTY output resolves `match` with the first number captured. */
+function watchedShell(pattern: RegExp) {
+  let output = ''
+  let found: (value: number) => void = () => {}
+  const match = new Promise<number>((resolve) => {
+    found = resolve
+  })
+  const manager = new TerminalManager({
+    onOutput: (_terminalId, data) => {
+      output += data
+      const result = pattern.exec(output)
+      if (result) found(Number(result[1]))
+    },
+    onExit: () => {},
+  })
+  return { manager, match }
+}
+
+function isRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+  // An exited process stays visible to kill(pid, 0) until its new parent reaps it.
+  const state = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' })
+  return state.stdout.trim() !== '' && !state.stdout.trim().startsWith('Z')
+}
+
+function processName(pid: number): string {
+  const name = spawnSync('ps', ['-o', 'comm=', '-p', String(pid)], { encoding: 'utf8' })
+  return path.basename(name.stdout.trim())
+}
+
+async function waitUntil(done: () => boolean, timeoutMs = 10_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!done()) {
+    if (Date.now() >= deadline) throw new Error('terminal test timed out')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+}
 
 async function within<T>(promise: Promise<T>): Promise<T> {
   let timeout: NodeJS.Timeout | undefined
@@ -409,14 +561,14 @@ function removeTemporaryDirectory(directory: string): void {
   rmSync(directory, { recursive: true, force: true, maxRetries: 20, retryDelay: 50 })
 }
 
-function controlledPty(options: { kill?: () => void } = {}): IPty & {
+function controlledPty(options: { kill?: () => void; pid?: number } = {}): IPty & {
   emitData(data: string): void
   emitExit(exitCode: number): void
 } {
   let onData: (data: string) => void = () => {}
   let onExit: (event: { exitCode: number; signal?: number }) => void = () => {}
   return {
-    pid: 1,
+    pid: options.pid ?? 1,
     cols: 80,
     rows: 24,
     process: 'fake',
