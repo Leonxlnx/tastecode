@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -144,9 +144,47 @@ describe('native Codex history', () => {
     expect((await source.list())[0]?.title).toBe('Renamed')
   })
 
+  it('reads the index again after a rewrite that kept its size and modification time', async () => {
+    const { root, file, source } = await store([])
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
+    db.exec(
+      'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, name TEXT, created_at INTEGER, updated_at INTEGER)',
+    )
+    db.prepare('INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      'native-session',
+      file,
+      '/project',
+      'Prompt',
+      'First name',
+      1,
+      2,
+    )
+    // Both commits fall into one timestamp tick, so the second keeps this mtime.
+    const tick = new Date(Math.floor(Date.now() / 1000) * 1000)
+    await utimes(database, tick, tick)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(tick.getTime() + 100)
+    try {
+      expect((await source.list())[0]?.title).toBe('First name')
+      db.prepare('UPDATE threads SET name = ?').run('Other name')
+      await utimes(database, tick, tick)
+      now.mockReturnValue(tick.getTime() + 5_000)
+
+      const renamed = (await source.list())[0]
+
+      expect(renamed?.title).toBe('Other name')
+      // An index older than one tick is trusted without reading it again.
+      expect((await source.list())[0]).toBe(renamed)
+    } finally {
+      now.mockRestore()
+      db.close()
+    }
+  })
+
   it('checks indexed rollouts again when the index changes or a minute has passed', async () => {
     const { root, file, source } = await store([])
-    const db = new DatabaseSync(path.join(root, 'state_5.sqlite'))
+    const database = path.join(root, 'state_5.sqlite')
+    const db = new DatabaseSync(database)
     db.exec(
       'CREATE TABLE threads (id TEXT, rollout_path TEXT, cwd TEXT, title TEXT, source TEXT, created_at INTEGER, updated_at INTEGER)',
     )
@@ -159,6 +197,9 @@ describe('native Codex history', () => {
       1,
       2,
     )
+    // The mocked clock cannot tell a recent write, so the same-size update
+    // below must not share the insert's timestamp tick.
+    await utimes(database, new Date(at), new Date(at))
     const append = async (message: string) =>
       writeFile(
         file,
