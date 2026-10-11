@@ -121,7 +121,7 @@ export function parseCodexHistory(
     },
   ]
   for (const saved of turns) {
-    const items = turnItems(saved)
+    const items = turnItems(saved, session.workspacePath)
     if (items.length === 0) continue
     const status = saved.status ?? 'interrupted'
     const mapped: Turn = {
@@ -148,7 +148,7 @@ export function parseCodexHistory(
   return events
 }
 
-function turnItems(turn: SavedTurn): HistoryItem[] {
+function turnItems(turn: SavedTurn, root: string): HistoryItem[] {
   const mapped: Array<HistoryItem & { kind: Entry['kind']; index: number }> = []
   const richIds = new Set(
     turn.entries
@@ -180,7 +180,7 @@ function turnItems(turn: SavedTurn): HistoryItem[] {
       status: 'completed' as const,
     }
     let items: HistoryItem[]
-    if (entry.kind === 'rich') items = historyItem(entry.payload, base)
+    if (entry.kind === 'rich') items = historyItem(entry.payload, base, root)
     else if (entry.kind === 'response') {
       if (
         (typeof entry.payload.id === 'string' && richIds.has(entry.payload.id)) ||

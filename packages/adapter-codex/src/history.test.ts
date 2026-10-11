@@ -690,9 +690,9 @@ describe('native Codex history', () => {
     ])
     const events = await source.read((await source.list())[0]!)
     const file = (name: string, to: string) => [
-      `diff --git a//project/${name} b//project/${name}`,
-      `--- a//project/${name}`,
-      `+++ b//project/${name}`,
+      `diff --git a/${name} b/${name}`,
+      `--- a/${name}`,
+      `+++ b/${name}`,
       '@@ -1,2 +1,2 @@',
       ` ${name[0]}`,
       '-old',
@@ -723,8 +723,8 @@ describe('native Codex history', () => {
     })
     const diff = events.find((entry) => entry.type === 'diff.updated')
     expect(diff?.type === 'diff.updated' && diff.diff).toBe(
-      'diff --git a//project/__init__.py b//project/__init__.py\nnew file mode 100644\n' +
-        'diff --git a//project/a.txt b//project/a.txt\n--- a//project/a.txt\n+++ b//project/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
+      'diff --git a/__init__.py b/__init__.py\nnew file mode 100644\n' +
+        'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+A\n',
     )
   })
 
@@ -745,15 +745,15 @@ describe('native Codex history', () => {
     const diff = events.find((entry) => entry.type === 'diff.updated')
     expect(diff?.type === 'diff.updated' && diff.diff).toBe(
       [
-        'diff --git a//project/new.txt b//project/new.txt',
+        'diff --git a/new.txt b/new.txt',
         'new file mode 100644',
         '--- /dev/null',
-        '+++ b//project/new.txt',
+        '+++ b/new.txt',
         '@@ -0,0 +1,1 @@',
         '+fresh',
-        'diff --git a//project/old.txt b//project/old.txt',
+        'diff --git a/old.txt b/old.txt',
         'deleted file mode 100644',
-        '--- a//project/old.txt',
+        '--- a/old.txt',
         '+++ /dev/null',
         '@@ -1,1 +0,0 @@',
         '-gone',
@@ -801,6 +801,57 @@ describe('native Codex history', () => {
     expect(await readFile(path.join(repo, 'a.txt'), 'utf8')).toBe('same\n')
     expect(existsSync(path.join(repo, 'new.txt'))).toBe(false)
     expect(existsSync(path.join(repo, 'b.txt'))).toBe(false)
+  })
+
+  it('names imported Windows files in Git headers relative to the project with / separators', async () => {
+    const { file, source } = await store([])
+    await writeFile(
+      file,
+      [
+        record('session_meta', { id: 'native-session', cwd: 'C:\\proj', timestamp: at }),
+        event({ type: 'task_started', turn_id: 'turn-one' }),
+        rich({
+          type: 'FileChange',
+          id: 'files',
+          changes: {
+            'C:\\proj\\src\\a.ts': {
+              type: 'update',
+              unified_diff: '@@ -1 +1 @@\n-a\n+A\n',
+              move_path: 'C:\\proj\\src\\b.ts',
+            },
+            'D:\\elsewhere\\c.ts': { type: 'add', content: 'c\n' },
+          },
+        }),
+        event({ type: 'task_complete', turn_id: 'turn-one' }),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join('\n') + '\n',
+    )
+    const events = await source.read((await source.list())[0]!)
+    const diff = events.find((entry) => entry.type === 'diff.updated')
+    expect(diff?.type === 'diff.updated' && diff.diff).toBe(
+      [
+        'diff --git a/src/a.ts b/src/b.ts',
+        'rename from src/a.ts',
+        'rename to src/b.ts',
+        '--- a/src/a.ts',
+        '+++ b/src/b.ts',
+        '@@ -1 +1 @@',
+        '-a',
+        '+A',
+        'diff --git a/D:/elsewhere/c.ts b/D:/elsewhere/c.ts',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b/D:/elsewhere/c.ts',
+        '@@ -0,0 +1,1 @@',
+        '+c',
+        '',
+      ].join('\n'),
+    )
+    expect(items(events).map((entry) => entry.path)).toEqual([
+      'C:\\proj\\src\\a.ts',
+      'D:\\elsewhere\\c.ts',
+    ])
   })
 
   it('marks an imported file content without a final newline', async () => {
