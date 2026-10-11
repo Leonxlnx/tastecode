@@ -110,12 +110,18 @@ describe('page phase', () => {
     expect(prompt).toContain('Compact reduces simultaneity, not content or capability')
     expect(prompt).toContain('Treat the selected reference images as composition requirements')
     expect(prompt).toContain('Do not add a section to use an available reference')
-    expect(prompt).toContain("Retain each selected reference's actual card geometry")
+    expect(prompt).toContain("Retain each selected reference's card arrangement")
+    expect(prompt).toContain("style every card in the brand's one card language")
     expect(prompt).toContain('record stable assetNeeds for every meaningful image')
     expect(prompt).toContain('Carry the approved brand accent into primary actions')
     expect(prompt).toContain('Give every section one explicit motion decision')
-    expect(prompt).toContain('Derive heading placement, scale, image proportions')
-    expect(prompt).toContain('Unify font families, brand colors and controls')
+    expect(prompt).toContain('Derive heading placement, line count, image proportions')
+    expect(prompt).toContain(
+      'References define macro composition only: grid, column structure, media count and crop, alignment, overlap, section proportions and responsive order',
+    )
+    expect(prompt).toContain(
+      'font families come only from the approved brand system and its designTokens, and must be identical across sections',
+    )
     expect(prompt).toContain('Never use an em dash')
     expect(prompt).toContain(
       'Use optional copy.eyebrow only when the selected reference actually contains a label',
@@ -179,6 +185,53 @@ describe('page phase', () => {
       prompt,
     )?.[1]
     expect(JSON.parse(deck ?? '[]')).toHaveLength(11)
+  })
+
+  it('keeps reference geometry per section and one design language for the page', () => {
+    const deck = [
+      {
+        id: 'studio-hero',
+        family: 'hero' as const,
+        imagePath: '/library/hero.webp',
+        cue: 'Large editorial composition',
+      },
+      {
+        id: 'other-feature',
+        family: 'feature' as const,
+        imagePath: '/library/feature.webp',
+        cue: 'Three offset cards',
+      },
+    ]
+    const prompt = designPagePrompt(brief, brand, [], deck)
+    expect(prompt).toContain('ONE DESIGN LANGUAGE')
+    expect(prompt).toContain(
+      'References are drawn at random around one anchor, the anchor reference (the deck entry whose role is "anchor"; in a deck without roles, the hero reference',
+    )
+    expect(prompt).toContain(
+      'drawn first from the anchor\'s own source site (role "same-site"), then from the most similar sites ("similar-site"), and only then from the wider library ("fallback")',
+    )
+    expect(prompt).toContain(
+      'Decks saved before anchor sampling were drawn independently for each family',
+    )
+    expect(prompt).toContain('prefer the one closer to the anchor')
+    expect(prompt).toContain(
+      "render the section in the page's one design language: brand palette, approved font families, the designTokens type scale",
+    )
+    expect(prompt).toContain(
+      "Derive architecture.signatureRule from the anchor reference's geometry",
+    )
+    expect(prompt).toContain("render it in the brand's one label style")
+    expect(prompt).not.toContain("Do not fall back to one source site's look")
+    expect(prompt).not.toContain("preserve each reference's individual type scale")
+    expect(prompt).not.toContain('Keep type proportions, case, media count, crops, borders, radii')
+    expect(
+      designPagePrompt(
+        { ...brief, pageType: 'dashboard', originalRequest: 'Build an analytics dashboard' },
+        brand,
+        [],
+        [{ ...deck[0]!, id: 'workspace', family: 'dashboard' as const }],
+      ),
+    ).toContain('That reference is the anchor: every view and region uses its one type')
   })
 
   it('persists and validates the selected visual reference', () => {
