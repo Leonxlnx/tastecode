@@ -209,7 +209,8 @@ function resolveExecutable(
   for (const candidate of candidates) {
     try {
       accessSync(candidate, constants.X_OK)
-      return candidate
+      // X_OK also holds for a directory, such as one named after the CLI.
+      if (statSync(candidate).isFile()) return candidate
     } catch {
       // Continue in PATH order, matching normal command resolution.
     }
