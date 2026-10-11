@@ -36,6 +36,7 @@ import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   mapMcpServerStatus,
   mapMcpStartupStatus,
+  mcpShellEnvironmentConfig,
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
@@ -62,6 +63,7 @@ import {
   McpToolApprovalParamsSchema,
   ModelListResponseSchema,
   PermissionsRequestApprovalParamsSchema,
+  ReasoningSummaryPartAddedNotificationSchema,
   SkillsConfigWriteResponseSchema,
   SkillsListResponseSchema,
   ThreadResumeResponseSchema,
@@ -125,6 +127,8 @@ const IGNORABLE_NOTIFICATIONS = new Set([
   // The app-server writes the same warning to stderr, which is already
   // forwarded to the log; mapping this too would print every warning twice.
   'configWarning',
+  // Experimental, and not guaranteed to add up to the plan item that completes it.
+  'item/plan/delta',
 ])
 
 /** Provider state TasteCode either does not expose or already derives from shared events. */
@@ -577,6 +581,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
+  #mcpShellConfig: Record<string, JsonValue>
   #mcpLogins = new Map<string, string>()
   /**
    * Approvals waiting on an answer, keyed by our id. Holds the JSON-RPC
@@ -606,6 +611,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
+    this.#mcpShellConfig = mcpShellEnvironmentConfig(prepared.environment)
   }
 
   get capabilities(): Capabilities {
@@ -618,7 +624,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#starting) return this.#starting
     const generation = this.#startupGeneration
     this.#starting = (async () => {
-      await this.#processStop
+      await this.#settleProcessStop()
       for (let attempt = 0; attempt < 2; attempt += 1) {
         if (generation !== this.#startupGeneration) throw new Error('Codex startup was cancelled')
         try {
@@ -680,7 +686,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       )
     } catch (error) {
       this.#processStop = Promise.resolve(rpc.dispose())
-      await this.#processStop
+      await this.#settleProcessStop()
       if (this.#rpc === rpc) this.#rpc = undefined
       throw error
     }
@@ -689,6 +695,20 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
     this.#started = true
     this.#restartNeeded = false
+  }
+
+  /** A process that refused to stop is reported once, never left to block every restart. */
+  async #settleProcessStop(): Promise<void> {
+    const stopping = this.#processStop
+    try {
+      await stopping
+    } catch (cause) {
+      this.emit(
+        'log',
+        `Previous Codex process did not stop: ${cause instanceof Error ? cause.message : String(cause)}`,
+      )
+      if (this.#processStop === stopping) this.#processStop = Promise.resolve()
+    }
   }
 
   #onFailure(rpc: CodexRpc, error: Error): void {
@@ -997,6 +1017,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
             mcp_servers: this.#mcpServers,
           }
         : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/start',
@@ -1041,6 +1062,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const config = {
       ...codexContextConfig(options.context),
       ...(Object.keys(this.#mcpServers).length ? { mcp_servers: this.#mcpServers } : {}),
+      ...this.#mcpShellConfig,
     }
     const response = await this.#callParsed(
       'thread/resume',
@@ -1522,6 +1544,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
+      // The completed item joins summary parts with a blank line; match it live.
+      case 'item/reasoning/summaryPartAdded': {
+        const p = ReasoningSummaryPartAddedNotificationSchema.parse(params)
+        if (p.summaryIndex > 0) {
+          emit({ type: 'item.delta', turnId: p.turnId, itemId: p.itemId, textDelta: '\n\n' })
+        }
+        return
+      }
+
       // Command output, live. A build that prints for a minute should show it
       // printing, not a spinner and then a wall of text.
       case 'item/commandExecution/outputDelta': {
@@ -1590,7 +1621,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const p = McpServerStatusUpdatedNotificationSchema.parse(params)
         this.#mcpStartup.set(mcpStartupKey(p.threadId ?? undefined, p.name), mapMcpStartupStatus(p))
         const inventory = this.#mcpInventory.get(p.threadId ?? '')
-        if (inventory) {
+        if (p.status === 'ready') {
+          // A server that just connected reports tools and auth the cached copy lacks.
+          this.#mcpInventory.delete(p.threadId ?? '')
+          this.#mcpInventoryLoads.delete(p.threadId ?? '')
+        } else if (inventory) {
           this.#mcpInventory.set(
             p.threadId ?? '',
             inventory.map((server) =>
@@ -1604,6 +1639,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'mcpServer/oauthLogin/completed': {
         const p = McpServerOauthLoginCompletedNotificationSchema.parse(params)
+        if (p.success) {
+          // The sign-in is the server's, not one chat's: every cached copy is stale.
+          this.#mcpInventory.clear()
+          this.#mcpInventoryLoads.clear()
+        }
         // A completion without a threadId still ends someone's login — match
         // by server name across threads rather than leaving the browser flow
         // finished and the UI waiting forever.

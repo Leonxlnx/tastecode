@@ -23,6 +23,7 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   buildReviewTree,
   flattenReviewTree,
+  reviewTreeNodeKey,
   type ReviewTreeNode,
   type ReviewTreeRow,
 } from './review-file-tree.js'
@@ -108,6 +109,9 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   branch?: string | undefined
   theme: 'light' | 'dark'
 }) {
+  // The server does not know a chat's provisional id while its first message
+  // creates it; stay in the project checkout until the real id arrives.
+  const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
   const [diff, setDiff] = useState<SessionDiff>()
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
@@ -139,7 +143,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       try {
         const result = await props.transport.request('workspace.diff', {
           projectPath: props.projectPath,
-          ...(props.threadId ? { threadId: props.threadId } : {}),
+          ...(threadId ? { threadId } : {}),
         })
         if (generation.current === mine) {
           // The version names the changes, so a draft survives a refresh that found the same ones.
@@ -155,7 +159,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         if (generation.current === mine) setLoading(false)
       }
     },
-    [clearCommitDraft, props.projectPath, props.threadId, props.transport],
+    [clearCommitDraft, props.projectPath, threadId, props.transport],
   )
 
   const generateCommitMessage = useCallback(async () => {
@@ -167,7 +171,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     try {
       const result = await props.transport.request('backgroundModel.generateCommitMessage', {
         projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
+        ...(threadId ? { threadId } : {}),
       })
       if (draftGeneration.current === mine) setCommitMessage(result.message)
     } catch (cause) {
@@ -177,7 +181,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     } finally {
       if (draftGeneration.current === mine) setGeneratingCommit(false)
     }
-  }, [props.projectPath, props.threadId, props.transport])
+  }, [props.projectPath, threadId, props.transport])
 
   const copyCommitMessage = useCallback(async () => {
     if (!commitMessage) return
@@ -198,10 +202,10 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       generation.current += 1
       draftGeneration.current += 1
     }
-  }, [clearCommitDraft, props.projectPath, props.threadId, refresh])
+  }, [clearCommitDraft, props.projectPath, threadId, refresh])
 
   const refreshAfterChange = useCallback(() => void refresh(true), [refresh])
-  useWorkspaceRefresh(props.transport, props.threadId, refreshAfterChange)
+  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange)
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
@@ -443,7 +447,7 @@ export const ReviewTree = memo(function ReviewTree({
   return (
     <div className="workspace-review__tree-list">
       {tree.map((node) => (
-        <ReviewTreeNode key={node.path} node={node} depth={0} onSelect={onSelect} />
+        <ReviewTreeNode key={reviewTreeNodeKey(node)} node={node} depth={0} onSelect={onSelect} />
       ))}
     </div>
   )
@@ -463,7 +467,10 @@ function VirtualReviewTree({
   )
   const scroller = useRef<HTMLDivElement>(null)
   const getItemKey = useCallback(
-    (index: number) => rows[index]?.node.path ?? `missing-review-row-${index}`,
+    (index: number) => {
+      const row = rows[index]
+      return row ? reviewTreeNodeKey(row.node) : `missing-review-row-${index}`
+    },
     [rows],
   )
   const virtualizer = useVirtualizer({
@@ -599,7 +606,12 @@ function ReviewTreeNode({
       </button>
       {open
         ? node.children.map((child) => (
-            <ReviewTreeNode key={child.path} node={child} depth={depth + 1} onSelect={onSelect} />
+            <ReviewTreeNode
+              key={reviewTreeNodeKey(child)}
+              node={child}
+              depth={depth + 1}
+              onSelect={onSelect}
+            />
           ))
         : null}
     </div>

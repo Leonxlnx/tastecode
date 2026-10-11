@@ -59,7 +59,7 @@ import {
   type NativeMenuShortcuts,
 } from './menu-contract.js'
 import { NativeMenuDispatch } from './native-menu-dispatch.js'
-import { isRendererFileUrl } from './own-renderer.js'
+import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
 import { ownedServerEnvironment } from './owned-server-env.js'
@@ -623,7 +623,7 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(rendererIndexPath())
+    void window.loadURL(rendererFileUrl(rendererIndexPath()))
   }
 }
 

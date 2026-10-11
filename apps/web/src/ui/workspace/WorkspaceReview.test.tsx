@@ -113,6 +113,37 @@ describe('WorkspaceReview', () => {
     })
   })
 
+  it('reviews a provisional chat in the project checkout until its real id arrives', async () => {
+    const request = vi.fn(async (method: string) => {
+      if (method === 'workspace.diff')
+        return {
+          threadId: 'workspace-checkout',
+          version: 'tree-1',
+          files: [{ path: 'src/index.ts', status: 'modified', binary: false, hunks: [] }],
+        } satisfies SessionDiff
+      if (method === 'backgroundModel.generateCommitMessage') return { message: 'chore: draft' }
+      throw new Error(`unexpected method ${method}`)
+    })
+
+    render(
+      <WorkspaceReview
+        transport={new TestTransport(request)}
+        projectPath="/repo"
+        threadId="pending:new"
+        branch="main"
+        theme="dark"
+      />,
+    )
+
+    expect(await screen.findByText('src/index.ts')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Draft commit message' }))
+    expect(await screen.findByText('chore: draft')).toBeTruthy()
+    expect(request.mock.calls).toEqual([
+      ['workspace.diff', { projectPath: '/repo' }],
+      ['backgroundModel.generateCommitMessage', { projectPath: '/repo' }],
+    ])
+  })
+
   it('drops an obsolete commit draft when the diff is refreshed', async () => {
     const diff = {
       threadId: 'workspace-checkout',

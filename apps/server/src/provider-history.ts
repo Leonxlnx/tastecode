@@ -10,7 +10,7 @@ import type {
 } from '@harness/contracts'
 import { Store } from './store.js'
 import { projectHistoryItems } from './side-chat.js'
-import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 type Source = { provider: ProviderId; history: ProviderHistorySource }
 type Imported = {
@@ -378,6 +378,15 @@ export function importedEvents(
     const id = turnId(event)
     if (!id) continue
     if (localTurns.has(id)) echoed.add(id)
+    // A Design phase prompt is the app's own instruction, and the local log already
+    // shows that phase as Design activity. A provider such as Claude saves each phase
+    // as a turn whose id matches no local turn.
+    if (
+      (event.type === 'item.completed' || event.type === 'item.started') &&
+      event.item.role === 'user' &&
+      withoutRestoreNotice(event.item.text)?.startsWith(DESIGN_PHASE_NOTICE)
+    )
+      echoed.add(id)
   }
   const candidates = events
     .flatMap((event) => {
@@ -395,7 +404,9 @@ export function importedEvents(
           Math.abs(item.createdAt - native.createdAt),
           started === undefined ? Infinity : Math.abs(started - native.createdAt),
         )
-        return distance < 60_000 ? [{ local: item.turnId, native: native.turnId, distance }] : []
+        // Match prompts, not turns: a steer stays in the local turn it steered, while a
+        // provider such as Claude saves it as a turn of its own.
+        return distance < 60_000 ? [{ local: item.id, native: native.turnId, distance }] : []
       })
     })
     .sort((a, b) => a.distance - b.distance)
@@ -455,9 +466,12 @@ export function importedEvents(
   return [...result].map(([key, event]) => ({ key, event }))
 }
 
+function withoutRestoreNotice(text: string | undefined): string | undefined {
+  return text?.startsWith(RESTORE_CONTEXT_NOTICE) ? text.slice(RESTORE_CONTEXT_NOTICE.length) : text
+}
+
 function sameUserMessage(left: Item, right: Item): boolean {
-  let text = right.text
-  if (text?.startsWith(RESTORE_CONTEXT_NOTICE)) text = text.slice(RESTORE_CONTEXT_NOTICE.length)
+  let text = withoutRestoreNotice(right.text)
   // Native logs contain our Design follow-up envelope; local history keeps only
   // the user's submission. Unwrap solely for echo matching, never arbitrary prose.
   if (text?.startsWith('This is an ordinary user turn, not an active TasteCode Design phase. ')) {

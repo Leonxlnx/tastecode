@@ -290,6 +290,58 @@ describe('Claude Code saved history', () => {
     ])
   })
 
+  it('ends an interrupted turn at its Stop marker instead of showing the marker as a prompt', async () => {
+    // Captured Claude 2.1.296 records: a Stop saves a user row with no prompt fields.
+    const answered = row('a3', 'assistant', [{ type: 'text', text: 'Noted.' }], 'u3')
+    answered.message = { ...answered.message, stop_reason: 'end_turn' } as typeof answered.message
+    const f = await fixture([
+      row('u1', 'user', [{ type: 'text', text: 'Write a story' }]),
+      row('a1', 'assistant', [{ type: 'text', text: 'Once upon' }], 'u1'),
+      row('stop', 'user', [{ type: 'text', text: '[Request interrupted by user]' }], 'a1', {
+        promptId: 'p1',
+      }),
+      row('u2', 'user', [{ type: 'text', text: 'Run the tests' }], 'stop'),
+      row(
+        'a2',
+        'assistant',
+        [
+          { type: 'text', text: 'Running them.' },
+          { type: 'tool_use', id: 'tool', name: 'Bash', input: { command: 'pnpm test' } },
+        ],
+        'u2',
+      ),
+      row(
+        'stop-tool',
+        'user',
+        [
+          { type: 'tool_result', tool_use_id: 'tool', content: 'Rejected', is_error: true },
+          { type: 'text', text: '[Request interrupted by user for tool use]' },
+        ],
+        'a2',
+      ),
+      row('u3', 'user', '[Request interrupted by user] is what the log said', 'stop-tool'),
+      answered,
+    ])
+    const session = (await f.source.list())[0]!
+    const events = await f.source.read(session)
+    const saved = items(events)
+    expect(saved.filter((item) => item.type === 'message').map((item) => item.text)).toEqual([
+      'Write a story',
+      'Once upon',
+      'Run the tests',
+      'Running them.',
+      '[Request interrupted by user] is what the log said',
+      'Noted.',
+    ])
+    expect(saved.find((item) => item.command === 'pnpm test')).toMatchObject({
+      status: 'failed',
+      turnId: `${SESSION}:u2`,
+    })
+    expect(
+      events.flatMap((event) => (event.type === 'turn.completed' ? [event.status] : [])),
+    ).toEqual(['interrupted', 'interrupted', 'completed'])
+  })
+
   it('hides SDK task notifications while preserving identical text pasted by the user', async () => {
     // Captured Claude 2.1.273 records use origin.kind, without isMeta or isSidechain.
     const notification =

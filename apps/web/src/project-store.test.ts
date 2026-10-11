@@ -306,6 +306,25 @@ describe('server project snapshot reconciliation', () => {
     expect(takeProjectSessionChanges(current, next)).toEqual([{ projectIndex: 1, sessionIndex: 0 }])
   })
 
+  it('keeps a chat that is still starting until the server can list it', () => {
+    const snapshot = serverProjects(2, 2)
+    const listed = reconcileProjectList([], snapshot, [], {}, 100)
+    const starting: Session = { ...session('pending:new-chat'), status: 'starting' }
+    const current = listed.map((project, index) =>
+      index === 1 ? { ...project, sessions: [starting, ...project.sessions] } : project,
+    )
+
+    const next = reconcileProjectList(current, snapshot, [], {}, 200)
+
+    expect(next[0]).toBe(current[0])
+    expect(next[1]?.sessions.map(({ id }) => id)).toEqual([
+      'pending:new-chat',
+      'thread-1-0',
+      'thread-1-1',
+    ])
+    expect(findSession(next, 'pending:new-chat')?.session).toBe(starting)
+  })
+
   it('applies saved project and chat order while adding defaults', () => {
     const snapshot = serverProjects(2, 2)
     delete snapshot[1]!.sessions[1]!.status

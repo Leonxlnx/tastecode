@@ -38,6 +38,28 @@ describe('workspace review file tree', () => {
     expect(tree[0]?.children[0]?.file).toBe(latest)
   })
 
+  it('keeps a deleted file apart from a folder that replaced it', () => {
+    const deleted = { ...file('foo'), status: 'deleted' as const }
+    const added = { ...file('foo/bar.ts'), status: 'added' as const }
+
+    for (const files of [
+      [deleted, added],
+      [added, deleted],
+    ]) {
+      const tree = buildReviewTree(files)
+
+      expect(tree.map((node) => [node.path, node.file])).toEqual([
+        ['foo', undefined],
+        ['foo', deleted],
+      ])
+      expect(flattenReviewTree(tree, new Set()).map(({ node }) => node.file)).toEqual([
+        undefined,
+        added,
+        deleted,
+      ])
+    }
+  })
+
   it('flattens open folders in display order and omits closed descendants', () => {
     const tree = buildReviewTree([file('src/nested/a.ts'), file('src/file.ts'), file('README.md')])
 

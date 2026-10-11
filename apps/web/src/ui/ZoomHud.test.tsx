@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ZoomHud } from './ZoomHud.js'
 
@@ -19,8 +19,10 @@ vi.mock('../bridge.js', () => ({
 }))
 
 afterEach(() => {
+  cleanup()
   zoom.listener = undefined
   vi.clearAllMocks()
+  vi.useRealTimers()
 })
 
 describe('ZoomHud', () => {
@@ -34,5 +36,22 @@ describe('ZoomHud', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Reset' }))
     expect(zoom.set).toHaveBeenNthCalledWith(1, 'out')
     expect(zoom.set).toHaveBeenNthCalledWith(2, 'reset')
+  })
+
+  it('stays visible while hovered after its own buttons change the zoom', () => {
+    vi.useFakeTimers()
+    render(<ZoomHud />)
+    act(() => zoom.listener?.(1.1))
+    const hud = screen.getByLabelText('App zoom 110%')
+
+    fireEvent.pointerEnter(hud)
+    fireEvent.click(screen.getByRole('button', { name: 'Zoom in' }))
+    act(() => zoom.listener?.(1.2))
+    act(() => vi.advanceTimersByTime(5_000))
+    expect(screen.getByLabelText('App zoom 120%')).toBeTruthy()
+
+    fireEvent.pointerLeave(hud)
+    act(() => vi.advanceTimersByTime(3_000))
+    expect(screen.queryByRole('status')).toBeNull()
   })
 })

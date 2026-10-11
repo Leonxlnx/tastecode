@@ -8,6 +8,7 @@ import {
   designBuildPrompt,
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
+  designWorkspaceFileBaseline,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
@@ -384,6 +385,29 @@ describe('build phase', () => {
       }
 
       expect(() => validateExactBuildFiles(workspace, brief, baseline)).not.toThrow()
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps generated dependency and cache trees out of both Design baselines', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-generated-trees-'))
+    try {
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      // A virtualenv or a Rust target folder alone can exceed the scan's entry cap.
+      for (const directory of ['.venv/lib', 'target/debug', '.next/cache', '__pycache__']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'generated.svg'), '<svg></svg>')
+      }
+
+      expect(designWorkspaceFileBaseline(workspace)).toEqual([
+        '.next/',
+        '.venv/',
+        '__pycache__/',
+        'index.html',
+        'target/',
+      ])
+      expect(designSourceQualityBaseline(workspace)).toEqual([])
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }

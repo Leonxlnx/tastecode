@@ -127,7 +127,9 @@ async function parseDiff(
       base,
       snapshot.commit,
       '--',
-      ...paths.map((file) => `:(top,literal)${file}`),
+      // A pathspec also matches everything below a folder of the same name,
+      // such as foo/bar.ts added where the file foo was deleted.
+      ...paths.flatMap((file) => [`:(top,literal)${file}`, `:(top,literal,exclude)${file}/`]),
     ])
     const hunks = parseHunks(file.path, patch, file.status === 'renamed')
     const targetId = digest(`file\0${file.path}\0${patch}`)

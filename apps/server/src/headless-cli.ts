@@ -26,6 +26,9 @@ export async function runHeadlessCli(
     port: options.port,
     host: '127.0.0.1',
     accessToken: env['HARNESS_ACCESS_TOKEN'],
+    // No renderer runs beside a headless server. Trusting the dev renderer's
+    // port would admit whatever page happens to answer there.
+    rendererOrigin: env['HARNESS_RENDERER_ORIGIN'] ?? 'file://',
   })
   installShutdownHandlers(server)
   process.stdout.write('TasteCode is running without the desktop app.\n')

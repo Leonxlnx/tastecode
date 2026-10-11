@@ -68,7 +68,7 @@ export function prepareMcpConfig(
       if (value.source === 'literal') {
         httpHeaders[name] = value.value
       } else {
-        const variable = `HARNESS_MCP_${createHash('sha256')
+        const variable = `HARNESS_MCP_TOKEN_${createHash('sha256')
           .update(`${server.id}\0${name}`)
           .digest('hex')
           .slice(0, 16)
@@ -90,6 +90,20 @@ export function prepareMcpConfig(
   }
 
   return { servers: result, environment }
+}
+
+/**
+ * Codex hands its own environment to every shell command the model runs, so
+ * the header credentials would reach `printenv`. An `exclude` override would
+ * replace the user's list; a dotted `set` leaf merges into their policy and
+ * is applied after inherit and exclude, so the commands see the name blank.
+ */
+export function mcpShellEnvironmentConfig(
+  environment: NodeJS.ProcessEnv,
+): Record<string, JsonValue> {
+  return Object.fromEntries(
+    Object.keys(environment).map((name) => [`shell_environment_policy.set.${name}`, '']),
+  )
 }
 
 function auth(status: ParsedMcpServerStatus['authStatus']): McpAuth {

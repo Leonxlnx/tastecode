@@ -22,6 +22,14 @@ const KIND_TO_ITEM = new Map<ToolKind, Item['type']>([
   ['think', 'reasoning'],
 ])
 
+type ToolState = {
+  itemId: string
+  kind?: ToolKind
+  title?: string
+  output?: string
+  finished?: boolean
+}
+
 export class Streamer {
   #turnId: string
   readonly #workspacePath: string | undefined
@@ -35,7 +43,9 @@ export class Streamer {
    * arrives as an anonymous "tool" and replaces the row that showed what was
    * actually run.
    */
-  #tools = new Map<string, { kind?: ToolKind; title?: string; output?: string }>()
+  #tools = new Map<string, ToolState>()
+  /** How often each tool call id has been reused after its call finished. */
+  #reuses = new Map<string, number>()
   /**
    * Edits a tool call proposed before it finished.
    *
@@ -72,10 +82,11 @@ export class Streamer {
   ): void {
     const proposed = diffParts(fields.content)
     if (proposed.length > 0) this.#proposed.set(toolCallId, proposed)
-    const known = this.#tools.get(toolCallId)
-    const kind = fields.kind ?? known?.kind
-    const title = fields.title ?? known?.title
+    const known = this.#call(toolCallId, true)
+    const kind = fields.kind ?? known.kind
+    const title = fields.title ?? known.title
     this.#tools.set(toolCallId, {
+      itemId: known.itemId,
       ...(kind ? { kind } : {}),
       ...(title ? { title } : {}),
     })
@@ -176,19 +187,21 @@ export class Streamer {
     // An update carries only what changed. Fall back to what we recorded when
     // this call started, so a completion does not erase its own identity —
     // and accumulate output, because each frame carries only its own chunk.
-    const known = this.#tools.get(id)
-    const kind = update.kind ?? known?.kind
-    const title = update.title ?? known?.title
+    const known = this.#call(id, update.sessionUpdate === 'tool_call')
+    const kind = update.kind ?? known.kind
+    const title = update.title ?? known.title
     const chunk = outputOf(update.content)
-    const output = chunk ? (known?.output ? `${known.output}${chunk}` : chunk) : known?.output
+    const output = chunk ? (known.output ? `${known.output}${chunk}` : chunk) : known.output
+    const finished = update.status === 'completed' || update.status === 'failed'
     this.#tools.set(id, {
+      itemId: known.itemId,
       ...(kind ? { kind } : {}),
       ...(title ? { title } : {}),
       ...(output ? { output } : {}),
+      ...(finished ? { finished } : {}),
     })
 
     const type = (kind && KIND_TO_ITEM.get(kind)) ?? 'tool_call'
-    const finished = update.status === 'completed' || update.status === 'failed'
 
     // A tool call interrupts the prose and thinking around it. Complete both
     // before the tool so their text remains immutable and whatever follows the
@@ -198,7 +211,7 @@ export class Streamer {
     )
 
     const item: Item = {
-      id,
+      id: known.itemId,
       turnId: this.#turnId,
       type,
       status: update.status === 'failed' ? 'failed' : finished ? 'completed' : 'started',
@@ -231,6 +244,23 @@ export class Streamer {
     if (diff !== undefined) events.push({ type: 'diff.updated', turnId: this.#turnId, diff })
 
     return events
+  }
+
+  /**
+   * What is known about the call a tool call id names now.
+   *
+   * Grok reuses ids one call after another. A call starting under the id of
+   * one that already finished gets its own item and none of the earlier
+   * state; sharing them replaced the first call's row with the second and
+   * appended the second call's output to the first's.
+   */
+  #call(toolCallId: string, starting: boolean): ToolState {
+    const known = this.#tools.get(toolCallId)
+    if (!known) return { itemId: toolCallId }
+    if (!starting || !known.finished) return known
+    const reuse = (this.#reuses.get(toolCallId) ?? 0) + 1
+    this.#reuses.set(toolCallId, reuse)
+    return { itemId: `${toolCallId}#${reuse}` }
   }
 
   /**

@@ -15,11 +15,15 @@ type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: numbe
 type IndexedSession = { session: ProviderHistorySession; name?: string; internal?: boolean }
 type SessionName = { title: string; updatedAt: number }
 type SessionNames = Map<string, SessionName>
+type Signature = { signature: string; racy: boolean }
 const PREVIEW_LENGTH = 200
 const SESSION_NAMES_FILE = 'session_index.jsonl'
 // Codex commits to its state index whenever a session changes. While the index
 // is unchanged, indexed rollouts reuse their last file stats for this long.
 const INDEXED_STAT_REUSE_MS = 60_000
+// A rewrite that keeps a file's size within one timestamp tick keeps its mtime
+// too, so a signature taken this close to a write is checked again next time.
+const RACY_SIGNATURE_MS = 1_000
 
 export type CodexHistoryOptions = { codexHome?: string }
 
@@ -32,8 +36,8 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   const headers = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
   // The server lists again on every background refresh. Unchanged stores and rollouts
   // reuse their previous results instead of re-reading the index and rehashing sessions.
-  let index: { signature: string; byFile: Map<string, IndexedSession> } | undefined
-  let sidecar: { signature: string; names: SessionNames } | undefined
+  let index: (Signature & { digest: string; byFile: Map<string, IndexedSession> }) | undefined
+  let sidecar: (Signature & { names: SessionNames }) | undefined
   const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let stats: { at: number; files: Map<string, SavedFile> } | undefined
   let listing: Promise<ProviderHistorySession[]> | undefined
@@ -41,27 +45,35 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   async function list(): Promise<ProviderHistorySession[]> {
     const databases = await stateFiles(home)
     // A commit rewrites the database or its write-ahead log.
-    const indexSignature = await filesSignature(
+    const indexFiles = await filesSignature(
       home,
       databases.flatMap((file) => [file, `${file}-wal`]),
     )
     let indexChanged = false
-    if (index?.signature !== indexSignature) {
-      indexChanged = true
+    if (index?.signature !== indexFiles.signature || index.racy) {
       const rows = await indexedSessions(home, databases)
+      // A racy index is read again, but unchanged rows keep their sessions.
+      const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
+      indexChanged = index?.signature !== indexFiles.signature || index.digest !== digest
       index = {
-        signature: indexSignature,
-        byFile: new Map(
-          rows.flatMap((entry) =>
-            entry.session.locator ? [[path.resolve(entry.session.locator), entry] as const] : [],
-          ),
-        ),
+        ...indexFiles,
+        digest,
+        byFile:
+          indexChanged || !index
+            ? new Map(
+                rows.flatMap((entry) =>
+                  entry.session.locator
+                    ? [[path.resolve(entry.session.locator), entry] as const]
+                    : [],
+                ),
+              )
+            : index.byFile,
       }
     }
     const byFile = index.byFile
-    const namesSignature = await filesSignature(home, [SESSION_NAMES_FILE])
-    if (sidecar?.signature !== namesSignature)
-      sidecar = { signature: namesSignature, names: await sessionNames(home) }
+    const namesFile = await filesSignature(home, [SESSION_NAMES_FILE])
+    if (sidecar?.signature !== namesFile.signature || sidecar.racy)
+      sidecar = { ...namesFile, names: await sessionNames(home) }
     const names = sidecar.names
     const now = Date.now()
     const reusable =
@@ -173,28 +185,40 @@ function describeSession(
   }
 }
 
-async function filesSignature(home: string, files: string[]): Promise<string> {
+async function filesSignature(home: string, files: string[]): Promise<Signature> {
+  const now = Date.now()
+  let racy = false
   const parts = await Promise.all(
     files.map((file) =>
       stat(path.join(home, file)).then(
-        (info) => `${file}:${info.size}:${info.mtimeMs}`,
+        (info) => {
+          racy ||= Math.abs(now - info.mtimeMs) < RACY_SIGNATURE_MS
+          return `${file}:${info.size}:${info.mtimeMs}`
+        },
         () => `${file}:-`,
       ),
     ),
   )
-  return parts.join('|')
+  return { signature: parts.join('|'), racy }
 }
 
 async function allowedFile(home: string, file: string): Promise<boolean> {
   try {
-    const canonicalHome = await realpath(home)
-    const relative = path.relative(canonicalHome, await realpath(file)).split(path.sep)
-    return (
-      ['sessions', 'archived_sessions'].includes(relative[0] ?? '') &&
-      !relative.includes('..') &&
-      path.extname(file) === '.jsonl' &&
-      (await stat(file)).isFile()
+    const canonical = await realpath(file)
+    // Listing follows a linked sessions folder, so its target is the boundary.
+    const folders = await Promise.all(
+      ['sessions', 'archived_sessions'].map((name) =>
+        realpath(path.join(home, name)).catch(() => undefined),
+      ),
     )
+    const inside = folders.some((folder) => {
+      if (!folder) return false
+      const relative = path.relative(folder, canonical)
+      return (
+        relative !== '' && !path.isAbsolute(relative) && !relative.split(path.sep).includes('..')
+      )
+    })
+    return inside && path.extname(file) === '.jsonl' && (await stat(file)).isFile()
   } catch {
     return false
   }

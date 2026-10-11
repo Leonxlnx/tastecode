@@ -282,6 +282,7 @@ function harness(
   const resumedIds: string[] = []
   const resumedIn: string[] = []
   const resumedOptions: StartOptions[] = []
+  const resumeBarriers: Promise<void>[] = []
   const capturePreview = vi.fn(
     async (
       _url: string,
@@ -321,6 +322,8 @@ function harness(
             resumedIds.push(threadId)
             resumedIn.push(workspacePath)
             resumedOptions.push(options)
+            const barrier = resumeBarriers.shift()
+            if (barrier) await barrier
             const session = new FakeSession(`s${sessions.length + 1}`)
             sessions.push(session)
             return {
@@ -394,11 +397,27 @@ function harness(
     resumedIds,
     resumedIn,
     resumedOptions,
+    resumeBarriers,
     capturePreview,
   }
 }
 
 describe('failed provider starts', () => {
+  const cleanupFailure = (message: string, dispose: () => Promise<void>) => {
+    const failure = Promise.reject(
+      new StartupCleanupError(new Error(message), new Error('process group survived'), {
+        dispose,
+      }),
+    )
+    failure.catch(() => {})
+    return failure
+  }
+  const failingOnce = () =>
+    vi
+      .fn<() => Promise<void>>()
+      .mockRejectedValueOnce(new Error('process group survived'))
+      .mockResolvedValue(undefined)
+
   it('keeps a session whose cleanup failed until a later stop confirms it', async () => {
     const { orchestrator, startBarriers, logs } = harness()
     const dispose = vi
@@ -422,6 +441,35 @@ describe('failed provider starts', () => {
     )
     await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
     expect(logs.some((line) => line.includes('process group survived'))).toBe(true)
+    await orchestrator.disposeAll()
+    expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a resumed session whose cleanup failed until a later stop confirms it', async () => {
+    const { orchestrator, store, resumeBarriers } = harness()
+    store.addProject('/repo')
+    store.addThread({ id: 'saved', projectPath: '/repo', provider: 'codex', title: 'Saved' })
+    const dispose = failingOnce()
+    resumeBarriers.push(cleanupFailure('thread/resume failed', dispose))
+
+    await expect(orchestrator.submitTurn('saved', 'continue')).rejects.toThrow(
+      'thread/resume failed',
+    )
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
+    await orchestrator.disposeAll()
+    expect(dispose).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a Side chat session whose cleanup failed until a later stop confirms it', async () => {
+    const { orchestrator, sessions, startBarriers } = harness()
+    const parent = await orchestrator.startThread('codex', process.cwd())
+    await orchestrator.submitTurn(parent.id, 'Main question', [], {}, 'main-question')
+    sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+    const dispose = failingOnce()
+    startBarriers.push(cleanupFailure('session/new failed', dispose))
+
+    await expect(orchestrator.startSideThread(parent.id)).rejects.toThrow('session/new failed')
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce())
     await orchestrator.disposeAll()
     expect(dispose).toHaveBeenCalledTimes(2)
   })
@@ -3120,6 +3168,38 @@ describe('provider-neutral design briefing', () => {
         ).toBe(true),
       )
       expect(sessions[0]?.sent).toHaveLength(2)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('delivers Stop to a Design phase whose provider start is still pending', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-stop-handoff-'))
+    const { orchestrator, sessions } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.release = () => {}
+      const malformed = JSON.stringify({
+        status: 'complete',
+        message: 'Brief ready',
+        questions: [],
+        brief: { version: 1 },
+      })
+      session.emit(message(malformed, 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+
+      // The correction turn starts on its own. An interrupt that reaches the
+      // adapter before it accepted the start finds no turn to stop.
+      const stopping = orchestrator.interrupt(thread.id)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(session.interrupted).toBe(false)
+      session.release?.()
+      await expect(stopping).resolves.toBeUndefined()
+      expect(session.interrupted).toBe(true)
     } finally {
       await orchestrator.disposeAll()
       rmSync(workspace, { recursive: true, force: true })

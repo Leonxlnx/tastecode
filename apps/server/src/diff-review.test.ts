@@ -19,6 +19,7 @@ import {
   reverseUnifiedDiff,
   StaleDiffSnapshotError,
 } from './diff-review.js'
+import { SessionDiffSchema } from '@harness/contracts'
 import { Store } from './store.js'
 
 let repo: string
@@ -95,6 +96,26 @@ describe('structured diff review', () => {
     expect(diff.files.find((file) => file.path === 'untracked.txt')).toMatchObject({
       status: 'added',
     })
+  })
+
+  it('keeps a deleted file apart from the folder that replaced it', async () => {
+    writeFileSync(path.join(repo, 'foo'), 'old foo\n')
+    git('add', '.')
+    git('commit', '-m', 'foo')
+    rmSync(path.join(repo, 'foo'))
+    mkdirSync(path.join(repo, 'foo'))
+    writeFileSync(path.join(repo, 'foo', 'bar.ts'), 'export const bar = 1\n')
+
+    const diff = await readWorkspaceDiff(repo)
+
+    expect(() => SessionDiffSchema.parse(diff)).not.toThrow()
+    expect(diff.files.map(({ path, status }) => ({ path, status }))).toEqual([
+      { path: 'foo', status: 'deleted' },
+      { path: 'foo/bar.ts', status: 'added' },
+    ])
+    expect(diff.files[0]?.hunks.flatMap((hunk) => hunk.lines)).toEqual([
+      { kind: 'deletion', oldLine: 1, text: 'old foo' },
+    ])
   })
 
   it('shows every file as added before the first commit', async () => {

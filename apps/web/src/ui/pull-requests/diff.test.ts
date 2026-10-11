@@ -20,6 +20,24 @@ describe('parsePullRequestPatch', () => {
     expect(hunk?.lines[2]).not.toHaveProperty('oldLine')
   })
 
+  it.each([
+    { name: 'U+2028', separator: '\u2028' },
+    { name: 'U+2029', separator: '\u2029' },
+  ])('numbers a hunk whose header context contains $name', ({ separator }) => {
+    const hunks = parsePullRequestPatch(
+      `@@ -1 +1 @@\n-a\n+b\n@@ -20,1 +30,1 @@ const text = "${separator}"\n-old\n+new`,
+    )
+
+    expect(hunks.map((hunk) => hunk.header)).toEqual([
+      '@@ -1 +1 @@',
+      `@@ -20,1 +30,1 @@ const text = "${separator}"`,
+    ])
+    expect(hunks[1]?.lines).toEqual([
+      expect.objectContaining({ kind: 'deletion', oldLine: 20, text: 'old' }),
+      expect.objectContaining({ kind: 'addition', newLine: 30, text: 'new' }),
+    ])
+  })
+
   it('returns no hunks for a binary or omitted patch', () => {
     expect(parsePullRequestPatch('')).toEqual([])
     expect(parsePullRequestPatch('Binary files differ')).toEqual([])

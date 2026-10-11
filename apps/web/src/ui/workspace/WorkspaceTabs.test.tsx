@@ -63,6 +63,13 @@ function Harness() {
       activeId={tabs[0]}
       onSelect={() => {}}
       onClose={(id) => setTabs((current) => current.filter((tab) => tab !== id))}
+      onReorder={(sourceId, targetId) =>
+        setTabs((current) => {
+          const next = current.filter((tab) => tab !== sourceId)
+          next.splice(current.indexOf(targetId), 0, sourceId)
+          return next
+        })
+      }
     >
       <button onClick={() => setTabs((current) => [...current, 'Files'])}>Add</button>
     </WorkspaceTabs>
@@ -139,6 +146,24 @@ it('moves a tab with Alt+Arrow and preserves its selected state', () => {
     altKey: true,
   })
   expect(reorder).not.toHaveBeenCalled()
+})
+
+it('keeps keyboard focus on a tab moved with Alt+Arrow', () => {
+  render(<Harness />)
+  const terminal = screen.getByRole('tab', { name: 'Terminal 1' })
+  act(() => terminal.focus())
+  fireEvent.keyDown(terminal, { key: 'ArrowRight', altKey: true })
+  expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+    'Browser',
+    'Terminal 1',
+  ])
+  expect(document.activeElement).toBe(terminal)
+  fireEvent.keyDown(terminal, { key: 'ArrowLeft', altKey: true })
+  expect(screen.getAllByRole('tab').map((tab) => tab.getAttribute('aria-label'))).toEqual([
+    'Terminal 1',
+    'Browser',
+  ])
+  expect(document.activeElement).toBe(terminal)
 })
 
 it('previews pointer reordering, commits on release, and cancels with Escape', () => {

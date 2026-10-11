@@ -324,6 +324,9 @@ type AccountCheck = {
   error?: ComposerError
 }
 
+/** The counter makes a repeated request for the open section navigate again. */
+type SettingsSectionRequest = { section: SettingsSection; request: number }
+
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
   pendingPath: string | undefined
@@ -363,6 +366,10 @@ function shellStyle(width: number): ShellStyle {
 
 function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
+}
+
+function requestSettingsSection(section: SettingsSection) {
+  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
 }
 
 export function resolveSendAvailability(input: {
@@ -586,6 +593,7 @@ export function App() {
         promise: Promise<string | undefined>
         threadId?: string | undefined
         title: string
+        pinned?: boolean | undefined
       }
     | undefined
   >(undefined)
@@ -716,7 +724,10 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('workflows')
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
+    section: 'workflows',
+    request: 0,
+  })
   const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [pullRequestSetupRefreshRevision, setPullRequestSetupRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -2400,7 +2411,9 @@ export function App() {
 
   useEffect(() => {
     if (!activeId || thread.running) return
-    void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
+    void refreshCheckpoints(activeId).catch(() => {
+      if (activeIdRef.current === activeId) setCheckpoints([])
+    })
   }, [activeId, thread.running, refreshCheckpoints])
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
@@ -2735,9 +2748,14 @@ export function App() {
       const uniquePaths = [...new Set(paths)]
       const activePath = uniquePaths.at(-1)
       if (!activePath) return
-      await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-      for (const path of uniquePaths) removedProjectPaths.current.delete(path)
-      await refreshProjects()
+      try {
+        await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
+        for (const path of uniquePaths) removedProjectPaths.current.delete(path)
+        await refreshProjects()
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+        return
+      }
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
@@ -2857,9 +2875,15 @@ export function App() {
               ? project
               : {
                   ...project,
+                  // A refresh during the start may already list the real row;
+                  // the local one carries the user's title and wins.
                   sessions: project.sessions.some((session) => session.id === provisionalId)
-                    ? project.sessions.map((session) =>
-                        session.id === provisionalId ? { ...session, id: threadId } : session,
+                    ? project.sessions.flatMap((session) =>
+                        session.id === provisionalId
+                          ? [{ ...session, id: threadId }]
+                          : session.id === threadId
+                            ? []
+                            : [session],
                       )
                     : project.sessions.some((session) => session.id === threadId)
                       ? project.sessions
@@ -2893,9 +2917,22 @@ export function App() {
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
+        // A pin made while the chat was starting has only been shown locally.
+        // Send it ahead of the rename so the refresh below already includes it.
+        if (pending?.pinned !== undefined) {
+          void transport
+            .request('thread.pin', { threadId, pinned: pending.pinned })
+            .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        }
+        // A title the user typed while the chat was starting is final; only a
+        // prompt-derived one is worth replacing with a generated title.
         void transport
           .request('thread.rename', { threadId, title: canonicalTitle })
-          .then(() => generateSessionTitle(threadId, titlePrompt, canonicalTitle))
+          .then(() =>
+            canonicalTitle === title
+              ? generateSessionTitle(threadId, titlePrompt, canonicalTitle)
+              : undefined,
+          )
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
@@ -3480,7 +3517,7 @@ export function App() {
     setWorkspacePanelOpen(completed.restorePanelOpen)
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
-      setSettingsSection('providers')
+      setSettingsSection(requestSettingsSection('providers'))
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -3655,7 +3692,8 @@ export function App() {
       try {
         await loadHistory(id, cached ? threadController.cursor(id) : undefined)
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
+        if (activeIdRef.current === id)
+          reportError(error instanceof Error ? error.message : String(error))
       } finally {
         setLoadingThreadId((current) => (current === id ? undefined : current))
       }
@@ -3840,7 +3878,11 @@ export function App() {
       })
       await loadHistory(undoRestore.threadId)
       await refreshCheckpoints(undoRestore.threadId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === undoRestore.threadId)
+          setWorkspace(info)
+      }
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
@@ -4276,6 +4318,14 @@ export function App() {
     (id: string) => {
       const pinned = !findSession(projectsRef.current, id)?.session.pinned
       setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
+      const pending = pendingSession.current
+      if (pending?.id === id) {
+        pending.pinned = pinned
+        if (!pending.threadId) return
+        id = pending.threadId
+      }
+      // A provisional chat whose start failed has no thread to pin.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:pinned`,
         () => transport.request('thread.pin', { threadId: id, pinned }),
@@ -4362,7 +4412,7 @@ export function App() {
     [selectSession],
   )
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
-    setSettingsSection(section)
+    setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -4477,7 +4527,7 @@ export function App() {
       setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
-        setSettingsSection('providers')
+        setSettingsSection(requestSettingsSection('providers'))
         setSettingsOpen(true)
       }
     },
@@ -4590,7 +4640,7 @@ export function App() {
         modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
       })
       if (route === 'closeSettings') setSettingsOpen(false)
-      else if (route === 'showKeybinds') setSettingsSection('keybinds')
+      else if (route === 'showKeybinds') setSettingsSection(requestSettingsSection('keybinds'))
       else if (route === 'run') keybindingActions[action]()
     },
     [keybindingActions, modalOwnsKeyboard, onboardingPreview, settingsOpen],
@@ -5274,10 +5324,11 @@ export function App() {
           <SurfaceErrorBoundary
             name="Settings"
             onClose={closeSettings}
-            fallback={<SettingsSkeleton section={settingsSection} />}
+            fallback={<SettingsSkeleton section={settingsSection.section} />}
           >
             <Settings
-              initialSection={settingsSection}
+              initialSection={settingsSection.section}
+              sectionRequest={settingsSection.request}
               showDebug={debugSettingsVisible}
               provider={provider}
               providerName={providerName(provider, sourceAgentName)}

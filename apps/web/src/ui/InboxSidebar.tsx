@@ -46,7 +46,7 @@ import {
   type ProjectMetadata,
 } from '../inbox-order.js'
 import { AppSelect } from './AppSelect.js'
-import { isConfirmEnter } from '../shortcuts.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { Project, Session } from './Sidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
@@ -374,6 +374,7 @@ function InboxSidebarComponent(props: {
               value={query}
               onChange={(event) => setQuery(event.currentTarget.value)}
               onKeyDown={(event) => {
+                if (isComposingKey(event)) return
                 if (event.key === 'Escape' && query) {
                   event.preventDefault()
                   setQuery('')
@@ -1209,6 +1210,7 @@ function Rename(props: { value: string; onCommit: (value: string) => void; onCan
       onChange={(event) => setValue(event.currentTarget.value)}
       onBlur={commit}
       onKeyDown={(event) => {
+        if (isComposingKey(event)) return
         if (isConfirmEnter(event)) commit()
         if (event.key === 'Escape') props.onCancel()
       }}
