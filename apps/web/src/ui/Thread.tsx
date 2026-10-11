@@ -1356,10 +1356,8 @@ function lastActivityItemForRender({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
-  const detail = auxDetail(item)
-
   const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
-  const expandable = Boolean(detail) && !phase
+  const expandable = !phase && hasAuxDetail(item)
   const label = live ? summariseLive(item) : activityItemLabel(item)
 
   return (
@@ -1396,7 +1394,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         ) : null}
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
-      {detail && expandable ? (
+      {expandable ? (
         <div
           ref={disclosure.revealRef}
           className="aux__reveal"
@@ -1410,7 +1408,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         >
           {disclosure.contentMounted ? (
             <div className="aux__reveal-clip">
-              <AuxDetail item={item} detail={detail} active={disclosure.expanded} />
+              <AuxDetail item={item} active={disclosure.expanded} />
             </div>
           ) : null}
         </div>
@@ -1428,13 +1426,44 @@ function auxDetail(item: Item): string | undefined {
       : (imageViewDetail(item) ?? item.text)
 }
 
-function AuxDetail({ item, detail, active }: { item: Item; detail: string; active: boolean }) {
+const auxDetailPresence = new WeakMap<Item, boolean>()
+
+/**
+ * Whether a row has detail to open, decided without building it. A tool's
+ * output can be hundreds of kilobytes of JSON: arguments already answer for
+ * almost every call, and any other row reads its output once per item rather
+ * than on every render of the stack around it. Items are immutable; a live
+ * update arrives as a new object.
+ */
+function hasAuxDetail(item: Item): boolean {
+  let present = auxDetailPresence.get(item)
+  if (present === undefined) {
+    present = hasToolArguments(item) || Boolean(auxDetail(item))
+    auxDetailPresence.set(item, present)
+  }
+  return present
+}
+
+/** A tool call's arguments are part of its detail, so a call with any has detail. */
+function hasToolArguments(item: Item): boolean {
+  return (
+    item.type === 'tool_call' &&
+    !isContextCompaction(item) &&
+    designPhaseLabel(toolText(item)) === undefined &&
+    toolArgumentEntries(parseToolCall(item.text).args).length > 0
+  )
+}
+
+/** Built only while its reveal is mounted, and not again on a parent render. */
+const AuxDetail = memo(function AuxDetail({ item, active }: { item: Item; active: boolean }) {
+  const detail = auxDetail(item)
+  if (!detail) return null
   return isImageView(item) && item.status === 'completed' ? (
     <ViewedImagePreview reference={detail} active={active} fallbackClassName="aux__out" />
   ) : (
     <ActivityDetail item={item} detail={detail} className="aux__out" />
   )
-}
+})
 
 /**
  * What opens under a tool row. A tool call shows what it was asked and what
