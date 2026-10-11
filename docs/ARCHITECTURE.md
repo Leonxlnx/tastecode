@@ -59,7 +59,7 @@ still cannot be stopped is logged rather than failing anything. On a pane or cha
 shell's grace, the job's grace and the wait after SIGTERM are three seconds each, and the wait
 after SIGKILL is one second. Server shutdown waits for every job, under one deadline counted from
 the start of the close: a shell still running is SIGKILLed and jobs get SIGTERM from 0.2 s, jobs
-get SIGKILL at 1.8 s, and the close gives up at 2.1 s. That keeps the last SIGKILL inside the
+get SIGKILL at 2 s, and the close gives up at 2.3 s. That keeps the last SIGKILL inside the
 desktop's three-second force stop, and leaves most of the time to SIGTERM, on which servers that
 reload on SIGHUP (gunicorn, nginx, postgres) shut down cleanly. Closing or deleting a chat,
 removing a project's chats and discarding a worktree wait only for the shells; a project's own
