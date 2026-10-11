@@ -201,3 +201,27 @@ it('previews pointer reordering, commits on release, and cancels with Escape', (
   expect(reorder).not.toHaveBeenCalled()
   expect(source.style.transform).toBe('')
 })
+
+it('keeps a readable prefix of a long title whole and names the tab in full', () => {
+  render(
+    <WorkspaceTabs
+      tabs={[
+        { id: 'a', title: 'Temporary chat', icon: null },
+        { id: 'b', title: 'Browser', icon: null },
+      ]}
+      activeId="a"
+      onSelect={() => {}}
+      onClose={() => {}}
+    >
+      <span />
+    </WorkspaceTabs>,
+  )
+  const long = screen.getByRole('tab', { name: 'Temporary chat' })
+  expect(long.querySelector('.workspace-tabs__label--split')).toBeTruthy()
+  expect(long.querySelector('.workspace-tabs__label-head')!.textContent).toBe('Tempo')
+  // Led by a zero-width word joiner, the character Chromium keeps before an ellipsis.
+  expect(long.querySelector('.workspace-tabs__label-tail')!.textContent).toBe('⁠rary chat')
+  const short = screen.getByRole('tab', { name: 'Browser' })
+  expect(short.querySelector('.workspace-tabs__label')!.textContent).toBe('Browser')
+  expect(short.querySelector('.workspace-tabs__label-head')).toBeNull()
+})

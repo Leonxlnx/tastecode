@@ -5,6 +5,40 @@ import { IconX } from '@tabler/icons-react'
 
 export type WorkspaceTabLabel = { id: string; title: string; icon: ReactNode }
 
+/** Characters a shrinking label always keeps before its ellipsis. */
+const READABLE_PREFIX = 5
+
+/**
+ * Chromium never elides the first character of a line, so a tail that starts
+ * with a real letter would show that letter and a clipped ellipsis. A word
+ * joiner has no width and no glyph, so leading the tail with one lets the
+ * ellipsis stand in for the whole tail.
+ */
+const ELLIPSIS_ANCHOR = '\u2060'
+
+/**
+ * A long title is split after a fixed prefix so only the rest can give way to
+ * an ellipsis: a shrinking tab never reads as one letter. Shorter titles stay
+ * whole. The tab's aria-label carries the title, so the split never changes
+ * its accessible name.
+ */
+function TabLabel(props: { title: string }) {
+  const characters = Array.from(props.title)
+  if (characters.length <= READABLE_PREFIX + 2) {
+    return <span className="workspace-tabs__label">{props.title}</span>
+  }
+  return (
+    <span className="workspace-tabs__label workspace-tabs__label--split">
+      <span className="workspace-tabs__label-head">
+        {characters.slice(0, READABLE_PREFIX).join('')}
+      </span>
+      <span className="workspace-tabs__label-tail">
+        {ELLIPSIS_ANCHOR + characters.slice(READABLE_PREFIX).join('')}
+      </span>
+    </span>
+  )
+}
+
 /** Animate live tabs and their neighbours without resizing text or repainting widths. */
 export function WorkspaceTabs(props: {
   tabs: WorkspaceTabLabel[]
@@ -159,6 +193,7 @@ export function WorkspaceTabs(props: {
             type="button"
             role="tab"
             aria-selected={tab.id === props.activeId}
+            aria-label={tab.title}
             title={tab.title}
             onClick={() => props.onSelect(tab.id)}
             onKeyDown={(event) => {
@@ -174,7 +209,7 @@ export function WorkspaceTabs(props: {
             }}
           >
             {tab.icon}
-            <span>{tab.title}</span>
+            <TabLabel title={tab.title} />
           </button>
           <button
             type="button"

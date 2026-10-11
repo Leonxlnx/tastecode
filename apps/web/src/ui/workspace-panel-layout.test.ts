@@ -5,6 +5,12 @@ const appCss = readFileSync(new URL('../styles/app.css', import.meta.url), 'utf8
 const css = readFileSync(new URL('./workspace-panel.css', import.meta.url), 'utf8')
 const skeletonCss = readFileSync(new URL('../styles/surface-skeleton.css', import.meta.url), 'utf8')
 
+/** The body of the panel stylesheet's first rule whose whole selector is `selector`. */
+function ruleBody(selector: string): string {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return css.match(new RegExp(`\\n${escaped} \\{(?<body>[^}]*)\\}`))?.groups?.body ?? ''
+}
+
 /** The first block that opens with `prelude {`, braces balanced. */
 function atRuleBlock(source: string, prelude: string): string {
   const start = source.indexOf(`${prelude} {`)
@@ -131,42 +137,26 @@ describe('workspace panel layout', () => {
     expect(withTerminal).toContain('margin-right: 112px')
   })
 
-  it('shrinks tabs before scrolling so two fit beside the toggles in the narrowest panel', () => {
-    const body = (selector: string) =>
-      css.match(
-        new RegExp(`\\n${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} \\{(?<body>[^}]*)\\}`),
-      )?.groups?.body ?? ''
-    const px = (source: string, property: string) =>
-      Number(source.match(new RegExp(`(?:^|\\s)${property}: (\\d+)px`))?.[1] ?? Number.NaN)
-    const strip = body('.workspace-tabs')
-    const tab = body('.workspace-tabs__tab')
-    const add = body('.workspace-tabs__add-button')
-    const withTerminal = css.match(
-      /\.panel-toggles__terminal\)\s+\.workspace-panel:not\(\.workspace-panel--bottom\)\s+> \.workspace-tabs \{(?<body>[^}]*)\}/,
-    )?.groups?.body
-    const workspaceOnly = css.match(
-      /is-workspace-open\)\s+\.workspace-panel:not\(\.workspace-panel--bottom\)\s+> \.workspace-tabs \{(?<body>[^}]*)\}/,
-    )?.groups?.body
+  it('keeps full tab labels while they fit and shrinks them only to a readable prefix', () => {
+    const tab = ruleBody('.workspace-tabs__tab')
+    const button = ruleBody('.workspace-tabs__tab button')
 
-    expect(tab).toContain('flex: 0 1 auto')
+    // While everything fits, tabs are exactly as before they could shrink.
+    expect(button).toContain('padding: 0 8px')
+    expect(button).toContain('gap: 6px')
+    expect(ruleBody('.workspace-tabs__tab .workspace-tabs__close')).toContain('padding: 0 5px')
     expect(tab).toContain('max-width: 190px')
-    expect(body('.workspace-tabs__tab .workspace-tabs__close')).toContain('flex: none')
-    expect(css).toMatch(/\.workspace-tabs__tab button span \{[^}]*text-overflow: ellipsis;/)
-
-    // A 300px panel with both toggles: the strip's content box after the 1px
-    // panel border, the reserve and its padding holds the add button and two
-    // tabs at their floor without scrolling.
-    const gap = px(strip, 'gap')
-    const room =
-      300 -
-      1 -
-      px(withTerminal ?? '', 'margin-right') -
-      Number(strip.match(/padding: \d+px \d+px \d+px (\d+)px/)?.[1]) -
-      px(workspaceOnly ?? '', 'padding-right') -
-      px(add, 'width') -
-      gap
-    expect(2 * px(tab, 'min-width') + gap).toBeLessThanOrEqual(room)
-    expect(3 * px(tab, 'min-width') + 2 * gap).toBeGreaterThan(room)
+    // Crowded, they shrink to their content minimum and no fixed floor.
+    expect(tab).toContain('flex: 0 1 auto')
+    expect(tab).not.toContain('min-width')
+    // That minimum is the label's whole prefix and a 1em track, room for "…".
+    expect(ruleBody('.workspace-tabs__label--split')).toContain(
+      'grid-template-columns: auto minmax(1em, auto)',
+    )
+    expect(ruleBody('.workspace-tabs__label-tail')).toMatch(
+      /overflow: hidden;\s*text-overflow: ellipsis;/,
+    )
+    expect(ruleBody('.workspace-tabs__label')).toContain('white-space: pre')
   })
 
   it('fades the tab strip start only once tabs have scrolled past it', () => {
