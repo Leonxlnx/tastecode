@@ -159,6 +159,8 @@ function WorkspacePanelComponent(props: {
       return { id: tab.id, title, icon: <Icon size={14} aria-hidden /> }
     })
   }, [tabs])
+  // Surfaces keep an order no tab move changes; React moving an iframe or webview reloads it.
+  const surfaces = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : 1)), [tabs])
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
   const toolRef = useRef(tool)
   const resizeCleanup = useRef<() => void>(() => {})
@@ -359,8 +361,8 @@ function WorkspacePanelComponent(props: {
         ) : null}
       </WorkspaceTabs>
       <div className="workspace-panel__body">
-        {tabs.length ? (
-          tabs.map((tab) => (
+        {surfaces.length ? (
+          surfaces.map((tab) => (
             <div className="workspace-panel__surface" key={tab.id} hidden={tab.id !== tool?.id}>
               <Suspense fallback={<WorkspaceLoading />}>
                 <WorkspaceToolSurface
