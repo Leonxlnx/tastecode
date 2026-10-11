@@ -64,6 +64,30 @@ describe('WorkspaceFiles', () => {
     })
     await waitFor(() => expect(transport.requests).toHaveLength(2))
   })
+  it('reads a provisional chat from the project checkout until its real id arrives', async () => {
+    const transport = new TestTransport((method, params) => {
+      if (method === 'workspace.listDirectory') return { path: '', entries: [file('one.ts')] }
+      if (method === 'workspace.readFile') {
+        const request = methods[method].params.parse(params)
+        return {
+          name: request.path,
+          path: request.path,
+          size: 12,
+          binary: false,
+          truncated: false,
+          content: 'const value = 1',
+        }
+      }
+      throw new Error(`Unhandled test request: ${method}`)
+    })
+    render(<WorkspaceFiles transport={transport} projectPath="/project" threadId="pending:new" />)
+    fireEvent.click(await screen.findByTitle('one.ts'))
+    expect(await screen.findByText('12 B')).toBeTruthy()
+    expect(transport.requests).toEqual([
+      { method: 'workspace.listDirectory', params: { projectPath: '/project' } },
+      { method: 'workspace.readFile', params: { projectPath: '/project', path: 'one.ts' } },
+    ])
+  })
   it('moves selection between file rows and clears it when the project changes', async () => {
     const entries = [file('one.ts'), file('two.ts')]
     const transport = new TestTransport((method, params) => {

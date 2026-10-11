@@ -83,6 +83,9 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   projectName?: string | undefined
   threadId?: string | undefined
 }) {
+  // The server does not know a chat's provisional id while its first message
+  // creates it; stay in the project checkout until the real id arrives.
+  const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
   const [directories, setDirectories] = useState<Map<string, Entry[]>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']))
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(new Set())
@@ -104,9 +107,9 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const context = useCallback(
     () => ({
       projectPath: props.projectPath!,
-      ...(props.threadId ? { threadId: props.threadId } : {}),
+      ...(threadId ? { threadId } : {}),
     }),
-    [props.projectPath, props.threadId],
+    [props.projectPath, threadId],
   )
 
   const loadDirectory = useCallback(
@@ -163,10 +166,10 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       directoryGeneration.current += 1
       fileGeneration.current += 1
     }
-  }, [fileSelection, loadDirectory, props.projectPath, props.threadId])
+  }, [fileSelection, loadDirectory, props.projectPath, threadId])
 
   const query = filter.trim()
-  const searchKey = JSON.stringify([props.projectPath, props.threadId, query])
+  const searchKey = JSON.stringify([props.projectPath, threadId, query])
   useEffect(() => {
     if (!props.projectPath || !query) {
       setSearch(undefined)
@@ -317,7 +320,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
     setSearchRevision((current) => current + 1)
   }, [loadDirectory, readFile])
 
-  useWorkspaceRefresh(props.transport, props.threadId, refreshDirectories)
+  useWorkspaceRefresh(props.transport, threadId, refreshDirectories)
 
   const rootEntries = directories.get('') ?? EMPTY_WORKSPACE_ENTRIES
   const visibleRoot = useMemo(
