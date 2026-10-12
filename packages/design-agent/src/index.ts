@@ -124,6 +124,12 @@ export {
   type VisualReview,
 } from './review-phase.js'
 export {
+  DESIGN_RADIUS_VALUE_LIMIT,
+  designConsistencyAudit,
+  designConsistencyBaseline,
+  type DesignConsistencyAudit,
+} from './design-consistency.js'
+export {
   designPreviewPrompt,
   parsePreviewPhaseOutput,
   parsePreviewPlan,

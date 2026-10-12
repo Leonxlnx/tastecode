@@ -277,7 +277,8 @@ function isCardLike(value: string): boolean {
   )
 }
 
-function designSourceFiles(workspacePath: string): string[] {
+/** Workspace source the Design checks scan: generated code, not dependencies, builds or tests. */
+export function designSourceFiles(workspacePath: string): string[] {
   const extensions = new Set([
     '.css',
     '.scss',
