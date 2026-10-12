@@ -716,8 +716,10 @@ them.
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
 selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. New runs sample uniformly across the configured catalog
-and labeled complete generated candidates, with pending inspection recorded honestly. They require
+purposeful motion decision per section. New runs draw a random anchor composition from the
+configured catalog and labeled complete generated candidates, then fill later sections from the
+anchor's source site and the most similar profiled sites so one page keeps one design language
+(see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md)), with pending inspection recorded honestly. They require
 a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
 Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
 still screenshots alone cannot validate playback. Ordinary follow-ups after Design ends clear the

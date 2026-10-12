@@ -11,6 +11,13 @@ of the bundled files.
 Candidate entries still require inspection during the Design run. Rejected sections,
 incomplete fragments and superseded revisions are excluded from the runtime pool.
 
+`style-profiles.json` (version 1) describes the design language of each source site, keyed by
+the source host without `www.`: theme, palette, heading and body type, radius, buttons, density,
+imagery, layout motifs, mood, a one-line summary and any `outliers` (entry ids that do not match
+the rest of that site). The sampler uses it to keep one design language per page: sections come
+from the anchor hero's site first, then from the most similar profiled sites. The file is
+optional; a library without it, or with a malformed one, falls back to uniform sampling.
+
 These generated images are layout references, not production website assets. Source URLs
 identify the referenced sites; they do not confer rights to third-party names, logos,
 photographs or artwork depicted in a reference. Do not represent them as client work or

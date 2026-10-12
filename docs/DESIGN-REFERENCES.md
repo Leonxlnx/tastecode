@@ -1,13 +1,56 @@
 # Design Agent v0.5 reference workflow
 
 New Design runs extract the requested sections and existing brand constraints before selecting
-references. The server samples composition groups uniformly across the entire eligible library,
-independently for each layout family. Style tags and source sites never narrow the random pool;
-alternate revisions do not get extra votes. It selects up to three feature compositions and two
-about compositions without replacement, and one of each other family. Explicit reference IDs or
-source URLs take priority. The page planner uses only sections needed by the brief. Free-form section
-names never filter out needed compositions. Missing families use available compositions with the
-requested content adapted inside them; section topics do not have to match layout family names.
+references.
+
+**One page keeps one design language (owner decision, 2026-10-12).** Randomness stays, but a
+generated website must not switch design language between sections: one type system (at most two
+families), one palette, one radius and spacing scale, and one button, card and label language.
+References from one source site share a design language, so sampling now starts from one anchor
+site. This replaces the earlier policy from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which sampled every family
+independently and uniformly regardless of source site and put about eleven sites on one page.
+
+The server draws the first requested family that has a pool, normally the hero, uniformly by
+composition group across the entire eligible library. That anchor's source site (its host without
+`www.`) defines the page's design language. Every later section comes from the first non-empty tier,
+group-first and uniform inside the tier:
+
+1. the anchor site's compositions of the same family;
+2. the anchor site's compositions of a compatible family (see below);
+3. the most similar profiled sites, the best three by score with ties included, same family before
+   compatible family;
+4. the uniform eligible pool for the family, exactly as before.
+
+Alternate revisions do not get extra votes. It selects up to three feature compositions and two
+about compositions without replacement, and one of each other family; the deck size is unchanged.
+Explicit reference IDs or source URLs take priority over every tier. The page planner uses only
+sections needed by the brief. Free-form section names never filter out needed compositions. Missing
+families use available compositions with the requested content adapted inside them; section topics
+do not have to match layout family names.
+
+Similarity comes from `style-profiles.json` beside `catalog.json`, one profile per source host. The
+deterministic score adds: heading type 3 when equal or 2 within the serif group (serif,
+high-contrast serif) or the sans group (grotesk, geometric, humanist, condensed), other types only
+when equal; body type 2 or 1 by the same rule; theme 2 when equal or 1 when either is mixed; radius
+2 when equal or 1 when adjacent on sharp, small, medium, large, pill; density 1; imagery 1; and one
+point per shared mood word, at most 3. Only sites scoring above zero qualify. Entries a profile lists
+as `outliers` do not share their site's language: they never anchor a page and never fill tiers 1-3,
+but remain in the uniform fallback. An anchor site without a profile skips tier 3. A missing or
+malformed profile file means no profiles; same-site sampling still applies and selection never fails
+because of it. A library configured below can ship its own `style-profiles.json`.
+
+Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar-site` or
+`fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
+likely typefaces. Decks saved before this change, without these fields, still parse and resume.
+
+Dashboards keep exactly one complete app screen. Instead of a uniform draw, the server scores each
+eligible screen by the domain words it shares with the request, subject, required content and
+explicit answers. Grammar, surface names (app, dashboard, screen) and interface parts every
+dashboard has (table, chart, filter, sidebar) are ignored. A word matching the screen's domain,
+tags or product name counts 2 and a word found only in its cue or motifs counts 1. The pick is
+uniform by group among the top-scoring screens, uniform over all screens when nothing matches, and
+an explicit ID or source still wins.
 
 The bundled selection pools each contain at least ten distinct composition groups and image files.
 Sparse topics use compatible geometry: metrics use proof/about compositions, pricing and process
@@ -109,8 +152,10 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. Complete-image discovery expands this installation to 172 composition groups,
 including 24 heroes. The roughly one thousand raw generated images include fragments and revisions;
 they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
-and orchestration checks cover equal group eligibility, sampling without replacement,
-explicit selection, image attachment transport, catalog validation and persisted selection.
+and orchestration checks cover equal anchor-group eligibility, the anchor-site and similar-site
+tiers, outlier exclusion, missing or malformed style profiles, dashboard domain relevance, sampling
+without replacement, explicit selection, image attachment transport, catalog validation and
+persisted selection including deck sites and roles.
 Four clean TasteCode site runs have finished. Each was started once
 with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and
 Clearpath. The test app uses isolated data, renderer port 5185 and server port 4315. Earlier
