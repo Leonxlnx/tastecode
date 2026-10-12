@@ -194,20 +194,34 @@ function compatibleFamilies(family: PageLayoutFamily): readonly PageLayoutFamily
   return COMPATIBLE_FAMILIES[family as keyof typeof COMPATIBLE_FAMILIES] ?? []
 }
 
+/** A family with fewer composition groups than this may borrow compatible geometry. */
+const MIN_FAMILY_GROUPS = 10
+
+function groupCount(references: readonly ReferenceDirection[]): number {
+  return new Set(references.map(groupOf)).size
+}
+
+function isSparseFamily(
+  family: PageLayoutFamily,
+  references: readonly ReferenceDirection[],
+): boolean {
+  return groupCount(references.filter((entry) => entry.family === family)) < MIN_FAMILY_GROUPS
+}
+
 /** Content topics can use a compatible image's geometry without relabeling that image. */
 export function referenceCandidatesForFamily<Entry extends ReferenceDirection>(
   family: PageLayoutFamily,
   references: readonly Entry[],
 ): Entry[] {
   const native = references.filter((entry) => entry.family === family)
-  if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
+  if (!isSparseFamily(family, references)) return native
   const alternatives = compatibleFamilies(family)
   const pool = references.filter(
     (entry) =>
       entry.family === family || alternatives.some((candidate) => candidate === entry.family),
   )
   // A deliberately small custom library remains authoritative; never pad it with duplicates.
-  return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
+  return groupCount(pool) >= MIN_FAMILY_GROUPS ? pool : native
 }
 
 /** Ids share prefixes (`x-about`, `x-about-process`), so a mention must be a whole id. */
@@ -389,10 +403,7 @@ export function selectReviewedReferences(
         ? mostRelevant(familyEntries)
         : familyEntries
     // Repeated content sections need distinct compositions within the same page too.
-    const count = Math.min(
-      new Set(pool.map(groupOf)).size,
-      family === 'feature' ? 3 : family === 'about' ? 2 : 1,
-    )
+    const count = Math.min(groupCount(pool), family === 'feature' ? 3 : family === 'about' ? 2 : 1)
     for (let index = 0; index < count; index++) {
       let pick: { entry: LibraryReference; role: ReferenceRole } | undefined
       if (explicitPool.length) {
