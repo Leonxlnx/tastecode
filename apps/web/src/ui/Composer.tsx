@@ -904,8 +904,14 @@ function ComposerComponent(props: {
     }
   }, [renderedQueue])
 
+  // Focus once per request. A request that arrives while disabled waits for
+  // the composer to be enabled, but enabling alone must not steal focus from
+  // whatever field the user moved to in the meantime.
+  const handledFocusRequest = useRef(0)
   useEffect(() => {
-    if (props.focusRequest > 0 && !props.disabled) area.current?.focus()
+    if (props.disabled || props.focusRequest === handledFocusRequest.current) return
+    handledFocusRequest.current = props.focusRequest
+    if (props.focusRequest > 0) area.current?.focus()
   }, [props.focusRequest, props.disabled])
 
   useEffect(() => {

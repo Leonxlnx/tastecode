@@ -1917,6 +1917,38 @@ describe('Composer transcript warm-up', () => {
   })
 })
 
+describe('Composer focus requests', () => {
+  afterEach(cleanup)
+
+  it('does not take focus back from another field when it is enabled again', () => {
+    const outside = document.createElement('input')
+    document.body.append(outside)
+    try {
+      const view = renderComposer(vi.fn(), { focusRequest: 1 })
+      const prompt = screen.getByPlaceholderText('Do anything')
+      expect(document.activeElement).toBe(prompt)
+
+      view.rerenderComposer({ disabled: true })
+      outside.focus()
+      view.rerenderComposer({ disabled: false })
+
+      expect(document.activeElement).toBe(outside)
+    } finally {
+      outside.remove()
+    }
+  })
+
+  it('applies a focus request that arrived while disabled once it is enabled', () => {
+    const view = renderComposer(vi.fn(), { focusRequest: 0, disabled: true })
+    view.rerenderComposer({ focusRequest: 1 })
+    expect(document.activeElement).toBe(document.body)
+
+    view.rerenderComposer({ disabled: false })
+
+    expect(document.activeElement).toBe(screen.getByPlaceholderText('Do anything'))
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
