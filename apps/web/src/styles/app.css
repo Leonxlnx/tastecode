@@ -255,9 +255,7 @@
   opacity: 1;
 }
 
-/* Every section of the rail shares one column: 8px from the window edge on
-   the left, and on the right the width of the list's scrollbar gutter, so
-   hover surfaces in the actions, the list and the footer all line up. */
+/* One column for actions, list and footer: 8px left, gutter-wide right. */
 .rail__actions {
   position: relative;
   padding: 8px 10px 6px 8px;
@@ -266,7 +264,6 @@
   gap: 2px;
 }
 
-/* Scrolled chats slide under the actions behind a short fade, not a rule. */
 .rail__actions::after {
   content: '';
   position: absolute;
@@ -411,9 +408,7 @@
   padding: 4px 10px 8px 8px;
 }
 
-/* No rule between the list and the profile: chats that continue below the
-   fold fade out under the footer instead, and only while there is more list
-   to scroll to. A full-width line here was the hardest edge in the rail. */
+/* No rule above the footer: chats fade out under it while more list follows. */
 .rail {
   timeline-scope: --rail-body;
 }
@@ -476,13 +471,9 @@
   border-color: var(--text-3);
 }
 
-/* The profile row: a 40px soft pill holding the picture, the name over a
-   quiet detail line, and an up/down selector. The surface is painted on the
-   inner span rather than the button, because buttons never animate (see
-   button-feedback.css) and this one should ease in like the chat rows. */
+/* The 40px profile pill, painted on the inner span: buttons never animate. */
 .rail__foot .menutrigger {
-  /* The open state is painted below as well, so the shared pressed fill
-     must not stack a second, square-cornered surface on top. */
+  /* The open state is painted on .account; no square pressed fill. */
   --control-pressed: transparent;
   width: 100%;
   padding: 0;
@@ -518,8 +509,7 @@
   background: var(--menu-hover);
 }
 
-/* Keyboard focus wears the hover surface plus a soft ring on the pill's own
-   corners, instead of the browser's hard black outline. */
+/* A soft ring on the pill's corners, not the browser's black outline. */
 .rail__foot .menutrigger:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent);
   outline-offset: -2px;
@@ -541,8 +531,6 @@
   overflow: hidden;
 }
 
-/* A hairline inside the circle instead of a border around it: it defines a
-   light photo against the rail without adding a hard outer edge. */
 .account__avatar::after {
   content: '';
   position: absolute;
@@ -558,8 +546,7 @@
   object-fit: cover;
 }
 
-/* Initials on the seal's hue, toned like generated-avatar.ts grounds and
-   inks: a soft ground and a deep ink in light, the inverse in dark. */
+/* Initials on the seal's hue, toned like generated-avatar.ts. */
 .account__initials {
   display: grid;
   place-items: center;
@@ -595,8 +582,7 @@
   line-height: 16px;
 }
 
-/* Dark --text-3 is 3.7:1 on the rail, too faint for words; this sits one
-   step above it there and is --text-3 itself in light. */
+/* Dark --text-3 is 3.7:1 on the rail; one step above it there. */
 .account__usage {
   color: color-mix(in srgb, var(--text-2) 55%, var(--text-3));
   font-size: var(--t-xs);
@@ -650,9 +636,7 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-/* The same two soft steps as the settings navigation: a hover surface that
-   is actually visible on the rail (--surface was 1.0:1 on it in light), and
-   one step further for the open chat. No shadow or border on either. */
+/* The settings nav's two soft steps: hover, then the open chat. */
 .sessrow:hover {
   --sess-bg: var(--control-hover);
 }
@@ -1029,7 +1013,6 @@
     center / 14px 14px no-repeat;
 }
 
-/* The parent carries the weight; its chats below stay regular. */
 .proj__name {
   flex: 1;
   overflow: hidden;
@@ -1065,8 +1048,7 @@
   min-height: 0;
 }
 
-/* Rows sit on a 30px pitch (28px row, 2px gap) like the projects around
-   them, so an open project is the same rhythm as a closed one. */
+/* A 30px pitch (28px row, 2px gap), like the projects. */
 .proj__sessions {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -1144,10 +1126,8 @@
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
-  /* No standing reservation for the hover actions: they overlay the right
-     edge with their own fade, so the title keeps the full row width and the
-     rail stays honest at any size. The 30px indent puts the title under its
-     project's name: 8px padding, 14px folder mark, 8px gap. */
+  /* Hover actions overlay the right edge. The 30px indent (8 + 14 + 8)
+     puts the title under its project's name. */
   padding: 0 8px 0 30px;
   text-align: left;
   min-width: 0;
@@ -1178,9 +1158,7 @@
   margin: 0 0 8px;
 }
 
-/* Chats are children of their project, so they read lighter than it: the
-   same size, regular weight, secondary colour. The open chat and a hovered
-   one come up to the full rail colour. */
+/* Chats read lighter than their project until hovered or open. */
 .sess__title {
   flex: 1;
   /* min-width lets the title shrink and ellipsize first, so the status dot
@@ -1197,8 +1175,7 @@
   color: var(--rail-text);
 }
 
-/* Gutter marks are centred on the folder mark's column (8px + 14px / 2), so
-   they never push the title: an inline dot used to shift it 13px right. */
+/* Gutter marks centre on the folder mark's column and never push the title. */
 .sess__unread-dot,
 .sess__lead {
   position: absolute;
@@ -1226,7 +1203,6 @@
   font-weight: 500;
 }
 
-/* The trailing slot: provider mark or live status, always 14px wide. */
 .sess__source {
   display: grid;
   place-items: center;
@@ -1265,8 +1241,7 @@
     color var(--dur-fast) var(--ease-out);
 }
 
-/* A tint rather than a surface token, so it still shows on the open chat's
-   own surface. */
+/* A tint, so it shows on the open chat's surface too. */
 .sess__action:hover,
 .sess__action:focus-visible {
   background: color-mix(in srgb, var(--text) 8%, transparent);
@@ -2858,9 +2833,7 @@
   padding: 4px 6px;
 }
 
-/* The account menu rises from the profile row: exactly as wide as it, with
-   a 12px panel around 8px rows so the corners stay concentric, and 30px
-   rows whose icons centre on the avatar's axis below. */
+/* The account menu: as wide as the profile row, concentric corners. */
 .menu--account {
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   padding: 4px;
@@ -2873,8 +2846,7 @@
   padding: 5px 8px;
 }
 
-/* The rule under the usage block stops short of the panel's edges instead
-   of running into its border. */
+/* An inset rule under the usage block. */
 .menu--account .account-menu__usage {
   position: relative;
   margin-bottom: 4px;
