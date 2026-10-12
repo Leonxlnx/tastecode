@@ -506,6 +506,11 @@ export function App() {
   })
   const providerRef = useRef(provider)
   providerRef.current = provider
+  // Read once at mount. The provider-default choice persists the initial
+  // provider before providers.list answers, so by then storage can no longer
+  // tell that this launch started without a usable stored provider.
+  const [launchedUnchosen] = useState(() => !isProviderId(readSetting(SETUP_KEY)))
+  const providerUnchosenAtLaunch = useRef(launchedUnchosen)
   const [sourceAgent, setSourceAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
@@ -1712,8 +1717,11 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
-      const storedProvider = readSetting(SETUP_KEY)
-      if (!activeIdRef.current && !isProviderId(storedProvider)) {
+      // Only the first answer may move an unchosen launch; later refreshes
+      // must not override what the user picked since.
+      const unchosen = providerUnchosenAtLaunch.current
+      providerUnchosenAtLaunch.current = false
+      if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
             status.installed &&
