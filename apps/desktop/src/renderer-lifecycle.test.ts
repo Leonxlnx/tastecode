@@ -29,16 +29,29 @@ describe('renderer lifecycle', () => {
     expect(test.cancelCaptures).toHaveBeenCalledTimes(2)
   })
 
-  it('cancels captures on reload and destruction but not hash or iframe navigation', () => {
+  it('cancels captures on a committed page load and destruction but not hash or iframe navigation', () => {
     const test = fixture()
-    test.contents.emit('did-start-navigation', { isMainFrame: false, isSameDocument: false })
-    test.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: true })
+    test.contents.emit('did-navigate-in-page', {}, 'file:///app/index.html#settings', true)
+    test.contents.emit('did-frame-navigate', {}, 'https://example.com/', 200, 'OK', false)
     expect(test.cancelCaptures).not.toHaveBeenCalled()
-    test.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    test.contents.emit('did-navigate', {}, 'file:///app/index.html', 200, 'OK')
     expect(test.cancelCaptures).toHaveBeenCalledOnce()
     expect(test.onPageReplaced).toHaveBeenCalledOnce()
     test.contents.emit('destroyed')
     expect(test.cancelCaptures).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the page state when a started navigation is blocked before it commits', () => {
+    const test = fixture()
+    // Electron emits did-start-navigation before will-navigate can cancel a
+    // same-window link, so the old page is still loaded and listening.
+    test.contents.emit('did-start-navigation', {
+      url: 'file:///C:/api/users',
+      isMainFrame: true,
+      isSameDocument: false,
+    })
+    expect(test.cancelCaptures).not.toHaveBeenCalled()
+    expect(test.onPageReplaced).not.toHaveBeenCalled()
   })
 
   it('never revives a renderer during quit', () => {

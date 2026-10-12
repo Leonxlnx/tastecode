@@ -11,8 +11,11 @@ export function configureRendererLifecycle(
   },
 ): void {
   let recovered = false
-  contents.on('did-start-navigation', (details) => {
-    if (!details.isMainFrame || details.isSameDocument) return
+  // Not did-start-navigation: Electron emits it before will-navigate gets to
+  // block a same-window link, and a blocked navigation leaves the old page
+  // loaded. did-navigate fires only for a committed main-frame document,
+  // reloads included.
+  contents.on('did-navigate', () => {
     options.cancelCaptures()
     options.onPageReplaced()
   })
