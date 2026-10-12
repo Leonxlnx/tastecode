@@ -69,7 +69,6 @@ import {
   ModelSelector,
   getCompactModelName,
   getEffortIndexFromPointer,
-  getEffortProgressFromPointer,
   getFastModeOffValue,
   getFriendlyEffortLabel,
   groupModelsBySource,
@@ -109,6 +108,19 @@ const MODELS: ModelChoice[] = RAW_MODELS.map((model) => ({
 }))
 
 type RenderOverrides = Partial<React.ComponentProps<typeof ModelSelector>>
+
+// A 280px meter at x=100: four 67px segments with 4px gaps (a 71px pitch).
+const METER_RECT = {
+  x: 100,
+  y: 20,
+  left: 100,
+  top: 20,
+  width: 280,
+  height: 30,
+  right: 380,
+  bottom: 50,
+  toJSON: () => ({}),
+}
 
 function renderSelector(overrides: RenderOverrides = {}) {
   const onModelChange = vi.fn()
@@ -291,9 +303,14 @@ describe('ModelSelector', () => {
       'Effort: Extra High',
     )
     expect(onEffortChange).not.toHaveBeenCalled()
-    expect(slider.querySelectorAll('canvas')).toHaveLength(2)
-    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    // The fill follows the drag before anything is committed.
+    const fill = slider.querySelectorAll(
+      '.model-selector__meter-fill .model-selector__meter-segment',
+    )
+    expect(fill).toHaveLength(4)
+    expect(fill[3]?.classList.contains('is-current')).toBe(true)
+    expect(slider.style.getPropertyValue('--effort-filled')).toBe('1')
+    expect(slider.querySelectorAll('canvas')).toHaveLength(0)
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -316,6 +333,82 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(1, 'high')
     expect(onEffortChange).toHaveBeenNthCalledWith(2, 'xhigh')
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
+  })
+
+  it('takes focus on press so the arrow keys move the level, not the search text', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    search.focus()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue(METER_RECT)
+
+    fireEvent.pointerDown(slider, { clientX: 120, pointerId: 2 })
+    expect(document.activeElement).toBe(slider)
+    // A pressed focus is not announced with a ring; the next key is.
+    expect(slider.dataset.focusSource).toBe('pointer')
+    fireEvent.pointerUp(slider, { clientX: 120, pointerId: 2 })
+    expect(onEffortChange).toHaveBeenLastCalledWith('low')
+
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(onEffortChange).toHaveBeenLastCalledWith('xhigh')
+    expect(slider.dataset.focusSource).toBeUndefined()
+  })
+
+  it('previews a hovered level as a ghost without committing it', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue(METER_RECT)
+    const ghosts = () =>
+      Array.from(
+        slider.querySelectorAll('.model-selector__meter-ghosts .model-selector__meter-segment'),
+      ).map((segment) => segment.classList.contains('is-ghost'))
+
+    fireEvent.pointerMove(slider, { clientX: 370, pointerId: 1, pointerType: 'mouse' })
+    expect(ghosts()).toEqual([false, false, true, true])
+    expect(document.querySelector('.model-selector__effort-preview')?.textContent).toBe(
+      'Extra High',
+    )
+    // Hovering is not a value change: the slider and the title keep the level.
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
+    expect(document.querySelector('.model-selector__effort-title')?.textContent).toBe(
+      'Effort: Medium',
+    )
+
+    // Below the level, the ghost covers what a click would drop.
+    fireEvent.pointerMove(slider, { clientX: 105, pointerId: 1, pointerType: 'mouse' })
+    expect(ghosts()).toEqual([false, true, false, false])
+    expect(document.querySelector('.model-selector__effort-preview')?.textContent).toBe('Low')
+
+    fireEvent.pointerMove(slider, { clientX: 180, pointerId: 1, pointerType: 'mouse' })
+    expect(document.querySelector('.model-selector__effort-preview')).toBeNull()
+
+    fireEvent.pointerMove(slider, { clientX: 370, pointerId: 1, pointerType: 'mouse' })
+    fireEvent.pointerLeave(slider, { pointerId: 1, pointerType: 'mouse' })
+    expect(ghosts()).toEqual([false, false, false, false])
+    expect(document.querySelector('.model-selector__effort-preview')).toBeNull()
+    expect(onEffortChange).not.toHaveBeenCalled()
+    expect(haptics.performAppHaptic).not.toHaveBeenCalled()
+  })
+
+  it('marks the model default under its level and names it in the preview', async () => {
+    renderSelector({ effort: 'xhigh' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue(METER_RECT)
+    const marks = Array.from(slider.querySelectorAll('.model-selector__meter-marks > span'))
+    expect(
+      marks.map((mark) => mark.querySelector('.model-selector__meter-default') !== null),
+    ).toEqual([false, true, false, false])
+
+    fireEvent.pointerMove(slider, { clientX: 180, pointerId: 1, pointerType: 'mouse' })
+    expect(document.querySelector('.model-selector__effort-preview')?.textContent).toBe(
+      'Medium· default',
+    )
   })
 
   it('shows compact models immediately and leaves effort and tier to the owner', async () => {
@@ -588,50 +681,35 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
-  it('maps pointer positions onto discrete effort stops', async () => {
-    expect(
-      getEffortIndexFromPointer({
-        clientX: 114,
-        left: 100,
-        width: 280,
-        stopCount: 4,
-      }),
-    ).toBe(0)
-
-    expect(
-      getEffortIndexFromPointer({
-        clientX: 352,
-        left: 100,
-        width: 280,
-        stopCount: 4,
-      }),
-    ).toBe(3)
-
-    expect(
-      getEffortProgressFromPointer({
-        clientX: 240,
-        left: 100,
-        width: 280,
-      }),
-    ).toBeCloseTo(0.5, 3)
+  it('maps a pointer onto the segment under it', () => {
+    // 284px, four segments: 68px wide on a 72px pitch (the gap belongs to the
+    // segment before it), so segment 2 starts at x=144.
+    const at = (x: number, stopCount = 4) =>
+      getEffortIndexFromPointer({ clientX: 100 + x, left: 100, width: 284, stopCount })
+    expect(at(1)).toBe(0)
+    expect(at(70)).toBe(0)
+    expect(at(72)).toBe(1)
+    expect(at(143)).toBe(1)
+    expect(at(144)).toBe(2)
+    expect(at(279)).toBe(3)
+    expect(at(-20)).toBe(0)
+    expect(at(400)).toBe(3)
+    // Six Codex levels share the same width.
+    expect(at(279, 6)).toBe(5)
+    expect(at(140, 6)).toBe(2)
+    expect(at(140, 1)).toBe(0)
   })
 
-  it('switches only in the final quarter of a drag in either direction', () => {
-    const at = (position: number, currentIndex: number) =>
-      getEffortIndexFromPointer({
-        clientX: 18 + position * 100,
-        left: 0,
-        width: 336,
-        stopCount: 4,
-        currentIndex,
-      })
-    expect(at(1.26, 2)).toBe(2)
-    expect(at(1.25, 2)).toBe(1)
-    expect(at(1.74, 1)).toBe(1)
-    expect(at(1.75, 1)).toBe(2)
-    expect(at(1.5, 2)).toBe(2)
-    expect(at(1.5, 1)).toBe(1)
-    expect(at(-1, 2)).toBe(0)
-    expect(at(4, 1)).toBe(3)
+  it('holds the dragged level until the pointer is well into the next segment', () => {
+    const at = (x: number, currentIndex: number) =>
+      getEffortIndexFromPointer({ clientX: x, left: 0, width: 284, stopCount: 4, currentIndex })
+    expect(at(146, 1)).toBe(1)
+    expect(at(150, 1)).toBe(2)
+    expect(at(140, 2)).toBe(2)
+    expect(at(137, 2)).toBe(1)
+    expect(at(200, 2)).toBe(2)
+    // A fast drag across several segments still lands where the pointer is.
+    expect(at(279, 0)).toBe(3)
+    expect(at(-5, 3)).toBe(0)
   })
 })

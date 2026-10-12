@@ -6,8 +6,8 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex: none;
   padding: 0;
   background: none;
@@ -58,8 +58,8 @@
 
 .model-selector__controls {
   display: grid;
-  gap: 4px;
-  padding: 6px 8px 8px;
+  gap: 6px;
+  padding: 8px 12px 10px;
   background: var(--model-picker-controls-bg);
   border-top: 1px solid var(--menu-line);
 }
@@ -75,16 +75,17 @@
 .model-selector__controls-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  min-height: 24px;
-  padding-left: 4px;
+  gap: 8px;
+  min-width: 0;
+  min-height: 28px;
 }
 
 .model-selector__fast-row {
   position: relative;
   display: flex;
   justify-content: flex-end;
-  min-height: 24px;
+  min-height: 28px;
+  margin-left: auto;
 }
 
 .model-selector__fast-meta {
@@ -102,19 +103,81 @@
     transform 150ms var(--ease-out);
 }
 
+.model-selector__effort-title {
+  display: block;
+  flex: none;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 450;
+  white-space: nowrap;
+}
+
+.model-selector__effort-value {
+  display: inline-block;
+  color: var(--text);
+  font-size: var(--t-md);
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+
+.model-selector__effort-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  transition:
+    opacity 120ms var(--ease-out),
+    transform 120ms var(--ease-out);
+}
+
+@starting-style {
+  .model-selector__effort-preview {
+    opacity: 0;
+    transform: translateX(-3px);
+  }
+}
+
+.model-selector__effort-preview svg {
+  flex: none;
+  color: var(--text-3);
+}
+
+.model-selector__effort-preview-note {
+  color: var(--text-3);
+}
+
+/* ---------- effort meter ----------
+   The slider element holds the meter and the default mark under it. Three
+   identical rows of pill segments stack inside the meter: the empty base, the
+   fill (clipped to end with the current level) and the hover ghosts on top. */
+
 .model-selector__slider {
+  --meter-gap: 4px; /* EFFORT_METER_GAP */
+
   position: relative;
-  height: 36px;
+  display: grid;
+  gap: 3px;
   width: 100%;
+  padding-block: 3px;
+  border-radius: var(--r-md);
+  cursor: pointer;
   touch-action: none;
   user-select: none;
-  cursor: default;
 }
 
 .model-selector__slider:focus-visible {
-  outline-color: var(--text-2);
-  outline-offset: 3px;
-  border-radius: var(--r-pill);
+  outline: none;
+}
+
+/* A click moves focus here by script, which Chromium reports as focus-visible
+   because the search field had it; the ring is only for keyboard focus. */
+.model-selector__slider:focus-visible:not([data-focus-source='pointer']) {
+  outline: 1px solid var(--text-3);
+  outline-offset: 2px;
 }
 
 .model-selector__slider.is-disabled {
@@ -122,95 +185,87 @@
   opacity: 0.45;
 }
 
-.model-selector__slider-track {
+.model-selector__meter {
+  position: relative;
+  height: 16px;
+}
+
+.model-selector__meter-row {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
+  inset: 2px 0;
+  display: flex;
+  gap: var(--meter-gap);
+}
+
+.model-selector__meter-segment {
+  flex: 1 1 0;
+  min-width: 0;
   border-radius: var(--r-pill);
-  background: var(--effort-track);
-  box-shadow: var(--effort-track-shadow);
+  background: var(--effort-meter-empty);
 }
 
-.model-selector__slider-fill {
-  position: absolute;
-  inset-block: var(--model-selector-slider-inset);
-  left: var(--model-selector-slider-inset);
-  width: var(--model-selector-slider-width);
-  overflow: hidden;
-  background: var(--effort-fill);
-  border-radius: var(--r-pill);
-  box-shadow: var(--effort-fill-shadow);
+/* The fill ends with the current segment: its share of the row plus the gap
+   that follows it. Clip, not width, so nothing reflows while it moves. */
+.model-selector__meter-fill {
+  clip-path: inset(0 calc((1 - var(--effort-filled)) * (100% + var(--meter-gap))) 0 0);
+  transition: clip-path var(--dur-press) var(--ease-rail);
 }
 
-.model-selector__slider-stops {
-  position: absolute;
-  z-index: 2;
-  inset: 0 22px;
-  pointer-events: none;
+.model-selector__meter-fill .model-selector__meter-segment {
+  background: var(--effort-meter-filled);
+  transition: background-color var(--dur-press) var(--ease-out);
 }
 
-.model-selector__slider-stop {
-  position: absolute;
-  top: 50%;
-  left: calc(var(--model-selector-stop) * 100%);
+.model-selector__meter-fill .model-selector__meter-segment.is-current {
+  background: var(--effort-meter-current);
+}
+
+.model-selector__meter-ghosts .model-selector__meter-segment {
+  background: var(--effort-meter-ghost);
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out);
+}
+
+.model-selector__meter-ghosts .model-selector__meter-segment.is-ghost {
+  opacity: 1;
+}
+
+.model-selector__meter-marks {
+  display: flex;
+  gap: var(--meter-gap);
+  height: 4px;
+}
+
+.model-selector__meter-marks > span {
+  display: grid;
+  flex: 1 1 0;
+  place-items: center;
+}
+
+.model-selector__meter-default {
   width: 4px;
   height: 4px;
-  background: color-mix(in srgb, var(--text-3) 52%, transparent);
   border-radius: var(--r-circle);
-  box-shadow: 0 0 0 1px color-mix(in srgb, black 10%, transparent);
-  transform: translate(-50%, -50%);
+  background: var(--text-3);
 }
 
-.model-selector__slider-stop.is-active {
-  background: color-mix(in srgb, var(--effort-value) 84%, transparent);
-}
-
-.model-selector__slider .dither-slider {
-  opacity: 0.45;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .model-selector__slider:hover .model-selector__slider-stop.is-active {
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--effort-value) 8%, transparent);
+@media (prefers-reduced-motion: reduce) {
+  /* The fill jumps; only the colours settle. */
+  .model-selector__meter-fill {
+    transition: none;
   }
-}
 
-.dither-slider {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-}
+  .model-selector__effort-preview {
+    transition: opacity 120ms var(--ease-out);
+  }
 
-.dither-slider__canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  image-rendering: pixelated;
-}
+  .model-selector__meter-fill .model-selector__meter-segment {
+    transition: background-color var(--dur-press) var(--ease-out) !important;
+  }
 
-.dither-slider__texture {
-  opacity: var(--dither-texture-opacity);
-  filter: var(--dither-texture-filter);
-}
-
-.dither-slider__bloom {
-  opacity: var(--dither-bloom-opacity);
-  filter: var(--dither-bloom-filter);
-  image-rendering: auto;
-  mix-blend-mode: var(--dither-bloom-blend);
-}
-
-.model-selector__effort-title {
-  display: block;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-weight: 450;
-}
-
-.model-selector__effort-title span {
-  color: var(--effort-value);
+  .model-selector__meter-ghosts .model-selector__meter-segment {
+    transition: opacity var(--dur-press) var(--ease-out) !important;
+  }
 }
 
 .model-selector__catalog {

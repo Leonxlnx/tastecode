@@ -2,7 +2,10 @@ import { readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(new URL('./model-selector-menu.css', import.meta.url), 'utf8')
+const css = readFileSync(new URL('./model-selector-menu.css', import.meta.url), 'utf8').replace(
+  /\r\n/g,
+  '\n',
+)
 
 function rule(selector: string): string {
   const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -11,19 +14,31 @@ function rule(selector: string): string {
   )
 }
 
-describe('effort slider motion', () => {
-  it('keeps the slider fill width but removes width animation from the fill', () => {
-    const fill = rule('.model-selector__slider-fill')
+describe('effort meter motion', () => {
+  it('reveals the fill with clip-path instead of resizing it', () => {
+    const fill = rule('.model-selector__meter-fill')
 
-    expect(fill).toContain('width: var(--model-selector-slider-width)')
-    expect(fill).not.toContain('transition:')
-    expect(fill).not.toContain('animation:')
+    expect(fill).toContain('clip-path: inset(')
+    expect(fill).toContain('var(--effort-filled)')
+    expect(fill).toMatch(/transition: clip-path var\(--dur-press\)/)
+    expect(fill).not.toMatch(/\bwidth\b/)
   })
 
-  it('does not animate width inside the model selector slider styles', () => {
-    const sliderSection = css.match(
-      /\.model-selector__slider \{[\s\S]*?\.model-selector__slider-stop \{/,
+  it('never animates layout anywhere in the effort meter', () => {
+    const meter = css.match(
+      /\/\* -{10} effort meter -{10}[\s\S]*?\.model-selector__catalog \{/,
     )?.[0]
-    expect(sliderSection).not.toMatch(/transition:[\s\S]*?\bwidth\b/)
+    expect(meter).toBeTruthy()
+    expect(meter).not.toMatch(/transition:[^;]*\b(width|left|right|height|inset)\b/)
+    expect(meter).not.toContain('dither')
+  })
+
+  it('keeps only colour and opacity settling under reduced motion', () => {
+    const reduced = css.match(
+      /@media \(prefers-reduced-motion: reduce\) \{\n {2}\/\* The fill jumps[\s\S]*?\n\}/,
+    )?.[0]
+    expect(reduced).toBeTruthy()
+    expect(reduced).not.toContain('clip-path')
+    expect(reduced).not.toContain('transform')
   })
 })

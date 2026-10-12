@@ -33,7 +33,6 @@ const ModelSelectorPanel = lazy(loadModelSelectorPanel)
 export {
   getCompactModelName,
   getEffortIndexFromPointer,
-  getEffortProgressFromPointer,
   getFastModeOffValue,
   getFastServiceTier,
   getFriendlyEffortLabel,

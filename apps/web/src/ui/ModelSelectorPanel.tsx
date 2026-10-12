@@ -7,17 +7,18 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import { IconCheck as Check, IconBolt as Zap } from '@tabler/icons-react'
+import {
+  IconArrowNarrowRight as ArrowRight,
+  IconCheck as Check,
+  IconBolt as Zap,
+} from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
-import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
-  SLIDER_DITHER_INSET,
-  SLIDER_DITHER_MIN_WIDTH,
   getEffortIndexFromPointer,
   getFastModeOffValue,
   getFastServiceTier,
@@ -222,42 +223,66 @@ function hasPointerCaptureSafe(target: HTMLDivElement, pointerId: number): boole
   return typeof target.hasPointerCapture === 'function' ? target.hasPointerCapture(pointerId) : true
 }
 
-function DitherChoiceRow(props: {
-  label: string
-  ariaLabel?: string
+function indexFromPointer(
+  event: PointerEvent<HTMLDivElement>,
+  stopCount: number,
+  currentIndex: number | null,
+): number {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return getEffortIndexFromPointer({
+    clientX: event.clientX,
+    left: rect.left,
+    width: rect.width,
+    stopCount,
+    currentIndex,
+  })
+}
+
+/**
+ * One segment per level, filled through the current one. A press or drag
+ * moves the fill (and the value the slider reports) before release commits
+ * it; a plain hover only lays a ghost over the segments a click would add or
+ * remove. The fill is revealed with clip-path, so a level change repaints a
+ * few small boxes instead of resizing anything.
+ */
+function EffortMeter(props: {
+  ariaLabel: string
   optionLabels: string[]
   selectedIndex: number
+  defaultIndex: number
   disabled: boolean
   onPreviewIndex: (index: number | null) => void
+  onHoverIndex: (index: number | null) => void
   onCommitIndex: (index: number) => void
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
   const pointerIndexRef = useRef<number | null>(null)
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const hoverIndexRef = useRef<number | null>(null)
+  // Focus that arrives with a press is not announced with a ring; the next key is.
+  const [pointerFocused, setPointerFocused] = useState(false)
+  const count = props.optionLabels.length
 
   const displayIndex = pointerIndex ?? props.selectedIndex
   const displayedLabel =
     props.optionLabels[displayIndex] ?? props.optionLabels[props.selectedIndex] ?? 'Default'
-  const selectedProgress =
-    displayIndex < 0 || props.optionLabels.length < 2
-      ? 0.5
-      : displayIndex / (props.optionLabels.length - 1)
-  const ditherWidthOffset =
-    (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
-  const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
-  const sliderVars = {
-    '--model-selector-slider-width': ditherWidth,
-    '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
+  const ghostIndex =
+    pointerIndex === null && hoverIndex !== null && hoverIndex !== displayIndex ? hoverIndex : null
+  const ghostFrom = ghostIndex === null ? count : Math.min(ghostIndex, displayIndex) + 1
+  const ghostTo = ghostIndex === null ? -1 : Math.max(ghostIndex, displayIndex)
+  const meterVars = {
+    '--effort-filled': count === 0 || displayIndex < 0 ? 0 : (displayIndex + 1) / count,
   } as CSSProperties
 
+  const showHover = (index: number | null) => {
+    if (hoverIndexRef.current === index) return
+    hoverIndexRef.current = index
+    setHoverIndex(index)
+    props.onHoverIndex(index)
+  }
+
   const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const nextIndex = getEffortIndexFromPointer({
-      clientX: event.clientX,
-      left: rect.left,
-      width: rect.width,
-      stopCount: props.optionLabels.length,
-      currentIndex: pointerIndexRef.current,
-    })
+    const nextIndex = indexFromPointer(event, count, pointerIndexRef.current)
     if (pointerIndexRef.current !== nextIndex) {
       const previousIndex = pointerIndexRef.current ?? displayIndex
       pointerIndexRef.current = nextIndex
@@ -287,21 +312,31 @@ function DitherChoiceRow(props: {
       return
     }
     event.preventDefault()
+    setPointerFocused(false)
+    // A resting pointer's preview would cover the keyed level until it moves.
+    showHover(null)
     commitIndex(nextIndex)
   }
+
+  const segments = (className: (index: number) => string) =>
+    props.optionLabels.map((option, index) => (
+      <span key={option} className={`model-selector__meter-segment${className(index)}`} />
+    ))
 
   return (
     <div
       role="slider"
       tabIndex={props.disabled ? -1 : 0}
-      aria-label={props.ariaLabel ?? props.label}
+      aria-label={props.ariaLabel}
       aria-disabled={props.disabled}
       aria-valuemin={0}
-      aria-valuemax={Math.max(0, props.optionLabels.length - 1)}
+      aria-valuemax={Math.max(0, count - 1)}
       aria-valuenow={Math.max(0, displayIndex)}
       aria-valuetext={displayedLabel}
       className={`model-selector__slider${props.disabled ? ' is-disabled' : ''}${pointerIndex !== null ? ' is-dragging' : ''}`}
-      style={sliderVars}
+      style={meterVars}
+      data-focus-source={pointerFocused ? 'pointer' : undefined}
+      onBlur={() => setPointerFocused(false)}
       onClick={(event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -314,15 +349,24 @@ function DitherChoiceRow(props: {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
+        // preventDefault also cancels the browser's own click-to-focus, which
+        // left focus in the search box: the arrow keys then typed there
+        // instead of moving the level.
+        event.currentTarget.focus({ preventScroll: true })
+        setPointerFocused(true)
         prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
       }}
       onPointerMove={(event) => {
-        if (!props.disabled && hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
+        if (props.disabled) return
+        if (hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
           previewFromPointer(event)
+        } else if (event.pointerType !== 'touch') {
+          showHover(indexFromPointer(event, count, null))
         }
       }}
+      onPointerLeave={() => showHover(null)}
       onPointerUp={(event) => {
         if (props.disabled || !hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
           // Capture can be lost without a pointercancel — a re-render under
@@ -337,16 +381,11 @@ function DitherChoiceRow(props: {
         }
         event.preventDefault()
         event.stopPropagation()
-        const rect = event.currentTarget.getBoundingClientRect()
-        const nextIndex = getEffortIndexFromPointer({
-          clientX: event.clientX,
-          left: rect.left,
-          width: rect.width,
-          stopCount: props.optionLabels.length,
-          currentIndex: pointerIndexRef.current,
-        })
+        const nextIndex = indexFromPointer(event, count, pointerIndexRef.current)
         releasePointerCaptureSafe(event.currentTarget, event.pointerId)
         pointerIndexRef.current = null
+        // The pointer now rests on the level it chose: no ghost left behind.
+        if (event.pointerType !== 'touch') showHover(nextIndex)
         requestAnimationFrame(() => {
           commitIndex(nextIndex)
           setPointerIndex(null)
@@ -362,23 +401,21 @@ function DitherChoiceRow(props: {
         props.onPreviewIndex(null)
       }}
     >
-      <div className="model-selector__slider-track">
-        <div className="model-selector__slider-fill">
-          <DitherSlider active={!props.disabled && pointerIndex !== null} />
+      <div className="model-selector__meter" aria-hidden>
+        <div className="model-selector__meter-row">{segments(() => '')}</div>
+        <div className="model-selector__meter-row model-selector__meter-fill">
+          {segments((index) => (index === displayIndex ? ' is-current' : ''))}
         </div>
-        <div className="model-selector__slider-stops" aria-hidden>
-          {props.optionLabels.map((option, index) => (
-            <span
-              className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
-              style={
-                {
-                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
-                } as CSSProperties
-              }
-              key={option}
-            />
-          ))}
+        <div className="model-selector__meter-row model-selector__meter-ghosts">
+          {segments((index) => (index >= ghostFrom && index <= ghostTo ? ' is-ghost' : ''))}
         </div>
+      </div>
+      <div className="model-selector__meter-marks" aria-hidden>
+        {props.optionLabels.map((option, index) => (
+          <span key={option}>
+            {index === props.defaultIndex ? <i className="model-selector__meter-default" /> : null}
+          </span>
+        ))}
       </div>
     </div>
   )
@@ -386,6 +423,7 @@ function DitherChoiceRow(props: {
 
 export function ModelSelectorPanel(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
+  const [hoverEffortIndex, setHoverEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
@@ -395,10 +433,19 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
   const effortLabels = effortOptions.map((value) => getFriendlyEffortLabel(value))
   const selectedEffortIndex =
     selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
+  const defaultEffortIndex = model?.defaultReasoningEffort
+    ? effortOptions.indexOf(model.defaultReasoningEffort)
+    : -1
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
-  const displayedEffortLabel =
-    effortLabels[previewEffortIndex ?? selectedEffortIndex] ?? effortLabel
+  const displayedEffortIndex = previewEffortIndex ?? selectedEffortIndex
+  const displayedEffortLabel = effortLabels[displayedEffortIndex] ?? effortLabel
+  const hoveredEffortLabel =
+    previewEffortIndex === null &&
+    hoverEffortIndex !== null &&
+    hoverEffortIndex !== selectedEffortIndex
+      ? effortLabels[hoverEffortIndex]
+      : undefined
 
   const commitEffortIndex = (nextIndex: number) => {
     const nextValue = effortOptions[nextIndex]
@@ -434,7 +481,17 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           <div className="model-selector__controls-head">
             {effortOptions.length > 0 ? (
               <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
+                <span className="model-selector__effort-label">Effort:</span>{' '}
+                <span className="model-selector__effort-value">{displayedEffortLabel}</span>
+              </span>
+            ) : null}
+            {hoveredEffortLabel ? (
+              <span className="model-selector__effort-preview" aria-hidden>
+                <ArrowRight size={13} />
+                {hoveredEffortLabel}
+                {hoverEffortIndex === defaultEffortIndex ? (
+                  <span className="model-selector__effort-preview-note">· default</span>
+                ) : null}
               </span>
             ) : null}
             {fastTier ? (
@@ -459,13 +516,14 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           </div>
 
           {effortOptions.length > 0 ? (
-            <DitherChoiceRow
-              label="Effort"
+            <EffortMeter
               ariaLabel="Reasoning effort"
               optionLabels={effortLabels}
               selectedIndex={selectedEffortIndex}
+              defaultIndex={defaultEffortIndex}
               disabled={props.disabled || effortOptions.length <= 1}
               onPreviewIndex={setPreviewEffortIndex}
+              onHoverIndex={setHoverEffortIndex}
               onCommitIndex={commitEffortIndex}
             />
           ) : null}

@@ -1,8 +1,10 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
 import { PROVIDER_ORDER, providerRank } from '../provider-presentation.js'
 
-export const SLIDER_DITHER_MIN_WIDTH = 32
-export const SLIDER_DITHER_INSET = 2
+/** The gap between effort meter segments, mirrored in model-selector-menu.css. */
+export const EFFORT_METER_GAP = 4
+/** How far a drag must travel into the next segment before the level follows it. */
+export const EFFORT_METER_HOLD = 6
 
 export type ModelSelectorProps = {
   models: ModelChoice[]
@@ -41,6 +43,12 @@ export function getFriendlyEffortLabel(value: string | undefined): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+/**
+ * The segment under the pointer. Each segment owns the gap after it, so the
+ * whole meter is clickable. While a drag holds a level (`currentIndex`), the
+ * level only follows once the pointer is EFFORT_METER_HOLD pixels into the
+ * neighbouring segment: a hand resting on a boundary does not flicker.
+ */
 export function getEffortIndexFromPointer(input: {
   clientX: number
   left: number
@@ -48,26 +56,19 @@ export function getEffortIndexFromPointer(input: {
   stopCount: number
   currentIndex?: number | null
 }): number {
-  if (input.stopCount <= 1) return 0
-  const position = getEffortProgressFromPointer(input) * (input.stopCount - 1)
-  if (input.currentIndex == null) return Math.round(position)
+  const count = input.stopCount
+  if (count <= 1) return 0
+  if (input.width <= 0) return 0
+  const pitch = (input.width + EFFORT_METER_GAP) / count
+  const x = input.clientX - input.left
+  const segmentAt = (position: number) =>
+    Math.min(count - 1, Math.max(0, Math.floor(position / pitch)))
+  const index = segmentAt(x)
   const current = input.currentIndex
-  // Keep the current stop until the pointer reaches the next stop's final quarter.
-  return position > current
-    ? Math.max(current, Math.floor(position + 0.25))
-    : Math.max(0, Math.min(current, Math.ceil(position - 0.25)))
-}
-
-export function getEffortProgressFromPointer(input: {
-  clientX: number
-  left: number
-  width: number
-}): number {
-  const innerWidth = input.width - SLIDER_DITHER_INSET * 2
-  if (innerWidth <= SLIDER_DITHER_MIN_WIDTH) return 0
-  const travelWidth = innerWidth - SLIDER_DITHER_MIN_WIDTH
-  const relativeX = input.clientX - input.left - SLIDER_DITHER_INSET - SLIDER_DITHER_MIN_WIDTH / 2
-  return Math.min(1, Math.max(0, relativeX / travelWidth))
+  if (current == null || index === current) return index
+  return index > current
+    ? Math.max(current, segmentAt(x - EFFORT_METER_HOLD))
+    : Math.min(current, segmentAt(x + EFFORT_METER_HOLD))
 }
 
 export function modelSourceKey(entry: ModelChoice): string {

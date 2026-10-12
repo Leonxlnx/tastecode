@@ -122,26 +122,14 @@
   --error: #e5687a;
   --success: #6fbf8e;
 
-  --effort-track: #171719;
-  --effort-track-shadow:
-    inset 0 1px rgb(255 255 255 / 1.2%), inset 0 0 0 1px rgb(255 255 255 / 0.8%),
-    0 1px 2px rgb(0 0 0 / 18%);
-  --effort-fill: linear-gradient(
-    180deg,
-    #2d2d2f 0%,
-    #252527 19%,
-    #262628 43%,
-    #2a2a2a 68%,
-    #2f2f2f 95%,
-    #363638 100%
-  );
-  --effort-fill-shadow: inset 0 1px rgb(255 255 255 / 2%), inset 0 -1px rgb(255 255 255 / 2.5%);
-  --effort-value: #f5f5f7;
-  --dither-texture-filter: none;
-  --dither-texture-opacity: 1;
-  --dither-bloom-filter: blur(1.75px) brightness(1.2);
-  --dither-bloom-opacity: 0.44;
-  --dither-bloom-blend: plus-lighter;
+  /* Effort meter: one pill per level. Levels below the current one read as a
+     mid grey and the current level as full text colour, so the level is
+     legible at a glance; a hover ghost sits between empty and filled. Mixed
+     from the text and surface tokens so backdrops follow. */
+  --effort-meter-empty: var(--surface-3);
+  --effort-meter-ghost: color-mix(in srgb, var(--text) 30%, var(--surface-3));
+  --effort-meter-filled: color-mix(in srgb, var(--text) 58%, var(--surface-3));
+  --effort-meter-current: var(--text);
 
   --font-system: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-ui: var(--font-system);
@@ -385,16 +373,11 @@
   --error: #be123c;
   --success: #16803c;
 
-  --effort-track: linear-gradient(180deg, #f3f3f5 0%, #ffffff 100%);
-  --effort-track-shadow: inset 0 1px 2px rgb(24 24 27 / 7%), inset 0 0 0 1px #dedee2;
-  --effort-fill: linear-gradient(180deg, #fafafa 0%, #ececef 100%);
-  --effort-fill-shadow: inset 0 1px #ffffff, 0 1px 2px rgb(24 24 27 / 7%);
-  --effort-value: #27272a;
-  --dither-texture-filter: invert(1);
-  --dither-texture-opacity: 0.26;
-  --dither-bloom-filter: invert(1) blur(1.25px);
-  --dither-bloom-opacity: 0.05;
-  --dither-bloom-blend: multiply;
+  /* Light segments mix toward the prompt white rather than --surface-3,
+     which sits too close to the panel to show an empty level. */
+  --effort-meter-empty: color-mix(in srgb, var(--text) 11%, var(--bg-prompt));
+  --effort-meter-ghost: color-mix(in srgb, var(--text) 28%, var(--bg-prompt));
+  --effort-meter-filled: color-mix(in srgb, var(--text) 56%, var(--bg-prompt));
 }
 
 :root[data-theme='light'][data-accent='ocean'] {
