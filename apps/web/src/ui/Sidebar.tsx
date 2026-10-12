@@ -72,7 +72,7 @@ import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
+import { ProviderIcon } from './ProviderIcon.js'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -1745,12 +1745,11 @@ function SessionRow(props: {
       >
         {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
         <span className="sess__title">{props.session.title}</span>
-        <SourceIdentity
-          className="sess__source"
-          presentation={providerPresentation(props.session.provider)}
-          density="compact"
-        />
-        <SessionStatus status={props.session.status} />
+        {sessionStatusMark(props.session.status) ?? (
+          <span className="sess__source" aria-hidden>
+            <ProviderIcon mark={providerPresentation(props.session.provider).mark} size={12} />
+          </span>
+        )}
       </button>
 
       <span className="sess__actions">
@@ -1872,16 +1871,21 @@ function deleteChatsCopy(project: Project): ConfirmCopy {
   }
 }
 
-function SessionStatus(props: { status: Session['status'] }) {
-  if (props.status === 'starting' || props.status === 'working') {
+/**
+ * A row has one trailing mark. A live status takes it; otherwise the row
+ * shows its provider as a mark alone, because the provider's name is already
+ * in the row's label and tooltip and the written name cost titles ~60px.
+ */
+function sessionStatusMark(status: Session['status']): ReactNode {
+  if (status === 'starting' || status === 'working') {
     return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
   }
 
-  if (props.status === 'approval' || props.status === 'input' || props.status === 'queued') {
+  if (status === 'approval' || status === 'input' || status === 'queued') {
     return <span className="sess__status-dot is-attention" aria-hidden />
   }
 
-  if (props.status === 'failed') {
+  if (status === 'failed') {
     return <span className="sess__status-dot is-failed" aria-hidden />
   }
 

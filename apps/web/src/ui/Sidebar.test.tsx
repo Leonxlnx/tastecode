@@ -595,9 +595,9 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Project options' })).toBeTruthy()
 
     const chat = screen.getByText('Polish the sidebar').closest('button')!
-    const identity = within(chat).getByText('Codex').closest('.source-identity')
-    expect(identity?.classList.contains('source-identity--compact')).toBe(true)
-    expect(identity?.querySelector('svg')).toBeTruthy()
+    // The provider is drawn as its mark alone; its name stays in the label.
+    expect(within(chat).queryByText('Codex')).toBeNull()
+    expect(chat.querySelector('.sess__source svg')).toBeTruthy()
     expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })

@@ -639,19 +639,11 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__source :is(.source-identity__label, .source-identity__qualifier) {
-  opacity: 0;
-}
-
 @media (hover: hover) and (pointer: fine) {
   .sessrow:hover .sess__actions,
   .proj__head:hover .dots {
     opacity: 1;
     pointer-events: auto;
-  }
-
-  .sessrow:hover .sess__source :is(.source-identity__label, .source-identity__qualifier) {
-    opacity: 0;
   }
 
   .sess:hover {
@@ -1154,11 +1146,14 @@
   flex: none;
 }
 
+/* The trailing slot: provider mark or live status, always 14px wide. */
 .sess__source {
-  max-width: 78px;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
   flex: none;
   color: var(--text-3);
-  font-size: 10px;
 }
 
 .sess__actions {
@@ -1214,7 +1209,7 @@
 .sess__status-dot {
   width: 6px;
   height: 6px;
-  margin: 0 3px;
+  margin: 0 4px;
   border-radius: var(--r-circle);
   flex: none;
 }
