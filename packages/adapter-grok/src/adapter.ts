@@ -251,6 +251,8 @@ const GrokFrameSchema = z.object({
   content: JsonRpcValueSchema.optional(),
   rawOutput: JsonRpcValueSchema.optional(),
   stopReason: z.string().optional(),
+  /** An `error` frame's reason, e.g. a model the CLI no longer lists. */
+  message: z.string().optional(),
   sessionId: z.string().optional(),
   total_cost_usd: z.number().optional(),
   usage: z
@@ -468,6 +470,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     })
 
     let terminal = false
+    /** Grok prints an `error` frame and exits without `end`; its reason is the useful one. */
+    let reportedError: string | undefined
     let messageCounter = 1
     let message = new StreamedItem(`${turnId}-message-${messageCounter}`)
     let reasoningCounter = 1
@@ -539,6 +543,10 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           this.#nativeSessionCreated = true
           this.#instructionsPending = false
           this.#announceProviderSessionId(this.#providerSessionId)
+        }
+        if (frame.type === 'error' && frame.message) {
+          reportedError = frame.message
+          return
         }
         if (frame.type === 'thought' && frame.data !== undefined) {
           message.complete(turnId, 'message', this, 'completed', 'commentary')
@@ -704,7 +712,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
     // An exit without an end frame would otherwise look like a hang.
     child.on('close', (code) =>
-      finishProcess(`grok exited with code ${code ?? 'unknown'} before reporting a result`),
+      finishProcess(
+        reportedError ?? `grok exited with code ${code ?? 'unknown'} before reporting a result`,
+      ),
     )
 
     // A spawn failure emits 'error' on the child; without a listener that
