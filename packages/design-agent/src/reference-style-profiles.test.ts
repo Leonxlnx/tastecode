@@ -4,6 +4,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  MAX_STYLE_SIMILARITY,
+  MIN_SIMILAR_STYLE_SCORE,
   REFERENCE_STYLE_PROFILE_FILE,
   isStyleOutlier,
   loadReferenceStyleProfiles,
@@ -105,6 +107,9 @@ describe('reference style profiles', () => {
       mood: ['calm', 'editorial', 'warm', 'premium'],
     })
     expect(styleSimilarity(anchor, anchor)).toBe(3 + 2 + 2 + 2 + 1 + 1 + 3)
+    expect(styleSimilarity(anchor, anchor)).toBe(MAX_STYLE_SIMILARITY)
+    // The similar-site minimum stays above half the scale, so related is not enough.
+    expect(MIN_SIMILAR_STYLE_SCORE).toBeGreaterThan(MAX_STYLE_SIMILARITY / 2)
     expect(
       styleSimilarity(
         anchor,

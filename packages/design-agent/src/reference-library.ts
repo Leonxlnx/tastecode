@@ -22,6 +22,7 @@ import {
 import {
   isStyleOutlier,
   loadReferenceStyleProfiles,
+  MIN_SIMILAR_STYLE_SCORE,
   referenceSite,
   styleProfileSummary,
   styleSimilarity,
@@ -267,7 +268,7 @@ function drawGroupFirst<Entry extends ReferenceDirection>(
   return revisions[chooseIndex(revisions.length)]!
 }
 
-/** How many of the most similar profiled sites may supply a section the anchor site lacks. */
+/** How many of the most similar close sites may supply a section the anchor site lacks. */
 const SIMILAR_SITE_COUNT = 3
 
 function configuredStyleProfiles(): ReferenceStyleProfiles {
@@ -281,8 +282,9 @@ function configuredStyleProfiles(): ReferenceStyleProfiles {
 /**
  * One page keeps one design language (owner decision, 2026-10-12). The first drawn section is the
  * anchor, chosen uniformly by group like before; its source site defines the page's language.
- * Every later section comes from the first non-empty tier: the anchor site's own family, the
- * anchor site's compatible families, the most similar profiled sites, then the uniform pool.
+ * Every later section comes from the first non-empty tier: the requested family on the anchor
+ * site, then on the most similar close sites; for a sparse family only, compatible families on
+ * the anchor site, then on close sites; finally the uniform pool the family always used.
  */
 export function selectReviewedReferences(
   brief: DesignBrief,
@@ -308,15 +310,15 @@ export function selectReviewedReferences(
     !isStyleOutlier(profiles.get(siteOf(entry) ?? ''), entry)
   let anchor: { site?: string | undefined; profile?: ReferenceStyleProfile | undefined } | undefined
 
-  // Unused, site-consistent entries that could fill a slot of this family.
-  const slotCandidates = (family: PageLayoutFamily) =>
+  // Unused, site-consistent entries of exactly these families.
+  const slotCandidates = (slotFamilies: readonly PageLayoutFamily[]) =>
     sectionReferences.filter(
-      (entry) =>
-        unused(entry) &&
-        consistent(entry) &&
-        (entry.family === family || compatibleFamilies(family).includes(entry.family)),
+      (entry) => unused(entry) && consistent(entry) && slotFamilies.includes(entry.family),
     )
-  // The best few other profiled sites by similarity to the anchor, ties included.
+  const onAnchorSite = (candidates: readonly LibraryReference[]) =>
+    anchor?.site ? candidates.filter((entry) => siteOf(entry) === anchor?.site) : []
+  // The best few other profiled sites that are genuinely close to the anchor, ties included.
+  // Without the minimum score, a family only one or two sites have would always come from them.
   const similarSites = (candidates: readonly ReferenceDirection[]): Set<string> => {
     const anchorProfile = anchor?.profile
     if (!anchorProfile) return new Set()
@@ -327,34 +329,34 @@ export function selectReviewedReferences(
       if (site && profile && !scores.has(site))
         scores.set(site, styleSimilarity(anchorProfile, profile))
     }
-    const ranked = [...scores.values()].filter((score) => score > 0).sort((a, b) => b - a)
-    const cutoff = ranked[Math.min(SIMILAR_SITE_COUNT, ranked.length) - 1]
-    return new Set(
-      [...scores]
-        .filter(([, score]) => cutoff !== undefined && score > 0 && score >= cutoff)
-        .map(([site]) => site),
-    )
+    const close = [...scores].filter(([, score]) => score >= MIN_SIMILAR_STYLE_SCORE)
+    const ranked = close.map(([, score]) => score).sort((a, b) => b - a)
+    const cutoff = ranked[Math.min(SIMILAR_SITE_COUNT, ranked.length) - 1] ?? Infinity
+    return new Set(close.filter(([, score]) => score >= cutoff).map(([site]) => site))
+  }
+  const onSimilarSites = (candidates: readonly LibraryReference[]) => {
+    const sites = similarSites(candidates)
+    return candidates.filter((entry) => sites.has(siteOf(entry) ?? ''))
   }
   const drawRelated = (
     family: PageLayoutFamily,
     uniformPool: readonly LibraryReference[],
   ): { entry: LibraryReference; role: ReferenceRole } | undefined => {
-    const native = (entry: ReferenceDirection) => entry.family === family
-    const compatible = (entry: ReferenceDirection) =>
-      compatibleFamilies(family).includes(entry.family)
-    const candidates = slotCandidates(family)
-    const sameSite = anchor?.site
-      ? candidates.filter((entry) => siteOf(entry) === anchor?.site)
-      : []
-    const similar = similarSites(candidates)
-    const related = candidates.filter((entry) => similar.has(siteOf(entry) ?? ''))
+    // The requested family wins over compatible geometry, from the anchor site or a close one.
+    const exact = slotCandidates([family])
     const tiers: [LibraryReference[], ReferenceRole][] = [
-      [sameSite.filter(native), 'same-site'],
-      [sameSite.filter(compatible), 'same-site'],
-      [related.filter(native), 'similar-site'],
-      [related.filter(compatible), 'similar-site'],
-      [uniformPool.filter(unused), 'fallback'],
+      [onAnchorSite(exact), 'same-site'],
+      [onSimilarSites(exact), 'similar-site'],
     ]
+    // Only a family too sparse to stand alone borrowed compatible geometry before; keep it so.
+    if (isSparseFamily(family, sectionReferences)) {
+      const compatible = slotCandidates(compatibleFamilies(family))
+      tiers.push(
+        [onAnchorSite(compatible), 'same-site'],
+        [onSimilarSites(compatible), 'similar-site'],
+      )
+    }
+    tiers.push([uniformPool.filter(unused), 'fallback'])
     const tier = tiers.find(([pool]) => pool.length)
     return tier && { entry: drawGroupFirst(tier[0], chooseIndex), role: tier[1] }
   }
@@ -380,10 +382,11 @@ export function selectReviewedReferences(
     const top = Math.max(0, ...scores)
     return top > 0 ? entries.filter((_, index) => scores[index] === top) : entries
   }
-  const relation = (family: PageLayoutFamily, entry: ReferenceDirection): ReferenceRole =>
+  // An explicit pick is labeled by where the tiers would have placed its own family.
+  const relation = (entry: ReferenceDirection): ReferenceRole =>
     anchor?.site && siteOf(entry) === anchor.site
       ? 'same-site'
-      : similarSites(slotCandidates(family)).has(siteOf(entry) ?? '')
+      : similarSites(slotCandidates([entry.family])).has(siteOf(entry) ?? '')
         ? 'similar-site'
         : 'fallback'
 
@@ -408,7 +411,7 @@ export function selectReviewedReferences(
       let pick: { entry: LibraryReference; role: ReferenceRole } | undefined
       if (explicitPool.length) {
         const entry = drawGroupFirst(explicitPool.filter(unused), chooseIndex)
-        pick = { entry, role: anchor ? relation(family, entry) : 'anchor' }
+        pick = { entry, role: anchor ? relation(entry) : 'anchor' }
       } else if (!anchor) {
         // Outliers do not share their site's language, so they cannot define the page's.
         const eligible = pool.filter(unused)
