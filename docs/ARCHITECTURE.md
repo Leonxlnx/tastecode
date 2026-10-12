@@ -596,6 +596,13 @@ and reduced-motion equivalents. Native inline chart SVG in reference-bound dashb
 visibly identified demo values avoid website-only validation blockers; asserted product claims
 still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
 
+Since 2026-10-12, every phase keeps one design language per page: references set each
+section's composition, and one anchor reference sets the type, palette, radius, spacing and
+component language. See [One design language per page](./DESIGN-REFERENCES.md#one-design-language-per-page).
+Dashboards use one sans family plus optional monospace data. They are reviewed for shell
+consistency, data density, table and chart readability, visible control states and focus.
+A site, one-pager or Webseite about an app classifies as a website.
+
 Reference-driven Design requires the session's declared image input capability. Unsupported
 sessions reject before inference or persisted Design state; ordinary coding remains available.
 Direct API sessions currently declare `images: false`, so visual Design is unsupported there.

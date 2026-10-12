@@ -38,10 +38,11 @@ the triggers and reduced-motion states; unused keyframes and button color change
 Motion preserves the selected compositions. Still screenshots alone cannot prove motion works.
 
 New runs also persist a random font permutation: ten verified families in each of four
-categories. Match the reference's typography category and use its first drawn family, unless
-the user or an existing identity supplies the font. Font files must be acquired and actually
-loaded; CSS fallback declarations do not satisfy that requirement. Reference geometry,
-labels, case, borders and line breaks take priority over generic style preferences.
+categories. Match the anchor reference's typography category and use its first drawn family,
+unless the user or an existing identity supplies the font. Font files must be acquired and
+actually loaded; CSS fallback declarations do not satisfy that requirement. Reference geometry
+and line breaks take priority over generic style preferences; labels, case, borders and radii
+follow the page's one design language below.
 
 Build receives the tested native `references/motion/reveal.js` implementation for simple
 entrances. It initializes only offscreen elements, observes before entry and plays once.
@@ -49,6 +50,52 @@ Already visible or restored-scroll content stays visible. Reduced-motion changes
 cancel only owned animations and restore the final state. Browser QA includes rapid down/up
 scrolling and restored scroll, not only still screenshots. See the
 [September 16 verification](./verification/design-variety-2026-09-16/README.md).
+
+## One design language per page
+
+Decision (Leon, 2026-10-12): a Design-agent website must not switch design language from
+section to section, such as five different fonts or unrelated layouts on one page. Randomness
+stays, but it should produce similar references rather than unrelated ones. One page keeps:
+
+- one type system, with at most two families
+- one palette
+- one radius and spacing scale
+- one button, card, label and surface language
+
+This replaces the earlier uniform, site-agnostic stance for how the phases treat references.
+The selection rules above draw each family independently. Each sampled reference then brought
+its own type scale, radii and surfaces into its section, so a deck from about ten source sites
+produced about ten design languages. References from one source site share a design language,
+and the library images of each site were reviewed for a consistent style. Reference selection
+is therefore being changed separately to draw each deck around one anchor reference, from the
+same site first and then from the most similar sites. The phase prompts work with decks of
+either kind.
+
+How the phases apply the decision:
+
+- **Anchor:** the anchor reference is the deck entry with role `anchor`. In a deck saved
+  before anchor sampling, it is the hero reference, or otherwise the first reference. When the
+  user attaches references, the first attached reference is the anchor.
+- **Brand:** derives typography (category and draw), type scale, palette seeds, radius family,
+  spacing rhythm, button, card and label styles, and the light/dark surface sequence from the
+  anchor only. It records them in the optional `designTokens` object of `brand.json`; brand
+  systems approved before this change still load without it. Monospace and mixed-type labels
+  appear only when the anchor uses them. Dashboards use one sans family plus an optional
+  monospace family for data, never a display or serif draw.
+- **Page and Build:** keep each section's macro composition from its own reference: grid,
+  column structure, media count and crop, alignment, overlap, section proportions and
+  responsive order. Everything else comes from the brand and is identical across sections.
+  Build declares one block of CSS custom properties (palette, approved font families, type
+  scale, radii, spacing). It adds no other font family except an icon font.
+- **Review:** blocks a page whose sections differ in font families, heading styles, type
+  scales, buttons, radius families, label systems, or card and surface treatments. Repair fixes
+  these findings through the shared tokens. Dashboards are reviewed for shell consistency, data
+  density, table and chart readability, visible control states and keyboard focus instead of
+  Hero criteria.
+- **Motion:** two or three named reveal types are reused across the page instead of a new
+  effect per section.
+- **Surface classification:** a site, one-pager, microsite, homepage, launch page, Webseite or
+  Seite for an app, analytics or admin product is a website, not a dashboard.
 
 ## Bundled library and local overrides
 
