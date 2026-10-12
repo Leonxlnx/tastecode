@@ -303,6 +303,22 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
+  it('takes keyboard focus from the model search when the effort slider is pressed', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    search.focus()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+
+    fireEvent.pointerDown(slider, { clientX: 0, pointerId: 7 })
+    expect(document.activeElement).toBe(slider)
+    fireEvent.pointerCancel(slider, { pointerId: 7 })
+
+    fireEvent.keyDown(document.activeElement!, { key: 'ArrowRight' })
+    expect(onEffortChange).toHaveBeenCalledWith('high')
+  })
+
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 

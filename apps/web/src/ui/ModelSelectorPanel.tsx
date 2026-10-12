@@ -314,6 +314,10 @@ function DitherChoiceRow(props: {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
+        // preventDefault also cancels the browser's focus-on-press, which left
+        // focus in the model search: arrow keys after a click typed there
+        // instead of moving the effort.
+        event.currentTarget.focus({ preventScroll: true })
         prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
