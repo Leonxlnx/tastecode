@@ -1237,6 +1237,17 @@ export function App() {
     },
     [publishComposerDraft],
   )
+  // Editing a queued prompt removes it before the composer takes it back. If
+  // the user switched chats meanwhile, the prompt returns to its own chat.
+  const keepQueuedEdit = useCallback(
+    (removed: Promise<RecoverableDraft | undefined>) => {
+      const owner = threadController.draftOwner
+      void removed.then((prompt) => {
+        if (prompt) restoreRejectedDraft(owner, prompt)
+      })
+    },
+    [restoreRejectedDraft],
+  )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   // What the sidebar shows. Navigation picks from this list so it never
@@ -5244,6 +5255,7 @@ export function App() {
                       onDraftChange={updateComposerDraftText}
                       onAttachmentsChange={updateComposerDraftAttachments}
                       onPendingAttachment={keepPendingAttachment}
+                      onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}
