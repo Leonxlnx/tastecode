@@ -133,8 +133,8 @@
 }
 
 .menutrigger.provider-tune__trigger:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 0;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .tune-value {
@@ -343,8 +343,8 @@
 }
 
 .tune-panel .switch:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .tune-panel__reset {
@@ -371,8 +371,8 @@
 }
 
 .tune-panel__reset:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 0;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* The same switcher as the sidebar setting. */
@@ -412,8 +412,8 @@
 }
 
 .tune-segmented__option:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 /* ---------- reasoning: a rising ladder ---------- */
@@ -475,8 +475,8 @@
 }
 
 .effort-ladder__step:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 /* ---------- context: the window drawn as a ruler ---------- */
@@ -611,8 +611,8 @@
 }
 
 .ctx-ruler__thumb:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .ctx-ruler[data-dragging] .ctx-ruler__thumb {

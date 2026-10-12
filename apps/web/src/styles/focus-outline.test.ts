@@ -1,10 +1,28 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 const focusRingCss = readFileSync(new URL('./focus-ring.css', import.meta.url), 'utf8')
+const modelSelectorMenuCss = readFileSync(
+  new URL('./model-selector-menu.css', import.meta.url),
+  'utf8',
+)
+
+function collectCss(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return collectCss(path)
+    return entry.name.endsWith('.css') ? [path] : []
+  })
+}
+
+const allCss = collectCss(fileURLToPath(new URL('../', import.meta.url)))
+  .map((path) => readFileSync(path, 'utf8'))
+  .join('\n')
 
 describe('focus outline', () => {
   it('does not globally suppress keyboard focus indicators', () => {
@@ -30,6 +48,23 @@ describe('focus outline', () => {
     expect(focusRingCss).toMatch(
       /\.navitem,[\s\S]*?\.sess,[\s\S]*?\.rail__foot \.menutrigger,[\s\S]*?\):focus-visible \{\s*outline-offset: var\(--focus-ring-inset\);/s,
     )
+  })
+
+  it('draws rows in menus, the model picker and settings with the same ring', () => {
+    expect(appCss).toMatch(
+      /\.menu__item:not\(:disabled\):focus-visible \{[^}]*outline: var\(--focus-ring\);[^}]*outline-offset: var\(--focus-ring-inset\);/s,
+    )
+    expect(modelSelectorMenuCss).toMatch(
+      /\.model-selector__model:focus-visible \{[^}]*outline: var\(--focus-ring\);[^}]*outline-offset: var\(--focus-ring-inset\);/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.settings__nav-item:focus-visible \{[^}]*outline: var\(--focus-ring\);[^}]*outline-offset: var\(--focus-ring-inset\);/s,
+    )
+  })
+
+  it('keeps the old thin and grey ring variants out of component CSS', () => {
+    expect(allCss).not.toMatch(/outline: 1(?:\.5)?px solid var\(--text-[23]\)/)
+    expect(allCss).not.toMatch(/outline: 1\.5px solid color-mix\(in srgb, var\(--text\) 34%/)
   })
 
   it('keeps the provider login terminal inside its neutral frame', () => {

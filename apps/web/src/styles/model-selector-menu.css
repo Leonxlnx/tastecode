@@ -259,11 +259,6 @@
   color: var(--text);
 }
 
-.model-selector__provider:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: 1px;
-}
-
 .model-selector__provider svg {
   flex: none;
   width: 16px;
@@ -388,8 +383,8 @@
 
 .model-selector__model:focus-visible {
   background: var(--model-picker-hover-bg);
-  outline: 1px solid var(--text-2);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .model-selector__model-name {

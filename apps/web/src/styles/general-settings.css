@@ -90,7 +90,7 @@
 }
 
 .general-option:focus-visible .general-option__picture {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
 }
 
 .general-option__label {
@@ -187,7 +187,7 @@
 }
 
 .settle-scale:focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
   outline-offset: 4px;
 }
 

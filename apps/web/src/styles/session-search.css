@@ -46,7 +46,6 @@
 
 .session-search__filters .app-select__trigger:focus-visible {
   border-color: var(--text-3);
-  outline: none;
 }
 
 .session-search__results {

@@ -109,7 +109,7 @@
 }
 
 .onboarding__progress button:focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
   outline-offset: 0;
 }
 
@@ -572,8 +572,8 @@
 .onboarding__primary:focus-visible,
 .onboarding__ghost:focus-visible,
 .onboarding__skip:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .onboarding__ghost {
@@ -1046,8 +1046,8 @@
 }
 
 .onboarding__provider-action:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* ---------- project ---------- */
