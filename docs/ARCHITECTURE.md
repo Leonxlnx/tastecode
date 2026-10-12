@@ -649,7 +649,9 @@ The asset import is complete: a separate dashboard catalog and provenance record
 references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
 344 paired references and 28 desktop-only references.
 Sampling chooses a layout group uniformly, then one variant within that group, so retries do
-not give a composition extra votes. One complete app-shell reference preserves navigation,
+not give a composition extra votes. Since 2026-10-12 the dashboard draw is uniform only among the
+screens whose domain, tags, product name, cue or motifs best match the request's domain words,
+and over all screens when nothing matches. One complete app-shell reference preserves navigation,
 content density and responsive hierarchy. The compiled default-bundle checks passed for all
 200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
 dashboard WebPs have unique matching hashes and valid viewport metadata. The catalog differs
@@ -693,6 +695,43 @@ layout votes, or requiring static screenshots in place of working native charts 
 
 ---
 
+## One design language per generated page (nightly)
+
+Owner decision, 2026-10-12: a generated website must not switch design language between sections.
+Randomness stays, but one page keeps one type system (at most two families), one palette, one
+radius and spacing scale, and one button, card and label language. This supersedes the uniform,
+site-agnostic website sampling from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which drew every layout family
+independently and put about eleven source sites into one 14-reference deck.
+
+The first drawn section, normally the hero, is still chosen uniformly by group and becomes the
+anchor; its source host defines the page's language. Each later section takes the requested
+family from the anchor site, then from the three most similar close sites in the optional per-site
+`style-profiles.json` (style score at least 10 of 14). Only a sparse family, one with fewer than
+ten composition groups, may then borrow a compatible family from those sites; otherwise the
+section comes from the uniform pool the family always used. The requested family always beats
+borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
+section to most pages. Profile outliers never anchor a page or count as their site's language. A
+missing or malformed profile file degrades to same-site and uniform sampling rather than failing a
+run. Saved deck entries record `site` and `role`; the anchor also carries a one-line `style`
+summary. Older decks parse unchanged. Details are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
+
+Brand derives the language from the anchor and at most two same-site references instead of the
+whole deck, and every phase is told that the anchor sets type, palette, radii, spacing, controls
+and surfaces while other references give composition only. Review then audits the generated source
+and adds bounded, non-fatal findings for fonts outside the brand and radius drift
+([DESIGN-AGENT.md](./DESIGN-AGENT.md)). The audit is a Review finding rather than a hard source
+gate because Build and Repair get one correction each, so a false positive must never fail a run.
+
+_Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
+the anchor site only (most sites lack some families, which would shrink the deck), a uniform
+draw per family (the source of the mixed-language pages), the anchor site's compatible family
+before a close site's own family (it put other section types into a third of FAQ slots), and
+similar sites with no minimum score or only half the maximum (a few broadly similar sites then
+supplied a rare section, such as the library's only stats section, to a third or more of pages).
+
+---
+
 ## Layout
 
 ```
@@ -711,6 +750,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |

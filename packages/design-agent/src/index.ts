@@ -1,4 +1,5 @@
 export {
+  isDashboardBrief,
   parseDesignBrief,
   readDesignBrief,
   writeDesignBrief,
@@ -48,13 +49,17 @@ export {
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
+  BRAND_SAME_SITE_REFERENCE_LIMIT,
   lockPageReferenceDirections,
   REFERENCE_DIRECTIONS,
+  REFERENCE_ROLES,
   referenceDirectionAttachmentPath,
   referenceDirectionAttachments,
+  referenceDirectionsForBrand,
   referenceDirectionsForPage,
   selectReferenceDirectionDeck,
   type ReferenceDirection,
+  type ReferenceRole,
 } from './reference-directions.js'
 export {
   assertPageCopy,
@@ -121,6 +126,15 @@ export {
   type ReviewSeverity,
   type VisualReview,
 } from './review-phase.js'
+export {
+  DESIGN_CONSISTENCY_FINDING_IDS,
+  DESIGN_RADIUS_VALUE_LIMIT,
+  designConsistencyAudit,
+  designConsistencyBaseline,
+  designConsistencyFindings,
+  enforceDesignConsistencyFindings,
+  type DesignConsistencyAudit,
+} from './design-consistency.js'
 export {
   designPreviewPrompt,
   parsePreviewPhaseOutput,

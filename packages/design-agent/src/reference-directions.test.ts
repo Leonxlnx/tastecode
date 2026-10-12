@@ -7,7 +7,9 @@ import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
 import {
   REFERENCE_DIRECTIONS,
   lockPageReferenceDirections,
+  referenceDirectionsForBrand,
   selectReferenceDirectionDeck,
+  type ReferenceDirection,
 } from './reference-directions.js'
 
 const brief: DesignBrief = {
@@ -144,5 +146,51 @@ describe('reference directions', () => {
     expect(() => lockPageReferenceDirections(page, deck)).toThrow(
       'must identify an attached user reference or internal direction',
     )
+  })
+
+  describe('Brand references', () => {
+    const entry = (
+      id: string,
+      family: ReferenceDirection['family'],
+      extra: Partial<ReferenceDirection> = {},
+    ): ReferenceDirection => ({ id, family, cue: id, imagePath: `${id}.webp`, ...extra })
+
+    it('keeps the anchor and at most two same-site compositions in deck order', () => {
+      const deck = [
+        entry('hero', 'hero', { site: 'a.example', role: 'anchor', style: 'Quiet serif.' }),
+        entry('feature-b', 'feature', { site: 'b.example', role: 'similar-site' }),
+        entry('feature-a', 'feature', { site: 'a.example', role: 'same-site' }),
+        entry('about-c', 'about', { site: 'c.example', role: 'fallback' }),
+        entry('about-a', 'about', { site: 'a.example', role: 'same-site' }),
+        entry('pricing-a', 'pricing', { site: 'a.example', role: 'same-site' }),
+      ]
+
+      expect(referenceDirectionsForBrand(deck).map(({ id }) => id)).toEqual([
+        'hero',
+        'feature-a',
+        'about-a',
+      ])
+    })
+
+    it('gives Brand only the anchor when no other composition shares its site', () => {
+      const deck = [
+        entry('feature-b', 'feature', { site: 'b.example', role: 'fallback' }),
+        entry('hero', 'hero', { role: 'anchor' }),
+        entry('about-b', 'about', { site: 'b.example', role: 'fallback' }),
+      ]
+
+      expect(referenceDirectionsForBrand(deck).map(({ id }) => id)).toEqual(['hero'])
+    })
+
+    it('keeps the full deck for decks saved before anchor sampling', () => {
+      const deck = [
+        entry('hero', 'hero', { source: 'https://a.example' }),
+        entry('feature', 'feature', { source: 'https://b.example' }),
+        entry('about', 'about'),
+      ]
+
+      expect(referenceDirectionsForBrand(deck)).toEqual(deck)
+      expect(referenceDirectionsForBrand([])).toEqual([])
+    })
   })
 })

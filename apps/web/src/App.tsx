@@ -5929,6 +5929,7 @@ function endsDesignBriefing(event: DomainEvent): boolean {
     text.trim() ===
       'Design mode was turned off because this request is not a website design task.' ||
     text.startsWith('Website built.') ||
+    text.startsWith('Dashboard built.') ||
     text.includes('DEBUG FINISHED · NO WEBSITE BUILT')
   )
 }

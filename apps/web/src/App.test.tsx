@@ -4423,6 +4423,23 @@ describe('new chats', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Design' }))
     emitThreadEvent('thread-1', {
+      type: 'item.completed',
+      item: {
+        id: 'dashboard-complete',
+        turnId: 'turn-3',
+        type: 'message',
+        role: 'assistant',
+        status: 'completed',
+        text: 'Dashboard built. Preview ready at http://127.0.0.1:5173/.',
+        createdAt: 3,
+      },
+    })
+    expect(screen.getByRole('button', { name: 'Design' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Design' }))
+    emitThreadEvent('thread-1', {
       type: 'thread.error',
       threadId: 'thread-1',
       message: 'Design mode failed: preview command is not allowed',
