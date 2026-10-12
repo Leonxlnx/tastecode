@@ -2847,6 +2847,38 @@
   padding: 4px 6px;
 }
 
+/* The account menu rises from the profile row: exactly as wide as it, with
+   a 12px panel around 8px rows so the corners stay concentric, and 30px
+   rows whose icons centre on the avatar's axis below. */
+.menu--account {
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
+  padding: 4px;
+  border-radius: var(--r-lg);
+}
+
+.menu--account .menu__item,
+.menu--account .account-menu__usage-head {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+/* The rule under the usage block stops short of the panel's edges instead
+   of running into its border. */
+.menu--account .account-menu__usage {
+  position: relative;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+
+.menu--account .account-menu__usage::after {
+  content: '';
+  position: absolute;
+  inset: auto 8px 0;
+  height: 1px;
+  background: var(--menu-line);
+}
+
 .menu--compact .menu__name {
   font-size: var(--t-sm);
   line-height: 1.25;

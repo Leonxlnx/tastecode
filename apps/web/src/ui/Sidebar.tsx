@@ -899,9 +899,9 @@ function SidebarComponent(props: {
         <div className="rail__foot">
           <Menu
             drop="up"
-            gap={14}
+            gap={6}
             label="Account"
-            panelClassName="menu--compact menu--settings"
+            panelClassName="menu--compact menu--settings menu--account"
             panelRole="dialog"
             panelLabel="Account and plan limits"
             trigger={() => (
