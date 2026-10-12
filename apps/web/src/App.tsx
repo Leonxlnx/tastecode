@@ -2746,22 +2746,39 @@ export function App() {
   const addProjects = useCallback(
     async (paths: readonly string[]) => {
       const uniquePaths = [...new Set(paths)]
-      const activePath = uniquePaths.at(-1)
-      if (!activePath) return
+      if (uniquePaths.length === 0) return
+      // Every request is already in flight, so one failed folder must not skip
+      // the cleanup and refresh that the folders which were added still need.
+      const results = await Promise.allSettled(
+        uniquePaths.map((path) => transport.request('projects.add', { path })),
+      )
+      const added = uniquePaths.filter((_, index) => results[index]?.status === 'fulfilled')
+      const failed = uniquePaths.filter((_, index) => results[index]?.status === 'rejected')
+      const failure = results.find((result) => result.status === 'rejected')
+      const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+      for (const path of added) removedProjectPaths.current.delete(path)
+      let refreshed = true
       try {
-        await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-        for (const path of uniquePaths) removedProjectPaths.current.delete(path)
         await refreshProjects()
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
-        return
+        refreshed = false
+        if (!failure) reportError(errorText(error))
       }
+      if (failure) {
+        const message = errorText(failure.reason)
+        // A dropped batch has to say which folders did not make it.
+        reportError(
+          uniquePaths.length === 1 ? message : `Could not add ${failed.join(', ')}. ${message}`,
+        )
+      }
+      const activePath = added.at(-1)
+      if (!refreshed || !activePath) return
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
     },
-    [transport, refreshProjects],
+    [transport, refreshProjects, reportError],
   )
 
   const addProject = useCallback(async () => {
