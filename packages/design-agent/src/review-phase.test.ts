@@ -59,6 +59,50 @@ describe('review and repair phases', () => {
       expect(prompt).toContain('a still screenshot cannot prove interaction behavior')
       expect(prompt).not.toContain('Verify an actual hero animation')
     }
+    const dashboardReview = prompts[0]!
+    expect(dashboardReview).toContain(
+      'This is an operating dashboard: judge it as one working screen',
+    )
+    expect(dashboardReview).toContain('The app shell is inconsistent')
+    expect(dashboardReview).toContain('Data density falls below the reference')
+    expect(dashboardReview).toContain('A table or chart is hard to read')
+    expect(dashboardReview).toContain(
+      'A filter, tab, sort, selection, navigation item or drawer that page.json plans shows no visible selected, active, sorted or open state',
+    )
+    expect(dashboardReview).toContain('say so in summary instead of reporting a finding')
+    expect(dashboardReview).toContain('Keyboard focus is invisible')
+    expect(dashboardReview).not.toContain('A Hero stacks a headline')
+  })
+
+  it('reviews reference geometry per section and one design language for the page', () => {
+    // SAFETY: This prompt test checks fixed instructions; the function only serializes these artifact values.
+    const prompt = designReviewPrompt(
+      {} as Parameters<typeof designReviewPrompt>[0],
+      {} as Parameters<typeof designReviewPrompt>[1],
+      {} as Parameters<typeof designReviewPrompt>[2],
+      [
+        { path: 'desktop.png', width: 1440, height: 1000 },
+        { path: 'mobile.png', width: 390, height: 844 },
+      ],
+    )
+    expect(prompt).toContain('ONE DESIGN LANGUAGE')
+    expect(prompt).toContain(
+      "every section must render in the page's one design language from brand.json",
+    )
+    expect(prompt).toContain(
+      'Compare normalized heading and media boxes, column structure, section height proportions',
+    )
+    expect(prompt).toContain(
+      "Never require a section to copy its own reference's radii, heading size, typeface",
+    )
+    expect(prompt).toContain(
+      'The page breaks its one design language: sections use different font families, heading styles, type scales, button styles, radius families, label systems or card and surface treatments',
+    )
+    expect(prompt).not.toContain('Only identity content, brand hues, the approved font family')
+    expect(prompt).not.toContain('whitespace, radii, borders and overlaps against the reference')
+    const repair = designRepairPrompt(review, 1, 2)
+    expect(repair).toContain('fix design-language findings through the shared tokens block')
+    expect(repair).toContain("never re-diverge a section toward its own reference's styling")
   })
 
   it('treats the visual anti-slop floor as pass-blocking', () => {
@@ -73,8 +117,10 @@ describe('review and repair phases', () => {
       ],
     )
     expect(prompt).toContain(
-      'Heading size, width, line count or placement differs materially from the reference',
+      'Heading width, line count, placement or relative prominence differs materially from the reference',
     )
+    expect(prompt).toContain('A Hero stacks a headline with multiple descriptions')
+    expect(prompt).not.toContain('The app shell is inconsistent')
     expect(prompt).toContain('flag missing planned motion when browser evidence proves it')
     expect(prompt).toContain(
       'Preserve concise identification of concept work or an illustrative catalog',
@@ -87,6 +133,7 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
     expect(prompt).toContain('replaces the reference alignment')
     expect(prompt).toContain("each section's recorded motion decision")
+    expect(prompt).toContain("reuse the page's two or three named reveal types")
     expect(prompt).toContain('referenceDirectionId')
     expect(prompt).toContain('Invented grids, separator rules, card-edge rails')
     expect(prompt).toContain('SVG is acceptable only for an explicit functional icon, logo')

@@ -90,10 +90,17 @@ describe('build phase', () => {
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain("Implement each section's recorded motion decision")
+    expect(prompt).toContain(
+      "Implement the page's motion vocabulary once, as two or three named reveal types with shared timing",
+    )
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
-    expect(prompt).toContain('Match its line count, text block width and relative size')
-    expect(prompt).toContain('Reproduce reference spacing, rules, borders, radii and surfaces')
+    expect(prompt).toContain(
+      'Derive heading placement, line count and text block width from the selected reference at each viewport, and set its size with the brand type-scale step',
+    )
+    expect(prompt).toContain(
+      'Take spacing, radii, borders, rules and surfaces from the design tokens and the brand',
+    )
     expect(prompt).toContain('open columns remain open')
     expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
@@ -107,6 +114,82 @@ describe('build phase', () => {
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
     expect(prompt).toContain('It may not replace photography, product imagery')
     expect(prompt).toContain('SVG is limited to an explicit functional icon, logo')
+  })
+
+  it('builds every section from one tokens block and the approved font families', () => {
+    const designTokens = {
+      typeScale: {
+        display: 'clamp(3.5rem, 8vw, 7rem)',
+        h1: '4rem',
+        h2: '3rem',
+        h3: '2rem',
+        body: '1rem',
+        small: '0.875rem',
+        label: '0.75rem',
+      },
+      radius: { scale: ['4px', '12px', '24px'], pill: '999px' },
+      spacing: { section: 'clamp(4rem, 10vw, 9rem)', gutter: '1.5rem', stack: '1rem' },
+      buttons: { primary: 'Solid accent pill.', secondary: 'Underlined text link.' },
+      surfaces: 'Paper canvas; one dark band before the footer.',
+    }
+    const brand = {
+      ...artifacts[1],
+      typefaces: [
+        { family: 'Fraunces', source: 'Google Fonts', roles: ['display'], weights: [600] },
+        { family: 'Hanken Grotesk', source: 'Google Fonts', roles: ['body'], weights: [400] },
+      ],
+      designTokens,
+    }
+    const prompt = designBuildPrompt(artifacts[0], brand, artifacts[2], artifacts[3])
+    expect(prompt).toContain('ONE DESIGN LANGUAGE')
+    expect(prompt).toContain('DESIGN TOKENS — one tokens block for the whole page')
+    expect(prompt).toContain(
+      'the approved font families, and the designTokens type scale, radius family and spacing scale',
+    )
+    expect(prompt).toContain(
+      'Every section reads colors, font families, font sizes, radii and section spacing only through these variables',
+    )
+    expect(prompt).toContain(
+      'The only permitted font families are "Fraunces" and "Hanken Grotesk". Do not add any other font-family, @font-face, Google Fonts or Fontsource import',
+    )
+    expect(prompt).toContain('an icon font required by the project')
+    expect(prompt).toContain('exactly one primary and one secondary button style from designTokens')
+    expect(prompt).not.toContain('This brand predates structured tokens')
+    const variables = JSON.parse(
+      /<design-token-variables>(\{.*?\})<\/design-token-variables>/su.exec(prompt)?.[1] ?? '{}',
+    )
+    expect(variables.root).toMatchObject({
+      '--color-ink': '#111',
+      '--font-primary': '"Fraunces", serif',
+      '--font-secondary': '"Hanken Grotesk", sans-serif',
+      '--text-display': 'clamp(3.5rem, 8vw, 7rem)',
+      '--radius-3': '24px',
+      '--radius-pill': '999px',
+      '--space-section': 'clamp(4rem, 10vw, 9rem)',
+    })
+
+    const partial = designBuildPrompt(
+      artifacts[0],
+      { ...brand, designTokens: { radius: designTokens.radius } },
+      artifacts[2],
+      artifacts[3],
+    )
+    expect(partial).toContain('the approved font families, and the designTokens radius family.')
+    expect(partial).toContain(
+      "This brand's designTokens have no usable type scale and spacing scale: derive one type scale (--text-display",
+    )
+    expect(partial).toContain('one spacing scale (--space-section, --space-gutter, --space-stack)')
+    expect(partial).not.toContain('from designTokens.buttons')
+    expect(partial).not.toContain('This brand predates structured tokens')
+
+    const legacy = designBuildPrompt(...artifacts)
+    expect(legacy).toContain('This brand predates structured tokens')
+    expect(legacy).toContain(
+      'derive one type scale (--text-display, --text-h1, --text-h2, --text-h3, --text-body, --text-small, --text-label), one radius family (--radius-1 to --radius-3 plus --radius-pill) and one spacing scale (--space-section, --space-gutter, --space-stack) from interfaceDirection and the anchor reference, and add them to the same block.',
+    )
+    expect(legacy).toContain('The only permitted font families are "Geist".')
+    expect(legacy).not.toContain('Reproduce reference spacing, rules, borders, radii and surfaces')
+    expect(legacy).not.toContain('Preserve reference labels, type contrast and case')
   })
 
   it('parses a completed implementation report', () => {

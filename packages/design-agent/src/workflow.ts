@@ -22,7 +22,7 @@ const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one o
 
 {"status":"not_design","message":"This request is not a website or interface design task.","questions":[],"brief":null}`
 
-const SURFACE_GUIDANCE = `Set pageType to "dashboard" for operating product interfaces such as admin, analytics, finance, health tracking or a customer workspace. Record their actual screens, data views, navigation and user actions in requiredContent; do not impose marketing sections or an eight-section minimum. A marketing website about a dashboard product is still pageType "landing_page" and follows the landing-page guidance.
+const SURFACE_GUIDANCE = `Set pageType to "dashboard" for operating product interfaces such as admin, analytics, finance, health tracking or a customer workspace. Record their actual screens, data views, navigation and user actions in requiredContent; do not impose marketing sections or an eight-section minimum. A marketing website about a dashboard product is still pageType "landing_page" and follows the landing-page guidance; so is a site, one-pager, microsite, homepage, launch page, Webseite or Seite for an app, analytics or admin product.
 
 New websites include visible entrance and scroll animations by default. Dashboards instead include useful transitions for filters, sorting, tabs, navigation, drawers and charts where present. Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.`
 

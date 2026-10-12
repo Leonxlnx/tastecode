@@ -685,6 +685,41 @@ describe('reviewed reference library', () => {
     },
   )
 
+  it.each([
+    ['one-pager', 'Build a one-pager site for my analytics app'],
+    ['', 'Build a one-pager site for my analytics app'],
+    ['', 'Erstelle eine Webseite für meine Fitness-App'],
+    ['website', 'Erstelle eine Webseite für meine Fitness-App'],
+    ['single page site', 'Make a site for our analytics startup'],
+    ['', 'Make a site for our admin tool'],
+    ['one_pager', 'One-pager for a bakery with App Store and Google Play buttons'],
+    ['', 'One-pager for a bakery with App Store and Google Play buttons'],
+    ['', 'Build a web site for our mobile app'],
+    ['product site', 'Site for our analytics app'],
+    ['', 'Site for our analytics app'],
+    ['microsite', 'Microsite launching our new app'],
+    ['', 'Microsite launching our new app'],
+    ['', 'Seite für unsere Analytics-Plattform'],
+    ['', 'Build a fitness app website'],
+    ['', 'Portfolio site for an iOS app developer'],
+    ['', 'Build a landing page for a dashboard product'],
+    ['', 'Create a launch page for our admin app'],
+    ['', 'Design a homepage for our analytics app'],
+    ['', 'Build a webpage about our fitness app'],
+    ['', 'Build a page for our analytics app'],
+  ])('classifies %j "%s" as a website', (pageType, originalRequest) => {
+    expect(isDashboardBrief({ pageType, originalRequest })).toBe(false)
+  })
+
+  it.each([
+    'Create an analytics dashboard',
+    'Admin panel for orders',
+    'Build an internal analytics tool',
+    'Build a settings page for the admin app',
+  ])('classifies "%s" as a dashboard', (originalRequest) => {
+    expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
+  })
+
   it('indexes complete generated candidates without claiming visual approval or resurrecting rejected entries', () => {
     const root = library()
     const site = path.join(root, 'new-studio')
