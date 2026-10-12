@@ -1916,6 +1916,38 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it('keeps the dropped folders that were added when another one fails', async () => {
+    serverProjects = []
+    droppedProjectFolderPaths.mockResolvedValue(['/work/first-project', '/work/second-project'])
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.add') {
+        const { path } = methods['projects.add'].params.parse(params)
+        if (path === '/work/second-project') return Promise.reject(new Error('permission denied'))
+        const name = path.split('/').at(-1) ?? path
+        serverProjects.push({ path, name, pinned: false, createdAt: 0, sessions: [] })
+        return Promise.resolve({ path, name, pinned: false, createdAt: 0 })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    const rail = await screen.findByRole('navigation')
+    const files = [new File([], 'first-project'), new File([], 'second-project')]
+    const dataTransfer = { files, types: ['Files'], dropEffect: 'none' }
+    fireEvent.dragEnter(rail, { dataTransfer })
+    fireEvent.drop(rail, { dataTransfer })
+
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in first-project?' }),
+    ).toBeTruthy()
+    expect(
+      await screen.findByText('Could not add /work/second-project. permission denied'),
+    ).toBeTruthy()
+  })
+
   it('opens the workspace directly on first launch', async () => {
     localStorage.removeItem('harness.provider')
 
