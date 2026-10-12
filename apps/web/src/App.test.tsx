@@ -2906,7 +2906,10 @@ describe('web client', () => {
       )
       if (scenario === 'pending') {
         await waitFor(() =>
-          expect(transport.request).toHaveBeenCalledWith('thread.history', { threadId: 'api-two' }),
+          expect(transport.request).toHaveBeenCalledWith('thread.history', {
+            threadId: 'api-two',
+            page: NEWEST_PAGE,
+          }),
         )
         await act(async () => releaseModels())
       }
