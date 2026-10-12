@@ -8,6 +8,7 @@ import {
   designBuildPrompt,
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
+  designWorkspaceFileBaseline,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
@@ -404,6 +405,29 @@ describe('build phase', () => {
     }
   })
 
+  it('keeps generated dependency and cache trees out of both Design baselines', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-generated-trees-'))
+    try {
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      // A virtualenv or a Rust target folder alone can exceed the scan's entry cap.
+      for (const directory of ['.venv/lib', 'target/debug', '.next/cache', '__pycache__']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'generated.svg'), '<svg></svg>')
+      }
+
+      expect(designWorkspaceFileBaseline(workspace)).toEqual([
+        '.next/',
+        '.venv/',
+        '__pycache__/',
+        'index.html',
+        'target/',
+      ])
+      expect(designSourceQualityBaseline(workspace)).toEqual([])
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects new files inside nested internal-named directories', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-internal-'))
     const brief = {
@@ -449,6 +473,7 @@ describe('build phase', () => {
     'Only create index.html, styles.css, and app.js; no other files.',
     'The files must be exactly index.html, styles.css, and app.js.',
     'Create these three files: index.html, styles.css, and app.js.',
+    'Create exactly index.html styles.css and app.js for the landing page.',
   ])('recognizes an exact file-list variant: %s', (constraint) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-variant-'))
     try {
@@ -474,6 +499,25 @@ describe('build phase', () => {
           constraints: ['Create exactly .nojekyll.'],
         }),
       ).toThrow('unexpected files: extra.json')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'Redesign our landing page. Create only Next.js components, no plain HTML.',
+    'Write only Three.js code for the 3D scene.',
+    'Only write Vue.js; no jQuery.',
+  ])('does not read a framework name as an exact file: %s', (originalRequest) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-framework-'))
+    const brief = { ...artifacts[0], originalRequest }
+    try {
+      expect(exactBuildFileBaseline(workspace, brief)).toBeUndefined()
+      const [, brand, page, assets] = artifacts
+      expect(designBuildPrompt(brief, brand, page, assets)).not.toContain('deliverable boundary')
+      mkdirSync(path.join(workspace, 'app'))
+      writeFileSync(path.join(workspace, 'app', 'page.tsx'), 'export default () => null')
+      expect(() => validateExactBuildFiles(workspace, brief)).not.toThrow()
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }

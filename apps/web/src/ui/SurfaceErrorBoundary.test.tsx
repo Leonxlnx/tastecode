@@ -128,9 +128,9 @@ describe('surface recovery', () => {
     )
     const retry = screen.getByRole('button', { name: 'Try again' })
     const close = screen.getByRole('button', { name: 'Back to app' })
-    fireEvent.keyDown(retry, { key: 'Tab', shiftKey: true })
+    fireEvent.keyDown(retry, { key: 'Tab' })
     expect(document.activeElement).toBe(close)
-    fireEvent.keyDown(close, { key: 'Tab' })
+    fireEvent.keyDown(close, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(retry)
   })
 

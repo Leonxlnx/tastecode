@@ -152,6 +152,17 @@ describe('pull-request Markdown images', () => {
     })
   })
 
+  it('resolves repository-relative links against the PR head', () => {
+    fixture('See [setup](docs/setup.md#run) and [guide](./guide.md).')
+
+    expect(screen.getByRole('link', { name: 'setup' }).getAttribute('href')).toBe(
+      'https://github.com/owner/repo/blob/abc/docs/setup.md#run',
+    )
+    expect(screen.getByRole('link', { name: 'guide' }).getAttribute('href')).toBe(
+      'https://github.com/owner/repo/blob/abc/guide.md',
+    )
+  })
+
   it('keeps Markdown HTML and URL sanitization enabled', () => {
     const { container, request } = fixture(
       '<script>throw 1</script><img src="javascript:alert(1)" onerror="alert(1)" /><iframe src="https://example.com"/>',

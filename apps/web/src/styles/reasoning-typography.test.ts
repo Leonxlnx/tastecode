@@ -21,8 +21,10 @@ describe('system typography', () => {
   })
 
   it('keeps bundled fonts selectable with a native fallback', () => {
-    expect(tokens).toContain("--font-ui: 'Geist Variable', var(--font-system);")
-    expect(tokens).toContain("--font-ui: 'Inter Variable', var(--font-system);")
+    expect(tokens).toContain("--font-geist: 'Geist Variable', var(--font-system);")
+    expect(tokens).toContain("--font-inter: 'Inter Variable', var(--font-system);")
+    expect(tokens).toMatch(/:root\[data-font='geist'\] \{\s*--font-ui: var\(--font-geist\);\s*\}/)
+    expect(tokens).toMatch(/:root\[data-font='inter'\] \{\s*--font-ui: var\(--font-inter\);\s*\}/)
   })
 })
 

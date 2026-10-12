@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
+import net from 'node:net'
+import { promisify } from 'node:util'
 import vm from 'node:vm'
 import {
   descendantProcesses,
   devStopTargets,
+  netstatListeners,
   previousRunTarget,
   verifiedRemainingPids,
 } from './dev-process-ownership.js'
@@ -115,3 +119,73 @@ test('malformed ancestor cycles do not hang ownership checks', () => {
   const processes = snapshot(row(3, 4, 'node vite.js'), row(4, 3, 'node other.js'))
   assert.equal(previousRunTarget(3, processes, root), undefined)
 })
+
+const netstat = (...rows) =>
+  [
+    '',
+    'Active Connections',
+    '',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    ...rows,
+  ].join('\r\n')
+
+test('netstat listeners are found in English output', () => {
+  const output = netstat(
+    '  TCP    127.0.0.1:4311         0.0.0.0:0              LISTENING       4120',
+    '  TCP    [::1]:5183             [::]:0                 LISTENING       5300',
+    '  TCP    127.0.0.1:4311         127.0.0.1:52011        ESTABLISHED     4120',
+    '  TCP    127.0.0.1:52011        127.0.0.1:4311         ESTABLISHED     7000',
+  )
+  assert.deepEqual(
+    netstatListeners(output),
+    new Map([
+      [4311, new Set([4120])],
+      [5183, new Set([5300])],
+    ]),
+  )
+})
+
+test('netstat listeners are found when the state column is localized', () => {
+  const output = [
+    '',
+    'Aktive Verbindungen',
+    '',
+    '  Proto  Lokale Adresse         Remoteadresse          Status           PID',
+    // German Windows prints ABHÖREN; the OEM code page can turn the umlaut into "?".
+    '  TCP    127.0.0.1:4311         0.0.0.0:0              ABHÖREN         4120',
+    '  TCP    0.0.0.0:5183           0.0.0.0:0              ABH?REN         5300',
+    '  TCP    [::]:5183              [::]:0                 ABHÖREN         5300',
+    '  TCP    127.0.0.1:4311         127.0.0.1:52011        HERGESTELLT     4120',
+    '  TCP    127.0.0.1:52011        127.0.0.1:4311         WARTEND         0',
+  ].join('\r\n')
+  assert.deepEqual(
+    netstatListeners(output),
+    new Map([
+      [4311, new Set([4120])],
+      [5183, new Set([5300])],
+    ]),
+  )
+})
+
+test('a connected netstat row never counts as a listener, whatever its state text', () => {
+  const output = netstat(
+    '  TCP    127.0.0.1:52011        127.0.0.1:4311         LISTENING       7000',
+  )
+  assert.deepEqual(netstatListeners(output), new Map())
+})
+
+test(
+  'netstat listeners include a live server on Windows',
+  { skip: process.platform !== 'win32' && 'netstat.exe exists only on Windows' },
+  async () => {
+    const server = net.createServer()
+    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const { port } = server.address()
+      const { stdout } = await promisify(execFile)('netstat.exe', ['-ano', '-p', 'tcp'])
+      assert.ok(netstatListeners(stdout).get(port)?.has(process.pid))
+    } finally {
+      server.close()
+    }
+  },
+)

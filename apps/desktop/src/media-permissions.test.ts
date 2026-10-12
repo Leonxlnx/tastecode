@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
+import {
+  allowsMicrophoneRequest,
+  allowsOwnRendererRequest,
+  isOwnRendererPermission,
+} from './media-permissions.js'
 
 describe('allowsMicrophoneRequest', () => {
   it('allows an explicit audio-only request', () => {
@@ -39,5 +43,26 @@ describe('own renderer permissions', () => {
     expect(isOwnRendererPermission('local-fonts')).toBe(true)
     expect(isOwnRendererPermission('geolocation')).toBe(false)
     expect(isOwnRendererPermission('unknown')).toBe(false)
+  })
+})
+
+describe('own renderer permission requests', () => {
+  it('allows element fullscreen for the media viewer', () => {
+    expect(allowsOwnRendererRequest('fullscreen')).toBe(true)
+    expect(isOwnRendererPermission('fullscreen')).toBe(false)
+  })
+
+  it('keeps every other non-media request to the check allowlist', () => {
+    expect(allowsOwnRendererRequest('local-fonts')).toBe(true)
+    for (const permission of [
+      'media',
+      'clipboard-read',
+      'clipboard-sanitized-write',
+      'geolocation',
+      'notifications',
+      'pointerLock',
+      'unknown',
+    ])
+      expect(allowsOwnRendererRequest(permission)).toBe(false)
   })
 })

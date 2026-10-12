@@ -62,13 +62,20 @@ export async function prepareDmgUpdate(
     await run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', app, zip])
     return zip
   } finally {
-    // attach can mount successfully just before cancellation rejects its process.
-    // Inspect the device too so that path does not leave a mounted update behind.
-    if ((await stat(mount)).dev !== (await stat(directory)).dev) {
-      // Cleanup must still work after a cancelled download or app shutdown.
-      await exec('/usr/bin/hdiutil', ['detach', mount], { timeout: 30_000 }).catch(async () => {
-        await exec('/usr/bin/hdiutil', ['detach', '-force', mount], { timeout: 30_000 })
-      })
+    // Detaching is best effort. The ZIP already sits outside the mount, so a stuck
+    // volume must not fail a prepared update, and after a failure the original
+    // error is the one that decides whether the download is kept for a retry.
+    try {
+      // attach can mount successfully just before cancellation rejects its process.
+      // Inspect the device too so that path does not leave a mounted update behind.
+      if ((await stat(mount)).dev !== (await stat(directory)).dev) {
+        // Cleanup must still work after a cancelled download or app shutdown.
+        await exec('/usr/bin/hdiutil', ['detach', mount], { timeout: 30_000 }).catch(async () => {
+          await exec('/usr/bin/hdiutil', ['detach', '-force', mount], { timeout: 30_000 })
+        })
+      }
+    } catch (error) {
+      console.warn(`[desktop] could not detach the update image: ${String(error)}`)
     }
   }
 }

@@ -181,6 +181,70 @@ describe('Cursor adapter', () => {
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
+  it('keeps the turn alive past a frame it cannot read', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => events.push(event))
+    adapter.on('log', (line: string) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    // `message: null` fails the schema; the frame after it is still read.
+    const drained = new Promise<void>((resolve) => child.stdout.once('end', resolve))
+    child.stdout.end(
+      [
+        '{"type":"assistant","message":null}',
+        '{"type":"result","subtype":"success","duration_ms":1,"is_error":false,"result":"done","session_id":"s1"}',
+      ].join('\n'),
+    )
+    await drained
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(logs.some((line) => line.startsWith('Cursor event handling failed'))).toBe(true)
+    expect(child.killed).toBe(false)
+    adapter.dispose()
+  })
+
+  it('logs a throwing event listener instead of failing the turn', async () => {
+    const child = new FakeChild()
+    const adapter = new CursorAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    let thrown = false
+    adapter.on('event', (event) => {
+      events.push(event)
+      if (event.type === 'item.started' && !thrown) {
+        thrown = true
+        throw new Error('listener failed')
+      }
+    })
+    adapter.on('log', (line: string) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    const drained = new Promise<void>((resolve) => child.stdout.once('end', resolve))
+    child.stdout.end(
+      [
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}',
+        '{"type":"assistant","message":{"content":[{"type":"text","text":" there"}]}}',
+        '{"type":"result","subtype":"success","duration_ms":1,"is_error":false,"result":"done","session_id":"s1"}',
+      ].join('\n'),
+    )
+    await drained
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
+    expect(child.killed).toBe(false)
+    adapter.dispose()
+  })
+
   it('lets the next turn start while the finished process is still exiting', async () => {
     const children: FakeChild[] = []
     const adapter = new CursorAdapter({

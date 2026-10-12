@@ -35,9 +35,10 @@ export function existingWorkspacePath(
 ): string {
   const target = contained(workspace, relativePath)
   const real = realpathSync(target)
-  assertContained(realpathSync(workspace), real)
-  assertPublicWorkspaceFile(target)
-  assertPublicWorkspaceFile(real)
+  const realWorkspace = realpathSync(workspace)
+  assertContained(realWorkspace, real)
+  assertPublicWorkspaceFile(target, workspace)
+  assertPublicWorkspaceFile(real, realWorkspace)
   const stats = statSync(real)
   if (directory ? !stats.isDirectory() : !stats.isFile()) {
     throw new Error(directory ? 'path must be a directory' : 'path must be a file')
@@ -48,11 +49,11 @@ export function existingWorkspacePath(
 export function writableWorkspacePath(workspace: string, relativePath: string): string {
   const target = contained(workspace, relativePath)
   const realWorkspace = realpathSync(workspace)
-  assertPublicWorkspaceFile(target)
+  assertPublicWorkspaceFile(target, workspace)
   if (existsSync(target)) {
     const real = realpathSync(target)
     assertContained(realWorkspace, real)
-    assertPublicWorkspaceFile(real)
+    assertPublicWorkspaceFile(real, realWorkspace)
     return real
   }
   let ancestor = path.dirname(target)
@@ -66,12 +67,44 @@ export function writableWorkspacePath(workspace: string, relativePath: string): 
   }
   const real = path.resolve(realpathSync(ancestor), path.relative(ancestor, target))
   assertContained(realWorkspace, real)
-  assertPublicWorkspaceFile(real)
+  assertPublicWorkspaceFile(real, realWorkspace)
   return real
 }
 
-export function assertPublicWorkspaceFile(file: string): void {
-  if (file.split(path.sep).some(isSecretWorkspaceName)) {
+// Folders that hold credentials as a whole. A workspace anywhere inside one,
+// such as ~/.aws/sso/cache, would expose token files whose names are not listed.
+const CREDENTIAL_HOMES = new Set(['.aws', '.ssh', '.azure', '.kube', '.gnupg', '.docker'])
+
+/** Whether every file of `workspace` is off limits because of where the folder itself is. */
+export function isCredentialWorkspace(workspace: string): boolean {
+  const resolved = path.resolve(workspace)
+  if (isSecretWorkspaceName(path.basename(resolved))) return true
+  const parents = path
+    .dirname(resolved)
+    .split(path.sep)
+    .map((part) => part.toLowerCase())
+  return parents.some(
+    (part, index) =>
+      CREDENTIAL_HOMES.has(part) || (part === 'gcloud' && parents[index - 1] === '.config'),
+  )
+}
+
+/**
+ * Only the workspace's own name and the part below it are checked by name: a
+ * project that merely lives under a folder such as `gcloud` or `release.key` is
+ * not itself a credential. A workspace opened directly on `~/.aws`, or anywhere
+ * inside a credential folder such as `~/.aws` or `~/.config/gcloud`, still is.
+ */
+export function assertPublicWorkspaceFile(file: string, workspace?: string): void {
+  const relative = workspace === undefined ? undefined : path.relative(workspace, file)
+  const inside =
+    relative !== undefined &&
+    !(relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+  if (
+    inside
+      ? isCredentialWorkspace(workspace!) || relative.split(path.sep).some(isSecretWorkspaceName)
+      : file.split(path.sep).some(isSecretWorkspaceName)
+  ) {
     throw new Error('credential files are not available')
   }
 }

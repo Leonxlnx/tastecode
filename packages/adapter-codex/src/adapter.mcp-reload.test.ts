@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { McpServerConfig } from '@harness/contracts'
 import { CodexAdapter } from './adapter.js'
-import { FakeCodexRpc, type RecordedRpcCall } from './fake-rpc.test-support.js'
+import { FakeCodexRpc } from './fake-rpc.test-support.js'
+import { prepareMcpConfig } from './mcp.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
@@ -16,180 +17,176 @@ vi.mock('@harness/proc', async (importOriginal) => ({
   },
 }))
 
+function signInFixture() {
+  const state = { signedIn: false }
+  const rpc = new FakeCodexRpc((method) =>
+    method === 'mcpServerStatus/list'
+      ? {
+          data: [
+            {
+              name: 'docs',
+              serverInfo: state.signedIn
+                ? { name: 'docs', title: null, version: '1.0.0', description: null }
+                : null,
+              authStatus: state.signedIn ? 'oAuth' : 'notLoggedIn',
+              tools: state.signedIn
+                ? { lookup: { name: 'lookup', inputSchema: { type: 'object' } } }
+                : {},
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
+          nextCursor: null,
+        }
+      : method === 'mcpServer/oauth/login'
+        ? { authorizationUrl: 'https://example.com/authorize' }
+        : {},
+  )
+  proc.rpc = rpc
+  return { rpc, state, adapter: new CodexAdapter() }
+}
+
+async function loadedInventory(adapter: CodexAdapter) {
+  await adapter.listMcpServers('t1')
+  await vi.waitFor(async () =>
+    expect(await adapter.listMcpServers('t1')).toMatchObject([{ id: 'docs', resources: [] }]),
+  )
+}
+
 const stdioServer = (id: string): McpServerConfig => ({
   id,
   enabled: true,
   transport: { type: 'stdio', command: 'server.exe' },
 })
 
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
-
-function mcpRpc(state: { failResume: boolean }) {
-  return new FakeCodexRpc((method) => {
-    if (method === 'thread/resume') {
-      if (state.failResume) throw new Error('no such thread')
-      return { threadId: 't1' }
-    }
-    if (method === 'mcpServerStatus/list') {
-      return {
-        data: [
-          {
-            name: 'github',
-            serverInfo: {
-              name: 'github',
-              title: 'GitHub',
-              description: null,
-              version: '1.0',
-            },
-            authStatus: 'unsupported',
-            tools: {},
-            resources: [],
-            resourceTemplates: [],
-          },
-        ],
-        nextCursor: null,
-      }
-    }
-    return {}
-  })
-}
-
-async function startedAdapter() {
-  const state = { failResume: false }
-  const rpc = mcpRpc(state)
-  proc.rpc = rpc
-  const adapter = new CodexAdapter({
-    mcpServers: [stdioServer('github')],
-  })
-  await adapter.start()
-
-  // Prime the per-thread inventory cache.
-  await adapter.listMcpServers('t1')
-  await settle()
-  const cached = await adapter.listMcpServers('t1')
-  expect(cached.map((server) => server.id)).toEqual(['github'])
-
-  rpc.calls.splice(0)
-  return { adapter, rpc, state }
-}
-
-const listCalls = (calls: RecordedRpcCall[]): RecordedRpcCall[] =>
-  calls.filter((call) => call.method === 'mcpServerStatus/list')
-
-describe('Codex MCP hot-reload', () => {
-  it.each(['old-first', 'new-first'] as const)(
-    'ignores a pre-reload inventory result and its cleanup (%s)',
-    async (order) => {
-      const inventory = (name: string) => ({
-        data: [
-          {
-            name,
-            serverInfo: null,
-            authStatus: 'unsupported',
-            tools: {},
-            resources: [],
-            resourceTemplates: [],
-          },
-        ],
-        nextCursor: null,
-      })
-      const old = Promise.withResolvers<ReturnType<typeof inventory>>()
-      const fresh = Promise.withResolvers<ReturnType<typeof inventory>>()
-      let loads = 0
-      const rpc = new FakeCodexRpc((method) => {
-        if (method === 'mcpServerStatus/list') return ++loads === 1 ? old.promise : fresh.promise
-        return {}
-      })
-      proc.rpc = rpc
-      const adapter = new CodexAdapter()
-      const changed = vi.fn()
-      const unsubscribe = adapter.onMcpChanged(changed)
-      try {
-        await adapter.start()
-        await adapter.listMcpServers('t1')
-        await adapter.reloadMcpServers('t1', [stdioServer('fresh')], {})
-        changed.mockClear()
-        await adapter.listMcpServers('t1')
-        expect(loads).toBe(2)
-        if (order === 'old-first') {
-          old.resolve(inventory('old'))
-          await settle()
-          expect(await adapter.listMcpServers('t1')).toEqual([])
-          expect(loads).toBe(2)
-          expect(changed).not.toHaveBeenCalled()
-          fresh.resolve(inventory('fresh'))
-        } else {
-          fresh.resolve(inventory('fresh'))
-          await settle()
-          old.resolve(inventory('old'))
-        }
-        await settle()
-        expect((await adapter.listMcpServers('t1')).map(({ id }) => id)).toEqual(['fresh'])
-        expect(changed).toHaveBeenCalledOnce()
-        unsubscribe()
-        await adapter.reloadMcpServers('t1', [], {})
-        expect(changed).toHaveBeenCalledOnce()
-      } finally {
-        old.resolve(inventory('old'))
-        fresh.resolve(inventory('fresh'))
-        unsubscribe()
-        await adapter.dispose()
-      }
-    },
-  )
-
-  it('reloads in order and drops the stale inventory cache on success', async () => {
-    const { adapter, rpc } = await startedAdapter()
-    const changed = vi.fn()
-    adapter.on('mcpChanged', changed)
-
-    await adapter.reloadMcpServers('t1', [stdioServer('github'), stdioServer('files')], {})
-
-    expect(rpc.calls.map((call) => call.method)).toEqual([
-      'thread/resume',
-      'config/mcpServer/reload',
-    ])
-    expect(changed).toHaveBeenCalledWith({ threadId: 't1' })
-
-    await adapter.listMcpServers('t1')
-    expect(listCalls(rpc.calls)).toHaveLength(1)
+describe('Codex MCP changes', () => {
+  // Codex 0.162.1 keeps a loaded thread's MCP layers: `thread/resume` ignores
+  // the new `mcp_servers` and `config/mcpServer/reload` only re-reads
+  // config.toml. A live reload would report success and change nothing.
+  it('offers no live reload, so the server resumes the chat instead', () => {
+    expect(Reflect.get(new CodexAdapter(), 'reloadMcpServers')).toBeUndefined()
   })
 
-  it('keeps config and cache untouched when the process refuses the reload', async () => {
-    const { adapter, rpc, state } = await startedAdapter()
-    state.failResume = true
-
-    await expect(adapter.reloadMcpServers('t1', [stdioServer('files')], {})).rejects.toThrow(
-      'Codex could not hot-reload MCP config; start a new session to apply it',
+  it('applies the project servers when the chat resumes on a fresh process', async () => {
+    const rpc = new FakeCodexRpc((method) =>
+      method === 'thread/resume'
+        ? { thread: { id: 't1', createdAt: 1_700_000_000 }, model: 'fake-model' }
+        : {},
     )
-
-    expect(rpc.calls.map((call) => call.method)).toEqual(['thread/resume'])
-    const cached = await adapter.listMcpServers('t1')
-    expect(cached.map((server) => server.id)).toEqual(['github'])
-    expect(listCalls(rpc.calls)).toHaveLength(0)
-  })
-
-  it('refuses to hot-reload changed credentials', async () => {
-    const withSecret: McpServerConfig = {
-      id: 'github',
-      enabled: true,
-      transport: {
-        type: 'http',
-        url: 'https://example.com/mcp',
-        headers: { Authorization: { source: 'credential', credentialRef: 'github-token' } },
-      },
-    }
-    const rpc = mcpRpc({ failResume: false })
     proc.rpc = rpc
     const adapter = new CodexAdapter({
-      mcpServers: [withSecret],
-      mcpCredentials: { 'github-token': 'old-secret' },
+      mcpServers: [stdioServer('docs'), { id: 'inherited', enabled: false }],
     })
-    await adapter.start()
+    try {
+      await adapter.start()
+      await adapter.resumeThread('t1', process.cwd())
 
-    await expect(
-      adapter.reloadMcpServers('t1', [withSecret], { 'github-token': 'new-secret' }),
-    ).rejects.toThrow('start a new session to apply new MCP credentials')
-    expect(rpc.calls.some((call) => call.method === 'thread/resume')).toBe(false)
+      expect(rpc.calls.find((call) => call.method === 'thread/resume')?.params).toMatchObject({
+        threadId: 't1',
+        config: {
+          mcp_servers: {
+            docs: { command: 'server.exe', enabled: true },
+            inherited: { enabled: false },
+          },
+        },
+      })
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory after a successful MCP sign-in', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+      expect((await adapter.listMcpServers('t1'))[0]?.auth.status).toBe('sign_in_required')
+      await adapter.startMcpOAuth('docs', 't1')
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/oauthLogin/completed', {
+        name: 'docs',
+        threadId: 't1',
+        success: true,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { auth: { status: 'authenticated' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
+      expect(rpc.calls.filter((call) => call.method === 'mcpServerStatus/list')).toHaveLength(2)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('reloads the inventory when a server finishes starting', async () => {
+    const { rpc, state, adapter } = signInFixture()
+    try {
+      await adapter.start()
+      await loadedInventory(adapter)
+
+      state.signedIn = true
+      rpc.emitNotification('mcpServer/startupStatus/updated', {
+        threadId: 't1',
+        name: 'docs',
+        status: 'ready',
+        error: null,
+        failureReason: null,
+      })
+
+      await vi.waitFor(async () =>
+        expect(await adapter.listMcpServers('t1')).toMatchObject([
+          { startup: { state: 'ready' }, tools: [{ name: 'lookup' }] },
+        ]),
+      )
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('blanks header credentials in the shell environment of every chat', async () => {
+    const rpc = new FakeCodexRpc(() => ({
+      thread: { id: 't1', createdAt: 1_700_000_000 },
+      model: 'fake-model',
+    }))
+    proc.rpc = rpc
+    const options = {
+      mcpServers: [
+        {
+          id: 'docs',
+          enabled: true,
+          transport: {
+            type: 'http',
+            url: 'https://example.com/mcp',
+            headers: {
+              Authorization: { source: 'credential', credentialRef: 'mcp/docs/auth' },
+            },
+          },
+        } satisfies McpServerConfig,
+      ],
+      mcpCredentials: { 'mcp/docs/auth': 'Bearer secret-value' },
+    }
+    const [variable] = Object.keys(
+      prepareMcpConfig(options.mcpServers, options.mcpCredentials).environment,
+    )
+    const adapter = new CodexAdapter(options)
+    try {
+      await adapter.start()
+      await adapter.startThread(process.cwd())
+      await adapter.resumeThread('t1', process.cwd())
+
+      for (const method of ['thread/start', 'thread/resume']) {
+        expect(rpc.calls.find((call) => call.method === method)?.params).toMatchObject({
+          config: {
+            mcp_servers: { docs: { env_http_headers: { Authorization: variable } } },
+            [`shell_environment_policy.set.${variable}`]: '',
+          },
+        })
+      }
+    } finally {
+      await adapter.dispose()
+    }
   })
 })

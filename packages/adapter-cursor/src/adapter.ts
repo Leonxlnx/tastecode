@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, readNdjson, runCli, spawnCli } from '@harness/proc'
+import { killTree, ProtocolFrameError, readNdjson, runCli, spawnCli } from '@harness/proc'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
 import {
   collapseCursorModels,
@@ -181,6 +181,12 @@ export class CursorAdapter extends EventEmitter<Events> {
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
       {
         onError: (error) => {
+          // A frame that does not match the schema, or a throwing event
+          // listener, leaves the stream intact; keep reading it.
+          if (!(error instanceof ProtocolFrameError)) {
+            this.emit('log', `Cursor event handling failed: ${error.message}`)
+            return
+          }
           this.#fail(turnId, error.message)
           void killTree(child)
         },

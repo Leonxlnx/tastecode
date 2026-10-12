@@ -1,4 +1,5 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
+import { PROVIDER_ORDER, providerRank } from '../provider-presentation.js'
 
 export const SLIDER_DITHER_MIN_WIDTH = 32
 export const SLIDER_DITHER_INSET = 2
@@ -77,9 +78,28 @@ export function modelSourceKey(entry: ModelChoice): string {
   })
 }
 
+/**
+ * Every ACP source names its agent, so an agent identity only marks a custom
+ * harness when the provider is a direct one. ACP agents (an ACP-backed custom
+ * harness among them) share ACP's place; custom harnesses on a direct
+ * provider follow every provider.
+ */
+function sourceRank(entry: ModelChoice): number {
+  if (entry.agent && entry.provider !== 'acp') return PROVIDER_ORDER.length
+  return providerRank(entry.provider)
+}
+
+/**
+ * Discovery settles sources in whatever order they answer, so the catalog's
+ * order shifts while models load. Stock providers therefore take their place
+ * in `PROVIDER_ORDER`, then ACP agents and API connections, and custom
+ * harnesses follow; sources that share a place keep the order they arrived
+ * in (the sort is stable), so groups hold still instead of jumping.
+ */
 export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
   const groups: ModelGroup[] = []
   const groupsByKey = new Map<string, ModelGroup>()
+  const ranks = new Map<ModelGroup, number>()
   for (const entry of models) {
     const key = modelSourceKey(entry)
     const group = groupsByKey.get(key)
@@ -87,10 +107,11 @@ export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
     else {
       const next = { key, name: entry.sourceName, mark: entry.mark, entries: [entry] }
       groupsByKey.set(key, next)
+      ranks.set(next, sourceRank(entry))
       groups.push(next)
     }
   }
-  return groups
+  return groups.sort((left, right) => ranks.get(left)! - ranks.get(right)!)
 }
 
 export function getSelectedChoice(

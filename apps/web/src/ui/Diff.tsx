@@ -53,6 +53,15 @@ export function Diff({
   if (!parsed || parsed.lines.length === 0 || undone) return null
   const visibleFiles = showAllFiles ? parsed.fileEntries : parsed.fileEntries.slice(0, 3)
   const hiddenFiles = parsed.fileEntries.length - visibleFiles.length
+  const patch = reviewing ? (
+    <pre className="diff__body">
+      {parsed.lines.map((line, index) => (
+        <span key={index} className={`dline dline--${line.kind}`}>
+          {line.text || ' '}
+        </span>
+      ))}
+    </pre>
+  ) : null
 
   const undo = async () => {
     if (!onUndo || undoing) return
@@ -133,16 +142,10 @@ export function Diff({
       </ul>
 
       {reviewing && threadId && transport ? (
-        <DiffReview transport={transport} threadId={threadId} />
-      ) : reviewing ? (
-        <pre className="diff__body">
-          {parsed.lines.map((line, index) => (
-            <span key={index} className={`dline dline--${line.kind}`}>
-              {line.text || ' '}
-            </span>
-          ))}
-        </pre>
-      ) : null}
+        <DiffReview transport={transport} threadId={threadId} fallback={patch} />
+      ) : (
+        patch
+      )}
     </section>
   )
 }

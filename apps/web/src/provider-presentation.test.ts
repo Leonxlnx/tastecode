@@ -1,8 +1,10 @@
-import type { ProviderId } from '@harness/contracts'
+import { ProviderIdSchema, type ProviderId } from '@harness/contracts'
 import { describe, expect, it } from 'vitest'
 import {
   agentPresentation,
+  PROVIDER_ORDER,
   providerPresentation,
+  providerRank,
   sessionSourcePresentation,
   sourcePresentation,
 } from './provider-presentation.js'
@@ -70,5 +72,13 @@ describe('provider presentation', () => {
       label: 'Claude Code',
       mark: 'anthropic',
     })
+  })
+
+  it('ranks every provider exactly once, Claude Code first', () => {
+    expect(PROVIDER_ORDER[0]).toBe('claude-code')
+    expect([...PROVIDER_ORDER].sort()).toEqual([...ProviderIdSchema.options].sort())
+    expect([...ProviderIdSchema.options].sort((a, b) => providerRank(a) - providerRank(b))).toEqual(
+      PROVIDER_ORDER,
+    )
   })
 })

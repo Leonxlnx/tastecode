@@ -1,10 +1,14 @@
+import path from 'node:path'
 import type { Item } from '@harness/contracts'
 import { binaryPlaceholder, jsonWithoutBinary } from './binary-content.js'
 import { object } from './history-values.js'
+import { countDiffLines } from './map-item.js'
+import { wholeFileHunk } from './whole-file-hunk.js'
 
 type Value = Record<string, unknown>
 type Base = Pick<Item, 'id' | 'turnId' | 'createdAt' | 'status'>
-export type HistoryItem = { item: Item; diff?: string }
+/** A multi-part reasoning item's `parts`, which Codex also writes as one event each. */
+export type HistoryItem = { item: Item; diff?: string; parts?: string[] }
 
 function text(value: unknown): string {
   if (typeof value === 'string') return value
@@ -71,6 +75,21 @@ function message(payload: Value, base: Base, role: 'user' | 'assistant'): Histor
   ]
 }
 
+/**
+ * A path as a Git header names it: relative to the project when inside it,
+ * with `/` separators. Undo applies the patch from the project, and Git reads
+ * a Windows `\` as part of the file name.
+ */
+function gitPath(file: string, root: string): string {
+  // A rollout keeps the native paths of the machine that recorded it.
+  const native = /^(?:[A-Za-z]:|\\\\)/.test(root || file) ? path.win32 : path.posix
+  const relative =
+    native.isAbsolute(file) && native.isAbsolute(root) ? native.relative(root, file) : ''
+  const inside =
+    relative !== '' && !native.isAbsolute(relative) && relative.split(native.sep)[0] !== '..'
+  return (inside ? relative : file).split(native.sep).join('/')
+}
+
 function duration(payload: Value): Pick<Item, 'durationMs'> {
   if (typeof payload.durationMs === 'number') return { durationMs: payload.durationMs }
   const value = object(payload.duration)
@@ -79,7 +98,8 @@ function duration(payload: Value): Pick<Item, 'durationMs'> {
     : {}
 }
 
-export function historyItem(payload: Value, original: Base): HistoryItem[] {
+/** `root` is the session's project, which file change patches are relative to. */
+export function historyItem(payload: Value, original: Base, root = ''): HistoryItem[] {
   const failed =
     /failed|declined|error/i.test(String(payload.status)) ||
     payload.success === false ||
@@ -93,19 +113,22 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
       return message(payload, base, 'assistant')
     case 'Reasoning': {
       const paragraphs = (value: unknown) =>
-        Array.isArray(value)
-          ? value
-              .map((part) => text(typeof part === 'string' ? part : object(part).text))
-              .filter(Boolean)
-              .join('\n\n')
-          : text(value)
-      const value = [
-        paragraphs(payload.summary_text ?? payload.summary),
-        paragraphs(payload.raw_content ?? payload.content),
+        (Array.isArray(value)
+          ? value.map((part) => text(typeof part === 'string' ? part : object(part).text))
+          : [text(value)]
+        ).filter(Boolean)
+      const parts = [
+        ...paragraphs(payload.summary_text ?? payload.summary),
+        ...paragraphs(payload.raw_content ?? payload.content),
       ]
-        .filter(Boolean)
-        .join('\n\n')
-      return value ? [{ item: { ...base, type: 'reasoning', text: value } }] : []
+      return parts.length
+        ? [
+            {
+              item: { ...base, type: 'reasoning', text: parts.join('\n\n') },
+              ...(parts.length > 1 ? { parts } : {}),
+            },
+          ]
+        : []
     }
     case 'Plan':
       return [{ item: { ...base, type: 'plan', text: text(payload.text ?? payload.content) } }]
@@ -139,17 +162,30 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
           change.type ?? object(change.kind).type ?? change.kind ?? 'update',
         ).toLowerCase()
         let body = text(change.unified_diff ?? change.diff ?? change.content)
-        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string') {
-          const lines = change.content.split('\n')
-          if (lines.at(-1) === '') lines.pop()
-          body =
-            kind === 'add'
-              ? `@@ -0,0 +1,${lines.length} @@\n${lines.map((line) => `+${line}`).join('\n')}\n`
-              : `@@ -1,${lines.length} +0,0 @@\n${lines.map((line) => `-${line}`).join('\n')}\n`
-        }
+        if ((kind === 'add' || kind === 'delete') && typeof change.content === 'string')
+          body = wholeFileHunk(kind, change.content)
+        const moved = change.move_path ?? object(change.kind).move_path
+        const target = typeof moved === 'string' && moved ? moved : file
+        const [from, to] = [gitPath(file, root), gitPath(target, root)]
+        // Without its mode line Git reads `/dev/null` as a path, and Undo would
+        // move a created file to `dev/null` instead of deleting it. Without its
+        // rename lines Undo would look for a moved file at its old path.
+        const mode =
+          kind === 'add'
+            ? 'new file mode 100644\n'
+            : kind === 'delete'
+              ? 'deleted file mode 100644\n'
+              : target !== file
+                ? `rename from ${from}\nrename to ${to}\n`
+                : ''
+        const header = `diff --git a/${from} b/${to}\n${mode}`
+        // An empty created or deleted file, or a moved one without edits, has
+        // no hunk, only its header.
         const diff = body.startsWith('diff --git')
           ? body
-          : `diff --git a/${file} b/${file}\n--- ${kind === 'add' ? '/dev/null' : `a/${file}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${file}`}\n${body}`
+          : body
+            ? `${header}--- ${kind === 'add' ? '/dev/null' : `a/${from}`}\n+++ ${kind === 'delete' ? '/dev/null' : `b/${to}`}\n${body}`
+            : header
         return {
           item: {
             ...base,
@@ -157,14 +193,10 @@ export function historyItem(payload: Value, original: Base): HistoryItem[] {
             type: 'file_change',
             path: file,
             text: body || `${kind} ${file}`,
-            linesAdded: body
-              .split('\n')
-              .filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-            linesRemoved: body
-              .split('\n')
-              .filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
+            linesAdded: countDiffLines(body, '+'),
+            linesRemoved: countDiffLines(body, '-'),
           },
-          ...(body ? { diff } : {}),
+          ...(body || mode ? { diff } : {}),
         }
       })
     }

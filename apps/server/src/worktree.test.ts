@@ -57,6 +57,13 @@ describe('createWorktree', () => {
       /unknown local branch/,
     )
   })
+  it('starts from a branch that shares its name with a tag', async () => {
+    git(repo, 'branch', 'release')
+    git(repo, 'tag', 'release')
+    const worktree = await createWorktree(repo, 'thread-from-release', root, 'release')
+    expect(git(worktree.path, 'show', 'HEAD:file.txt')).toBe('original\n')
+  })
+
   it('gives the session a checkout of its own on its own branch', async () => {
     const worktree = await createWorktree(repo, 'codex-aaaa-bbbb-cccc', root)
 

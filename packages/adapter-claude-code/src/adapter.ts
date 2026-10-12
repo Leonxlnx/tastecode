@@ -56,6 +56,16 @@ export { CLAUDE_CAPABILITIES } from './capabilities.js'
 const SUPPORTED = '2.1'
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
+/**
+ * Captured from claude 2.1.296, which advertises `msg_lifecycle_v1` on system/init. The SDK's
+ * message union does not declare it: each uuid-stamped prompt is reported queued, started and
+ * then completed or cancelled, and a `result` can arrive before the terminal state.
+ */
+const CommandLifecycleSchema = z.object({
+  type: z.literal('command_lifecycle'),
+  command_uuid: z.string(),
+  state: z.string(),
+})
 const ToolLocationSchema = z.object({ cwd: z.string().optional() })
 const ToolInputSchema = z.record(z.string(), JsonRpcValueSchema)
 const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
@@ -91,15 +101,23 @@ type ToolInput = z.infer<typeof ToolInputSchema>
  * Claude Code's versioned catalog. The SDK model control intentionally returns
  * the short interactive-picker list, including a synthetic `default` row, so
  * live discovery is merged with this catalog instead of replacing it.
+ *
+ * The current lineup comes first in tier order (Fable, Opus, Sonnet, Haiku).
+ * Older generations follow, newest generation first and in tier order within
+ * one generation.
  */
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-export const CLAUDE_MODELS: Model[] = [
+const CURRENT_CLAUDE_MODELS: Model[] = [
   claudeModel('claude-fable-5-1', 'Fable 5.1', 'Long-horizon reasoning and coding', FULL_EFFORTS),
-  claudeModel('claude-fable-5', 'Fable 5', 'Most capable — flagship tier', FULL_EFFORTS, true),
-  claudeModel('claude-opus-5', 'Opus 5', 'Deep reasoning', FULL_EFFORTS),
-  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
-  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Fastest and cheapest', []),
-  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-opus-5-5', 'Opus 5.5', 'Deep reasoning', FULL_EFFORTS, true),
+  claudeModel('claude-sonnet-5-5', 'Sonnet 5.5', 'Balanced speed and capability', FULL_EFFORTS),
+  claudeModel('claude-haiku-5-5', 'Haiku 5.5', 'Fastest and cheapest', FULL_EFFORTS),
+]
+const OLDER_CLAUDE_MODELS: Model[] = [
+  claudeModel('claude-fable-5', 'Fable 5', 'Previous Fable generation', FULL_EFFORTS),
+  claudeModel('claude-opus-5', 'Opus 5', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Previous Sonnet generation', FULL_EFFORTS),
+  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Older Opus generation', FULL_EFFORTS),
   claudeModel('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation', FULL_EFFORTS, false, 'xhigh'),
   claudeModel('claude-opus-4-6', 'Opus 4.6', 'Older Opus generation', [
     'low',
@@ -113,13 +131,15 @@ export const CLAUDE_MODELS: Model[] = [
     'high',
     'max',
   ]),
-  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation', [
+  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Older Sonnet generation', [
     'low',
     'medium',
     'high',
     'max',
   ]),
+  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Previous Haiku generation', []),
 ]
+export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
 function claudeModel(
   id: string,
@@ -332,6 +352,21 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
+  /**
+   * Steers sent during the current turn, by uuid, and whether the CLI reported that their run
+   * started, so a stop receipt or a result can tell which of them still run.
+   */
+  readonly #turnSteers = new Map<string, boolean>()
+  /** The CLI reports each prompt's lifecycle (`msg_lifecycle_v1`). */
+  #messageLifecycle = false
+  /** A run ended while a steer of the turn waited to start; the status that run ended with. */
+  #heldTurnStatus: 'completed' | 'failed' | 'interrupted' | undefined
+  /** A stop left steers queued: the SDK runs them next, still inside the turn they steered. */
+  #steersOutliveRun = false
+  /** Settles once a stop receipt is read; the stopped run's result may overtake it. */
+  #stopReceipt: Promise<void> | undefined
+  /** The SDK's `total_cost_usd` is a running total for the current query. */
+  #queryCostUsd = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
@@ -425,14 +460,20 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#assertThread(threadId)
     this.#options = next
 
-    const queue = this.#requirePromptQueue()
-    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
-    queue.push(claudeUserMessage(text, attachments, this.#sessionId))
+    this.#requirePromptQueue().push(claudeUserMessage(text, attachments, this.#sessionId))
+    return this.#startTurn()
+  }
+
+  #startTurn(): string {
+    const turnId = `${this.#threadId}-turn-${crypto.randomUUID()}`
     this.#activeTurnId = turnId
     this.#interruptRequested = false
+    this.#turnSteers.clear()
+    this.#steersOutliveRun = false
+    this.#heldTurnStatus = undefined
     this.emit('event', {
       type: 'turn.started',
-      turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+      turn: { id: turnId, threadId: this.#threadId, status: 'running', createdAt: Date.now() },
     })
     return turnId
   }
@@ -440,21 +481,42 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
     this.#assertThread(threadId)
     if (!this.#activeTurnId) throw new Error('there is no running Claude turn to steer')
-    this.#requirePromptQueue().push({
-      ...claudeUserMessage(text, attachments, this.#sessionId),
-      priority: 'now',
-    })
+    const message = claudeUserMessage(text, attachments, this.#sessionId)
+    this.#requirePromptQueue().push({ ...message, priority: 'now' })
+    this.#turnSteers.set(message.uuid!, false)
   }
 
   async interrupt(): Promise<void> {
-    if (!this.#activeTurnId || !this.#query) return
+    const turnId = this.#activeTurnId
+    if (!turnId || !this.#query) return
     const query = this.#query
     const redactor = this.#redactor
     this.#interruptRequested = true
+    // The SDK keeps queued async messages through an interrupt and lists them in its receipt.
+    const stopping = query.interrupt().then((receipt) => {
+      if (
+        this.#query === query &&
+        this.#activeTurnId === turnId &&
+        receipt?.still_queued.some((uuid) => this.#turnSteers.has(uuid))
+      )
+        this.#steersOutliveRun = true
+    })
+    const receipt =
+      this.#turnSteers.size > 0
+        ? stopping.then(
+            () => undefined,
+            () => undefined,
+          )
+        : undefined
+    if (receipt) this.#stopReceipt = receipt
     try {
-      await query.interrupt()
+      await stopping
     } catch (error) {
+      // The turn keeps running, so a later error result is real and must still surface.
+      if (this.#query === query) this.#interruptRequested = false
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    } finally {
+      if (receipt && this.#stopReceipt === receipt) this.#stopReceipt = undefined
     }
   }
 
@@ -702,6 +764,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           const generation = ++this.#queryGeneration
           this.#promptQueue = promptQueue
           this.#query = query
+          this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
           if (bootstrap)
@@ -760,7 +823,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
-    this.#queryGeneration += 1
+    const generation = ++this.#queryGeneration
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
     this.#query?.close()
@@ -772,6 +835,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
     } catch (error) {
       const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
+      // dispose() drops every listener, so the owner must learn the session is gone first.
+      // #consume already announced it when the failed query ended on its own.
+      if (!this.#disposed && (this.#query || this.#queryGeneration === generation)) {
+        this.#settlePending('Claude session disconnected.')
+        this.emit('disconnected')
+      }
       await this.dispose()
       throw new Error(message)
     }
@@ -785,6 +854,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       for await (const message of query) {
         if (generation !== this.#queryGeneration || this.#disposed) return
+        if (message.type === 'result' && this.#stopReceipt) {
+          await this.#stopReceipt
+          if (generation !== this.#queryGeneration || this.#disposed) return
+        }
         this.#onMessage(message)
       }
       if (generation === this.#queryGeneration && !this.#disposed && this.#activeTurnId) {
@@ -808,22 +881,28 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const sessionId = 'session_id' in message ? message.session_id : undefined
     if (sessionId) this.#sessionId = sessionId
 
+    if ((message as { type: string }).type === 'command_lifecycle') {
+      this.#onCommandLifecycle(message)
+      return
+    }
+
     if (message.type === 'stream_event') {
       this.#onStreamEvent(message)
       return
     }
 
     if (message.type === 'assistant') {
-      if (!this.#activeTurnId) {
-        this.emit('log', 'ignored Claude assistant replay outside an active turn')
-        return
-      }
+      // Subagent (Task) snapshots belong to the sidechain. Saved history leaves them out, so
+      // the live transcript must too, and they must not touch the main plan or model label.
+      if (message.parent_tool_use_id) return
       if (message.error) this.#log(`Claude assistant error: ${message.error}`)
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude assistant event: ${parsed.error.message}`)
         return
       }
+      // Output that no turn waits for, such as a steer that outlived its turn, gets its own.
+      const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
       this.#reportedModel = event.message?.model
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
@@ -839,13 +918,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               },
             }
           : event
-      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId, this.#toolCalls))
+      this.#emitDomainEvents(toDomainEvents(filtered, turnId, this.#toolCalls))
       this.#emitTodoPlan(event)
       return
     }
 
     if (message.type === 'user') {
-      if (!this.#activeTurnId) return
+      if (!this.#activeTurnId || message.parent_tool_use_id) return
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
@@ -859,7 +938,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const turnId = this.#activeTurnId
       if (!turnId) return
       this.#resumeOnRestart = true
-      const usage = toUsage(message.usage, message.total_cost_usd)
+      // Usage tokens are per turn, but the cost is the query's running total: report only
+      // this turn's share so the store can sum turns. A drop means the SDK started over.
+      const total = message.total_cost_usd
+      const costUsd = total < this.#queryCostUsd ? total : total - this.#queryCostUsd
+      this.#queryCostUsd = total
+      const usage = toUsage(message.usage, costUsd)
       if (usage) {
         this.emit('event', {
           type: 'usage.updated',
@@ -870,11 +954,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
-        this.emit('event', {
-          type: 'thread.error',
-          threadId: this.#threadId,
-          message: this.#redactor.redact(message.errors.join('\n')),
-        })
+        const errors = this.#redactor.redact(message.errors.join('\n'))
+        // A stopped turn ends as an error result carrying "[ede_diagnostic]" lines; that is
+        // the expected outcome of Stop, not something to show as an error.
+        if (this.#interruptRequested) this.#log(`Claude stopped turn: ${errors}`)
+        else this.emit('event', { type: 'thread.error', threadId: this.#threadId, message: errors })
       }
       const status = this.#interruptRequested
         ? 'interrupted'
@@ -882,12 +966,25 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           ? 'failed'
           : 'completed'
       this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
-      this.emit('event', {
-        type: 'turn.completed',
-        turnId,
-        status,
-      })
-      this.#activeTurnId = undefined
+      // A steer cuts the run it steers short, and the CLI starts it as a run of its own, Stop
+      // or not. Until every steer has started, a result ends only one run of the turn.
+      const steerWaits =
+        this.#messageLifecycle && [...this.#turnSteers.values()].some((started) => !started)
+      // Only the stopped run ended. The steers it left queued run next, and their answer
+      // and result belong to the turn they steered, not to whichever prompt comes after.
+      if (steerWaits || this.#steersOutliveRun) {
+        // Without lifecycle reports the next result is the steers' own.
+        if (steerWaits) this.#heldTurnStatus = status
+        else this.#turnSteers.clear()
+        this.#steersOutliveRun = false
+      } else {
+        this.emit('event', {
+          type: 'turn.completed',
+          turnId,
+          status,
+        })
+        this.#activeTurnId = undefined
+      }
       this.#interruptRequested = false
       this.#settlePending('Claude turn ended before the request was answered.')
       this.#clearStreamingState()
@@ -912,6 +1009,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model
+      this.#messageLifecycle = message.capabilities?.includes('msg_lifecycle_v1') ?? false
       if (message.claude_code_version && !message.claude_code_version.startsWith(SUPPORTED)) {
         this.emit(
           'log',
@@ -921,11 +1019,35 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
+  #onCommandLifecycle(message: unknown): void {
+    const parsed = CommandLifecycleSchema.safeParse(message)
     const turnId = this.#activeTurnId
-    if (!turnId || message.parent_tool_use_id) return
+    if (!parsed.success || !turnId || !this.#turnSteers.has(parsed.data.command_uuid)) return
+    const { command_uuid: uuid, state } = parsed.data
+    if (state === 'started') {
+      this.#turnSteers.set(uuid, true)
+      this.#heldTurnStatus = undefined
+      return
+    }
+    if (state !== 'completed' && state !== 'cancelled') return
+    this.#turnSteers.delete(uuid)
+    // A held turn is between runs. A steer that ends without a run of its own, cancelled or
+    // folded into a run that already reported, may leave it nothing more to wait for.
+    const status = this.#heldTurnStatus
+    if (!status || [...this.#turnSteers.values()].some((started) => !started)) return
+    this.#heldTurnStatus = undefined
+    this.emit('event', { type: 'turn.completed', turnId, status })
+    this.#activeTurnId = undefined
+  }
+
+  #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
+    if (message.parent_tool_use_id) return
     const event = message.event
     const type = event.type
+    const turnId =
+      this.#activeTurnId ??
+      (type === 'message_start' || type === 'content_block_start' ? this.#startTurn() : undefined)
+    if (!turnId) return
     if (type === 'message_start') {
       this.#streamMessageId = event.message.id
       return
@@ -1316,33 +1438,36 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
     discovered.unshift(mapSdkModel(defaultEntry, defaultResolvedId))
   }
 
-  const merged: Model[] = []
+  // One row per model: an alias such as `sonnet` and its `[1m]` variant both
+  // resolve to the same family, and the standard-context row represents it.
   const used = new Set<DiscoveredClaudeModel>()
-  for (const catalogModel of CLAUDE_MODELS) {
-    const family = claudeModelFamily(catalogModel.id)
-    const matches = discovered.filter((entry) => claudeModelFamily(entry.resolvedId) === family)
-    const standard = matches.find((entry) => !entry.resolvedId.endsWith('[1m]'))
-    const selected = standard ?? matches[0]
-
-    if (selected) {
-      merged.push(selected.model)
-      for (const entry of matches) used.add(entry)
-    } else {
-      merged.push(catalogModel)
-    }
+  const takeFamily = (family: string): DiscoveredClaudeModel | undefined => {
+    const matches = discovered.filter(
+      (entry) => !used.has(entry) && claudeModelFamily(entry.resolvedId) === family,
+    )
+    for (const entry of matches) used.add(entry)
+    return matches.find((entry) => !entry.resolvedId.endsWith('[1m]')) ?? matches[0]
   }
+  // A live row keeps its catalog row's default flag, so an answer without a
+  // `default` row still selects the catalog default, not whichever row is first.
+  const fromCatalog = (catalog: Model[]): Model[] =>
+    catalog.map((catalogModel) => {
+      const selected = takeFamily(claudeModelFamily(catalogModel.id))
+      return selected ? { ...selected.model, isDefault: catalogModel.isDefault } : catalogModel
+    })
+
+  const current = fromCatalog(CURRENT_CLAUDE_MODELS)
+  const older = fromCatalog(OLDER_CLAUDE_MODELS)
+  const unknown: DiscoveredClaudeModel[] = []
   for (const entry of discovered) {
-    if (!used.has(entry)) merged.push(entry.model)
+    if (used.has(entry)) continue
+    const selected = takeFamily(claudeModelFamily(entry.resolvedId))
+    if (selected) unknown.push(selected)
   }
-
-  const preferred = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5']
-  const rank = (model: Model): number => {
-    const resolvedId =
-      discovered.find((entry) => entry.model.id === model.id)?.resolvedId ?? model.id
-    const index = preferred.indexOf(claudeModelFamily(resolvedId))
-    return index < 0 ? preferred.length : index
-  }
-  merged.sort((left, right) => rank(left) - rank(right))
+  // A model the catalog does not list yet is most likely a new release, so it
+  // follows the current lineup instead of sinking below older generations.
+  unknown.sort((left, right) => compareClaudeReleases(left.resolvedId, right.resolvedId))
+  const merged = [...current, ...unknown.map((entry) => entry.model), ...older]
 
   let defaultIndex = defaultResolvedId
     ? merged.findIndex(
@@ -1388,8 +1513,32 @@ function claudeModelFamily(id: string): string {
   return id.replace(/\[1m\]$/, '').replace(/-\d{8}$/, '')
 }
 
+const CLAUDE_VERSIONED_ID = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/
+const CLAUDE_TIERS = ['fable', 'opus', 'sonnet', 'haiku']
+
+/**
+ * Newest version first, then Fable, Opus, Sonnet and Haiku within one version.
+ * Ids without a recognizable version keep their order after the versioned ones.
+ */
+function compareClaudeReleases(leftId: string, rightId: string): number {
+  const left = claudeRelease(leftId)
+  const right = claudeRelease(rightId)
+  if (!left || !right) return (left ? 0 : 1) - (right ? 0 : 1)
+  return right.major - left.major || right.minor - left.minor || left.tier - right.tier
+}
+
+function claudeRelease(id: string): { tier: number; major: number; minor: number } | undefined {
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
+  if (!match) return undefined
+  return {
+    tier: CLAUDE_TIERS.indexOf(match[1]!),
+    major: Number(match[2]),
+    minor: Number(match[3] ?? 0),
+  }
+}
+
 function versionedClaudeModelName(id: string): string | undefined {
-  const match = claudeModelFamily(id).match(/^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/)
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
   if (!match) return undefined
   const family = `${match[1]![0]!.toUpperCase()}${match[1]!.slice(1)}`
   const version = `${match[2]}${match[3] ? `.${match[3]}` : ''}`

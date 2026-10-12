@@ -23,50 +23,36 @@ import {
 } from '../terminal-placement.js'
 import '../styles/general-settings.css'
 
-/** The part of the window a setting decides, lit in the plan while the setting is in focus. */
-type PlanPart = 'sidebar' | 'settle' | 'terminal' | 'picker'
-
 type SidebarMode = SidebarSettings['mode']
 /** `null` is "never", the stop past the 90-day end of the scale. */
 type SettleDays = SidebarSettings['autoSettleDays']
 
+type Option<T extends string> = { value: T; label: string }
+
 const SIDEBAR_OPTIONS = [
   { value: 'classic', label: 'Classic' },
   { value: 'inbox', label: 'Inbox' },
-] as const satisfies ReadonlyArray<{ value: SidebarMode; label: string }>
+] as const satisfies ReadonlyArray<Option<SidebarMode>>
 
 const TERMINAL_OPTIONS = [
   { value: 'bottom', label: 'Bottom' },
   { value: 'workspace', label: 'Right' },
-] as const satisfies ReadonlyArray<{ value: TerminalPlacement; label: string }>
+] as const satisfies ReadonlyArray<Option<TerminalPlacement>>
 
 const PICKER_OPTIONS = [
   { value: 'list', label: 'List' },
   { value: 'rail', label: 'Rail' },
-] as const satisfies ReadonlyArray<{ value: ModelPickerLayout; label: string }>
-
-function caption(part: PlanPart, days: SettleDays): string {
-  if (part === 'sidebar') {
-    return 'Classic files chats under their projects. Inbox lines them up by last activity.'
-  }
-  if (part === 'settle') {
-    return days === null
-      ? 'Chats stay in the inbox until you settle them yourself.'
-      : `Chats untouched for ${dayCount(days)} fold into Settled. New activity brings them back.`
-  }
-  if (part === 'terminal') return 'Where the Toggle terminal shortcut opens a terminal.'
-  return 'Rail picks a provider first, then its models. List shows every model in one scroll.'
-}
+] as const satisfies ReadonlyArray<Option<ModelPickerLayout>>
 
 function dayCount(days: number): string {
   return days === 1 ? '1 day' : `${days} days`
 }
 
 /**
- * General is a drawing of the window it arranges. Each setting is one line of
- * the legend, and the plan beside it redraws what that line decides: the
- * sidebar regroups, idle chats fold away, the terminal moves, the model picker
- * opens to show its layout.
+ * General is chosen by picture, the way Appearance chooses a theme: each
+ * setting is a name, a line on what it decides, and its two choices drawn as
+ * the window they make, the part that changes in full ink and the chosen one
+ * ringed. The settle scale sits under the Inbox picture and moves its fold.
  */
 export function GeneralSettings(props: {
   sidebarSettings: SidebarSettings
@@ -78,29 +64,13 @@ export function GeneralSettings(props: {
     readTerminalPlacement,
     readTerminalPlacement,
   )
-  const [hovered, setHovered] = useState<PlanPart>()
-  const [focused, setFocused] = useState<PlanPart>()
-  // The caption keeps its last words while it fades out.
-  const [described, setDescribed] = useState<PlanPart>()
-  // While the settle scale is dragged the plan follows the pointer; the
-  // server only hears the value the pointer lets go at.
+  // While the settle scale is dragged the Inbox picture follows the pointer;
+  // the server only hears the value the pointer lets go at.
   const [draftDays, setDraftDays] = useState<SettleDays | undefined>()
-  const lit = hovered ?? focused
-  if (lit && lit !== described) setDescribed(lit)
 
   const mode = props.sidebarSettings.mode
   const days = draftDays === undefined ? props.sidebarSettings.autoSettleDays : draftDays
   const inbox = mode === 'inbox'
-
-  const leave = (part: PlanPart) =>
-    setHovered((current) => (current === part ? undefined : current))
-  const track = (part: PlanPart): Track => ({
-    'data-lit': lit === part || undefined,
-    onPointerEnter: () => setHovered(part),
-    onPointerLeave: () => leave(part),
-    onFocus: () => setFocused(part),
-    onBlur: () => setFocused((current) => (current === part ? undefined : current)),
-  })
 
   return (
     <section className="settings__panel" aria-labelledby="settings-general">
@@ -108,24 +78,21 @@ export function GeneralSettings(props: {
         General
       </h1>
       <div className="general">
-        <div className="general__legend">
-          <LegendLine name="Sidebar" track={track('sidebar')}>
-            {(labelId) => (
-              <Choice
-                labelId={labelId}
-                value={mode}
-                options={SIDEBAR_OPTIONS}
-                onChange={(next) => props.onSidebarSettingsChange({ mode: next })}
-              />
-            )}
-          </LegendLine>
+        <Setting
+          name="Sidebar"
+          note="Classic files chats under their projects. Inbox lines them up by last activity."
+          value={mode}
+          options={SIDEBAR_OPTIONS}
+          onChange={(next) => props.onSidebarSettingsChange({ mode: next })}
+          picture={(value) => <MiniWindow focus="sidebar" mode={value} days={days} />}
+        >
           <div
             className="general-settle"
             data-open={inbox || undefined}
             inert={!inbox}
             aria-hidden={!inbox || undefined}
           >
-            <div className="general-settle__inner" {...track('settle')}>
+            <div className="general-settle__inner">
               <SettleScale
                 days={days}
                 onDraft={setDraftDays}
@@ -138,78 +105,46 @@ export function GeneralSettings(props: {
               />
             </div>
           </div>
-          <LegendLine name="Terminal" track={track('terminal')}>
-            {(labelId) => (
-              <Choice
-                labelId={labelId}
-                value={terminal}
-                options={TERMINAL_OPTIONS}
-                onChange={writeTerminalPlacement}
-              />
-            )}
-          </LegendLine>
-          <LegendLine name="Model picker" track={track('picker')}>
-            {(labelId) => (
-              <Choice
-                labelId={labelId}
-                value={picker}
-                options={PICKER_OPTIONS}
-                onChange={writeModelPickerLayout}
-              />
-            )}
-          </LegendLine>
-        </div>
-        <figure className="general__figure">
-          <WindowPlan
-            mode={mode}
-            days={days}
-            terminal={terminal}
-            picker={picker}
-            lit={lit}
-            onHover={setHovered}
-            onLeave={leave}
-          />
-          <figcaption className="general__caption" data-shown={lit ? true : undefined}>
-            {described ? caption(described, days) : null}
-          </figcaption>
-        </figure>
+        </Setting>
+        <Setting
+          name="Terminal"
+          note="Where the Toggle terminal shortcut opens a terminal."
+          value={terminal}
+          options={TERMINAL_OPTIONS}
+          onChange={writeTerminalPlacement}
+          picture={(value) => (
+            <MiniWindow focus="terminal" mode={mode} days={days} terminal={value} />
+          )}
+        />
+        <Setting
+          name="Model picker"
+          note="Rail picks a provider first, then its models. List shows every model in one scroll."
+          value={picker}
+          options={PICKER_OPTIONS}
+          onChange={writeModelPickerLayout}
+          picture={(value) => <MiniWindow focus="picker" mode={mode} days={days} picker={value} />}
+        />
       </div>
     </section>
   )
 }
 
-/** Hover and focus handlers that light one part of the plan. */
-type Track = {
-  'data-lit': true | undefined
-  onPointerEnter: () => void
-  onPointerLeave: () => void
-  onFocus: () => void
-  onBlur: () => void
-}
-
-function LegendLine(props: {
+/**
+ * One setting: its name and what it decides, then its choices as pictures.
+ * The pictures are one radio group; arrow keys move the choice, as in any
+ * native radio group.
+ */
+function Setting<T extends string>(props: {
   name: string
-  track: Track
-  children: (labelId: string) => ReactNode
-}) {
-  const labelId = useId()
-  return (
-    <div className="general-line" {...props.track}>
-      <p className="general-line__name" id={labelId}>
-        {props.name}
-      </p>
-      {props.children(labelId)}
-    </div>
-  )
-}
-
-/** Two words, not a segmented control: the chosen one is set in full ink and underlined. */
-function Choice<T extends string>(props: {
-  labelId: string
+  note: string
   value: T
-  options: ReadonlyArray<{ value: T; label: string }>
+  options: ReadonlyArray<Option<T>>
   onChange: (value: T) => void
+  picture: (value: T) => ReactNode
+  children?: ReactNode
 }) {
+  const nameId = useId()
+  const noteId = useId()
   const buttons = useRef<Array<HTMLButtonElement | null>>([])
   const choose = (index: number) => {
     const option = props.options[index]
@@ -229,27 +164,46 @@ function Choice<T extends string>(props: {
     buttons.current[next]?.focus()
   }
   return (
-    <div className="general-choice" role="radiogroup" aria-labelledby={props.labelId}>
-      {props.options.map((option, index) => {
-        const checked = option.value === props.value
-        return (
-          <button
-            key={option.value}
-            ref={(button) => {
-              buttons.current[index] = button
-            }}
-            className="general-choice__option"
-            type="button"
-            role="radio"
-            aria-checked={checked}
-            tabIndex={checked ? 0 : -1}
-            onClick={() => choose(index)}
-            onKeyDown={(event) => onKeyDown(event, index)}
-          >
-            {option.label}
-          </button>
-        )
-      })}
+    <div className="general-setting">
+      <div className="general-setting__copy">
+        <p className="general-setting__name" id={nameId}>
+          {props.name}
+        </p>
+        <p className="general-setting__note" id={noteId}>
+          {props.note}
+        </p>
+      </div>
+      <div
+        className="general-setting__options"
+        role="radiogroup"
+        aria-labelledby={nameId}
+        aria-describedby={noteId}
+      >
+        {props.options.map((option, index) => {
+          const checked = option.value === props.value
+          return (
+            <button
+              key={option.value}
+              ref={(button) => {
+                buttons.current[index] = button
+              }}
+              className="general-option"
+              type="button"
+              role="radio"
+              aria-checked={checked}
+              tabIndex={checked ? 0 : -1}
+              onClick={() => choose(index)}
+              onKeyDown={(event) => onKeyDown(event, index)}
+            >
+              <span className="general-option__picture" aria-hidden>
+                {props.picture(option.value)}
+              </span>
+              <span className="general-option__label">{option.label}</span>
+            </button>
+          )
+        })}
+      </div>
+      {props.children}
     </div>
   )
 }
@@ -432,126 +386,124 @@ const PLAN_CHATS = [
   { project: 0, age: 12, width: 0.66 },
   { project: 1, age: 40, width: 0.5 },
 ] as const
-const PLAN_PROJECTS = [0.62, 0.74] as const
-const PROJECT_ROWS = 5
-
 type RowStyle = CSSProperties & { '--row': number; '--w': number }
 
 function rowStyle(row: number, width: number): RowStyle {
   return { '--row': row, '--w': width }
 }
 
-function planLabel(
-  mode: SidebarMode,
-  days: SettleDays,
-  terminal: TerminalPlacement,
-  picker: ModelPickerLayout,
-): string {
-  const sidebar =
-    mode === 'classic'
-      ? 'Classic sidebar'
-      : `Inbox sidebar, chats settle ${days === null ? 'never' : `after ${dayCount(days)}`}`
-  const where = terminal === 'bottom' ? 'terminal at the bottom' : 'terminal on the right'
-  return `Window plan: ${sidebar}, ${where}, model picker as a ${picker}.`
-}
+/** Rows from one project's heading to the next in the Classic picture. */
+const CLASSIC_BLOCK = 4.6
+const THREAD_LINES = [0.92, 0.84, 0.88, 0.5] as const
+const PICKER_ROWS = [0.4, 0.78, 0.64, 0.7, 0.34, 0.6, 0.82] as const
 
-function WindowPlan(props: {
+/**
+ * The window in miniature, painted in the app's own surfaces: the sidebar,
+ * a reply, the prompt bar with its send button, and, where the setting asks
+ * for them, the terminal or the open model picker. The part the setting
+ * changes is drawn in full ink; the rest stays quiet around it.
+ */
+function MiniWindow(props: {
+  focus: 'sidebar' | 'terminal' | 'picker'
   mode: SidebarMode
   days: SettleDays
-  terminal: TerminalPlacement
-  picker: ModelPickerLayout
-  lit: PlanPart | undefined
-  onHover: (part: PlanPart) => void
-  onLeave: (part: PlanPart) => void
+  terminal?: TerminalPlacement
+  picker?: ModelPickerLayout
 }) {
   const inbox = props.mode === 'inbox'
   const active = PLAN_CHATS.filter((chat) => props.days === null || chat.age < props.days).length
-  const settled = inbox && active < PLAN_CHATS.length
-  const hover = (part: PlanPart) => ({
-    onPointerEnter: () => props.onHover(part),
-    onPointerLeave: () => props.onLeave(part),
-  })
-
   return (
-    <div
-      className="gplan"
-      role="img"
-      aria-label={planLabel(props.mode, props.days, props.terminal, props.picker)}
-      data-mode={props.mode}
+    <span
+      className="gwin"
+      data-focus={props.focus}
       data-terminal={props.terminal}
       data-picker={props.picker}
-      data-lit={props.lit}
     >
-      <div className="gplan__rail gplan__part" {...hover('sidebar')}>
-        <span className="gplan__action" style={rowStyle(0, 0.5)} />
-        <span className="gplan__action" style={rowStyle(1, 0.64)} />
-        {PLAN_PROJECTS.map((width, project) => (
-          <span
-            key={project}
-            className="gplan__project"
-            style={rowStyle(project * PROJECT_ROWS, width)}
-          />
-        ))}
-        {PLAN_CHATS.map((chat, index) => {
-          const settles = index >= active
-          const row = inbox
-            ? index + (settles ? 1 : 0)
-            : chat.project * PROJECT_ROWS +
-              1 +
-              PLAN_CHATS.slice(0, index).filter((earlier) => earlier.project === chat.project)
-                .length
-          return (
-            <span
-              key={index}
-              className="gplan__chat"
-              data-settled={(inbox && settles) || undefined}
-              style={rowStyle(row, chat.width)}
-            />
-          )
-        })}
-        <span
-          className="gplan__fold"
-          data-shown={settled || undefined}
-          style={rowStyle(active, 0.4)}
-        />
-      </div>
-      <div className="gplan__main gplan__part">
-        <div className="gplan__thread">
-          <span className="gplan__ask" />
-          <span className="gplan__line" style={rowStyle(0, 0.96)} />
-          <span className="gplan__line" style={rowStyle(1, 0.88)} />
-          <span className="gplan__line" style={rowStyle(2, 0.93)} />
-          <span className="gplan__line" style={rowStyle(3, 0.52)} />
-        </div>
-        <div className="gplan__composer" {...hover('picker')}>
-          <span className="gplan__placeholder" />
-          <span className="gplan__chip" />
-          <span className="gplan__send" />
-          <div className="gplan__picker">
-            <div className="gplan__picker-strip">
-              <span className="gplan__picker-mark" data-selected />
-              <span className="gplan__picker-mark" />
-              <span className="gplan__picker-mark" />
-            </div>
-            {[0.4, 0.78, 0.64, 0.7, 0.34, 0.6, 0.82, 0.5].map((width, row) => (
-              <span
-                key={row}
-                className="gplan__picker-row"
-                data-head={row === 0 || (row === 4 && props.picker === 'list') || undefined}
-                style={rowStyle(row, width)}
+      <span className="gwin__rail">
+        {inbox ? (
+          <>
+            {PLAN_CHATS.slice(0, active).map((chat, index) => (
+              <i
+                key={index}
+                className="gwin__chat"
+                data-project={chat.project}
+                style={rowStyle(index, chat.width)}
               />
             ))}
-          </div>
-        </div>
-      </div>
-      <div className="gplan__terminal gplan__part" {...hover('terminal')}>
-        <span className="gplan__tab" data-selected />
-        <span className="gplan__tab" />
-        <span className="gplan__prompt" style={rowStyle(0, 0.32)} />
-        <span className="gplan__output" style={rowStyle(1, 0.58)} />
-        <span className="gplan__output" style={rowStyle(2, 0.44)} />
-        <span className="gplan__prompt gplan__prompt--cursor" style={rowStyle(3, 0)} />
-      </div>
-    </div>
+            {active < PLAN_CHATS.length ? (
+              <>
+                <i className="gwin__fold" style={rowStyle(active, 0.42)} />
+                {PLAN_CHATS.slice(active).map((chat, index) => (
+                  <i
+                    key={index}
+                    className="gwin__chat"
+                    data-settled
+                    style={rowStyle(active + 1 + index, chat.width)}
+                  />
+                ))}
+              </>
+            ) : null}
+          </>
+        ) : (
+          [0, 1].map((project) => (
+            <span key={project} className="gwin__project">
+              <i
+                className="gwin__heading"
+                data-project={project}
+                style={rowStyle(project * CLASSIC_BLOCK, 0.62)}
+              />
+              {PLAN_CHATS.filter((chat) => chat.project === project)
+                .slice(0, 3)
+                .map((chat, index) => (
+                  <i
+                    key={index}
+                    className="gwin__chat"
+                    style={rowStyle(project * CLASSIC_BLOCK + index + 1, chat.width)}
+                  />
+                ))}
+            </span>
+          ))
+        )}
+      </span>
+      <span className="gwin__main">
+        <span className="gwin__thread">
+          <i className="gwin__ask" />
+          {THREAD_LINES.map((width, row) => (
+            <i key={row} className="gwin__line" style={rowStyle(row, width)} />
+          ))}
+        </span>
+        <span className="gwin__prompt">
+          <b />
+        </span>
+        {props.picker ? (
+          <span className="gwin__picker">
+            {props.picker === 'rail' ? (
+              <span className="gwin__strip">
+                <i data-selected />
+                <i />
+                <i />
+              </span>
+            ) : null}
+            <span className="gwin__models">
+              {PICKER_ROWS.map((width, row) => (
+                <i
+                  key={row}
+                  data-head={row === 0 || (row === 4 && props.picker === 'list') || undefined}
+                  style={rowStyle(row, width)}
+                />
+              ))}
+            </span>
+          </span>
+        ) : null}
+      </span>
+      {props.terminal ? (
+        <span className="gwin__terminal">
+          <i className="gwin__term-line" data-prompt style={rowStyle(0, 0.36)} />
+          <i className="gwin__term-line" style={rowStyle(1, 0.62)} />
+          <i className="gwin__term-line" style={rowStyle(2, 0.48)} />
+          <i className="gwin__term-line" data-prompt data-cursor style={rowStyle(3, 0.1)} />
+        </span>
+      ) : null}
+    </span>
   )
 }

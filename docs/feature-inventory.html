@@ -310,8 +310,10 @@
                 user
                 <span class="d"
                   >permission-profile requests show the requested access and answer with Codex's
-                  grant-and-scope wire shape; Stop uses the original thread and turn IDs; automatic
-                  review runs without status or result cards in the chat</span
+                  grant-and-scope wire shape; MCP tool approvals show the tool and its arguments and
+                  answer Codex's elicitation action, remembering the tool when Codex offers it for
+                  the session; Stop uses the original thread and turn IDs; automatic review runs
+                  without status or result cards in the chat</span
                 ></span
               ></label
             >
@@ -1050,14 +1052,17 @@
                   evidence authority, scrolls through lazy content, and waits within fixed deadlines
                   for animation frames, animations, fonts, and images before bounded whole-page
                   desktop and mobile PNGs, then clears shared browser storage and cache before the
-                  next capture; a successful preview remains reachable until thread close or a
-                  replacement Design run, with process and port release awaited before cleanup;
-                  exhausted validation corrections finish their turn and activity as failed;
-                  completed queued phases remain idle when their provider promise settles late;
-                  source checks accept HTML with embedded images above 2 MB while retaining a 32 MB
-                  total scan limit; since 0.1.1, history replies and live pushes have separate
-                  bounded output budgets, and failed repair validation retains its correction guard
-                  to prevent unlimited retries</span
+                  next capture; a page that scrolls inside a full-screen element reports what that
+                  element hides, so review covers the captured part only, and its controls are
+                  audited like the document's; a successful preview remains reachable until thread
+                  close or a replacement Design run, with process and port release awaited before
+                  cleanup and a static preview's open media responses ended when it stops; exhausted
+                  validation corrections finish their turn and activity as failed; completed queued
+                  phases remain idle when their provider promise settles late; source checks accept
+                  HTML with embedded images above 2 MB while retaining a 32 MB total scan limit;
+                  since 0.1.1, history replies and live pushes have separate bounded output budgets,
+                  and failed repair validation retains its correction guard to prevent unlimited
+                  retries</span
                 ></span
               ></label
             >
@@ -1152,6 +1157,22 @@
                   tails stay exact; streamed frames overlay only the active turn, and stable
                   completed-row identities survive both streaming and optimistic-to-canonical
                   reconciliation</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Long chats open with their newest turns and load earlier ones while scrolling up
+                <span class="d"
+                  >a cold open shows the newest ten whole turns and fetches twenty more as the
+                  reader nears the top, keeping the row being read in place; a quiet pill says when
+                  earlier messages are loading and offers a retry if a page fails; find in chat and
+                  search jumps load the remaining turns in one read whose reply closing find drops
+                  (the request still completes), and find says when that read failed and offers a
+                  retry; a restore or a rewritten provider history reopens from the newest
+                  page</span
                 ></span
               ></label
             >
@@ -1270,14 +1291,21 @@
                 <span class="d"
                   >current checkout against HEAD, including staged, unstaged and untracked files;
                   structured hunks, collapsed unchanged ranges, changed-file tree and live
-                  filtering</span
+                  filtering; refreshes after each turn in its chat and on reconnect, keeping a
+                  drafted commit message while the changes stay the same</span
                 ></span
               ></label
             >
           </li>
           <li>
             <label
-              ><input type="checkbox" /><span>Per-hunk and per-file accept or reject</span></label
+              ><input type="checkbox" /><span
+                >Per-hunk and per-file accept or reject
+                <span class="d"
+                  >isolated chats only; Review in a Local chat shows the turn's patch, since its
+                  edits share the user's own checkout</span
+                ></span
+              ></label
             >
           </li>
           <li>
@@ -1512,11 +1540,25 @@
                 >Resizable bottom and right tool panels
                 <span class="d"
                   >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
-                  Temporary chat. Each panel has independent tool tabs, a + menu, and an upper-right
-                  close button. Tabs fade on add and close; neighbouring tabs slide into place. Tabs
-                  support drag reordering and Alt+Left/Right with the app haptic preference. Closing
-                  the panel returns to the picker. No manual expansion. Bottom and right terminals
-                  have separate shells. Edge resizing remains. CSP-safe compact terminals with link
+                  Temporary chat that stacks into one column in a narrow right panel. Each panel has
+                  independent tool tabs, a + menu, and an upper-right close button. Tabs fade on add
+                  and close; neighbouring tabs slide into place. Tabs support drag reordering and
+                  Alt+Left/Right with the app haptic preference. Closing the panel returns to the
+                  picker. No manual expansion. Bottom and right terminals have separate shells;
+                  closing one, its chat or project, or the app also ends its foreground job after a
+                  grace period to shut down cleanly, and a shell that ignores SIGHUP. Jobs put in
+                  the background from the prompt, nohup and disown included, stay the shell's; the
+                  &amp; children of a foreground script or one-shot command are ended with it. Edge
+                  resizing takes the right panel down to 300 px, and both panels lay their tools out
+                  by the panel's own width: the Browser address takes its own row below 420 px in
+                  either panel, while only the full-height right panel moves the Review and Files
+                  tree underneath below 500 px (the short bottom panel keeps them side by side), and
+                  right tabs stop short of the floating panel toggles. Tabs keep full labels while
+                  they fit and shrink only to a five-character prefix and an ellipsis; when even
+                  that does not fit, inactive tabs reduce to icons whose close button appears on
+                  hover or keyboard focus, while the active tab keeps its label. Only a strip that
+                  still overflows scrolls, keeping the active tab in view and fading its start edge,
+                  and every tab names itself in full on hover. CSP-safe compact terminals with link
                   detection, distinct desktop/tablet/mobile Browser controls, lazy file trees and
                   side chat; queued and steered Side-chat turns keep their own channel across
                   runtime restart, while a full app restart still purges temporary Side chats; New
@@ -1540,8 +1582,10 @@
                   chrome or a full-panel startup spinner; Codex-compatible /side and /btw commands,
                   hidden point-in-time parent context, independent streaming, approvals and
                   structured input across every provider; startup fails visibly after 30 seconds
-                  instead of spinning forever, and closing it disposes the provider session and
-                  erases its temporary transcript</span
+                  instead of spinning forever; a /side prompt is sent once, so reopening the tab
+                  starts empty; the bottom and right panels share one Temporary chat per
+                  conversation, and closing its last tab disposes the provider session and erases
+                  its temporary transcript</span
                 ></span
               ></label
             >
@@ -1727,16 +1771,21 @@
               ><input type="checkbox" /><span
                 >Custom keybinds with hints rendered in the UI
                 <span class="d"
-                  >22 app, chat, project, and workspace actions; searchable native editor, conflict
-                  checks, automatic persistence, reset, and safe keyboard ownership for Settings and
-                  modal dialogs; the always-available top-row Options menu exposes common sidebar,
-                  terminal, workspace, chat, search, pull request, and settings actions, while the
-                  desktop File, View, Chat, Workspace, Window, and Help menus mirror the same
-                  actions and current custom accelerators. Cmd+1–9 on macOS and Ctrl+1–9 on
-                  Windows/Linux open the nine newest sessions in the first sidebar project.
-                  Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key labels
-                  and portable recorded Option keys. Direct workspace tool shortcuts work before and
-                  after the panel opens and respect modal keyboard ownership</span
+                  >22 app, chat, project, and workspace actions; searchable editor where each action
+                  is wired to its shortcut by a dotted leader that runs while recording, turns red
+                  on a conflict and draws in when keys land, live modifier feedback while recording,
+                  conflict checks that can move a taken shortcut, per-action restore and clear,
+                  automatic persistence, reset of every default, and safe keyboard ownership for
+                  Settings and modal dialogs; the always-available top-row Options menu exposes
+                  common sidebar, terminal, workspace, chat, search, pull request, and settings
+                  actions, while the desktop File, View, Chat, Workspace, Window, and Help menus
+                  mirror the same actions and current custom accelerators. Cmd+1–9 on macOS and
+                  Ctrl+1–9 on Windows/Linux open the nine newest sessions in the first sidebar
+                  project. Cmd/Option bindings use Ctrl/Alt on Windows and Linux, with readable key
+                  labels and portable recorded Option keys. Direct workspace tool shortcuts work
+                  before and after the panel opens and respect modal keyboard ownership. The
+                  recorder refuses those, the number keys, find, turn navigation and the debug
+                  chord</span
                 ></span
               ></label
             >
@@ -1757,7 +1806,7 @@
                 inspect, per-project scope
                 <span class="d"
                   >a provider selector manages separate Codex, Claude Code, and Grok project
-                  definitions; Codex can hot-reload compatible changes, Grok receives selected
+                  definitions; open Codex chats resume with saved changes, Grok receives selected
                   servers through ACP, and Claude receives enabled definitions on start and resume
                   with credentials kept out of process arguments; controls follow the available
                   capabilities, and Claude rejects unsupported inherited-server hiding before
@@ -1777,7 +1826,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >MCP servers reloadable into a running session</span
+                >Saved MCP changes reach open chats
+                <span class="d"
+                  >an idle chat resumes with them, a working chat once its current and queued
+                  messages finish; a Temporary chat says it keeps the servers it started with</span
+                ></span
               ></label
             >
           </li>
@@ -1796,13 +1849,13 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >General section: a plan of the window beside a four-line legend
+                >General section: each setting chosen by picture
                 <span class="d"
-                  >Sidebar, Terminal and Model picker are two-word choices, and the terminal starts
-                  on the right until moved; the Inbox choice opens a logarithmic settle scale from 1
-                  to 90 days or never. The plan redraws each choice as it changes — chats regroup,
-                  settle past the fold, the terminal moves, the picker opens — and lights the part
-                  the focused line decides</span
+                  >Sidebar, Terminal and Model picker each show their two choices as the window they
+                  make, painted in the app's surfaces with the changed part in ink and the chosen
+                  one ringed, beside a line on what the setting decides; the terminal starts on the
+                  right until moved. Under Inbox a logarithmic settle scale from 1 to 90 days or
+                  never moves the Settled fold in the Inbox picture as it is dragged</span
                 ></span
               ></label
             >
@@ -1821,8 +1874,9 @@
               ><input type="checkbox" /><span
                 >Theme preview: System, Light, Dark
                 <span class="d"
-                  >Large selectable cards and a two-pane code sample expose surface, syntax,
-                  semantic color, and contrast differences before customization</span
+                  >Three centred previews, each a miniature TasteCode window (sidebar, reply, prompt
+                  bar) painted in that mode's chosen background and accent, so a color change shows
+                  in its preview at once. The chosen one is ringed just outside its edge</span
                 ></span
               ></label
             >
@@ -1834,10 +1888,13 @@
                 <span class="d"
                   >New profiles use the native system font: San Francisco on macOS, Segoe UI on
                   Windows, and the desktop system font on Linux. Saved font choices are preserved.
-                  System default, bundled font families, and every installed font family appear in
-                  one deduplicated alphabetical list with name search. The complete list is cached
-                  across app restarts, refreshes after 24 hours, and replaces the first-load message
-                  only when ready</span
+                  The picker opens on a Built in group (System default first, then the bundled
+                  families) above every installed family in alphabetical order, each row with an Ag
+                  sample set in its own face. There is no search bar: opening the picker turns the
+                  row's value into a field, typing filters in place with names that start with the
+                  query ranked first, and the list keeps its size while it filters. The complete
+                  list is cached across app restarts, refreshes after 24 hours, and replaces the
+                  first-load message only when ready</span
                 ></span
               ></label
             >
@@ -1845,13 +1902,16 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Compact appearance controls
+                >Open appearance rows
                 <span class="d"
-                  >Light mode and Dark mode each have a labeled, bordered settings card with
-                  independently saved accent, background, installed font, and sidebar translucency.
-                  Trackpad haptics and font smoothing remain shared macOS controls. Accent and
-                  background use color pills with hex values, a custom color picker, and saved
-                  presets. Custom backgrounds choose light or dark text for contrast</span
+                  >Light mode and Dark mode each list independently saved accent, background,
+                  installed font, and sidebar translucency as open rows like the provider roster: no
+                  card or fill, a dotted leader from each name to its value that lights on hover.
+                  Accent and background show a square chip with the preset name (hex for a custom
+                  color) and open the custom color picker with saved presets; Reset colors appears
+                  beside a mode once either color changes. Trackpad haptics and font smoothing
+                  remain shared macOS controls. Custom backgrounds choose light or dark text for
+                  contrast</span
                 ></span
               ></label
             >
@@ -2049,6 +2109,19 @@
                     >production evidence</a
                   ></span
                 ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Crash recovery: a render exception replaces the window with a recovery card
+                offering Reload window, allowlisted Copy diagnostics and, on desktop, Ask an agent
+                to fix it, which opens Claude Code, Codex or Grok in the default terminal in its
+                bypass-permissions mode inside a fresh temp folder holding a scrubbed crash report
+                and a one-line prompt to explain and fix the crash; a failing full-window surface
+                shows the same card with Try again and Back to app.
+                <a href="./evidence/recovery-agent-picker-dark-20261010.jpg">evidence</a></span
               ></label
             >
           </li>

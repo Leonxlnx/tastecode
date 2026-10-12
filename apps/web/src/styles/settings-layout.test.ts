@@ -16,7 +16,7 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('compacts appearance controls from their usable pane width', () => {
+  it('compacts appearance from its usable pane width', () => {
     expect(settingsCss).toMatch(
       /\.settings__content \{[^}]*container: settings-content \/ inline-size;/s,
     )
@@ -24,10 +24,7 @@ describe('settings viewport CSS', () => {
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.theme-picker \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s,
     )
     expect(settingsCss).toMatch(
-      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-code-preview \{[^}]*grid-template-columns: 1fr;[\s\S]*?\.appearance-editor \.settings__row \{[^}]*flex-direction: column;[\s\S]*?\.appearance-control,[\s\S]*?\{[^}]*width: 100%;/s,
-    )
-    expect(settingsCss).toMatch(
-      /\.appearance-control__select \{[^}]*width: min\(152px, 100%\);[^}]*max-width: none;/s,
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-row__leader \{[^}]*display: none;/s,
     )
   })
 
