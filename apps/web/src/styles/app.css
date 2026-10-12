@@ -518,6 +518,17 @@
   background: var(--menu-hover);
 }
 
+/* Keyboard focus wears the hover surface plus a soft ring on the pill's own
+   corners, instead of the browser's hard black outline. */
+.rail__foot .menutrigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent);
+  outline-offset: -2px;
+}
+
+.rail__foot .menutrigger:focus-visible .account {
+  background: var(--control-hover);
+}
+
 .account__avatar {
   position: relative;
   display: grid;
