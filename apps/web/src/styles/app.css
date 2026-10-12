@@ -256,15 +256,32 @@
 }
 
 .rail__actions {
+  position: relative;
   padding: 8px 10px 9px;
   display: flex;
   flex-direction: column;
   gap: 3px;
-  border-bottom: 1px solid transparent;
 }
 
-.rail__actions.is-scrolled {
-  border-bottom-color: var(--line-strong);
+/* Scrolled chats slide under the actions behind a short fade, not a rule. */
+.rail__actions::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 100% 10px auto 0;
+  height: 16px;
+  background: linear-gradient(to bottom, var(--bg-rail), transparent);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.rail__actions.is-scrolled::after {
+  opacity: 1;
+}
+
+:root[data-glass='on'] .rail__actions::after {
+  display: none;
 }
 
 /* New chat and search share one row: the search icon rides on the right,
@@ -380,13 +397,56 @@
   padding: 8px 4px 18px 10px;
   /* Same reason as .thread: the list must not shift when it crosses the fold. */
   scrollbar-gutter: stable;
+  /* Named so the footer can read how far the list is scrolled. */
+  scroll-timeline: --rail-body block;
 }
 
 .rail__foot {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   padding: 6px;
-  border-top: 1px solid var(--line-strong);
+}
+
+/* No rule between the list and the profile: chats that continue below the
+   fold fade out under the footer instead, and only while there is more list
+   to scroll to. A full-width line here was the hardest edge in the rail. */
+.rail {
+  timeline-scope: --rail-body;
+}
+
+.rail__foot::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  /* Clear of the body's scrollbar gutter. */
+  inset: auto 10px 100% 0;
+  height: 24px;
+  background: linear-gradient(to top, var(--bg-rail), transparent);
+  opacity: 0;
+  pointer-events: none;
+}
+
+@supports (animation-timeline: scroll()) {
+  .rail__foot::before {
+    animation: rail-edge-fade-out linear both;
+    animation-timeline: --rail-body;
+    animation-range: calc(100% - 24px) 100%;
+  }
+}
+
+/* A painted fade would show as a band on the translucent rail. */
+:root[data-glass='on'] .rail__foot::before {
+  display: none;
+}
+
+@keyframes rail-edge-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 .account-menu__actions {
