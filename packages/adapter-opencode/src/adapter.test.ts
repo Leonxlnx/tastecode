@@ -270,6 +270,24 @@ describe('OpenCode adapter', () => {
     adapter.dispose()
   })
 
+  it('rejects a model without a provider before the turn opens', async () => {
+    const mock = await serveOpenCode()
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo', { model: 'provider-1/model-1' })
+
+    await expect(adapter.sendTurn(thread.id, 'Go', [], { model: 'gpt-5' })).rejects.toThrow(
+      'OpenCode models use provider/model',
+    )
+    expect(events.some((event) => event.type === 'turn.started')).toBe(false)
+
+    await adapter.sendTurn(thread.id, 'Go again', [], { model: 'provider-1/model-1' })
+    const prompt = await mock.waitFor('/session/session-1/prompt_async')
+    expect(prompt.body).toMatchObject({ model: { providerID: 'provider-1', modelID: 'model-1' } })
+    adapter.dispose()
+  })
+
   it('hands the turn over through the duplicated completion idle (#373)', async () => {
     const mock = await serveOpenCode()
     const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
