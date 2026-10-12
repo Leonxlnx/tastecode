@@ -1948,6 +1948,17 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it('reports a folder picker failure instead of leaving it unhandled', async () => {
+    serverProjects = []
+    pickFolder.mockRejectedValue(new Error('folder dialog failed'))
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+    expect(await screen.findByText('folder dialog failed')).toBeTruthy()
+    expect(rpcCount('projects.add')).toBe(0)
+  })
+
   it('opens the workspace directly on first launch', async () => {
     localStorage.removeItem('harness.provider')
 

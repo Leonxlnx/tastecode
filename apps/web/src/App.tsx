@@ -2786,9 +2786,17 @@ export function App() {
   )
 
   const addProject = useCallback(async () => {
-    const path = await pickFolder()
+    // Every caller fires this with `void`, so a failing picker must be
+    // reported here rather than escape as an unhandled rejection.
+    let path: string | undefined
+    try {
+      path = await pickFolder()
+    } catch (error) {
+      reportError(error instanceof Error ? error.message : String(error))
+      return
+    }
     if (path) await addProjects([path])
-  }, [addProjects])
+  }, [addProjects, reportError])
 
   const generateSessionTitle = useCallback(
     async (threadId: string, prompt: string, expectedTitle: string) => {
