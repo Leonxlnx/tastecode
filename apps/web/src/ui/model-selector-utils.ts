@@ -79,10 +79,22 @@ export function modelSourceKey(entry: ModelChoice): string {
 }
 
 /**
+ * Every ACP source names its agent, so an agent identity only marks a custom
+ * harness when the provider is a direct one. ACP agents (an ACP-backed custom
+ * harness among them) share ACP's place; custom harnesses on a direct
+ * provider follow every provider.
+ */
+function sourceRank(entry: ModelChoice): number {
+  if (entry.agent && entry.provider !== 'acp') return PROVIDER_ORDER.length
+  return providerRank(entry.provider)
+}
+
+/**
  * Discovery settles sources in whatever order they answer, so the catalog's
  * order shifts while models load. Stock providers therefore take their place
- * in `PROVIDER_ORDER`, and custom harnesses follow in the order they arrived
- * (the sort is stable), so groups hold still instead of jumping.
+ * in `PROVIDER_ORDER`, then ACP agents and API connections, and custom
+ * harnesses follow; sources that share a place keep the order they arrived
+ * in (the sort is stable), so groups hold still instead of jumping.
  */
 export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
   const groups: ModelGroup[] = []
@@ -95,7 +107,7 @@ export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
     else {
       const next = { key, name: entry.sourceName, mark: entry.mark, entries: [entry] }
       groupsByKey.set(key, next)
-      ranks.set(next, entry.agent ? PROVIDER_ORDER.length : providerRank(entry.provider))
+      ranks.set(next, sourceRank(entry))
       groups.push(next)
     }
   }
