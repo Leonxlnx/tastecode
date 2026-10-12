@@ -3475,6 +3475,42 @@ describe('new chats', () => {
     expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
   })
 
+  it('does not load server history when a chat that is still starting is selected', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId!
+    await act(async () => {
+      await sidebarProps().onSelectSession(pendingId)
+    })
+
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'thread.history',
+      expect.objectContaining({ threadId: pendingId }),
+    )
+    expect(header().sessionId).toBe(pendingId)
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
+  })
+
   it('pins a chat that was pinned while it was still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },

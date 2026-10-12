@@ -3716,6 +3716,9 @@ export function App() {
       } else {
         setThread(emptyThread)
       }
+      // A chat that is still starting only has a local id the server does not
+      // know, so asking for its history fails. The start adopts the real id.
+      if (id.startsWith('pending:')) return
 
       setLoadingThreadId(id)
       try {
