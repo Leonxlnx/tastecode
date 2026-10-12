@@ -291,22 +291,55 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-12 nightly · includes main d4461e93</span>
+        <span class="meta">2026-10-12 nightly abb78ddf · includes main 0e792a64</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
+          October 12 on nightly (abb78ddf): main is synchronized through 0e792a64 with every nightly
+          provider kept (PR #1494), and Claude Code is first across nightly's longer provider lists
+          (PR #1495). Cursor, Antigravity and Pi keep reading past a frame that fails its schema or
+          a listener that throws (PR #1494). The Design agent keeps one design language per page: it
+          samples website references from one anchor site and then similar profiled sites (53 style
+          profiles), matches a dashboard screen to the request's domain (PR #1485), tells every
+          phase to follow the anchor's shared designTokens with at most two font families (PR
+          #1478), and audits generated fonts and radii as bounded Review findings while Brand sees
+          only the anchor and up to two same-site references; finished dashboards say "Dashboard
+          built." (PR #1493). A bad providers.json entry no longer breaks every API connection, and
+          Antigravity is found in %LOCALAPPDATA%\agy\bin (PR #1489).
+        </p>
+        <p>
+          October 12 (main 0e792a64): Claude Code is listed first wherever providers appear and is
+          the default for new users, and picker groups keep that order while models load (PR #1486).
+          Claude lists the 5.5 lineup first in tier order with Haiku 5.5 visible (PR #1482); Codex
+          lists only the models its CLI still ships (PR #1480). A live smoke the same day got an
+          answer from every visible model: Claude Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5 and
+          their aliases; Codex GPT-6-Astra and GPT-5.6 Sol, Terra and Luna; Grok 4.7, 4.7 Build
+          Fast, 4.6 and 4.5.
+        </p>
+        <p>
+          Fixes merged the same day: Codex questions with blank fields reach the user instead of
+          blocking the turn (PR #1479); dirty checkouts stay when a nested chat folder is gone (PR
+          #1481); a Design start that throws releases its turn (PR #1483); one failed provider
+          history source no longer breaks every chat (PR #1484); one-shot CLI commands end stdin (PR
+          #1488); a multi-folder add keeps the folders that succeeded (PR #1490); deleting a chat
+          forgets its saved model (PR #1491); a failing connection-state listener can no longer stop
+          reconnects (PR #1492). DMG update cleanup failures no longer fail a prepared macOS update
+          (PR #1487); that still needs a run on a real Mac. Issues #25, #957, #1014, #1015 and #1283
+          were closed on GitHub and moved to the team's own roadmap tool.
+        </p>
+        <p>
           <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
           work, exact verification, local workspace risks and every open PR/issue. Nightly includes
-          main through d4461e93, synchronized on 2026-10-12. The latest published desktop remains
+          main through 0e792a64, synchronized on 2026-10-12. The latest published desktop remains
           0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
           source.
         </p>
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through d4461e93. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through 0e792a64. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
@@ -635,7 +668,8 @@
           >. <a href="./DESIGN-REFERENCES.md">Reference workflow and local library setup</a>.
         </p>
         <p class="sub">
-          New Design runs sample the full eligible library without source-site or style filtering.
+          New Design runs sampled the full eligible library without source-site or style filtering
+          until 2026-10-12, when nightly moved website decks to anchor-site sampling (PR #1485).
           Complete generated candidates expand the local pool to 172 compositions and 24 heroes;
           their visual inspection remains part of the consuming run. Hero entrances and distinct
           scroll reveals are required by default. Normal follow-ups clear completed Design JSON
@@ -717,7 +751,7 @@
           <div class="kpi">
             <b>3</b>
             <span>providers in the beta</span>
-            <small>Codex, Claude Code, Grok. All working today</small>
+            <small>Claude Code, Codex, Grok. Every visible model answered on 2026-10-12</small>
           </div>
           <div class="kpi">
             <b>Ready</b>
@@ -763,8 +797,10 @@
                 <span
                   >Codex plan
                   <span class="d"
-                    >OAuth, live models, effort, steer, approvals, limits, and account-backed
-                    dictation with white voice ribbons and file attachments during recording</span
+                    >OAuth, live models limited to the ones the installed CLI ships, effort, steer,
+                    approvals, questions that reach the user even with blank fields, limits, and
+                    account-backed dictation with white voice ribbons and file attachments during
+                    recording</span
                   >
                 </span>
               </li>
@@ -773,11 +809,11 @@
                 <span
                   >Claude Code plan
                   <span class="d"
-                    >Agent SDK session over the installed CLI, complete versioned models, steer,
-                    resume, approvals, structured questions, pasted and selected image input,
-                    selected file references, structured subscription limits, and project MCP
-                    definitions on start and resume; unsupported inherited-server hiding is rejected
-                    before saving</span
+                    >Agent SDK session over the installed CLI, complete versioned models with the
+                    5.5 lineup first in tier order and Haiku 5.5 visible, steer, resume, approvals,
+                    structured questions, pasted and selected image input, selected file references,
+                    structured subscription limits, and project MCP definitions on start and resume;
+                    unsupported inherited-server hiding is rejected before saving</span
                   >
                 </span>
               </li>
@@ -935,12 +971,14 @@
                     discovery retries after reconnect while a valid catalog remains usable; source
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
-                    remain picker inclusion; the flat list is the first-run layout, current Codex
-                    and exact Claude defaults are prioritized; superseded GPT and Claude versions
-                    start hidden, Claude account labels include the available Max multiplier, and
-                    Grok 4.5 and 4.6 remain discoverable, provider readiness stays silent during
-                    new-chat source changes, and saved custom ids remain usable while their
-                    management UI is parked</span
+                    remain picker inclusion; the flat list is the first-run layout; Claude Code,
+                    Codex and Grok groups keep that order while models load, followed on nightly by
+                    the other CLIs, ACP agents and API connections, and new users start on Claude
+                    Code; current Codex and exact Claude defaults are prioritized; superseded GPT
+                    and Claude versions start hidden, Claude account labels include the available
+                    Max multiplier, and Grok 4.5 and 4.6 remain discoverable, provider readiness
+                    stays silent during new-chat source changes, and saved custom ids remain usable
+                    while their management UI is parked</span
                   >
                 </span>
               </li>
@@ -1205,8 +1243,9 @@
                     after merged
                     <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>; not
                     released on public beta. The 200 reviewed generated desktop/mobile dashboard
-                    pairs (400 WebPs) are imported in a separate catalog with provenance. Uniform
-                    group-first selection supplies one complete app shell. Plans use operate_monitor
+                    pairs (400 WebPs) are imported in a separate catalog with provenance. One
+                    complete app shell is chosen by matching the request's domain, uniformly among
+                    the best matches; finished runs say "Dashboard built." Plans use operate_monitor
                     and functional filters, sorting, tabs, navigation, drawers and charts, including
                     keyboard access, focus restoration and reduced motion. Native charts and visibly
                     identified demo values avoid website-only validation blockers. Image capability
@@ -1251,32 +1290,35 @@
                     review can pass; every new page section records one of the human-authored beta
                     layout families and exact case IDs, invalid or adjacent duplicate compositions
                     fail before Build, and Build plus Review must preserve the selected geometry;
-                    new runs sample catalog and complete generated candidates uniformly, with
-                    distinct feature/about compositions before reuse; the legacy 132-direction deck
-                    remains for older saved runs; supplied reference pixels and selected direction
-                    IDs persist across phases; approved artifacts and assets are checked before
-                    reuse, duplicate briefing IDs are rejected, and exact output rules inspect
-                    nested files; brand palettes supply optional dependency-free card, section, and
-                    page gradient recipes; each section records a purposeful motion trigger, timing,
-                    easing, and reduced-motion equivalent, with visible hero and scroll entrances
-                    required by default; reference labels and line lengths are retained, while
-                    internal placeholders, unsupported claims and redundant Hero support copy remain
-                    rejected; Brand limits typography to two approved families, with forty
-                    randomized choices for new identities; Page, Asset, Build, and Review require
-                    reference-based card systems, meaningful brand-accent use, and real image
-                    acquisition when provider tools are available; they block ornamental SVG filler,
-                    divider-grid templates, off-reference card rails, unstyled controls, overflow,
-                    and heading geometry that loses the reference; representative content stays out
-                    of page disclaimers and reaches the final Harness response as a publishing
-                    verification note; serialized hidden capture remains the review authority,
-                    scrolls through lazy content, audits the whole document, captures a bounded
-                    whole-page image per viewport, waits for animation, font, and image settlement,
-                    confines navigation and redirects to the preview origin, and verifies the final
-                    URL; negotiated ACP image prompts receive the screenshots, and shared browser
-                    storage and cache are cleared before the next capture; successful previews
-                    remain reachable until their owning thread closes or starts a replacement, and a
-                    completed queued Design turn stays idle even when its provider start promise
-                    resolves late</span
+                    new website runs sample one anchor site first, then the closest profiled sites,
+                    then the uniform pool, with distinct feature/about compositions before reuse;
+                    every phase keeps the anchor's one design language through shared designTokens
+                    and at most two font families, Brand sees only the anchor and same-site
+                    references, and a font and radius audit adds bounded Review findings; the legacy
+                    132-direction deck remains for older saved runs; supplied reference pixels and
+                    selected direction IDs persist across phases; approved artifacts and assets are
+                    checked before reuse, duplicate briefing IDs are rejected, and exact output
+                    rules inspect nested files; brand palettes supply optional dependency-free card,
+                    section, and page gradient recipes; each section records a purposeful motion
+                    trigger, timing, easing, and reduced-motion equivalent, with visible hero and
+                    scroll entrances required by default; reference labels and line lengths are
+                    retained, while internal placeholders, unsupported claims and redundant Hero
+                    support copy remain rejected; Brand limits typography to two approved families,
+                    with forty randomized choices for new identities; Page, Asset, Build, and Review
+                    require reference-based card systems, meaningful brand-accent use, and real
+                    image acquisition when provider tools are available; they block ornamental SVG
+                    filler, divider-grid templates, off-reference card rails, unstyled controls,
+                    overflow, and heading geometry that loses the reference; representative content
+                    stays out of page disclaimers and reaches the final Harness response as a
+                    publishing verification note; serialized hidden capture remains the review
+                    authority, scrolls through lazy content, audits the whole document, captures a
+                    bounded whole-page image per viewport, waits for animation, font, and image
+                    settlement, confines navigation and redirects to the preview origin, and
+                    verifies the final URL; negotiated ACP image prompts receive the screenshots,
+                    and shared browser storage and cache are cleared before the next capture;
+                    successful previews remain reachable until their owning thread closes or starts
+                    a replacement, and a completed queued Design turn stays idle even when its
+                    provider start promise resolves late</span
                   >
                 </span>
               </li>
