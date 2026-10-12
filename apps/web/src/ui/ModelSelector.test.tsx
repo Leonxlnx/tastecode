@@ -411,6 +411,23 @@ describe('ModelSelector', () => {
     )
   })
 
+  it('shows the level as a bar meter beside the effort in the trigger', () => {
+    renderSelector({ effort: 'medium' })
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    const bars = Array.from(trigger.querySelectorAll('.model-selector__trigger-bar'))
+    expect(bars.map((bar) => bar.classList.contains('is-filled'))).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ])
+    expect(
+      trigger.querySelector('.model-selector__trigger-meter')?.getAttribute('aria-hidden'),
+    ).toBe('true')
+    expect(trigger.querySelector('.model-selector__trigger-effort')?.textContent).toBe('Medium')
+  })
+
   it('shows compact models immediately and leaves effort and tier to the owner', async () => {
     const { onModelChange, onEffortChange, onServiceTierChange } = renderSelector({
       effort: 'xhigh',

@@ -46,6 +46,9 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortLabel = getFriendlyEffortLabel(selectedEffort)
+  const effortOptions = model?.reasoningEfforts ?? []
+  const effortIndex =
+    selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
 
   return (
@@ -71,7 +74,19 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
               {choice ? <ProviderIcon mark={choice.mark} size={14} /> : null}
               {getCompactModelName(model?.displayName)}
             </span>
-            <span className="model-selector__trigger-effort">{effortLabel}</span>
+            <span className="model-selector__trigger-level">
+              {effortOptions.length > 1 && effortIndex >= 0 ? (
+                <span className="model-selector__trigger-meter" aria-hidden>
+                  {effortOptions.map((option, index) => (
+                    <span
+                      key={option}
+                      className={`model-selector__trigger-bar${index <= effortIndex ? ' is-filled' : ''}`}
+                    />
+                  ))}
+                </span>
+              ) : null}
+              <span className="model-selector__trigger-effort">{effortLabel}</span>
+            </span>
           </span>
           <span className="model-selector__trigger-chevron" aria-hidden>
             <ChevronDown size={15} />

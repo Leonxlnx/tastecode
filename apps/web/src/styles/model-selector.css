@@ -47,8 +47,31 @@
   font-size: var(--t-md);
 }
 
+.model-selector__trigger-level,
+.model-selector__trigger-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.model-selector__trigger-meter {
+  gap: 2px;
+}
+
+.model-selector__trigger-bar {
+  width: 3px;
+  height: 9px;
+  border-radius: var(--r-pill);
+  background: var(--effort-meter-trigger-empty);
+  transition: background-color var(--dur-press) var(--ease-out);
+}
+
+.model-selector__trigger-bar.is-filled {
+  background: var(--text-2);
+}
+
 .model-selector__trigger-effort {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--t-md);
 }
 
