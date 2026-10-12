@@ -100,6 +100,7 @@ describe('desktop preview capture ownership', () => {
     })
     configureRendererLifecycle(renderer as unknown as WebContents, {
       cancelCaptures: () => test.owner.cancelAll(),
+      onPageReplaced: vi.fn(),
       isQuitting: () => false,
       onRepeatedCrash: vi.fn(),
     })
