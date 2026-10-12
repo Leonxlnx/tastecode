@@ -313,6 +313,50 @@ describe('ApiAgentSession', () => {
     ])
   })
 
+  it('answers a call the review rejects with a tool error instead of failing the turn', async () => {
+    let request = 0
+    let executions = 0
+    const seenMessages: unknown[] = []
+    const events: DomainEvent[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: async function* (input) {
+        seenMessages.push(structuredClone(input.messages))
+        if (request++ === 0) {
+          yield {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'write_file', input: { path: '../outside.txt' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else {
+          yield { type: 'text', delta: 'I will stay inside the workspace.' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+      reviewTool: () => {
+        throw new Error('path escapes the workspace')
+      },
+      executeTool: async () => {
+        executions++
+        return { content: 'written' }
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Write it')
+    await session.waitForTurn(turnId)
+
+    expect(executions).toBe(0)
+    expect(seenMessages[1]).toContainEqual({
+      role: 'tool',
+      content: 'Tool execution failed.',
+      toolCallId: 'call-1',
+      isError: true,
+    })
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+  })
+
   it('classifies assistant text from the transport finish reason', async () => {
     let request = 0
     const events: unknown[] = []
