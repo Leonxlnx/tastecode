@@ -141,6 +141,28 @@ describe('Cursor adapter', () => {
     }
   })
 
+  it('keeps the session instructions for the next turn when the CLI cannot start', async () => {
+    const prompts: string[] = []
+    let attempts = 0
+    const adapter = new CursorAdapter({
+      spawn: (_command, args) => {
+        attempts += 1
+        if (attempts === 1) throw new Error('spawn failed')
+        prompts.push(args.at(-1)!)
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { instructions: 'Answer plainly.' })
+
+    await expect(adapter.sendTurn(thread.id, 'first')).rejects.toThrow('spawn failed')
+    await adapter.sendTurn(thread.id, 'retry')
+
+    expect(prompts).toEqual([
+      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nretry',
+    ])
+    adapter.dispose()
+  })
+
   it('resumes, force-maps trusted modes and interrupts honestly', async () => {
     const child = new FakeChild()
     let args: string[] = []

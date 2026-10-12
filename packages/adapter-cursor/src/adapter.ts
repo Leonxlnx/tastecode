@@ -156,7 +156,6 @@ export class CursorAdapter extends EventEmitter<Events> {
       this.#instructionsPending && this.#options.instructions
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
-    this.#instructionsPending = false
     const args = [
       '--print',
       '--output-format',
@@ -169,6 +168,9 @@ export class CursorAdapter extends EventEmitter<Events> {
       prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
+    // The instructions count as sent only once the CLI has started; a spawn
+    // that throws keeps them for the retry.
+    this.#instructionsPending = false
     this.#child = child
     this.#turnId = turnId
     this.#mapper = new CursorEventMapper(turnId)
