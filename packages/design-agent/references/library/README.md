@@ -14,9 +14,10 @@ incomplete fragments and superseded revisions are excluded from the runtime pool
 `style-profiles.json` (version 1) describes the design language of each source site, keyed by
 the source host without `www.`: theme, palette, heading and body type, radius, buttons, density,
 imagery, layout motifs, mood, a one-line summary and any `outliers` (entry ids that do not match
-the rest of that site). The sampler uses it to keep one design language per page: sections come
-from the anchor hero's site first, then from the most similar profiled sites. The file is
-optional; a library without it, or with a malformed one, falls back to uniform sampling.
+the rest of that site). The sampler uses it to keep one design language per page: each section
+comes from the anchor hero's site first, then from close profiled sites (style score at least 10
+of 14), always in its own layout family unless that family is too sparse. The file is optional;
+a library without it, or with a malformed one, falls back to same-site and uniform sampling.
 
 These generated images are layout references, not production website assets. Source URLs
 identify the referenced sites; they do not confer rights to third-party names, logos,

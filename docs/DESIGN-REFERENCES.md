@@ -16,12 +16,20 @@ composition group across the entire eligible library. That anchor's source site 
 `www.`) defines the page's design language. Every later section comes from the first non-empty tier,
 group-first and uniform inside the tier:
 
-1. the anchor site's compositions of the same family;
-2. the anchor site's compositions of a compatible family (see below);
-3. the most similar profiled sites, the best three by score with ties included, same family before
-   compatible family;
-4. the uniform eligible pool for the family, exactly as before.
+1. the requested family on the anchor site;
+2. the requested family on close profiled sites: sites scoring at least 10 of 14 against the
+   anchor (see below), the best three by score with ties included;
+3. only for a sparse family, one with fewer than ten composition groups in the whole library: a
+   compatible family (see below) on the anchor site, then on close profiled sites;
+4. the uniform pool the family has always used: the family alone when it has at least ten groups,
+   otherwise the family together with its compatible families.
 
+The requested family always wins over compatible geometry. A FAQ, CTA, process or contact slot of
+a family with enough compositions is never filled with another section type; only sparse families
+such as stats and pricing borrow, and only when neither the anchor site nor a close site has that
+family. An earlier order tried the anchor site's compatible family before a close site's exact
+family, which on the 1,129-pair library put another section type into about a third of FAQ slots
+and half of process slots, and gave a fifth of pages two contact sections and no CTA band.
 Alternate revisions do not get extra votes. It selects up to three feature compositions and two
 about compositions without replacement, and one of each other family; the deck size is unchanged.
 Explicit reference IDs or source URLs take priority over every tier. The page planner uses only
@@ -34,11 +42,16 @@ deterministic score adds: heading type 3 when equal or 2 within the serif group 
 high-contrast serif) or the sans group (grotesk, geometric, humanist, condensed), other types only
 when equal; body type 2 or 1 by the same rule; theme 2 when equal or 1 when either is mixed; radius
 2 when equal or 1 when adjacent on sharp, small, medium, large, pill; density 1; imagery 1; and one
-point per shared mood word, at most 3. Only sites scoring above zero qualify. Entries a profile lists
-as `outliers` do not share their site's language: they never anchor a page and never fill tiers 1-3,
-but remain in the uniform fallback. An anchor site without a profile skips tier 3. A missing or
-malformed profile file means no profiles; same-site sampling still applies and selection never fails
-because of it. A library configured below can ship its own `style-profiles.json`.
+point per shared mood word, at most 3, so 14 at most. A close site scores at least 10, for example
+the same heading and body type, theme and radius plus one more trait. Half the maximum is about the
+median pair among the 53 profiled sites: it would call every second site close and put the
+library's single stats reference on a third of all pages. With 10, about the closest 8% of site
+pairs qualify; anchors without a close site fill missing families from the uniform pool. Entries a
+profile lists as `outliers` do not share their site's language: they never anchor a page and never
+fill tiers 1-3, but remain in the uniform fallback. An anchor site without a profile skips the
+close-site tiers. A missing or malformed profile file means no profiles; same-site sampling still
+applies and selection never fails because of it. A library configured below can ship its own
+`style-profiles.json`.
 
 Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar-site` or
 `fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
@@ -157,10 +170,13 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. Complete-image discovery expands this installation to 172 composition groups,
 including 24 heroes. The roughly one thousand raw generated images include fragments and revisions;
 they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
-and orchestration checks cover equal anchor-group eligibility, the anchor-site and similar-site
-tiers, outlier exclusion, missing or malformed style profiles, dashboard domain relevance, sampling
-without replacement, explicit selection, image attachment transport, catalog validation and
-persisted selection including deck sites and roles.
+and orchestration checks cover equal anchor-group eligibility, the anchor-site and close-site
+tiers, the requested family before compatible geometry, the minimum similarity score, outlier
+exclusion, missing or malformed style profiles, dashboard domain relevance, sampling without
+replacement, explicit selection, image attachment transport, catalog validation and persisted
+selection including deck sites and roles. A seeded 2,000-page simulation over the bundled library
+checks that only sparse families borrow geometry and only when their own family is out of reach,
+and that no reference reaches a quarter of all pages.
 Four clean TasteCode site runs have finished. Each was started once
 with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and
 Clearpath. The test app uses isolated data, renderer port 5185 and server port 4315. Earlier

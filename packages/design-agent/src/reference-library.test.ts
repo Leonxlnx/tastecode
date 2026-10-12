@@ -14,7 +14,11 @@ import {
   referenceCandidatesForFamily,
   selectReviewedReferences,
 } from './reference-library.js'
-import type { ReferenceStyleProfile, ReferenceStyleProfiles } from './reference-style-profiles.js'
+import {
+  MIN_SIMILAR_STYLE_SCORE,
+  type ReferenceStyleProfile,
+  type ReferenceStyleProfiles,
+} from './reference-style-profiles.js'
 
 const roots: string[] = []
 afterEach(() => {
@@ -299,7 +303,70 @@ describe('reviewed reference library', () => {
     ])
   })
 
-  it('falls back to the most similar profiled sites, ties included, before the uniform pool', () => {
+  it('fills a slot with its own family before borrowing compatible geometry', () => {
+    const root = library()
+    const site = (id: string, family: string, name: string) => ({
+      ...entry,
+      id,
+      group: id,
+      family,
+      source: `https://${name}.example/`,
+    })
+    const style = {
+      theme: 'light',
+      headingType: 'serif',
+      bodyType: 'serif',
+      radius: 'small',
+      density: 'airy',
+    }
+    const styles = profiles({
+      'a.example': style,
+      's.example': style,
+      'far.example': { theme: 'dark', headingType: 'mono', bodyType: 'mono' },
+    })
+    save(root, [
+      site('a-hero', 'hero', 'a'),
+      site('a-proof-1', 'social_proof', 'a'),
+      site('a-proof-2', 'social_proof', 'a'),
+      site('a-cta-1', 'cta', 'a'),
+      site('a-cta-2', 'cta', 'a'),
+      site('far-stats', 'stats', 'far'),
+      // Eleven contact groups: contact is not sparse, so it never borrows CTA geometry.
+      ...Array.from({ length: 10 }, (_, index) =>
+        site(`c${index}-contact`, 'contact', `c${index}`),
+      ),
+      site('s-contact', 'contact', 's'),
+      site('s-stats', 'stats', 's'),
+    ])
+    const references = loadReviewedReferences(root)
+    const deck = (without: string[]) =>
+      selectReviewedReferences(
+        brief,
+        references.filter(({ id }) => !without.includes(id)),
+        () => 0,
+        styles,
+      ).map(({ id, family, role, cue }) =>
+        [id, family, role, /Sampled for (\w+) content/u.exec(cue)?.[1]].filter(Boolean).join(':'),
+      )
+    // The similar site's contact beats the anchor site's unused CTA.
+    expect(deck(['s-stats'])).toEqual([
+      'a-hero:hero:anchor',
+      'a-proof-1:social_proof:same-site',
+      // Stats is sparse and no close site has one, so the anchor site's proof is borrowed.
+      'a-proof-2:social_proof:same-site:stats',
+      'a-cta-1:cta:same-site',
+      's-contact:contact:similar-site',
+    ])
+    // Without a close contact, the uniform contact pool still beats the anchor site's CTA.
+    expect(deck(['s-stats', 's-contact']).slice(3)).toEqual([
+      'a-cta-1:cta:same-site',
+      'c0-contact:contact:fallback',
+    ])
+    // A close site's real stats section beats borrowed geometry from the anchor site.
+    expect(deck([])[2]).toBe('s-stats:stats:similar-site')
+  })
+
+  it('falls back to the closest profiled sites, ties included, but never to loosely related ones', () => {
     const root = library()
     const anchorStyle = {
       theme: 'light',
@@ -310,18 +377,28 @@ describe('reviewed reference library', () => {
       imagery: 'photographic',
       mood: ['calm', 'editorial', 'warm'],
     }
+    const sharedType = { theme: 'light', headingType: 'serif', bodyType: 'grotesk-sans' }
     const styles = profiles({
       'anchor.example': { ...anchorStyle, summary: 'Calm serif editorial.' },
+      // Scores against the anchor: 14, 12, 11, 11, 10 and 9; the minimum is 10.
       's1.example': anchorStyle,
-      's2.example': { theme: 'light', headingType: 'serif', bodyType: 'grotesk-sans' },
-      's3.example': { theme: 'mixed', headingType: 'high-contrast-serif' },
-      's4.example': { headingType: 'serif' },
-      's5.example': { density: 'airy' },
+      's2.example': { ...anchorStyle, mood: ['calm'] },
+      's3.example': { ...sharedType, radius: 'small', density: 'airy', imagery: 'photographic' },
+      's4.example': {
+        ...anchorStyle,
+        headingType: 'high-contrast-serif',
+        bodyType: 'geometric-sans',
+        mood: ['calm', 'editorial'],
+      },
+      's5.example': { ...sharedType, radius: 'small', density: 'airy' },
+      'near.example': { ...sharedType, radius: 'medium', density: 'airy' },
       'dissimilar.example': { theme: 'dark', headingType: 'mono', bodyType: 'mono' },
     })
+    expect(MIN_SIMILAR_STYLE_SCORE).toBe(10)
+    const sites = ['s1', 's2', 's3', 's4', 's5', 'near', 'dissimilar', 'unprofiled']
     save(root, [
       { ...entry, id: 'anchor-hero', group: 'anchor-hero', source: 'https://anchor.example/' },
-      ...['s1', 's2', 's3', 's4', 's5', 'dissimilar', 'unprofiled'].map((name) => ({
+      ...sites.map((name) => ({
         ...entry,
         id: `${name}-footer`,
         group: `${name}-footer`,
@@ -330,8 +407,13 @@ describe('reviewed reference library', () => {
       })),
     ])
     const references = loadReviewedReferences(root)
-    const pick = (chooseIndex: (length: number) => number) =>
-      selectReviewedReferences(brief, references, chooseIndex, styles)
+    const pick = (chooseIndex: (length: number) => number, without: string[] = []) =>
+      selectReviewedReferences(
+        brief,
+        references.filter(({ id }) => !without.includes(id)),
+        chooseIndex,
+        styles,
+      )
     const lastDeck = pick((length) => length - 1)
     expect(lastDeck[0]).toMatchObject({ id: 'anchor-hero', role: 'anchor' })
     expect(lastDeck[0]?.style).toBe('Calm serif editorial.')
@@ -341,6 +423,13 @@ describe('reviewed reference library', () => {
       [0, 1, 2, 3].map((index) => pick((length) => (length === 4 ? index : 0))[1]?.id),
     )
     expect(reachable).toEqual(new Set(['s1-footer', 's2-footer', 's3-footer', 's4-footer']))
+    // Once the closer sites are gone, s5 still qualifies, but a site below the minimum never does.
+    const closer = ['s1-footer', 's2-footer', 's3-footer', 's4-footer']
+    expect(pick(() => 0, closer)[1]).toMatchObject({ id: 's5-footer', role: 'similar-site' })
+    expect(pick(() => 0, [...closer, 's5-footer'])[1]).toMatchObject({
+      id: 'near-footer',
+      role: 'fallback',
+    })
     // Similar sites never take a slot from the anchor site itself.
     const withAnchorFooter = [
       ...references,
@@ -443,7 +532,13 @@ describe('reviewed reference library', () => {
     ])
     vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', root)
     const profileFile = path.join(root, 'style-profiles.json')
-    const shared = { theme: 'dark', headingType: 'serif', bodyType: 'serif' }
+    const shared = {
+      theme: 'dark',
+      headingType: 'serif',
+      bodyType: 'serif',
+      radius: 'small',
+      density: 'airy',
+    }
     writeFileSync(
       profileFile,
       JSON.stringify({

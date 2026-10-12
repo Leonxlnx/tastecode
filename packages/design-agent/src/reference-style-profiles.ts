@@ -111,6 +111,20 @@ function typeScore(anchor: string | undefined, other: string | undefined, exact:
 }
 
 /**
+ * The highest {@link styleSimilarity}: heading 3, body 2, theme 2, radius 2, density 1, imagery 1
+ * and mood 3.
+ */
+export const MAX_STYLE_SIMILARITY = 14
+
+/**
+ * The lowest {@link styleSimilarity} that still counts as a similar site. Half the maximum (7) is
+ * about the median pair among the 53 profiled sites, so it would call every second site similar
+ * and let one broadly similar site supply a rare section to a third of all pages. 10 keeps about
+ * the closest 8% of site pairs: matching heading and body type, theme and radius plus one more.
+ */
+export const MIN_SIMILAR_STYLE_SCORE = 10
+
+/**
  * Deterministic design-language similarity. Type carries the most weight because mixed type
  * systems were the most visible drift; theme and radius follow, then density, imagery and mood.
  */
