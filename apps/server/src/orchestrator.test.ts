@@ -271,6 +271,7 @@ function harness(
   const lifecycleScheduleChanges: Array<'later' | number | undefined> = []
   const logs: string[] = []
   const queueChanges: Array<{ threadId: string; itemIds: string[] }> = []
+  const queueStates: Array<{ threadId: string; itemIds: string[]; canSteer: boolean }> = []
   const usageChanges: ProviderId[] = []
   const mcpChanges: Array<{ provider: ProviderId; projectPath: string }> = []
   const queueNotificationError: QueueNotificationError = {}
@@ -351,7 +352,9 @@ function harness(
         ...(serializedEvent === undefined ? {} : { serializedEvent }),
       }),
     onQueue: (threadId, state) => {
-      queueChanges.push({ threadId, itemIds: state.items.map(({ id }) => id) })
+      const itemIds = state.items.map(({ id }) => id)
+      queueChanges.push({ threadId, itemIds })
+      queueStates.push({ threadId, itemIds, canSteer: state.canSteer })
       if (queueNotificationError.current) throw queueNotificationError.current
     },
     onSideEvent: (threadId, event) => sideReceived.push({ threadId, event }),
@@ -387,6 +390,7 @@ function harness(
     lifecycleScheduleChanges,
     logs,
     queueChanges,
+    queueStates,
     usageChanges,
     mcpChanges,
     queueNotificationError,
@@ -3834,6 +3838,62 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('keeps queued prompts out of a running Design phase turn', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-steer-'))
+    const { orchestrator, sessions, queueStates } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      const session = sessions[0]!
+      session.turnIds.push('first', 'design', 'after')
+      await orchestrator.submitTurn(thread.id, 'First')
+      session.emit(turnStarted(thread.id, 'first'))
+      await orchestrator.submitTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const queued = await orchestrator.submitTurn(thread.id, 'Make the hero blue.')
+      if (!queued.queued) throw new Error('expected the prompt to queue')
+      expect(orchestrator.queue(thread.id).canSteer).toBe(true)
+
+      session.emit({ type: 'turn.completed', turnId: 'first', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2), { timeout: 10_000 })
+      session.emit(turnStarted(thread.id, 'design'))
+      await vi.waitFor(() => expect(orchestrator.isTurnRunning(thread.id)).toBe(true), {
+        timeout: 10_000,
+      })
+
+      // The client keeps the last pushed canSteer, so the pushes must follow the run.
+      expect(orchestrator.queue(thread.id).canSteer).toBe(false)
+      expect(queueStates.at(-1)).toEqual({
+        threadId: thread.id,
+        itemIds: [queued.queuedTurn.id],
+        canSteer: false,
+      })
+      await expect(orchestrator.steerQueuedTurn(thread.id, queued.queuedTurn.id)).rejects.toThrow(
+        'queued prompts wait until the Design run finishes',
+      )
+      expect(session.steered).toEqual([])
+      expect(orchestrator.queue(thread.id).items.map(({ text }) => text)).toEqual([
+        'Make the hero blue.',
+      ])
+
+      const beforeRunEnds = queueStates.length
+      session.emit({ type: 'turn.completed', turnId: 'design', status: 'interrupted' })
+      await vi.waitFor(
+        () =>
+          expect(queueStates[beforeRunEnds]).toEqual({
+            threadId: thread.id,
+            itemIds: [queued.queuedTurn.id],
+            canSteer: true,
+          }),
+        { timeout: 10_000 },
+      )
+      await vi.waitFor(() => expect(session.sent.at(-1)).toBe('Make the hero blue.'), {
+        timeout: 10_000,
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+    }
+  })
+
   async function previewRecoveryHarness(
     error: unknown,
     phase: 'preview' | 'review' | 'repair' = 'preview',
@@ -4044,30 +4104,28 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
-  it('keeps a restored steer queued while Design captures between phases', async () => {
+  it('keeps a refused steer queued while Design captures between phases', async () => {
     const result = await previewRecoveryHarness(undefined)
-    let rejectSteer = (_error: Error) => {}
     try {
       result.capturePreview.mockReset()
       result.capturePreview.mockImplementation(() => new Promise(() => {}))
       const session = result.sessions[0]!
       const queued = await result.orchestrator.submitTurn('preview-recovery', 'Queued work')
       if (!queued.queued) throw new Error('expected the prompt to queue behind Design')
-      session.steerBarriers.push(new Promise<void>((_resolve, reject) => (rejectSteer = reject)))
-      const steering = result.orchestrator.steerQueuedTurn('preview-recovery', queued.queuedTurn.id)
+      await expect(
+        result.orchestrator.steerQueuedTurn('preview-recovery', queued.queuedTurn.id),
+      ).rejects.toThrow('queued prompts wait until the Design run finishes')
       session.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
       session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
       await vi.waitFor(() => expect(result.capturePreview).toHaveBeenCalledTimes(1))
 
-      rejectSteer(new Error('no running turn'))
-      await expect(steering).rejects.toThrow('no running turn')
       await new Promise<void>((resolve) => setTimeout(resolve, 50))
+      expect(session.steered).toEqual([])
       expect(session.sent).toHaveLength(1)
       expect(result.orchestrator.queue('preview-recovery').items.map(({ text }) => text)).toEqual([
         'Queued work',
       ])
     } finally {
-      rejectSteer(new Error('cleanup'))
       await result.orchestrator.disposeAll()
       result.store.close()
       rmSync(result.workspace, { recursive: true, force: true })
