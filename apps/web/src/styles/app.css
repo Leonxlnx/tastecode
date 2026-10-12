@@ -585,18 +585,15 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
+/* The same two soft steps as the settings navigation: a hover surface that
+   is actually visible on the rail (--surface was 1.0:1 on it in light), and
+   one step further for the open chat. No shadow or border on either. */
 .sessrow:hover {
-  --sess-bg: var(--surface);
+  --sess-bg: var(--control-hover);
 }
 
 .sessrow.is-active {
-  --sess-bg: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
-  box-shadow: none;
-}
-
-:root[data-theme='light'] .sessrow.is-active {
-  --sess-bg: var(--chrome-raised);
-  box-shadow: var(--chrome-shadow);
+  --sess-bg: var(--menu-hover);
 }
 
 .sessrow.is-reorderable .sess {
@@ -929,6 +926,11 @@
   margin-right: 3px;
 }
 
+/* The head already wears the hover surface; a tint keeps the button visible on it. */
+.proj__head > .icon-btn:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
 .proj__toggle {
   flex: 1;
   min-width: 0;
@@ -1198,9 +1200,11 @@
     color var(--dur-fast) var(--ease-out);
 }
 
+/* A tint rather than a surface token, so it still shows on the open chat's
+   own surface. */
 .sess__action:hover,
 .sess__action:focus-visible {
-  background: var(--surface-3);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
 }
 
