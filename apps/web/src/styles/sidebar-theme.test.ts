@@ -53,8 +53,13 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.rail__search \{[^}]*width: 26px;[^}]*height: 26px;/s)
   })
 
-  it('uses medium-weight chat titles and softens only their dark-theme color', () => {
-    expect(appCss).toMatch(/\.sess__title \{[^}]*font-size: 12\.5px;[^}]*font-weight: 500;/s)
+  it('sets chat titles in the rail type, lighter than their project, and softens only dark', () => {
+    const titleRule =
+      appCss.match(/^\.sess__title \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
+    expect(titleRule).not.toContain('font-size')
+    expect(titleRule).not.toContain('font-weight')
+    expect(appCss).toMatch(/\.proj__name \{[^}]*font-weight: 500;/s)
+    expect(appCss).toMatch(/\.sessrow\.is-unread \.sess__title \{[^}]*font-weight: 560;/s)
     expect(appCss).toMatch(
       /:root\[data-theme='dark'\] \.sess__title \{[^}]*color: color-mix\(in srgb, var\(--rail-text\) 78%, transparent\);/s,
     )
@@ -74,21 +79,20 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('reserves touch-row actions without obscuring compact source identity', () => {
+  it('reserves touch-row actions so the time stays beside them', () => {
     expect(appCss).toMatch(
       /@media \(max-width: 700px\) \{[\s\S]*?\.sessrow \.sess \{[^}]*padding-right: 56px/s,
     )
-    expect(appCss).toMatch(
-      /@media \(max-width: 700px\) \{[\s\S]*?\.sess__source \{[^}]*max-width: 68px/s,
-    )
+    expect(appCss).not.toContain('.sess__source')
   })
 
-  it('hides provider text when chat row actions are visible', () => {
+  it('hides the time and status when chat row actions are visible', () => {
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\) \{[^}]*opacity: 0;/s,
+      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__meta \{[^}]*opacity: 0;/s,
     )
+    expect(appCss).toMatch(/\.sessrow:focus-within \.sess__meta \{[^}]*opacity: 0;/s)
     expect(appCss).toMatch(
-      /\.sessrow:focus-within \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\) \{[^}]*opacity: 0;/s,
+      /\.sess__time \{[^}]*font-size: var\(--t-xs\);[^}]*font-variant-numeric: tabular-nums;/s,
     )
   })
 
@@ -97,17 +101,18 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
     expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 28px;/s)
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 9px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
     )
-    expect(appCss).toMatch(/\.sess \{[^}]*padding: 0 12px 0 28px;/s)
-    expect(appCss).toMatch(/\.sessrow\.is-pinned \.sess \{[^}]*padding-left: 7px;/s)
+    // The provider mark fills the gutter under the folder mark (7px + 13px +
+    // 8px), so chat titles start on the project name's line, pinned or not.
+    expect(appCss).toMatch(/\.sess \{[^}]*gap: 8px;[^}]*padding: 0 8px 0 7px;/s)
+    expect(appCss).toMatch(/\.sess__provider \{[^}]*width: 13px;[^}]*height: 13px;/s)
+    expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
   })
 
   it('gives project actions room away from the scrollbar', () => {
-    expect(appCss).toMatch(
-      /\.proj__head > \.icon-btn \{[^}]*width: 22px;[^}]*height: 22px;[^}]*margin-right: 3px;/s,
-    )
+    expect(appCss).toMatch(/\.proj__head > \.icon-btn \{[^}]*width: 28px;[^}]*height: 28px;/s)
   })
 
   it('keeps the provider visible before the working chat spinner', () => {
@@ -169,23 +174,23 @@ describe('sidebar theme CSS', () => {
   it('gives project rows a consistent readable rhythm', () => {
     const sessRule = appCss.match(/^\.sess \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
     expect(appCss).toMatch(/\.rail__body \{[^}]*padding: 8px 4px 18px 10px;/s)
-    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 7px;/s)
+    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 4px;/s)
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
     expect(appCss).toMatch(
-      /\.proj__head \{[^}]*height: 26px;[^}]*min-height: 26px;[^}]*padding-right: 6px;/s,
+      /\.proj__head \{[^}]*height: 28px;[^}]*min-height: 28px;[^}]*padding-right: 4px;/s,
     )
     expect(appCss).toMatch(
-      /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 26px;[^}]*min-height: 26px;/s,
+      /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 28px;[^}]*min-height: 28px;/s,
     )
-    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 25px;[^}]*border-radius: var\(--r-md\);/ms)
-    expect(sessRule).toContain('height: 25px;')
-    expect(sessRule).toContain('padding: 0 12px 0 28px;')
+    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 28px;[^}]*border-radius: var\(--r-md\);/ms)
+    expect(sessRule).toContain('height: 28px;')
+    expect(sessRule).toContain('padding: 0 8px 0 7px;')
     expect(sessRule).toContain('font-size: var(--rail-font-size);')
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
-    expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 27')
+    expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 30')
     expect(appCss).toMatch(
       /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
     )

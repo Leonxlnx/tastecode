@@ -71,7 +71,8 @@ import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
+import { ProviderIcon } from './ProviderIcon.js'
+import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
@@ -190,7 +191,8 @@ const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
-const VIRTUAL_SESSION_ROW_HEIGHT = 27
+/** A 28px chat row plus the list's 2px row gap. */
+const VIRTUAL_SESSION_ROW_HEIGHT = 30
 const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
 const VIRTUAL_SESSION_OVERSCAN = 6
 const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
@@ -1749,7 +1751,7 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''}`}
+      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1769,14 +1771,17 @@ function SessionRow(props: {
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
-        {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon mark={providerPresentation(props.session.provider).mark} size={12} />
+        </span>
         <span className="sess__title">{props.session.title}</span>
-        <SourceIdentity
-          className="sess__source"
-          presentation={providerPresentation(props.session.provider)}
-          density="compact"
-        />
-        <SessionStatus status={props.session.status} />
+        <span className="sess__meta">
+          <SessionStatus
+            status={props.session.status}
+            since={props.session.statusSince ?? props.session.createdAt}
+          />
+          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        </span>
       </button>
 
       <span className="sess__actions">
@@ -1898,7 +1903,9 @@ function deleteChatsCopy(project: Project): ConfirmCopy {
   }
 }
 
-function SessionStatus(props: { status: Session['status'] }) {
+/** A live state takes the time's place: while a chat works or waits, that is
+ *  the news, and how long ago it started is not. */
+function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
     return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
   }
@@ -1911,7 +1918,17 @@ function SessionStatus(props: { status: Session['status'] }) {
     return <span className="sess__status-dot is-failed" aria-hidden />
   }
 
-  return null
+  return <SessionTime at={props.since} />
+}
+
+function SessionTime(props: { at: number }) {
+  const now = useSyncExternalStore(subscribeSessionClock, readSessionClock, readSessionClock)
+  if (!(props.at > 0)) return null
+  return (
+    <span className="sess__time" aria-hidden>
+      {compactRelativeTime(props.at, now)}
+    </span>
+  )
 }
 
 function sessionLabel(session: Session): string {

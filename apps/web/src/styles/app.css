@@ -438,7 +438,7 @@
   min-width: 0;
   max-width: 100%;
   width: 100%;
-  height: 25px;
+  height: 28px;
   background: var(--sess-bg);
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
@@ -498,7 +498,7 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+.sessrow:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -509,8 +509,12 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+  .sessrow:hover .sess__meta {
     opacity: 0;
+  }
+
+  .sessrow:hover .sess__provider {
+    color: var(--text-2);
   }
 
   .sess:hover {
@@ -744,7 +748,7 @@
 
 .proj {
   position: relative;
-  margin-bottom: 7px;
+  margin-bottom: 4px;
 }
 
 .proj[draggable='true'] > .proj__head {
@@ -779,9 +783,9 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 26px;
-  min-height: 26px;
-  padding-right: 6px;
+  height: 28px;
+  min-height: 28px;
+  padding-right: 4px;
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -791,9 +795,8 @@
 }
 
 .proj__head > .icon-btn {
-  width: 22px;
-  height: 22px;
-  margin-right: 3px;
+  width: 28px;
+  height: 28px;
 }
 
 .proj__toggle {
@@ -811,8 +814,8 @@
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
-  height: 26px;
-  min-height: 26px;
+  height: 28px;
+  min-height: 28px;
   padding: 2px 7px;
   text-align: left;
 }
@@ -831,6 +834,8 @@
 
 .proj__name {
   flex: 1;
+  /* Parents carry the weight; their chats read lighter beneath them. */
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -868,7 +873,7 @@
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
   list-style: none;
-  margin: 2px 0 9px;
+  margin: 2px 0 8px;
   padding: 0;
   /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
@@ -901,7 +906,7 @@
 .proj__sessions-toggle {
   width: 100%;
   max-width: 100%;
-  height: 25px;
+  height: 28px;
   padding: 0 28px;
   background: none;
   border: 0;
@@ -927,10 +932,10 @@
 .sess {
   flex: 1;
   width: 100%;
-  height: 25px;
+  height: 28px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -942,8 +947,9 @@
   letter-spacing: var(--rail-letter-spacing);
   /* No standing reservation for the hover actions: they overlay the right
      edge with their own fade, so the title keeps the full row width and the
-     rail stays honest at any size. */
-  padding: 0 12px 0 28px;
+     rail stays honest at any size. The provider mark sits in the gutter under
+     the project's folder, so every title starts on the project name's line. */
+  padding: 0 8px 0 7px;
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -961,7 +967,7 @@
 }
 
 .sessrow > .rename--session {
-  height: 25px;
+  height: 28px;
   padding: 0 12px 0 28px;
   color: color-mix(in srgb, var(--text-2) 82%, transparent);
   font-size: var(--rail-font-size);
@@ -973,14 +979,6 @@
   margin: 0 0 10px;
 }
 
-.sessrow.is-pinned .sess {
-  padding-left: 7px;
-}
-
-.sessrow.is-pinned > .rename--session {
-  padding-left: 7px;
-}
-
 .sess__title {
   flex: 1;
   /* min-width lets the title shrink and ellipsize first, so the status dot
@@ -989,12 +987,47 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
 }
 
 :root[data-theme='dark'] .sess__title {
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
+}
+
+.sessrow:is(.is-active, .is-unread) .sess__title {
+  color: var(--rail-text);
+}
+
+.sessrow.is-unread .sess__title {
+  font-weight: 560;
+}
+
+.sess__provider {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.sessrow.is-active .sess__provider {
+  color: var(--text-2);
+}
+
+.sess__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__time {
+  color: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .sess__unread-dot {
@@ -1005,20 +1038,14 @@
   flex: none;
 }
 
-.sess__source {
-  max-width: 78px;
-  flex: none;
-  color: var(--text-3);
-  font-size: 10px;
-}
-
 .sess__actions {
   position: absolute;
-  right: 6px;
+  right: 0;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 0;
   padding-left: 12px;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
   background: linear-gradient(90deg, transparent, var(--sess-bg) 10px);
   opacity: 0;
   pointer-events: none;
@@ -1028,10 +1055,13 @@
 .sess__action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
+  /* A 28px target with a 24px face: the hover fill stays inside the row. */
+  width: 28px;
+  height: 28px;
+  padding: 2px;
   background: none;
+  /* After the shorthand, which would reset it. */
+  background-clip: content-box;
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
@@ -1043,7 +1073,7 @@
 
 .sess__action:hover,
 .sess__action:focus-visible {
-  background: var(--surface-3);
+  background-color: var(--surface-3);
   color: var(--text);
 }
 
@@ -3576,10 +3606,6 @@
      absolute action layer at the rail's 240px minimum. */
   .sessrow .sess {
     padding-right: 56px;
-  }
-
-  .sess__source {
-    max-width: 68px;
   }
 
   .sessrow .sess__actions,
