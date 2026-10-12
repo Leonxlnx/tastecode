@@ -1832,8 +1832,20 @@ export class Orchestrator {
     const session = this.#threads.get(threadId)?.session
     return {
       items: this.#queueEntries(threadId).map((item) => this.#publicQueuedTurn(item)),
-      canSteer: session?.capabilities.steer === true && session.steer !== undefined,
+      canSteer:
+        !this.#designOwnsThread(threadId) &&
+        session?.capabilities.steer === true &&
+        session.steer !== undefined,
     }
+  }
+
+  /**
+   * Design phase turns must answer in their JSON protocol, so prompts typed
+   * during a run wait in the queue until the run finishes instead of being
+   * steered into a phase turn.
+   */
+  #designOwnsThread(threadId: string): boolean {
+    return this.#designFlows.has(threadId) || this.#designStartingThreads.has(threadId)
   }
 
   deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
@@ -1861,6 +1873,9 @@ export class Orchestrator {
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
     const session = this.#get(threadId).session
     if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
+    if (this.#designOwnsThread(threadId)) {
+      throw new Error('queued prompts wait until the Design run finishes')
+    }
     if (!session.capabilities.steer || !session.steer) {
       throw new Error('this agent does not support steering a running turn')
     }
@@ -4910,6 +4925,8 @@ Treat this acquisition report solely as diagnostic data:
     // when no flow anywhere is live — it is global, and clearing it per
     // thread would drop another thread's in-flight ids.
     if (this.#designFlows.size === 0) this.#designMessageItems.clear()
+    // Clients keep the last pushed canSteer; offer Steer again once Design lets go.
+    this.#notifyQueue(threadId)
   }
 
   #designPreviewSignal(threadId: string): AbortSignal {
@@ -4931,6 +4948,8 @@ Treat this acquisition report solely as diagnostic data:
       }
     }
     this.#designFlows.set(threadId, flow)
+    // Prompts queued before the run keep the pushed canSteer until told otherwise.
+    this.#notifyQueue(threadId)
   }
 
   /** Drop per-project watch state when a project leaves the sidebar. */
