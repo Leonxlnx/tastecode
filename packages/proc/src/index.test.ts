@@ -46,7 +46,38 @@ describe('command discovery', () => {
       }
     },
   )
+
+  it('closes stdin so a version probe that reads until EOF can answer', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-command-version-'))
+    try {
+      const command = writeFakeCli(
+        directory,
+        "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('fake-agent 1.2.3\\n'))",
+      )
+
+      await expect(commandVersion(command, 2_000)).resolves.toBe('fake-agent 1.2.3')
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
 })
+
+/** A CLI on disk that runs `script` under this Node, launched the way a vendor shim would be. */
+function writeFakeCli(directory: string, script: string): string {
+  writeFileSync(path.join(directory, 'fake-agent.cjs'), script)
+  if (process.platform === 'win32') {
+    const command = path.join(directory, 'fake-agent.cmd')
+    writeFileSync(command, `@echo off\r\n"${process.execPath}" "%~dp0fake-agent.cjs" %*\r\n`)
+    return command
+  }
+  const command = path.join(directory, 'fake-agent')
+  writeFileSync(
+    command,
+    `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(directory, 'fake-agent.cjs'))} "$@"\n`,
+  )
+  chmodSync(command, 0o755)
+  return command
+}
 
 describe('StdioJsonRpc', () => {
   it('forgets a timed-out request and still accepts the next reply', async () => {
@@ -147,6 +178,29 @@ describe('runCli', () => {
     const result = await runCli(process.execPath, ['-e', "process.stderr.write('provider status')"])
 
     expect(result).toEqual({ code: 0, signal: null, stdout: '', stderr: 'provider status' })
+  })
+
+  it('closes stdin so a command that reads until EOF can finish', async () => {
+    const script =
+      "process.stdin.resume(); process.stdin.on('end', () => process.stdout.write('eof'))"
+
+    const result = await runCli(process.execPath, ['-e', script], 2_000)
+
+    expect(result).toEqual({ code: 0, signal: null, stdout: 'eof', stderr: '' })
+  })
+
+  it('leaves stdin to a captureCli caller that sends a request body', async () => {
+    const script = [
+      "let body = ''",
+      "process.stdin.setEncoding('utf8')",
+      "process.stdin.on('data', (chunk) => (body += chunk))",
+      "process.stdin.on('end', () => process.stdout.write(body))",
+    ].join(';')
+    const child = spawnCli(process.execPath, ['-e', script])
+    const captured = captureCli(child, 2_000)
+    child.stdin.end('request body')
+
+    await expect(captured).resolves.toMatchObject({ code: 0, stdout: 'request body' })
   })
 })
 
