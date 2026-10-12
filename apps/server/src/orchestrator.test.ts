@@ -7932,6 +7932,57 @@ describe('isolated sessions', () => {
     }
   })
 
+  it('keeps uncommitted work when a nested project folder was deleted from its checkout', async () => {
+    const nested = path.join(repo, 'apps', 'web')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(nested, 'index.ts'), 'export {}\n')
+    execFileSync('git', ['add', '.'], { cwd: repo, windowsHide: true })
+    execFileSync('git', ['commit', '-m', 'nested'], { cwd: repo, windowsHide: true })
+    const { orchestrator, store } = harness(trees)
+    try {
+      const thread = await orchestrator.startThread('codex', nested, { isolate: true })
+      const workPath = store.thread(thread.id)!.worktreePath!
+      const checkout = path.dirname(path.dirname(workPath))
+      writeFileSync(path.join(checkout, 'file.txt'), 'agent work\n')
+      rmSync(workPath, { recursive: true, force: true })
+
+      expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(true)
+      await expect(orchestrator.discardWorktree(thread.id)).rejects.toThrow(/uncommitted/i)
+      expect(readFileSync(path.join(checkout, 'file.txt'), 'utf8')).toBe('agent work\n')
+      expect(store.thread(thread.id)?.worktreePath).toBe(workPath)
+
+      await orchestrator.discardWorktree(thread.id, true)
+      expect(existsSync(checkout)).toBe(false)
+      expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('forgets a fully deleted nested checkout without inspecting a repository above it', async () => {
+    const host = path.join(path.dirname(repo), 'host')
+    execFileSync('git', ['init', '-b', 'main', host], { windowsHide: true })
+    writeFileSync(path.join(host, 'notes.txt'), 'unrelated work\n')
+    const nested = path.join(repo, 'apps', 'web')
+    mkdirSync(nested, { recursive: true })
+    writeFileSync(path.join(nested, 'index.ts'), 'export {}\n')
+    execFileSync('git', ['add', '.'], { cwd: repo, windowsHide: true })
+    execFileSync('git', ['commit', '-m', 'nested'], { cwd: repo, windowsHide: true })
+    const { orchestrator, store } = harness(path.join(host, 'trees'))
+    try {
+      const thread = await orchestrator.startThread('codex', nested, { isolate: true })
+      const workPath = store.thread(thread.id)!.worktreePath!
+      rmSync(path.dirname(path.dirname(workPath)), { recursive: true, force: true })
+
+      expect(await orchestrator.hasUnsavedWork(thread.id)).toBe(false)
+      await orchestrator.discardWorktree(thread.id)
+      expect(store.thread(thread.id)?.worktreePath).toBeUndefined()
+      expect(readFileSync(path.join(host, 'notes.txt'), 'utf8')).toBe('unrelated work\n')
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('cleans a private checkout when MCP credential resolution fails before provider startup', async () => {
     const { orchestrator, store, credentialFailure } = harness(trees)
     orchestrator.addMcpServer('codex', repo, {
@@ -8338,6 +8389,33 @@ describe('rolling a session back', () => {
     await orchestrator.restoreCheckpoint(first.id, point.id)
     expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
     await orchestrator.disposeAll()
+  })
+
+  it('releases the shared checkout when a Design start throws before the agent accepts it', async () => {
+    const { orchestrator, sessions } = harness()
+    try {
+      const first = await orchestrator.startThread('codex', repo)
+      await orchestrator.sendTurn(first.id, 'save original')
+      sessions[0]!.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      const point = orchestrator.checkpoints(first.id)[0]!
+      const designer = await orchestrator.startThread('codex', repo)
+      sessions[1]!.sendTurn = () => {
+        throw new Error('provider failed before returning a promise')
+      }
+
+      await expect(
+        orchestrator.sendTurn(designer.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT]),
+      ).rejects.toThrow('provider failed before returning a promise')
+
+      // A start that never reached the agent must not keep the chat "starting"
+      // or hold the checkout that restores in other chats need.
+      expect(orchestrator.isTurnRunning(designer.id)).toBe(false)
+      writeFileSync(path.join(repo, 'file.txt'), 'changed\n')
+      await orchestrator.restoreCheckpoint(first.id, point.id)
+      expect(readFileSync(path.join(repo, 'file.txt'), 'utf8')).toBe('original\n')
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it('undoes only the patch from an edit block and keeps the conversation', async () => {

@@ -101,15 +101,23 @@ type ToolInput = z.infer<typeof ToolInputSchema>
  * Claude Code's versioned catalog. The SDK model control intentionally returns
  * the short interactive-picker list, including a synthetic `default` row, so
  * live discovery is merged with this catalog instead of replacing it.
+ *
+ * The current lineup comes first in tier order (Fable, Opus, Sonnet, Haiku).
+ * Older generations follow, newest generation first and in tier order within
+ * one generation.
  */
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-export const CLAUDE_MODELS: Model[] = [
+const CURRENT_CLAUDE_MODELS: Model[] = [
   claudeModel('claude-fable-5-1', 'Fable 5.1', 'Long-horizon reasoning and coding', FULL_EFFORTS),
-  claudeModel('claude-fable-5', 'Fable 5', 'Most capable — flagship tier', FULL_EFFORTS, true),
-  claudeModel('claude-opus-5', 'Opus 5', 'Deep reasoning', FULL_EFFORTS),
-  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
-  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Fastest and cheapest', []),
-  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-opus-5-5', 'Opus 5.5', 'Deep reasoning', FULL_EFFORTS, true),
+  claudeModel('claude-sonnet-5-5', 'Sonnet 5.5', 'Balanced speed and capability', FULL_EFFORTS),
+  claudeModel('claude-haiku-5-5', 'Haiku 5.5', 'Fastest and cheapest', FULL_EFFORTS),
+]
+const OLDER_CLAUDE_MODELS: Model[] = [
+  claudeModel('claude-fable-5', 'Fable 5', 'Previous Fable generation', FULL_EFFORTS),
+  claudeModel('claude-opus-5', 'Opus 5', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Previous Sonnet generation', FULL_EFFORTS),
+  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Older Opus generation', FULL_EFFORTS),
   claudeModel('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation', FULL_EFFORTS, false, 'xhigh'),
   claudeModel('claude-opus-4-6', 'Opus 4.6', 'Older Opus generation', [
     'low',
@@ -123,13 +131,15 @@ export const CLAUDE_MODELS: Model[] = [
     'high',
     'max',
   ]),
-  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Previous Sonnet generation', [
+  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Older Sonnet generation', [
     'low',
     'medium',
     'high',
     'max',
   ]),
+  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Previous Haiku generation', []),
 ]
+export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
 function claudeModel(
   id: string,
@@ -1428,33 +1438,36 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
     discovered.unshift(mapSdkModel(defaultEntry, defaultResolvedId))
   }
 
-  const merged: Model[] = []
+  // One row per model: an alias such as `sonnet` and its `[1m]` variant both
+  // resolve to the same family, and the standard-context row represents it.
   const used = new Set<DiscoveredClaudeModel>()
-  for (const catalogModel of CLAUDE_MODELS) {
-    const family = claudeModelFamily(catalogModel.id)
-    const matches = discovered.filter((entry) => claudeModelFamily(entry.resolvedId) === family)
-    const standard = matches.find((entry) => !entry.resolvedId.endsWith('[1m]'))
-    const selected = standard ?? matches[0]
-
-    if (selected) {
-      merged.push(selected.model)
-      for (const entry of matches) used.add(entry)
-    } else {
-      merged.push(catalogModel)
-    }
+  const takeFamily = (family: string): DiscoveredClaudeModel | undefined => {
+    const matches = discovered.filter(
+      (entry) => !used.has(entry) && claudeModelFamily(entry.resolvedId) === family,
+    )
+    for (const entry of matches) used.add(entry)
+    return matches.find((entry) => !entry.resolvedId.endsWith('[1m]')) ?? matches[0]
   }
+  // A live row keeps its catalog row's default flag, so an answer without a
+  // `default` row still selects the catalog default, not whichever row is first.
+  const fromCatalog = (catalog: Model[]): Model[] =>
+    catalog.map((catalogModel) => {
+      const selected = takeFamily(claudeModelFamily(catalogModel.id))
+      return selected ? { ...selected.model, isDefault: catalogModel.isDefault } : catalogModel
+    })
+
+  const current = fromCatalog(CURRENT_CLAUDE_MODELS)
+  const older = fromCatalog(OLDER_CLAUDE_MODELS)
+  const unknown: DiscoveredClaudeModel[] = []
   for (const entry of discovered) {
-    if (!used.has(entry)) merged.push(entry.model)
+    if (used.has(entry)) continue
+    const selected = takeFamily(claudeModelFamily(entry.resolvedId))
+    if (selected) unknown.push(selected)
   }
-
-  const preferred = ['claude-fable-5-1', 'claude-opus-5-5', 'claude-opus-5', 'claude-sonnet-5']
-  const rank = (model: Model): number => {
-    const resolvedId =
-      discovered.find((entry) => entry.model.id === model.id)?.resolvedId ?? model.id
-    const index = preferred.indexOf(claudeModelFamily(resolvedId))
-    return index < 0 ? preferred.length : index
-  }
-  merged.sort((left, right) => rank(left) - rank(right))
+  // A model the catalog does not list yet is most likely a new release, so it
+  // follows the current lineup instead of sinking below older generations.
+  unknown.sort((left, right) => compareClaudeReleases(left.resolvedId, right.resolvedId))
+  const merged = [...current, ...unknown.map((entry) => entry.model), ...older]
 
   let defaultIndex = defaultResolvedId
     ? merged.findIndex(
@@ -1500,8 +1513,32 @@ function claudeModelFamily(id: string): string {
   return id.replace(/\[1m\]$/, '').replace(/-\d{8}$/, '')
 }
 
+const CLAUDE_VERSIONED_ID = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/
+const CLAUDE_TIERS = ['fable', 'opus', 'sonnet', 'haiku']
+
+/**
+ * Newest version first, then Fable, Opus, Sonnet and Haiku within one version.
+ * Ids without a recognizable version keep their order after the versioned ones.
+ */
+function compareClaudeReleases(leftId: string, rightId: string): number {
+  const left = claudeRelease(leftId)
+  const right = claudeRelease(rightId)
+  if (!left || !right) return (left ? 0 : 1) - (right ? 0 : 1)
+  return right.major - left.major || right.minor - left.minor || left.tier - right.tier
+}
+
+function claudeRelease(id: string): { tier: number; major: number; minor: number } | undefined {
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
+  if (!match) return undefined
+  return {
+    tier: CLAUDE_TIERS.indexOf(match[1]!),
+    major: Number(match[2]),
+    minor: Number(match[3] ?? 0),
+  }
+}
+
 function versionedClaudeModelName(id: string): string | undefined {
-  const match = claudeModelFamily(id).match(/^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/)
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
   if (!match) return undefined
   const family = `${match[1]![0]!.toUpperCase()}${match[1]!.slice(1)}`
   const version = `${match[2]}${match[3] ? `.${match[3]}` : ''}`

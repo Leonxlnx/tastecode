@@ -184,7 +184,10 @@ async function spawnCommandVersion(
   timeoutMs: number,
 ): Promise<string | undefined> {
   try {
-    const { stdout } = await captureCli(spawnCli(command, ['--version']), timeoutMs, 64 * 1024)
+    const child = spawnCli(command, ['--version'])
+    const captured = captureCli(child, timeoutMs, 64 * 1024)
+    endStdin(child)
+    const { stdout } = await captured
     return (
       stdout
         .split('\n')
@@ -224,10 +227,27 @@ export function runCli(
   args: string[],
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
-  return captureCli(spawnCli(command, args), timeoutMs)
+  const child = spawnCli(command, args)
+  const captured = captureCli(child, timeoutMs)
+  endStdin(child)
+  return captured
 }
 
-/** Bound combined stdout/stderr before retaining bytes; settle only after owned cleanup. */
+/**
+ * Send EOF to a command that gets no input. spawnCli opens stdin as a pipe, and
+ * a CLI that reads it until EOF would otherwise wait for the time limit.
+ */
+function endStdin(child: ChildProcessWithoutNullStreams): void {
+  // A child that exits or fails to start before reading leaves a broken pipe;
+  // captureCli already reports that through the child's own events.
+  child.stdin.on('error', () => undefined)
+  child.stdin.end()
+}
+
+/**
+ * Bound combined stdout/stderr before retaining bytes; settle only after owned cleanup.
+ * stdin stays open: callers that send a request body write and end it themselves.
+ */
 export function captureCli(
   child: ChildProcessWithoutNullStreams,
   timeoutMs = 5000,

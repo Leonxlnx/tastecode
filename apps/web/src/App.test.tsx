@@ -1462,6 +1462,26 @@ describe('web client', () => {
     })
   })
 
+  it("forgets a deleted chat's saved model setup and keeps the others", async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const saved = JSON.stringify({ modelKey: 'codex:gpt-6.1-sol', effort: 'high' })
+    localStorage.setItem('harness.modelByThread:doomed-thread', saved)
+    localStorage.setItem('harness.modelByThread:untouched-thread', saved)
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'doomed-thread',
+      }),
+    )
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelByThread:doomed-thread')).toBeNull(),
+    )
+    expect(localStorage.getItem('harness.modelByThread:untouched-thread')).not.toBeNull()
+  })
+
   it('cancels a deletion safety check when the chat is selected again', async () => {
     const request = transport.request.getMockImplementation()!
     let release!: (work: typeof serverUnsavedWork) => void
@@ -1766,7 +1786,59 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+  })
+
+  it('reveals Haiku 5.5 for a version 4 profile and keeps its other choices', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          images: false,
+        },
+      },
+    ]
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem(
+      'harness.hiddenModels',
+      '["codex:gpt-5.5","claude-code:opus","claude-code:haiku"]',
+    )
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: false,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return Promise.resolve({
+        models:
+          methods['models.list'].params.parse(params).provider === 'claude-code'
+            ? ['opus', 'haiku', 'claude-opus-4-8'].map(listed)
+            : [cachedCodexChoice().model, listed('gpt-5.5')],
+      })
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe(
+        '["codex:gpt-5.5","claude-code:opus"]',
+      ),
+    )
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {
@@ -1948,6 +2020,49 @@ describe('web client', () => {
     ).toBeTruthy()
   })
 
+  it('keeps the dropped folders that were added when another one fails', async () => {
+    serverProjects = []
+    droppedProjectFolderPaths.mockResolvedValue(['/work/first-project', '/work/second-project'])
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'projects.add') {
+        const { path } = methods['projects.add'].params.parse(params)
+        if (path === '/work/second-project') return Promise.reject(new Error('permission denied'))
+        const name = path.split('/').at(-1) ?? path
+        serverProjects.push({ path, name, pinned: false, createdAt: 0, sessions: [] })
+        return Promise.resolve({ path, name, pinned: false, createdAt: 0 })
+      }
+      return request(method, params)
+    })
+
+    render(<App />)
+
+    const rail = await screen.findByRole('navigation')
+    const files = [new File([], 'first-project'), new File([], 'second-project')]
+    const dataTransfer = { files, types: ['Files'], dropEffect: 'none' }
+    fireEvent.dragEnter(rail, { dataTransfer })
+    fireEvent.drop(rail, { dataTransfer })
+
+    expect(
+      await screen.findByRole('heading', { name: 'What should we build in first-project?' }),
+    ).toBeTruthy()
+    expect(
+      await screen.findByText('Could not add /work/second-project. permission denied'),
+    ).toBeTruthy()
+  })
+
+  it('reports a folder picker failure instead of leaving it unhandled', async () => {
+    serverProjects = []
+    pickFolder.mockRejectedValue(new Error('folder dialog failed'))
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Add project' }))
+
+    expect(await screen.findByText('folder dialog failed')).toBeTruthy()
+    expect(rpcCount('projects.add')).toBe(0)
+  })
+
   it('opens the workspace directly on first launch', async () => {
     localStorage.removeItem('harness.provider')
 
@@ -1958,6 +2073,101 @@ describe('web client', () => {
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
     })
+  })
+
+  it('moves a launch without a usable stored provider to the first ready one', async () => {
+    localStorage.setItem('harness.provider', 'cursor')
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
+      serverProviders[0]!,
+    ]
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'grok' })
+      expect(localStorage.getItem('harness.provider')).toBe('grok')
+    })
+  })
+
+  it('keeps a usable stored provider when another one is listed first', async () => {
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
+      serverProviders[0]!,
+    ]
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'grok' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'grok' })
+    expect(localStorage.getItem('harness.provider')).toBe('codex')
+  })
+
+  it('starts a first launch on Claude Code until the server lists providers', async () => {
+    localStorage.removeItem('harness.provider')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list' ? new Promise(() => {}) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'claude-code' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+  })
+
+  it('keeps a stored provider instead of the Claude Code default', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list' ? new Promise(() => {}) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', {
+      provider: 'claude-code',
+    })
+  })
+
+  it('lands a first launch on Claude Code when the server lists it first', async () => {
+    localStorage.removeItem('harness.provider')
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' },
+      serverProviders[0]!,
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      const input = methods['models.list'].params.parse(params)
+      return Promise.resolve({
+        models: [
+          {
+            id: `${input.provider}-default`,
+            displayName: `${input.provider} default`,
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        ],
+      })
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:claude-code-default')
+    })
+    expect(localStorage.getItem('harness.provider')).toBe('claude-code')
   })
 
   it('defers the closed workspace panel until first intent and then retains it', async () => {
@@ -7235,6 +7445,66 @@ describe('new chats', () => {
     })
     expect(JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!)).toEqual(
       saved,
+    )
+  })
+
+  it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    localStorage.setItem('harness.model', 'codex:gpt-5.4')
+    serverProjects[0]!.sessions = [
+      { id: 'chat-retired', title: 'Retired model chat', provider: 'codex', createdAt: 1 },
+    ]
+    localStorage.setItem(
+      'harness.modelByThread:chat-retired',
+      JSON.stringify({ modelKey: 'codex:gpt-5.4', effort: 'high' }),
+    )
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              {
+                id: 'gpt-6-astra',
+                displayName: 'GPT-6-Astra',
+                isDefault: true,
+                reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+                defaultReasoningEffort: 'medium',
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.6-sol',
+                displayName: 'GPT-5.6-Sol',
+                isDefault: false,
+                reasoningEfforts: ['low', 'medium', 'high'],
+                defaultReasoningEffort: 'low',
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Retired model chat,/ }))
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'chat-retired' }),
+      )
+      expect(screen.getByRole('button', { name: 'Model and reasoning' }).textContent).toContain(
+        'Astra',
+      )
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Carry on' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.sendTurn',
+        expect.objectContaining({ threadId: 'chat-retired', model: 'gpt-6-astra' }),
+      ),
     )
   })
 

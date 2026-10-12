@@ -2,7 +2,14 @@ import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
+import {
+  ErrorCode,
+  methods,
+  PROTOCOL_VERSION,
+  type MethodName,
+  type ProviderHistorySource,
+  type ProviderId,
+} from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -203,32 +210,47 @@ export function startServer(
   lifecycleScheduler.refreshNow()
   let historyClosing = false
   let historySessionStarts = 0
-  const providerHistory = Promise.all([
-    import('@harness/adapter-codex').then(({ createCodexHistorySource }) => ({
-      provider: 'codex' as const,
-      history: createCodexHistorySource(),
-    })),
-    import('@harness/adapter-claude-code').then(({ createClaudeHistorySource }) => ({
-      provider: 'claude-code' as const,
-      history: createClaudeHistorySource(),
-    })),
-    import('@harness/adapter-grok').then(({ createGrokHistorySource }) => ({
-      provider: 'grok' as const,
-      history: createGrokHistorySource(),
-    })),
-  ]).then(
-    (sources) =>
-      new ProviderHistory(store, sources, {
-        isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
-        canImport: () => historySessionStarts === 0,
-        changed: (threadIds) => {
-          if (!historyClosing) {
-            lifecycleScheduler.changed()
-            push.broadcast('providerHistory.changed', { threadIds })
-          }
+  // Each provider's saved chats load on their own: an adapter that cannot be
+  // loaded must not keep local chats, or another provider's, from opening.
+  const historySources = [
+    {
+      provider: 'codex',
+      load: async () => (await import('@harness/adapter-codex')).createCodexHistorySource(),
+    },
+    {
+      provider: 'claude-code',
+      load: async () => (await import('@harness/adapter-claude-code')).createClaudeHistorySource(),
+    },
+    {
+      provider: 'grok',
+      load: async () => (await import('@harness/adapter-grok')).createGrokHistorySource(),
+    },
+  ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
+  /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
+  const unavailableHistory = new Map<string, unknown>()
+  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
+    (results) =>
+      new ProviderHistory(
+        store,
+        historySources.flatMap(({ provider }, index) => {
+          const result = results[index]!
+          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+          unavailableHistory.set(`external:${provider}:`, result.reason)
+          console.log(`[history] ${provider} history could not be loaded`)
+          return []
+        }),
+        {
+          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+          canImport: () => historySessionStarts === 0,
+          changed: (threadIds) => {
+            if (!historyClosing) {
+              lifecycleScheduler.changed()
+              push.broadcast('providerHistory.changed', { threadIds })
+            }
+          },
+          log: (message) => console.log(`[history] ${message}`),
         },
-        log: (message) => console.log(`[history] ${message}`),
-      }),
+      ),
   )
   const refreshProviderHistory = () => {
     if (!historyClosing)
@@ -245,7 +267,17 @@ export function startServer(
   void initialProviderHistory.catch(() => undefined)
 
   async function loadProviderHistory(threadId: string): Promise<void> {
-    const history = await initialProviderHistory
+    let history: ProviderHistory
+    try {
+      history = await initialProviderHistory
+    } catch (error) {
+      // Only an imported chat depends on the history service for its transcript.
+      if (threadId.startsWith('external:')) throw error
+      return
+    }
+    for (const [prefix, reason] of unavailableHistory) {
+      if (threadId.startsWith(prefix)) throw reason
+    }
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
   // A previous run killed mid-session leaves git believing in checkouts that

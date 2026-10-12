@@ -18,6 +18,7 @@ import type {
   Usage,
   UserInputRequest,
 } from '@harness/contracts'
+import { UserInputRequestSchema } from '@harness/contracts'
 import { mapThreadItem } from './map-item.js'
 import {
   spawnCli,
@@ -276,19 +277,41 @@ const REVIEW_STATUS = {
   aborted: 'aborted',
 } satisfies Record<GuardianReviewNotification['review']['status'], ApprovalReview['status']>
 
+/** Codex sends blank strings rather than omitting text, so blank counts as missing. */
+function presentText(text: string): string | undefined {
+  return text.trim() ? text : undefined
+}
+
+/**
+ * Codex's wire schema allows blank text and any timeout; the shared contract
+ * does not, and every consumer drops a request that fails it. Blank text is
+ * filled from its neighbour, unlabelled options are dropped, and a timeout
+ * the contract cannot carry is left out. Ids are answer keys Codex matches,
+ * so they are never invented; the caller rejects what still does not fit.
+ */
 export function mapUserInputRequest(params: ToolRequestUserInputParams): UserInputRequest {
+  const autoResolutionMs = UserInputRequestSchema.shape.autoResolutionMs.safeParse(
+    params.autoResolutionMs,
+  )
   return {
     id: params.itemId,
     turnId: params.turnId,
-    questions: params.questions.map((question) => ({
-      id: question.id,
-      header: question.header,
-      question: question.question,
-      allowOther: question.isOther,
-      secret: question.isSecret,
-      options: question.options,
-    })),
-    autoResolutionMs: params.autoResolutionMs,
+    questions: params.questions.map((question) => {
+      const header = presentText(question.header)
+      const text = presentText(question.question)
+      return {
+        id: question.id,
+        header: header ?? text ?? '',
+        question: text ?? header ?? '',
+        allowOther: question.isOther,
+        secret: question.isSecret,
+        options:
+          question.options?.flatMap(({ label, description }) =>
+            presentText(label) ? [{ label, description: presentText(description) ?? label }] : [],
+          ) ?? null,
+      }
+    }),
+    autoResolutionMs: autoResolutionMs.success ? autoResolutionMs.data : null,
     createdAt: Date.now(),
   }
 }
@@ -349,24 +372,13 @@ const PLAN_LABELS = [
   ['edu', 'Edu'],
 ] as const
 
+/**
+ * Models still in Codex's own catalog that `model/list` marks hidden. An id
+ * Codex has dropped from its catalog does not belong here, or the picker would
+ * keep offering a model Codex no longer ships.
+ */
 const CODEX_COMPATIBILITY_MODELS: Model[] = [
-  codexCompatibilityModel(
-    'gpt-5.5',
-    'GPT-5.5',
-    'Frontier model for complex coding, research, and real-world work.',
-  ),
-  codexCompatibilityModel('gpt-5.4', 'GPT-5.4', 'Strong model for everyday coding.'),
-  codexCompatibilityModel(
-    'gpt-5.4-mini',
-    'GPT-5.4-Mini',
-    'Small, fast, and cost-efficient model for simpler coding tasks.',
-  ),
-  codexCompatibilityModel(
-    'gpt-5.3-codex-spark',
-    'GPT-5.3-Codex-Spark',
-    'Ultra-fast coding model.',
-    'high',
-  ),
+  codexCompatibilityModel('gpt-5.5', 'GPT-5.5', 'Legacy coding model.'),
 ]
 
 function codexCompatibilityModel(
@@ -890,14 +902,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           : {}),
       }))
 
-    // Codex 0.147 omits older selectable models from model/list. Preserve the
-    // last provider-advertised metadata while letting live rows win.
+    // Codex hides legacy models from model/list while still running them, so a
+    // chat saved on one would otherwise lose its model. Live rows win.
     for (const compatibilityModel of CODEX_COMPATIBILITY_MODELS) {
       if (!models.some((model) => model.id === compatibilityModel.id)) {
         models.push(compatibilityModel)
       }
     }
-    const preferred = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']
+    // Codex's own catalog priority (codex-cli 0.154). Unlisted rows keep their
+    // model/list order after these, and the legacy fallback stays last.
+    const preferred = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
     return models.sort((left, right) => {
       const leftRank = preferred.indexOf(left.id)
       const rightRank = preferred.indexOf(right.id)
@@ -1304,7 +1318,19 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   ): void {
     if (method === 'item/tool/requestUserInput') {
       const parsed = ToolRequestUserInputParamsSchema.parse(params)
-      const request = mapUserInputRequest(parsed)
+      // Consumers drop a request that fails the shared contract, so holding
+      // it would block Codex on a question nobody sees. Answer it with no
+      // answers, as a turn that ends unanswered does.
+      const mapped = UserInputRequestSchema.safeParse(mapUserInputRequest(parsed))
+      if (!mapped.success) {
+        this.emit(
+          'log',
+          `answered an unusable Codex question with no answers: ${z.prettifyError(mapped.error)}`,
+        )
+        respond({ answers: {} })
+        return
+      }
+      const request = mapped.data
       this.#userInputs.set(request.id, {
         respond,
         rpcId,

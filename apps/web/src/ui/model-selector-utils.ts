@@ -1,4 +1,5 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
+import { PROVIDER_ORDER, providerRank } from '../provider-presentation.js'
 
 export const SLIDER_DITHER_MIN_WIDTH = 32
 export const SLIDER_DITHER_INSET = 2
@@ -77,9 +78,16 @@ export function modelSourceKey(entry: ModelChoice): string {
   })
 }
 
+/**
+ * Discovery settles sources in whatever order they answer, so the catalog's
+ * order shifts while models load. Stock providers therefore take their place
+ * in `PROVIDER_ORDER`, and custom harnesses follow in the order they arrived
+ * (the sort is stable), so groups hold still instead of jumping.
+ */
 export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
   const groups: ModelGroup[] = []
   const groupsByKey = new Map<string, ModelGroup>()
+  const ranks = new Map<ModelGroup, number>()
   for (const entry of models) {
     const key = modelSourceKey(entry)
     const group = groupsByKey.get(key)
@@ -87,10 +95,11 @@ export function groupModelsBySource(models: ModelChoice[]): ModelGroup[] {
     else {
       const next = { key, name: entry.sourceName, mark: entry.mark, entries: [entry] }
       groupsByKey.set(key, next)
+      ranks.set(next, entry.agent ? PROVIDER_ORDER.length : providerRank(entry.provider))
       groups.push(next)
     }
   }
-  return groups
+  return groups.sort((left, right) => ranks.get(left)! - ranks.get(right)!)
 }
 
 export function getSelectedChoice(

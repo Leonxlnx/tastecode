@@ -756,6 +756,8 @@ describe('provider authentication states', () => {
     await waitFor(() =>
       expect(codex.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
     )
+    // The roster keeps its own order, whatever order the server reported.
+    expect(Array.from(document.querySelectorAll('.settings__row'))).toEqual([claude, codex, grok])
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
     expect(columns(claude)).toEqual(columns(grok))

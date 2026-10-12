@@ -678,7 +678,16 @@ class WebSocketTransport implements Transport {
     if (this.#state === state) return
     this.#state = state
     if (state !== 'open') reportStartupMilestone('requests-busy')
-    for (const listener of this.#stateListeners) listener(state)
+    // State changes are announced from inside connect, the open handshake and
+    // reconnect scheduling. One owner's bug must not starve the others or abort
+    // that work: an escaped throw would leave the app disconnected for good.
+    for (const listener of this.#stateListeners) {
+      try {
+        listener(state)
+      } catch (error) {
+        console.error('[transport] connection state listener failed', error)
+      }
+    }
   }
 }
 

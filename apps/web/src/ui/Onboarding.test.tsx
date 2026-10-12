@@ -103,8 +103,7 @@ describe('first-run onboarding', () => {
 
     const plans = screen.getByRole('list', { name: 'Supported beta plans' })
     expect(plans.querySelectorAll('.onboarding__provider')).toHaveLength(3)
-    expect(plans.textContent).toContain('CodexOpenAIReady')
-    expect(plans.textContent).toContain('Claude CodeAnthropicChecking…')
+    expect(plans.textContent).toContain('Claude CodeAnthropicChecking…CodexOpenAIReady')
     expect(plans.textContent).toContain('GrokxAINot installedSet up')
     expect(screen.getByRole('status').textContent).toContain('Looking for the coding agents')
 

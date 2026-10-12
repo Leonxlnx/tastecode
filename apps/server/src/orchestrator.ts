@@ -23,7 +23,7 @@ import {
   type StartOptions,
   type TurnOptions,
 } from './runtime-loader.js'
-import { existsSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -319,6 +319,22 @@ export function resolveWorkspacePath(workspacePath: string): string {
     return path.join(os.homedir(), workspacePath.slice(2))
   }
   return workspacePath
+}
+
+/**
+ * The private checkout a chat's stored folder belongs to.
+ *
+ * A nested project's chat stores a folder inside its checkout, but git reports
+ * on and removes a worktree only by its root. Deleting that folder leaves the
+ * checkout, and any uncommitted work in it, behind, so the root is still the
+ * answer. Only a linked worktree (a `.git` file) counts: once the whole
+ * checkout is gone, the walk up can reach an unrelated repository above the
+ * worktree directory.
+ */
+function privateCheckoutPath(worktreePath: string): string {
+  const root = canonicalCheckoutRoot(worktreePath)
+  const marker = statSync(path.join(root, '.git'), { throwIfNoEntry: false })
+  return marker?.isFile() ? root : worktreePath
 }
 
 const projectTerminalKey = (projectPath: string): string => `project:${projectPath}`
@@ -931,8 +947,8 @@ export class Orchestrator {
     const builtIns = await Promise.all(
       (
         [
-          ['codex', 'Codex'],
           ['claude-code', 'Claude Code'],
+          ['codex', 'Codex'],
           ['grok', 'Grok'],
         ] as const
       ).map(async ([provider, displayName]) => {
@@ -3344,7 +3360,7 @@ export class Orchestrator {
   async hasUnsavedWork(threadId: string): Promise<boolean> {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath) return false
-    return hasUncommittedChanges(stored.worktreePath)
+    return hasUncommittedChanges(privateCheckoutPath(stored.worktreePath))
   }
 
   /**
@@ -3358,10 +3374,8 @@ export class Orchestrator {
     const stored = this.#store.thread(threadId)
     if (!stored?.worktreePath || !stored.worktreeBranch) return
     const root = canonicalCheckoutRoot(stored.worktreePath)
-    // A nested project's chat stores its folder inside the checkout; git only
-    // removes a worktree by its root.
     const worktree = {
-      path: existsSync(stored.worktreePath) ? root : stored.worktreePath,
+      path: privateCheckoutPath(stored.worktreePath),
       branch: stored.worktreeBranch,
       repoPath: resolveWorkspacePath(stored.projectPath),
     }
@@ -3980,99 +3994,107 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     options: TurnOptions,
     pendingStart = this.#beginTurnStart(threadId),
   ): Promise<string> {
-    if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
-    const designFlow = this.#designFlows.get(threadId)
-    if (designFlow) {
-      if (designFlow.continueNormally) {
-        designFlow.phase = 'response'
-        delete designFlow.continueNormally
-        this.#saveDesignFlow(threadId)
-      }
-      if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
-      this.#validateApprovedDesignArtifacts(designFlow)
-      attachments = [
-        ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
-      ]
-    }
-    const panicGeneration = this.#panicGeneration
-    this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
-    for (const [turnId, owner] of this.#designTurns) {
-      if (owner === threadId) {
-        this.#acceptedDesignOutputs.delete(turnId)
-        this.#designOutputErrors.delete(turnId)
-        this.#completeDesignActivity(threadId, turnId)
-      }
-    }
-    this.#addSidebarStatus(this.#designStartingThreads, threadId)
+    // The default pendingStart is already registered, and the checks below can
+    // throw before the provider is asked. Every early exit must reach the
+    // finally, or the leftover start keeps this chat starting and holds the
+    // checkout that restores need.
     let resolveStarted = (_turnId: string) => {}
-    const started = new Promise<string>((resolve) => (resolveStarted = resolve))
-    this.#designStartWaiters.set(threadId, resolveStarted)
-    const session = this.#get(threadId).session
-    let timedOut = false
-    const providerStart = session
-      .sendTurn(threadId, this.#promptAfterRestore(threadId, prompt), attachments, options)
-      .then(async (turnId) => {
-        if (
-          timedOut ||
-          panicGeneration !== this.#panicGeneration ||
-          this.#threads.get(threadId)?.session !== session
-        ) {
-          await session.interrupt(threadId)
-          throw new Error('Design turn start was cancelled')
-        }
-        return turnId
-      })
-    this.#designProviderStarts.set(threadId, providerStart)
-    void providerStart
-      .finally(() => {
-        if (this.#designProviderStarts.get(threadId) === providerStart)
-          this.#designProviderStarts.delete(threadId)
-      })
-      .catch(() => undefined)
-    const flow = this.#designFlows.get(threadId)
     let timeout: NodeJS.Timeout | undefined
     try {
-      const result = await Promise.race([
-        providerStart.then((turnId) => ({ source: 'provider' as const, turnId })),
-        started.then((turnId) => ({ source: 'event' as const, turnId })),
-        new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => {
-            timedOut = true
-            reject(new Error('the agent did not start the Design phase within 30 seconds'))
-          }, DESIGN_START_TIMEOUT_MS)
-        }),
-      ])
-      const { turnId } = result
-      if (panicGeneration !== this.#panicGeneration) throw new Error('turn cancelled by panic stop')
-      this.#acceptTurnStart(threadId, turnId, pendingStart)
-      this.#store.clearThreadRestoreContext(threadId)
-      if (this.#activeTurnIds.get(threadId) === turnId) this.#startDesignActivity(threadId, turnId)
-      if (result.source === 'event') {
-        void providerStart.then(
-          (returnedTurnId) => {
-            if (returnedTurnId !== turnId && this.#designFlows.get(threadId) === flow) {
-              this.#onLog('provider returned a different turn id after Design already started')
-            }
-          },
-          (error: unknown) => {
-            this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
-          },
-        )
+      if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
+      const designFlow = this.#designFlows.get(threadId)
+      if (designFlow) {
+        if (designFlow.continueNormally) {
+          designFlow.phase = 'response'
+          delete designFlow.continueNormally
+          this.#saveDesignFlow(threadId)
+        }
+        if (designFlow.phase !== 'response') prompt = `${DESIGN_PHASE_NOTICE}${prompt}`
+        this.#validateApprovedDesignArtifacts(designFlow)
+        attachments = [
+          ...new Set([...attachments, ...this.#designReferenceAttachments(threadId, designFlow)]),
+        ]
       }
-      return turnId
-    } catch (error) {
-      if (timedOut) {
-        await Promise.race([
-          session
-            .interrupt(threadId)
-            .catch((interruptError) =>
-              this.#onLog(`Design start interruption failed: ${errorMessage(interruptError)}`),
-            ),
-          new Promise<void>((resolve) => setTimeout(resolve, PANIC_STOP_TIMEOUT_MS)),
+      const panicGeneration = this.#panicGeneration
+      this.#checkoutAccess.beginTurn(this.#repoPath(threadId), threadId)
+      for (const [turnId, owner] of this.#designTurns) {
+        if (owner === threadId) {
+          this.#acceptedDesignOutputs.delete(turnId)
+          this.#designOutputErrors.delete(turnId)
+          this.#completeDesignActivity(threadId, turnId)
+        }
+      }
+      this.#addSidebarStatus(this.#designStartingThreads, threadId)
+      const started = new Promise<string>((resolve) => (resolveStarted = resolve))
+      this.#designStartWaiters.set(threadId, resolveStarted)
+      const session = this.#get(threadId).session
+      let timedOut = false
+      const providerStart = session
+        .sendTurn(threadId, this.#promptAfterRestore(threadId, prompt), attachments, options)
+        .then(async (turnId) => {
+          if (
+            timedOut ||
+            panicGeneration !== this.#panicGeneration ||
+            this.#threads.get(threadId)?.session !== session
+          ) {
+            await session.interrupt(threadId)
+            throw new Error('Design turn start was cancelled')
+          }
+          return turnId
+        })
+      this.#designProviderStarts.set(threadId, providerStart)
+      void providerStart
+        .finally(() => {
+          if (this.#designProviderStarts.get(threadId) === providerStart)
+            this.#designProviderStarts.delete(threadId)
+        })
+        .catch(() => undefined)
+      const flow = this.#designFlows.get(threadId)
+      try {
+        const result = await Promise.race([
+          providerStart.then((turnId) => ({ source: 'provider' as const, turnId })),
+          started.then((turnId) => ({ source: 'event' as const, turnId })),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => {
+              timedOut = true
+              reject(new Error('the agent did not start the Design phase within 30 seconds'))
+            }, DESIGN_START_TIMEOUT_MS)
+          }),
         ])
-        await this.#disposeThreadRuntime(threadId, 'disconnect')
+        const { turnId } = result
+        if (panicGeneration !== this.#panicGeneration)
+          throw new Error('turn cancelled by panic stop')
+        this.#acceptTurnStart(threadId, turnId, pendingStart)
+        this.#store.clearThreadRestoreContext(threadId)
+        if (this.#activeTurnIds.get(threadId) === turnId)
+          this.#startDesignActivity(threadId, turnId)
+        if (result.source === 'event') {
+          void providerStart.then(
+            (returnedTurnId) => {
+              if (returnedTurnId !== turnId && this.#designFlows.get(threadId) === flow) {
+                this.#onLog('provider returned a different turn id after Design already started')
+              }
+            },
+            (error: unknown) => {
+              this.#onLog(`provider rejected after Design already started: ${errorMessage(error)}`)
+            },
+          )
+        }
+        return turnId
+      } catch (error) {
+        if (timedOut) {
+          await Promise.race([
+            session
+              .interrupt(threadId)
+              .catch((interruptError) =>
+                this.#onLog(`Design start interruption failed: ${errorMessage(interruptError)}`),
+              ),
+            new Promise<void>((resolve) => setTimeout(resolve, PANIC_STOP_TIMEOUT_MS)),
+          ])
+          await this.#disposeThreadRuntime(threadId, 'disconnect')
+        }
+        throw error
       }
-      throw error
     } finally {
       if (timeout) clearTimeout(timeout)
       if (this.#designStartWaiters.get(threadId) === resolveStarted) {

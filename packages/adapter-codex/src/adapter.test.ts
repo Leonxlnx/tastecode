@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { UserInputRequestSchema } from '@harness/contracts'
 import type { AccountUpdatedNotification } from './generated/v2/AccountUpdatedNotification'
 import type { ConfigWarningNotification } from './generated/v2/ConfigWarningNotification'
 import type { GuardianApprovalReviewAction } from './generated/v2/GuardianApprovalReviewAction'
@@ -286,6 +287,54 @@ describe('Codex structured user input', () => {
         },
       ],
     })
+  })
+
+  it('fits blank wire text and an out-of-range timeout to the shared contract', () => {
+    const params = {
+      threadId: 'thread-1',
+      turnId: 'turn-1',
+      itemId: 'questions-1',
+      autoResolutionMs: 300_000,
+      questions: [
+        {
+          id: 'palette',
+          header: ' ',
+          question: 'Do you already have a palette?',
+          isOther: false,
+          isSecret: false,
+          options: [
+            { label: 'Decide for me', description: '' },
+            { label: '', description: 'An option nobody can name' },
+          ],
+        },
+        {
+          id: 'name',
+          header: 'Name',
+          question: '',
+          isOther: true,
+          isSecret: false,
+          options: null,
+        },
+      ],
+    }
+    const request = mapUserInputRequest(params)
+    expect(UserInputRequestSchema.safeParse(request).success).toBe(true)
+    expect(request).toMatchObject({
+      autoResolutionMs: null,
+      questions: [
+        {
+          id: 'palette',
+          header: 'Do you already have a palette?',
+          question: 'Do you already have a palette?',
+          options: [{ label: 'Decide for me', description: 'Decide for me' }],
+        },
+        { id: 'name', header: 'Name', question: 'Name', options: null },
+      ],
+    })
+    expect(mapUserInputRequest({ ...params, autoResolutionMs: 30_000 }).autoResolutionMs).toBe(null)
+    expect(mapUserInputRequest({ ...params, autoResolutionMs: 120_000 }).autoResolutionMs).toBe(
+      120_000,
+    )
   })
 })
 

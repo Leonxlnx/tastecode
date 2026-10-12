@@ -182,8 +182,11 @@ describe('cross-session search', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
     fireEvent.click(screen.getByRole('option', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
-    expect(screen.getByRole('option', { name: 'Codex' })).toBeTruthy()
-    expect(screen.getByRole('option', { name: 'Grok' })).toBeTruthy()
+    expect(
+      screen
+        .getAllByRole('option', { name: /^(All agents|Claude Code|Codex|Grok)$/ })
+        .map((option) => option.textContent),
+    ).toEqual(['All agents', 'Claude Code', 'Codex', 'Grok'])
     expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     const search = screen.getByLabelText('Search every chat')

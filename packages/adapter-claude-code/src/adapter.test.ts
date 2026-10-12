@@ -14,7 +14,12 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, claudeUserMessage } from './adapter.js'
+import {
+  ClaudeCodeAdapter,
+  CLAUDE_CAPABILITIES,
+  CLAUDE_MODELS,
+  claudeUserMessage,
+} from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
 import { createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import { Store } from '../../../apps/server/src/store.js'
@@ -1536,15 +1541,18 @@ describe('Claude Agent SDK session', () => {
       })),
     ).toEqual([
       { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'claude-opus-5-5', displayName: 'Opus 5.5', isDefault: false },
+      { id: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5', isDefault: false },
+      { id: 'claude-haiku-5-5', displayName: 'Haiku 5.5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Fable 5', isDefault: false },
       { id: 'opus[1m]', displayName: 'Opus 5', isDefault: true },
       { id: 'sonnet', displayName: 'Sonnet 5', isDefault: false },
-      { id: 'claude-fable-5[1m]', displayName: 'Fable 5', isDefault: false },
-      { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
       { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
       { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
       { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
     expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
@@ -1553,40 +1561,201 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
-  it('places a newly discovered Opus 5.5 before older Claude models', async () => {
+  it('lists the aliases claude 2.1.296 resolves to the 5.5 lineup once, in tier order', async () => {
+    const efforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
     const fake = harness([
       {
         value: 'default',
         resolvedModel: 'claude-opus-5-5',
-        displayName: 'Default',
-        description: 'Account default',
+        displayName: 'Default (recommended)',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-5',
+        displayName: 'Sonnet',
+        description: 'Sonnet 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'haiku',
+        resolvedModel: 'claude-haiku-5-5',
+        displayName: 'Haiku',
+        description: 'Haiku 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(
+      models.map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        isDefault: model.isDefault,
+      })),
+    ).toEqual([
+      { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'opus', displayName: 'Opus 5.5', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5.5', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 5.5', isDefault: false },
+      { id: 'claude-fable-5', displayName: 'Fable 5', isDefault: false },
+      { id: 'claude-opus-5', displayName: 'Opus 5', isDefault: false },
+      { id: 'claude-sonnet-5', displayName: 'Sonnet 5', isDefault: false },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', isDefault: false },
+    ])
+    expect(models.find((model) => model.id === 'haiku')?.reasoningEfforts).toEqual([...efforts])
+    adapter.dispose()
+  })
+
+  it('keeps the catalog default when the runtime reports no default row', async () => {
+    const fake = harness([
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
         supportsEffort: true,
       },
       {
         value: 'opus',
         resolvedModel: 'claude-opus-5-5',
         displayName: 'Opus',
-        description: 'Latest Opus',
-        supportsEffort: true,
-      },
-      {
-        value: 'claude-opus-5',
-        resolvedModel: 'claude-opus-5',
-        displayName: 'Opus 5',
-        description: 'Previous Opus',
+        description: 'Opus 5.5',
         supportsEffort: true,
       },
     ])
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
-    expect(models.slice(0, 4).map((model) => model.displayName)).toEqual([
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual(['opus'])
+    adapter.dispose()
+  })
+
+  it('places models the catalog does not list after the current lineup, newest first', async () => {
+    const fake = harness([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Default',
+        description: 'Account default',
+        supportsEffort: true,
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-6',
+        displayName: 'Sonnet',
+        description: 'Latest Sonnet',
+        supportsEffort: true,
+      },
+      {
+        value: 'claude-haiku-6',
+        resolvedModel: 'claude-haiku-6',
+        displayName: 'Haiku 6',
+        description: 'Latest Haiku',
+      },
+      {
+        value: 'opus[1m]',
+        resolvedModel: 'claude-opus-6[1m]',
+        displayName: 'Opus (1M context)',
+        description: 'Latest Opus with 1M context',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Opus',
+        description: 'Latest Opus',
+        supportsEffort: true,
+      },
+      {
+        value: 'experimental',
+        resolvedModel: 'claude-experimental',
+        displayName: 'Experimental',
+        description: 'Research preview',
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(models.map((model) => model.displayName)).toEqual([
       'Fable 5.1',
       'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+      'Opus 6',
+      'Haiku 6',
+      'Sonnet 5.6',
+      'Experimental',
+      'Fable 5',
       'Opus 5',
       'Sonnet 5',
+      'Opus 4.8',
+      'Opus 4.7',
+      'Opus 4.6',
+      'Opus 4.5',
+      'Sonnet 4.6',
+      'Haiku 4.5',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('opus')
+    expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
     adapter.dispose()
+  })
+})
+
+describe('Claude static model catalog', () => {
+  it('lists the current lineup first, then older generations in tier order', () => {
+    expect(CLAUDE_MODELS.map((model) => model.id)).toEqual([
+      'claude-fable-5-1',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-opus-4-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ])
+    expect(CLAUDE_MODELS.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      'claude-opus-5-5',
+    ])
+  })
+
+  it('offers the efforts each model accepts', () => {
+    const efforts = (id: string) => CLAUDE_MODELS.find((model) => model.id === id)?.reasoningEfforts
+    for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+      expect(efforts(id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    }
+    expect(efforts('claude-haiku-4-5')).toEqual([])
+    expect(CLAUDE_MODELS.find((model) => model.id === 'claude-opus-4-7')).toMatchObject({
+      defaultReasoningEffort: 'xhigh',
+    })
   })
 })
 

@@ -39,8 +39,8 @@ type StepId = (typeof STEPS)[number]['id']
 const PROVIDERS_STEP = STEPS.findIndex((entry) => entry.id === 'providers')
 
 const BETA_PLANS = [
-  { id: 'codex', name: 'Codex', vendor: 'OpenAI' },
   { id: 'claude-code', name: 'Claude Code', vendor: 'Anthropic' },
+  { id: 'codex', name: 'Codex', vendor: 'OpenAI' },
   { id: 'grok', name: 'Grok', vendor: 'xAI' },
 ] as const satisfies ReadonlyArray<{ id: ProviderId; name: string; vendor: string }>
 

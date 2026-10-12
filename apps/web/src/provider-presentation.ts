@@ -39,6 +39,18 @@ const ACP_AGENTS = {
   qwen: { label: 'Qwen Code', mark: 'qwen' },
 } satisfies Record<string, ProviderPresentation>
 
+/**
+ * The one order every provider list follows: Claude Code, then Codex, then
+ * Grok. The server reports `providers.list` in the same order.
+ */
+export const PROVIDER_ORDER: readonly ProviderId[] = ['claude-code', 'codex', 'grok']
+
+/** A provider's place in `PROVIDER_ORDER`; one it does not name sorts last. */
+export function providerRank(provider: ProviderId): number {
+  const rank = PROVIDER_ORDER.indexOf(provider)
+  return rank === -1 ? PROVIDER_ORDER.length : rank
+}
+
 export function providerPresentation(provider: ProviderId): ProviderPresentation {
   return PROVIDERS[provider]
 }

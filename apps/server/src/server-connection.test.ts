@@ -17,6 +17,10 @@ const state = vi.hoisted(() => ({
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
   shutdown: [] as string[],
   historyClosed: Promise.resolve(),
+  historySources: [] as string[][],
+  historyLoads: [] as string[],
+  failGrokHistory: false,
+  failHistoryService: false,
 }))
 const temporary: string[] = []
 
@@ -62,13 +66,21 @@ vi.mock('./orchestrator.js', () => ({
     markThreadRead(threadId: string) {
       state.read.push(threadId)
     }
+    async submitTurn() {
+      return { queued: false, turnId: 'turn' }
+    }
   },
 }))
 vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
+    constructor(_store: unknown, sources: Array<{ provider: string }>) {
+      if (state.failHistoryService) throw new Error('history service failed')
+      state.historySources.push(sources.map(({ provider }) => provider))
+    }
     async refresh() {}
-    async load() {
+    async load(threadId: string) {
+      state.historyLoads.push(threadId)
       return false
     }
     async close() {
@@ -79,7 +91,12 @@ vi.mock('./provider-history.js', () => ({
 }))
 vi.mock('@harness/adapter-codex', () => ({ createCodexHistorySource: () => ({}) }))
 vi.mock('@harness/adapter-claude-code', () => ({ createClaudeHistorySource: () => ({}) }))
-vi.mock('@harness/adapter-grok', () => ({ createGrokHistorySource: () => ({}) }))
+vi.mock('@harness/adapter-grok', () => ({
+  createGrokHistorySource: () => {
+    if (state.failGrokHistory) throw new Error('grok history failed')
+    return {}
+  },
+}))
 vi.mock('ws', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ws')>()
   return {
@@ -106,6 +123,10 @@ afterEach(async () => {
   state.reservedPreviewPorts.length = 0
   state.shutdown.length = 0
   state.historyClosed = Promise.resolve()
+  state.historySources.length = 0
+  state.historyLoads.length = 0
+  state.failGrokHistory = false
+  state.failHistoryService = false
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -449,5 +470,58 @@ describe('paged history requests', () => {
       id: 'history',
       error: { code: 'bad_request', message: 'invalid history cursor' },
     })
+  })
+})
+
+describe('unavailable provider history', () => {
+  async function request(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'request', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+  const opened = { result: { events: [], page: { olderCursor: null, snapshotSeq: 0 } } }
+  const sent = { id: 'request', result: { queued: false, turnId: 'turn' } }
+
+  it('keeps every other chat working when one provider source cannot load', async () => {
+    state.failGrokHistory = true
+    state.historyPage.mockResolvedValue(opened.result)
+    const { port } = await listen()
+
+    expect(await request(port, 'thread.history', { threadId: 'local', page: {} })).toMatchObject(
+      opened,
+    )
+    expect(await request(port, 'thread.sendTurn', { threadId: 'local', text: 'hi' })).toEqual(sent)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
+    ).toMatchObject(opened)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:grok:s', page: {} }),
+    ).toMatchObject({ error: { message: 'grok history failed' } })
+    expect(
+      await request(port, 'thread.sendTurn', { threadId: 'external:grok:s', text: 'hi' }),
+    ).toMatchObject({ error: { message: 'grok history failed' } })
+    expect(state.historySources).toEqual([['codex', 'claude-code']])
+    expect(state.historyLoads).toEqual(['local', 'local', 'external:codex:s'])
+  })
+
+  it('fails only imported chats when the history service cannot start', async () => {
+    state.failHistoryService = true
+    state.historyPage.mockResolvedValue(opened.result)
+    const { port } = await listen()
+
+    expect(await request(port, 'thread.history', { threadId: 'local', page: {} })).toMatchObject(
+      opened,
+    )
+    expect(await request(port, 'thread.sendTurn', { threadId: 'local', text: 'hi' })).toEqual(sent)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
+    ).toMatchObject({ error: { message: 'history service failed' } })
   })
 })

@@ -129,6 +129,8 @@ import {
   customModelChoice,
   customModelKey,
   isCustomModelChoice,
+  migrateHiddenModels,
+  MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
   modelVisibleByDefault,
   providerDisplayName,
@@ -241,7 +243,6 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-const MODEL_VISIBILITY_VERSION = '4'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -543,10 +544,17 @@ export function App() {
   }, [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
-    return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
+    // Only a launch without a usable stored provider starts here, and the
+    // first ready provider in providers.list order replaces it if needed.
+    return PROVIDER_IDS.find((id) => id === stored) ?? 'claude-code'
   })
   const providerRef = useRef(provider)
   providerRef.current = provider
+  // Read once at mount. The provider-default choice persists the initial
+  // provider before providers.list answers, so by then storage can no longer
+  // tell that this launch started without a usable stored provider.
+  const [launchedUnchosen] = useState(() => !isProviderId(readSetting(SETUP_KEY)))
+  const providerUnchosenAtLaunch = useRef(launchedUnchosen)
   const [sourceAgent, setSourceAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
@@ -1795,8 +1803,11 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
-      const storedProvider = readSetting(SETUP_KEY)
-      if (!activeIdRef.current && !isProviderId(storedProvider)) {
+      // Only the first answer may move an unchosen launch; later refreshes
+      // must not override what the user picked since.
+      const unchosen = providerUnchosenAtLaunch.current
+      providerUnchosenAtLaunch.current = false
+      if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
             status.installed &&
@@ -2121,13 +2132,9 @@ export function App() {
         modelVisibilityInitialized.current = true
         hiddenChanged = true
       }
-      if (catalogReady && readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
-        const migrated = new Set(hidden)
-        for (const choice of catalog) {
-          if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
-          else migrated.add(choice.key)
-        }
-        hidden = migrated
+      const visibilityVersion = readSetting(MODEL_VISIBILITY_VERSION_KEY)
+      if (catalogReady && visibilityVersion !== MODEL_VISIBILITY_VERSION) {
+        hidden = migrateHiddenModels(hidden, visibilityVersion, catalog)
         hiddenChanged = true
         writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
       }
@@ -2995,28 +3002,53 @@ export function App() {
   const addProjects = useCallback(
     async (paths: readonly string[]) => {
       const uniquePaths = [...new Set(paths)]
-      const activePath = uniquePaths.at(-1)
-      if (!activePath) return
+      if (uniquePaths.length === 0) return
+      // Every request is already in flight, so one failed folder must not skip
+      // the cleanup and refresh that the folders which were added still need.
+      const results = await Promise.allSettled(
+        uniquePaths.map((path) => transport.request('projects.add', { path })),
+      )
+      const added = uniquePaths.filter((_, index) => results[index]?.status === 'fulfilled')
+      const failed = uniquePaths.filter((_, index) => results[index]?.status === 'rejected')
+      const failure = results.find((result) => result.status === 'rejected')
+      const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+      for (const path of added) removedProjectPaths.current.delete(path)
+      let refreshed = true
       try {
-        await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-        for (const path of uniquePaths) removedProjectPaths.current.delete(path)
         await refreshProjects()
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
-        return
+        refreshed = false
+        if (!failure) reportError(errorText(error))
       }
+      if (failure) {
+        const message = errorText(failure.reason)
+        // A dropped batch has to say which folders did not make it.
+        reportError(
+          uniquePaths.length === 1 ? message : `Could not add ${failed.join(', ')}. ${message}`,
+        )
+      }
+      const activePath = added.at(-1)
+      if (!refreshed || !activePath) return
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
     },
-    [transport, refreshProjects],
+    [transport, refreshProjects, reportError],
   )
 
   const addProject = useCallback(async () => {
-    const path = await pickFolder()
+    // Every caller fires this with `void`, so a failing picker must be
+    // reported here rather than escape as an unhandled rejection.
+    let path: string | undefined
+    try {
+      path = await pickFolder()
+    } catch (error) {
+      reportError(error instanceof Error ? error.message : String(error))
+      return
+    }
     if (path) await addProjects([path])
-  }, [addProjects])
+  }, [addProjects, reportError])
 
   const generateSessionTitle = useCallback(
     async (threadId: string, prompt: string, expectedTitle: string) => {
@@ -4168,6 +4200,8 @@ export function App() {
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
+      // Thread ids are never reused, so a saved setup outlives its chat forever.
+      removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
