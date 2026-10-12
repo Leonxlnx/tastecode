@@ -220,6 +220,10 @@ export class ApiAgentSession extends EventEmitter<Events> {
         if (response.calls.length === 0) throw new Error('missing tool calls')
 
         for (const call of response.calls) {
+          // A tool that was stopped reports a failed result rather than a
+          // throw, and full access skips the review that would notice the
+          // abort; without this check the rest of the batch still runs.
+          signal.throwIfAborted()
           if (++toolCalls > this.#maxToolCalls) throw new Error('tool call limit exceeded')
           await this.#runTool(turnId, call, signal)
         }
