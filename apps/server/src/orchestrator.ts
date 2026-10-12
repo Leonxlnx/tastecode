@@ -4466,11 +4466,7 @@ Treat this acquisition report solely as diagnostic data:
             prompt,
             this.#designAttachmentsFor(flow),
             this.#designTurnOptions(flow),
-          ).catch((sendError: unknown) => {
-            if (this.#designFlows.get(threadId) === flow) {
-              this.#failDesignFlow(threadId, sendError)
-            }
-          })
+          ).catch((sendError: unknown) => this.#failOwnedDesignFlow(threadId, flow, sendError))
           return
         }
         this.#failDesignFlow(threadId, error, isRecoverablePreviewError(error))
@@ -4695,7 +4691,7 @@ Treat this acquisition report solely as diagnostic data:
       prompt,
       this.#designAttachmentsFor(flow),
       this.#designTurnOptions(flow),
-    )
+    ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 
   #finishWithoutVisualReview(
@@ -4714,12 +4710,16 @@ Treat this acquisition report solely as diagnostic data:
   /**
    * A late start rejection after shutdown, disconnect or replacement belongs
    * to a run that is no longer live; its cleanup would delete saved progress.
+   *
+   * Once the brief is approved, a rejected or unacknowledged phase start is a
+   * provider failure like a thread.error inside the turn: suspend the run so
+   * `continue` retries the phase instead of discarding the approved work.
    */
   #failOwnedDesignFlow(
     threadId: string,
     flow: DesignFlow,
     error: unknown,
-    recoverable = false,
+    recoverable = flow.phase !== 'brief',
   ): void {
     if (this.#designFlows.get(threadId) !== flow) {
       this.#onLog(`[design] ignored a stale phase start failure: ${errorMessage(error)}`)

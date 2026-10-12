@@ -5073,6 +5073,70 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('suspends the run when the provider rejects a later phase start', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-handoff-start-'))
+    writePreviewArtifacts(workspace)
+    const complete = JSON.stringify({
+      status: 'complete',
+      message: 'Brief complete.',
+      questions: [],
+      brief: readDesignBrief(workspace),
+    })
+    const { orchestrator, sessions, store, received } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Build a site.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 's1-turn'))
+      session.emit(message(complete, 's1-turn'))
+      session.sendError = new Error('Provider overloaded')
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand', suspended: true }),
+      )
+      expect(session.sent[1]).toContain('Brand phase')
+      expect(
+        received.some(
+          ({ event }) =>
+            event.type === 'thread.error' && event.message.includes('Provider overloaded'),
+        ),
+      ).toBe(true)
+    } finally {
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('suspends the run when the provider rejects the Review start after capture', async () => {
+    const { orchestrator, sessions, store, workspace, capturePreview } =
+      await previewRecoveryHarness(undefined)
+    capturePreview.mockReset().mockImplementation(async (_url, viewports) =>
+      viewports.map((viewport) => {
+        const file = path.join(workspace, `${viewport.width}x${viewport.height}.png`)
+        writeFileSync(file, 'png')
+        return { path: file, ...viewport }
+      }),
+    )
+    try {
+      const session = sessions[0]!
+      session.sendError = new Error('Provider overloaded')
+      session.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'preview',
+          suspended: true,
+        }),
+      )
+      expect(session.sent).toHaveLength(2)
+      expect(session.sent[1]).toContain('visual Review phase')
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it.each([
     {
       failure: new Error('path must be a file'),
