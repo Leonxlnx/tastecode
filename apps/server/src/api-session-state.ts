@@ -48,7 +48,7 @@ export function persistentApiSession(
           return ApiRuntimeStateSchema.parse({
             version: 1,
             model,
-            state: apiKey ? redactState(state, apiKey) : state,
+            state: apiKey.length >= MIN_REDACTED_KEY_LENGTH ? redactState(state, apiKey) : state,
           })
         }
       }
@@ -59,6 +59,10 @@ export function persistentApiSession(
 }
 
 const REDACTED = '[redacted]'
+// The live session (adapter-api runtime) ignores shorter secrets as well. A
+// placeholder such as "1" is no credential, and rewriting it would corrupt
+// every "3001" or "#12" in the history the model is resumed with.
+const MIN_REDACTED_KEY_LENGTH = 4
 
 // Only free text is rewritten. Ids, roles and numbers stay as they are, because
 // local servers are often given placeholder keys such as "1" that also occur there.
