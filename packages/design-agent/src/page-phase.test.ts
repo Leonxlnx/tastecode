@@ -205,7 +205,10 @@ describe('page phase', () => {
     const prompt = designPagePrompt(brief, brand, [], deck)
     expect(prompt).toContain('ONE DESIGN LANGUAGE')
     expect(prompt).toContain(
-      'References are drawn at random around one anchor, the anchor reference (the deck entry whose role is "anchor"; in a deck without roles, the hero reference',
+      'the anchor reference (the deck entry whose role is "anchor"; in a deck without roles, the hero reference',
+    )
+    expect(prompt).toContain(
+      'References are drawn at random around the one anchor reference defined above',
     )
     expect(prompt).toContain(
       'drawn first from the anchor\'s own source site (role "same-site"), then from the most similar sites ("similar-site"), and only then from the wider library ("fallback")',

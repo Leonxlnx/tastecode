@@ -3,7 +3,7 @@ import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
-import { ANCHOR_REFERENCE, ONE_DESIGN_LANGUAGE } from './design-language.js'
+import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import { assertPageLayoutSelections, PAGE_LAYOUT_GUIDANCE } from './layout-guidance.js'
 import { parsePageBlueprint, type PageBlueprint } from './page.js'
@@ -49,7 +49,7 @@ The deck is a menu of available compositions, not a required section list. Selec
 
 ${ONE_DESIGN_LANGUAGE}
 
-References are drawn at random around one anchor, ${ANCHOR_REFERENCE}. The other families are drawn first from the anchor's own source site (role "same-site"), then from the most similar sites ("similar-site"), and only then from the wider library ("fallback"); site names an entry's source site when the deck records it. Decks saved before anchor sampling were drawn independently for each family; treat their hero or first reference as the anchor and apply the same rules. Use the supplied random order within each family: assign a different available reference to each repeated feature or about section before reusing one, and do not choose the most familiar composition. When two references fit a section equally well, prefer the one closer to the anchor: same site before similar site before fallback. Every section keeps its own reference's composition, and every section speaks the brand's one design language.
+References are drawn at random around the one anchor reference defined above. The other families are drawn first from the anchor's own source site (role "same-site"), then from the most similar sites ("similar-site"), and only then from the wider library ("fallback"); site names an entry's source site when the deck records it. Decks saved before anchor sampling were drawn independently for each family; treat their hero or first reference as the anchor and apply the same rules. Use the supplied random order within each family: assign a different available reference to each repeated feature or about section before reusing one, and do not choose the most familiar composition. When two references fit a section equally well, prefer the one closer to the anchor: same site before similar site before fallback. Every section keeps its own reference's composition, and every section speaks the brand's one design language.
 
 For a new product, implement code examples, model lists, billing panels, calendars, forms, and other product interface demonstrations as native HTML/CSS. Put a substantial interface component in componentNeeds and describe its representative content and composition in layout. Do not require a screenshot of software that does not exist. Reserve interface_capture assetNeeds for actual captures already supplied or available in the project. Real photography and physical product imagery remain assetNeeds; preserve the reference's media frame and proportions when implementing a native interface inside it.
 
