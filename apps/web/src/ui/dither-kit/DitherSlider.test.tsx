@@ -94,4 +94,36 @@ describe('DitherSlider', () => {
     act(() => vi.advanceTimersByTime(160))
     expect(vi.getTimerCount()).toBe(0)
   })
+
+  it('leaves an invisible spot unpainted under reduced motion too', () => {
+    const bloomContext = createCanvasContext([])
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
+      this: HTMLCanvasElement,
+    ) {
+      return this.classList.contains('dither-slider__texture')
+        ? createCanvasContext([])
+        : bloomContext
+    })
+    vi.spyOn(window, 'matchMedia').mockReturnValue({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as MediaQueryList)
+    const paints = () => vi.mocked(bloomContext.drawImage).mock.calls.length
+
+    render(
+      <div className="model-selector__slider">
+        <DitherSlider active={false} />
+      </div>,
+    )
+    const initial = paints()
+    for (let move = 0; move < 50; move += 1) {
+      fireEvent.pointerMove(window, { clientX: 150 + move, clientY: 600 })
+    }
+    act(() => vi.advanceTimersByTime(160))
+    expect(paints()).toBe(initial)
+
+    fireEvent.pointerMove(window, { clientX: 150, clientY: 121 })
+    expect(paints()).toBe(initial + 1)
+  })
 })

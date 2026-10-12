@@ -333,7 +333,10 @@ export function reconcileProjectList(
 
     let currentById: Map<string, Session> | undefined
     let sessionsChanged = previous.sessions.length !== orderedSessions.length
-    const sessions: Session[] = []
+    // A chat whose thread.start is still in flight exists only on this client;
+    // keep it on top, where it was added, until its real id replaces it. Such a
+    // row can never match the snapshot, so the project is always copied.
+    const sessions = previous.sessions.filter((session) => session.id.startsWith('pending:'))
     for (let sessionIndex = 0; sessionIndex < orderedSessions.length; sessionIndex += 1) {
       const session = orderedSessions[sessionIndex]!
       let prior = previous.sessions[sessionIndex]

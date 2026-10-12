@@ -286,6 +286,58 @@ describe('Agent Skills settings', () => {
     expect(screen.getByRole('switch', { name: 'Disable Beta Skill' })).toBeTruthy()
   })
 
+  it('keeps a switch locked until its own toggle settles', async () => {
+    const finishToggle = new Map<string, () => void>()
+    const transport = client(async (method, params) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: true, install: false },
+          skills: ['alpha', 'beta'].map((id) => ({
+            ...skill,
+            id,
+            displayName: id,
+            dependencyErrors: [],
+          })),
+          errors: [],
+        }
+      }
+      if (method === 'skills.setEnabled') {
+        return new Promise((resolve) =>
+          finishToggle.set((params as { skillId: string }).skillId, () =>
+            resolve({ enabled: false }),
+          ),
+        )
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <SkillsSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const alpha = await screen.findByRole('switch', { name: 'Disable alpha' })
+    const beta = screen.getByRole('switch', { name: 'Disable beta' })
+    fireEvent.click(alpha)
+    fireEvent.click(beta)
+    expect((alpha as HTMLButtonElement).disabled).toBe(true)
+    act(() => finishToggle.get('alpha')?.())
+
+    await waitFor(() => expect((alpha as HTMLButtonElement).disabled).toBe(false))
+    expect((beta as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(beta)
+    expect(
+      vi
+        .mocked(transport.request)
+        .mock.calls.filter(([method]) => method === 'skills.setEnabled')
+        .map(([, params]) => (params as { skillId: string }).skillId),
+    ).toEqual(['alpha', 'beta'])
+  })
+
   it('keeps a confirmed toggle ahead of an older inventory refresh', async () => {
     const listeners = new Map<string, (value: never) => void>()
     let resolveRefresh: ((value: unknown) => void) | undefined

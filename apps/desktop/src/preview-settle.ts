@@ -1,3 +1,5 @@
+import { PAGE_SCROLLER_SOURCE } from './preview-page-scroller.js'
+
 export const MAX_PREVIEW_HEIGHT = 12_000
 const MAX_PREVIEW_HEIGHT_SOURCE = String(MAX_PREVIEW_HEIGHT)
 export const PREVIEW_SETTLE_BUDGET_MS = 5_500
@@ -82,17 +84,37 @@ export const PREVIEW_SETTLE_SCRIPT = `(async () => {
   }
 })()`
 
-export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => ({
-  documentElement: document.documentElement.scrollHeight,
-  body: document.body?.scrollHeight ?? 0,
-}))()`
+export const PREVIEW_PAGE_HEIGHT_SCRIPT = `(() => {
+  ${PAGE_SCROLLER_SOURCE}
+  // The largest page scroller says how much of the page the document height leaves out.
+  // Like the DOM audit, walk open shadow roots and stop at a bound; shallowest first,
+  // where page scrollers sit, so a huge list cannot use up the bound before them. The
+  // body itself is skipped: its overflow can belong to the document, already measured.
+  const queue = document.body ? Array.from(document.body.children) : []
+  let scrollContainer = 0
+  for (let index = 0; index < queue.length && index < 20000; index += 1) {
+    const element = queue[index]
+    const hidden = pageScrollerOverflow(element)
+    if (hidden > scrollContainer) scrollContainer = hidden
+    for (const child of element.shadowRoot ? element.shadowRoot.children : []) queue.push(child)
+    for (const child of element.children) queue.push(child)
+  }
+  return {
+    documentElement: document.documentElement.scrollHeight,
+    body: document.body?.scrollHeight ?? 0,
+    scrollContainer,
+  }
+})()`
 
 /** Validate raw DOM measurements before they reach native bitmap allocation. */
 export function previewCaptureHeight(value: unknown, viewportHeight: number): number {
   return previewPageHeights(value, viewportHeight).capturedHeight
 }
 
-/** The capture is cut at MAX_PREVIEW_HEIGHT; the document height says how much was left out. */
+/**
+ * The capture is cut at MAX_PREVIEW_HEIGHT, and never holds what a page scroller
+ * hides below its first screen; the document height says how much was left out.
+ */
 export function previewPageHeights(value: unknown, viewportHeight: number) {
   if (
     typeof value !== 'object' ||
@@ -106,8 +128,13 @@ export function previewPageHeights(value: unknown, viewportHeight: number) {
   ) {
     throw new Error('Invalid preview page height')
   }
-  const documentHeight = Math.max(viewportHeight, value.documentElement, value.body)
-  return { documentHeight, capturedHeight: Math.min(MAX_PREVIEW_HEIGHT, documentHeight) }
+  const scrollContainer = 'scrollContainer' in value ? value.scrollContainer : 0
+  const pageHeight = Math.max(viewportHeight, value.documentElement, value.body)
+  if (!validHeight(scrollContainer) || !validHeight(pageHeight + scrollContainer)) {
+    throw new Error('Invalid preview page height')
+  }
+  const documentHeight = pageHeight + scrollContainer
+  return { documentHeight, capturedHeight: Math.min(MAX_PREVIEW_HEIGHT, pageHeight) }
 }
 
 function validHeight(value: unknown): value is number {

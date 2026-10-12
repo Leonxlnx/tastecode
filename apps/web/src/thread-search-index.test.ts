@@ -5,6 +5,7 @@ import {
   createThreadSearchIndexer,
   findThreadSearchHits,
 } from './thread-search-index.js'
+import { emptyThread, reduce } from './thread-store.js'
 
 const items: Item[] = [
   {
@@ -73,8 +74,92 @@ describe('thread search index', () => {
     expect(trimmed).toBe(initial)
     expect(trimmed.searchable).toHaveLength(2)
 
-    const rebuilt = project([{ ...items[0]!, id: 'other', text: 'Other' }])
-    expect(rebuilt).not.toBe(initial)
-    expect(findThreadSearchHits(rebuilt, undefined, 'other')).toEqual([0])
+    const replacedHead = project([{ ...items[0]!, id: 'other', text: 'Other' }])
+    expect(findThreadSearchHits(replacedHead, undefined, 'other')).toEqual([0])
+    expect(findThreadSearchHits(replacedHead, undefined, 'alpha')).toEqual([])
+    expect(replacedHead.searchable).toHaveLength(1)
+  })
+
+  it('reindexes an earlier tool call that completes after later calls started', () => {
+    const tool = (id: string, status: 'started' | 'completed', text: string): Item => ({
+      id,
+      turnId: 't1',
+      type: 'tool_call',
+      status,
+      text,
+      createdAt: 1,
+    })
+    const project = createThreadSearchIndexer()
+    let state = reduce(emptyThread, {
+      type: 'turn.started',
+      turn: { id: 't1', threadId: 'th', status: 'running', createdAt: 1 },
+    })
+    for (const id of ['a', 'b', 'c']) {
+      state = reduce(state, { type: 'item.started', item: tool(id, 'started', 'Read file') })
+      project(state.items)
+    }
+
+    state = reduce(state, {
+      type: 'item.completed',
+      item: tool('a', 'completed', 'Read file needle.ts'),
+    })
+
+    expect(state.items[0]?.text).toContain('needle')
+    expect(findThreadSearchHits(project(state.items), state.liveItems, 'needle')).toEqual([0])
+  })
+
+  it('reindexes a streamed row once it is materialized below a newer tail', () => {
+    const project = createThreadSearchIndexer()
+    let state = reduce(emptyThread, {
+      type: 'turn.started',
+      turn: { id: 't1', threadId: 'th', status: 'running', createdAt: 1 },
+    })
+    state = reduce(state, {
+      type: 'item.started',
+      item: {
+        id: 'm',
+        turnId: 't1',
+        type: 'message',
+        role: 'assistant',
+        status: 'started',
+        text: '',
+        createdAt: 1,
+      },
+    })
+    project(state.items)
+    state = reduce(state, {
+      type: 'item.started',
+      item: {
+        id: 'x',
+        turnId: 't1',
+        type: 'tool_call',
+        status: 'started',
+        text: 'Tool',
+        createdAt: 2,
+      },
+    })
+    project(state.items)
+    state = reduce(state, {
+      type: 'item.delta',
+      turnId: 't1',
+      itemId: 'm',
+      textDelta: 'needle here',
+    })
+    project(state.items)
+    state = reduce(state, {
+      type: 'item.started',
+      item: {
+        id: 'y',
+        turnId: 't1',
+        type: 'tool_call',
+        status: 'started',
+        text: 'Tool',
+        createdAt: 3,
+      },
+    })
+
+    expect(state.liveItems.has(0)).toBe(false)
+    expect(state.items[0]?.text).toBe('needle here')
+    expect(findThreadSearchHits(project(state.items), state.liveItems, 'needle')).toEqual([0])
   })
 })

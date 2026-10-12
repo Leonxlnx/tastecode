@@ -34,7 +34,6 @@ describe('WorkspaceTerminal', () => {
         terminalKey="terminal-1"
         transport={new TestTransport()}
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -54,13 +53,33 @@ describe('WorkspaceTerminal', () => {
         transport={new TestTransport()}
         threadId="thread-1"
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
 
     const terminal = screen.getByTestId('terminal-pane')
     expect(terminal.getAttribute('data-thread-id')).toBe('thread-1')
+    expect(terminal.getAttribute('data-project-path')).toBeNull()
+  })
+
+  it('stays on the project checkout while the first message creates the chat', () => {
+    const props = {
+      active: true,
+      terminalKey: 'terminal-4',
+      transport: new TestTransport(),
+      projectPath: '/workspace/current-project',
+      onClose: vi.fn(),
+    }
+    const view = render(<WorkspaceTerminal {...props} />)
+
+    view.rerender(<WorkspaceTerminal {...props} threadId="pending:3f1c" />)
+    let terminal = screen.getByTestId('terminal-pane')
+    expect(terminal.getAttribute('data-project-path')).toBe('/workspace/current-project')
+    expect(terminal.getAttribute('data-thread-id')).toBeNull()
+
+    view.rerender(<WorkspaceTerminal {...props} threadId="thread-4" />)
+    terminal = screen.getByTestId('terminal-pane')
+    expect(terminal.getAttribute('data-thread-id')).toBe('thread-4')
     expect(terminal.getAttribute('data-project-path')).toBeNull()
   })
 
@@ -72,7 +91,6 @@ describe('WorkspaceTerminal', () => {
         terminalKey="terminal-3"
         transport={new TestTransport()}
         projectPath="/workspace/current-project"
-        theme="dark"
         onClose={onClose}
       />,
     )

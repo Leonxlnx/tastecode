@@ -100,6 +100,32 @@ describe('Composer voice dictation', () => {
     }
   })
 
+  it('sends a file attached while a send-after transcript is transcribing', async () => {
+    const originalPrompt = window.prompt
+    window.prompt = vi.fn(() => '/work/late.txt')
+    let resolve!: (transcript: string) => void
+    const onTranscribeVoice = vi.fn(
+      () =>
+        new Promise<string>((done) => {
+          resolve = done
+        }),
+    )
+    const onSend = vi.fn()
+    renderVoiceComposer({ onSend, onTranscribeVoice })
+    try {
+      fireEvent.click(await screen.findByRole('button', { name: 'Record voice note' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Transcribe and send voice note' }))
+      await waitFor(() => expect(onTranscribeVoice).toHaveBeenCalledOnce())
+      fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+      await screen.findByText('late.txt')
+      await act(async () => resolve('spoken words'))
+      await waitFor(() => expect(onSend).toHaveBeenCalledWith('spoken words', ['/work/late.txt']))
+      expect(onSend).toHaveBeenCalledOnce()
+    } finally {
+      window.prompt = originalPrompt
+    }
+  })
+
   it('transcribes and sends from the arrow action', async () => {
     const onSend = vi.fn()
     const onTranscribeVoice = vi.fn(async () => 'spoken words')

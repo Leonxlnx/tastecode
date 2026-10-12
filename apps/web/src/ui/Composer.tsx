@@ -1226,10 +1226,13 @@ function ComposerComponent(props: {
     const el = area.current
     const currentHeight = el?.offsetHeight ?? COMPOSER_MIN_HEIGHT
     previousComposerRect.current = composerAnchor.current?.getBoundingClientRect() ?? null
+    // Clear before handing the text over. A send that is rejected on the spot
+    // puts the words back into this chat's draft, and a later clear would
+    // erase them from the saved draft while the box still showed them.
+    updateText('')
     if (submission === 'steer') props.onSteer(trimmed, paths)
     else props.onSend(trimmed, paths)
     composerAtMaximumHeight.current = false
-    updateText('')
     setSelectedResources([])
     setResourceTrigger(undefined)
     clearAttachments()
@@ -1393,13 +1396,13 @@ function ComposerComponent(props: {
           className={`composer__box ${dragging ? 'is-dropping' : ''}`}
           onDragOver={(e) => {
             e.preventDefault()
-            if (props.attachmentsSupported) setDragging(true)
+            if (props.attachmentsSupported && hasDroppedFiles(e)) setDragging(true)
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
             e.preventDefault()
             setDragging(false)
-            addDroppedFiles(Array.from(e.dataTransfer.files))
+            if (hasDroppedFiles(e)) addDroppedFiles(Array.from(e.dataTransfer.files))
           }}
         >
           <ComposerErrors
@@ -1814,9 +1817,12 @@ function ComposerComponent(props: {
                         return
                       }
                       if (e.key === 'Enter') {
-                        e.preventDefault()
-                        if (!resourcePicker.current?.selectActive()) setResourceTrigger(undefined)
-                        return
+                        if (resourcePicker.current?.selectActive()) {
+                          e.preventDefault()
+                          return
+                        }
+                        // Nothing to pick ("echo $HOME"): Enter keeps its usual meaning.
+                        setResourceTrigger(undefined)
                       }
                       if (e.key === 'Escape') {
                         e.preventDefault()
@@ -2156,6 +2162,11 @@ export function insertTranscriptAtCursor(
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/** Queued-prompt reorders bubble up here too; only real file drags attach. */
+function hasDroppedFiles(event: DragEvent<HTMLElement>): boolean {
+  return Array.from(event.dataTransfer.types ?? []).includes('Files')
 }
 
 function previewMediaType(mimeType: string, fileName: string): 'image' | 'video' | undefined {

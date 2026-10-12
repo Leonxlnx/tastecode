@@ -69,6 +69,81 @@ describe('brand phase', () => {
     })
     expect(prompt).toContain('DASHBOARD INTERACTION AND MOTION')
     expect(prompt).not.toContain('Plan and implement a visible hero entrance')
+    expect(prompt).toContain(
+      "This is a dashboard: take its type from the anchor screen's own interface",
+    )
+    expect(prompt).toContain(
+      'Use one family for the whole interface, in the category the anchor sets its app type in (a serif when the anchor uses serif inside the app), plus at most one monospace family for data',
+    )
+    expect(prompt).toContain('never add a display face')
+    expect(prompt).not.toContain('never a display or serif family')
+    expect(designBrandPrompt(brief)).not.toContain('Use one family for the whole interface')
+  })
+
+  it('derives one design language from the anchor reference, not from every reference', () => {
+    const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('ONE DESIGN LANGUAGE')
+    expect(prompt).toContain('the deck entry whose role is "anchor"')
+    expect(prompt).toContain('in a deck without roles, the hero reference')
+    expect(prompt).toContain('its one-line style summary when the deck records one')
+    expect(prompt).toContain(
+      'Derive the whole design language from the anchor reference: typography category and draw, type scale, palette seeds, radius family, spacing rhythm, button, card and label styles, and the sequence of light and dark surfaces',
+    )
+    expect(prompt).toContain('never average their styles into the brand')
+    expect(prompt).toContain('never assemble a light and dark pattern from different sections')
+    expect(prompt).toContain("base them on the anchor reference's accent character")
+    expect(prompt).not.toContain("Preserve the references' observable composition language")
+  })
+
+  it('asks for page-wide design tokens and keeps them through the palette recipe', () => {
+    const prompt = designBrandPrompt(brief)
+    expect(prompt).toContain('Record the same decisions in designTokens')
+    expect(prompt).toContain('"designTokens":{"typeScale":{"display"')
+    expect(prompt).toContain('"radius":{"scale":["4px","12px","24px"],"pill":"999px"}')
+    expect(prompt).toContain('These are page-wide tokens, never per-section values')
+    const designTokens = {
+      typeScale: {
+        display: '6rem',
+        h1: '4rem',
+        h2: '3rem',
+        h3: '2rem',
+        body: '1rem',
+        small: '0.875rem',
+        label: '0.75rem',
+      },
+      radius: { scale: ['4px', '12px', '24px'], pill: '999px' },
+      spacing: { section: '8rem', gutter: '2rem', stack: '1rem' },
+      buttons: { primary: 'Solid accent pill.', secondary: 'Underlined text link.' },
+      surfaces: 'Light canvas with one dark band before the footer.',
+    }
+    const { colorPalette: _, ...withoutPalette } = brand
+    expect(
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...withoutPalette,
+          designTokens,
+          paletteRecipe: {
+            themes: {
+              light: { accentSeed: '#C1492E', neutralSeed: '#665A50', surfaceContrast: 'quiet' },
+            },
+            locked: {},
+          },
+        }),
+      ).designTokens,
+    ).toEqual(designTokens)
+    // A partial or malformed tokens object must never send Brand into its correction loop.
+    expect(
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...brand,
+          designTokens: { typeScale: { display: '6rem' }, radius: designTokens.radius },
+        }),
+      ).designTokens,
+    ).toEqual({ radius: designTokens.radius })
+    expect(
+      'designTokens' in
+        parseBrandPhaseOutput(JSON.stringify({ ...brand, designTokens: 'see interfaceDirection' })),
+    ).toBe(false)
   })
 
   it('keeps untrusted brief content inside a data boundary', () => {
@@ -95,9 +170,11 @@ describe('brand phase', () => {
     expect(prompt).toContain('Make motionDirection operational')
     expect(prompt).toContain('Return each motionDirection.principles entry as one string')
     expect(prompt).toContain('Do not apply the same fade-up to every section')
-    expect(prompt).toContain('including monumental type or monospace when present')
     expect(prompt).toContain(
-      'Preserve rules, panels, card edges and dividers visible in the reference',
+      'Use monospace or mixed-type label treatments only when the anchor itself uses them',
+    )
+    expect(prompt).toContain(
+      'Take the rule, panel, card-edge and divider language from the anchor reference',
     )
     expect(prompt).toContain('Derive card padding, radius, surface depth')
     expect(prompt).toContain('primary action, focus and selected states')

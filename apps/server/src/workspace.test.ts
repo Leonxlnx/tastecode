@@ -38,6 +38,23 @@ describe('workspace branches', () => {
     expect((await readWorkspace(repo)).branch).toBe('feature/shelf')
   })
 
+  it('lists and switches to a branch that shares its name with a tag', async () => {
+    const repo = repository()
+    git(repo, 'branch', 'release')
+    git(repo, 'tag', 'release')
+    expect(await listWorkspaceBranches(repo)).toEqual(['main', 'feature/shelf', 'release'])
+    expect((await switchWorkspaceBranch(repo, 'release')).branch).toBe('release')
+    expect(await listWorkspaceBranches(repo)).toEqual(['release', 'feature/shelf', 'main'])
+  })
+
+  it('switches to a branch whose name reads like a git option', async () => {
+    const repo = repository()
+    git(repo, 'update-ref', 'refs/heads/--orphan=evil', 'HEAD')
+    expect((await switchWorkspaceBranch(repo, '--orphan=evil')).branch).toBe('--orphan=evil')
+    expect(git(repo, 'ls-files')).toBe('file.txt')
+    expect(git(repo, 'branch', '--list', 'evil')).toBe('')
+  })
+
   it('rejects revisions that are not local branch names', async () => {
     const repo = repository()
     await expect(switchWorkspaceBranch(repo, 'HEAD~1')).rejects.toThrow('unknown local branch')

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -46,6 +46,49 @@ describe('design source scan size limits', () => {
     expect(() =>
       validateDesignSourceQuality(root, ['Chart.tsx'], [], undefined, dashboard),
     ).toThrow('unmanifested standalone SVG')
+  })
+
+  it('allows standalone icon files but not illustrations in reference-bound operating dashboards', () => {
+    const root = workspace()
+    mkdirSync(path.join(root, 'icons'))
+    const dashboard = {
+      architecture: { mode: 'operate_monitor' },
+      sections: [
+        { id: 'workspace', layoutFamily: 'dashboard', referenceDirectionId: 'reviewed-dashboard' },
+      ],
+    } as Parameters<typeof validateDesignSourceQuality>[4]
+    const icons = {
+      // Stroke icon sets put stroke-width on the root; it is not the drawing box.
+      'icons/search.svg':
+        '<!-- search --><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+      'icons/bell.svg':
+        '<svg viewBox="0 0 448 512"><path d="M224 0c-17.7 0-32 14.3-32 32v19.2C119 66 64 130.6 64 208v18.8c0 47-17.3 92.4-48.5 127.6z"/></svg>',
+      'icons/dot.svg': '<svg width="16px" height="16px"><circle cx="8" cy="8" r="4"/></svg>',
+    }
+    for (const [file, source] of Object.entries(icons)) writeFileSync(path.join(root, file), source)
+    expect(() => validateDesignSourceQuality(root, [], [], undefined, dashboard)).not.toThrow()
+    expect(() => validateDesignSourceQuality(root)).toThrow(
+      'icons/bell.svg: unmanifested standalone SVG',
+    )
+
+    const illustrations = {
+      'gradient.svg':
+        '<svg viewBox="0 0 64 64"><defs><linearGradient id="g"><stop offset="0" stop-color="#fff"/></linearGradient></defs><rect width="64" height="64" fill="url(#g)"/></svg>',
+      'banner.svg': '<svg viewBox="0 0 1200 400"><rect width="1200" height="400"/></svg>',
+      'photo.svg':
+        '<svg viewBox="0 0 24 24"><image href="data:image/png;base64,AAAA" width="24" height="24"/></svg>',
+      'label.svg': '<svg viewBox="0 0 24 24"><text x="0" y="12">Revenue</text></svg>',
+      'large.svg': `<svg viewBox="0 0 24 24"><path d="${'M0 0L24 24'.repeat(700)}"/></svg>`,
+      'unsized.svg': '<svg><path d="M0 0L24 24"/></svg>',
+    }
+    for (const [file, source] of Object.entries(illustrations)) {
+      const absolute = path.join(root, file)
+      writeFileSync(absolute, source)
+      expect(() => validateDesignSourceQuality(root, [], [], undefined, dashboard)).toThrow(
+        `${file}: unmanifested standalone SVG`,
+      )
+      rmSync(absolute)
+    }
   })
 
   it('accepts an unchanged uploaded SVG logo after the Assets phase', () => {

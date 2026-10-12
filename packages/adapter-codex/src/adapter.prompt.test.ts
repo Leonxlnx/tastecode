@@ -180,3 +180,29 @@ describe('Codex prompt transport', () => {
     adapter.dispose()
   })
 })
+
+describe('Codex live reasoning', () => {
+  it('separates summary parts the way the completed item joins them', async () => {
+    const { adapter, rpc } = promptAdapter()
+    const deltas: string[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'item.delta') deltas.push(event.textDelta)
+    })
+    adapter.on('log', (line) => logs.push(line))
+    const ids = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reasoning-1' }
+    try {
+      await adapter.start()
+      for (const [summaryIndex, delta] of ['**Plan**', '**Check**'].entries()) {
+        rpc.emitNotification('item/reasoning/summaryPartAdded', { ...ids, summaryIndex })
+        rpc.emitNotification('item/reasoning/summaryTextDelta', { ...ids, delta, summaryIndex })
+      }
+      rpc.emitNotification('item/plan/delta', { ...ids, itemId: 'plan-1', delta: '1. Read' })
+
+      expect(deltas.join('')).toBe('**Plan**\n\n**Check**')
+      expect(logs).toEqual([])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+})

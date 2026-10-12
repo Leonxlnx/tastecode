@@ -1,5 +1,5 @@
 import { SemVer } from 'semver'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AppUpdater } from 'electron-updater'
 import type { ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider.js'
 import {
@@ -12,6 +12,8 @@ import {
   UpdateCheckDeferredError,
   type ReleaseFetch,
 } from './github-release-provider.js'
+
+afterEach(() => vi.useRealTimers())
 
 function release(version = '0.1.0-beta.8', date = '2026-09-20T00:00:00Z') {
   return {
@@ -226,12 +228,36 @@ describe('GitHub asset releases', () => {
     ])
   })
 
-  it('spends no API request on a full feed that still lists the installed release', async () => {
+  it('finds a higher version published before the installed one on a full feed', async () => {
+    const previews = Array.from({ length: 8 }, (_, index) => `linux-preview-${index}`)
+    const fetch = feedFetch(feed(...previews, 'v0.1.0-beta.10', 'v0.1.2'), {}, [
+      localRelease('0.1.2'),
+      localRelease('0.1.3'),
+    ])
+    const provider = providerWith(fetch, '0.1.2')
+    expect((await provider.getLatestVersion()).version).toBe('0.1.3')
+    expect((await provider.getLatestVersion()).version).toBe('0.1.3')
+    expect(fetch.mock.calls.filter(([url]) => url.includes('?per_page=')).length).toBe(1)
+  })
+
+  it('reads the release list once a day for a full feed that lists the installed release', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.parse('2026-10-11T08:00:00Z') })
     const fetch = feedFetch(
       feed('v0.1.2', ...Array.from({ length: 9 }, (_, index) => `v0.0.${index}`)),
+      {},
+      [localRelease('0.1.2')],
     )
-    expect((await providerWith(fetch, '0.1.2').getLatestVersion()).version).toBe('0.1.2')
-    expect(fetch).toHaveBeenCalledOnce()
+    const provider = providerWith(fetch, '0.1.2')
+    const lists = () => fetch.mock.calls.filter(([url]) => url.includes('?per_page=')).length
+
+    expect((await provider.getLatestVersion()).version).toBe('0.1.2')
+    expect(lists()).toBe(1)
+    vi.setSystemTime(Date.parse('2026-10-12T07:00:00Z'))
+    expect((await provider.getLatestVersion()).version).toBe('0.1.2')
+    expect(lists()).toBe(1)
+    vi.setSystemTime(Date.parse('2026-10-12T08:00:00Z'))
+    expect((await provider.getLatestVersion()).version).toBe('0.1.2')
+    expect(lists()).toBe(2)
   })
 
   it('reads the release list when a feed entry has no readable tag', async () => {

@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { Profiler, StrictMode } from 'react'
+import { Profiler, StrictMode, useLayoutEffect } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResultOf } from '@harness/contracts'
@@ -120,6 +120,9 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   document.documentElement.style.removeProperty('--font-terminal')
+  document.documentElement.style.removeProperty('--terminal-workspace-bg')
+  document.documentElement.style.removeProperty('--rail-glass')
+  delete document.documentElement.dataset['theme']
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -132,7 +135,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-idle"
         height={260}
-        theme="dark"
         active={false}
         onClose={vi.fn()}
       />,
@@ -146,7 +148,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-idle"
         height={260}
-        theme="dark"
         active
         onClose={vi.fn()}
       />,
@@ -170,7 +171,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-idle"
         height={260}
-        theme="dark"
         active={false}
         onClose={vi.fn()}
       />,
@@ -183,7 +183,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-idle"
         height={260}
-        theme="dark"
         active
         onClose={vi.fn()}
       />,
@@ -206,7 +205,6 @@ describe('TerminalPane', () => {
           transport={harness.transport}
           threadId="thread-1"
           height={260}
-          theme="dark"
           onHeightChange={vi.fn()}
           onClose={onClose}
         />
@@ -269,14 +267,7 @@ describe('TerminalPane', () => {
         if (method === 'terminal.status' && recovering) return reply.promise
         return undefined
       })
-      render(
-        <TerminalPane
-          transport={harness.transport}
-          threadId="replay"
-          theme="dark"
-          onClose={vi.fn()}
-        />,
-      )
+      render(<TerminalPane transport={harness.transport} threadId="replay" onClose={vi.fn()} />)
       await screen.findByText('Connected')
       const instance = xterm.instances.at(-1)!
       act(() =>
@@ -329,14 +320,7 @@ describe('TerminalPane', () => {
         return { status: 'running', output: 'prompt', outputOffset: 0, exitCode: null }
       return undefined
     })
-    render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="early-output"
-        theme="dark"
-        onClose={vi.fn()}
-      />,
-    )
+    render(<TerminalPane transport={harness.transport} threadId="early-output" onClose={vi.fn()} />)
     act(() => {
       harness.emit('terminal.output', { terminalId: 'unrelated', data: 'ignore', outputOffset: 0 })
       harness.emit('terminal.output', { terminalId: 'terminal-1', data: 'prompt', outputOffset: 0 })
@@ -355,7 +339,6 @@ describe('TerminalPane', () => {
           terminalKey="offline-tab"
           transport={harness.transport}
           threadId="offline"
-          theme="dark"
           mode="workspace"
           onClose={vi.fn()}
         />,
@@ -391,7 +374,6 @@ describe('TerminalPane', () => {
         terminalKey="shared-tab"
         transport={harness.transport}
         threadId="owner-A"
-        theme="dark"
         mode="workspace"
         onClose={onClose}
       />,
@@ -402,7 +384,6 @@ describe('TerminalPane', () => {
         terminalKey="shared-tab"
         transport={harness.transport}
         threadId="owner-B"
-        theme="dark"
         mode="workspace"
         onClose={onClose}
       />,
@@ -427,7 +408,6 @@ describe('TerminalPane', () => {
         terminalKey="late-tab"
         transport={harness.transport}
         threadId="owner-A"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -436,7 +416,6 @@ describe('TerminalPane', () => {
         terminalKey="late-tab"
         transport={harness.transport}
         threadId="owner-B"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -456,12 +435,7 @@ describe('TerminalPane', () => {
       )
       const onClose = vi.fn()
       const view = render(
-        <TerminalPane
-          transport={harness.transport}
-          threadId="exited"
-          theme="dark"
-          onClose={onClose}
-        />,
+        <TerminalPane transport={harness.transport} threadId="exited" onClose={onClose} />,
       )
       await screen.findByText('Connected')
       recovering = true
@@ -484,18 +458,12 @@ describe('TerminalPane', () => {
         <TerminalPane
           transport={harness.transport}
           threadId="exited"
-          theme="dark"
           active={false}
           onClose={onClose}
         />,
       )
       view.rerender(
-        <TerminalPane
-          transport={harness.transport}
-          threadId="exited"
-          theme="dark"
-          onClose={onClose}
-        />,
+        <TerminalPane transport={harness.transport} threadId="exited" onClose={onClose} />,
       )
       act(() => harness.emit('terminal.exit', { terminalId: 'terminal-1', exitCode: 7 }))
       expect(onClose).toHaveBeenCalledOnce()
@@ -526,7 +494,6 @@ describe('TerminalPane', () => {
         terminalKey="restart-tab"
         transport={harness.transport}
         threadId="restart"
-        theme="dark"
         mode="workspace"
         onClose={vi.fn()}
       />,
@@ -585,14 +552,7 @@ describe('TerminalPane', () => {
         }
       })
       const onClose = vi.fn()
-      render(
-        <TerminalPane
-          transport={harness.transport}
-          threadId="stale"
-          theme="dark"
-          onClose={onClose}
-        />,
-      )
+      render(<TerminalPane transport={harness.transport} threadId="stale" onClose={onClose} />)
       await screen.findByText('Connected')
       act(() => harness.setState('reconnecting'))
       act(() => harness.setState('open'))
@@ -618,14 +578,7 @@ describe('TerminalPane', () => {
         ? { status: 'running', output: 'tail', outputOffset: 200_000, exitCode: null }
         : undefined,
     )
-    render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="truncated"
-        theme="dark"
-        onClose={vi.fn()}
-      />,
-    )
+    render(<TerminalPane transport={harness.transport} threadId="truncated" onClose={vi.fn()} />)
     await screen.findByText('Connected')
     recovering = true
     act(() => harness.setState('reconnecting'))
@@ -652,19 +605,13 @@ describe('TerminalPane', () => {
     )
     const onClose = vi.fn()
     const view = render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="inactive-recovery"
-        theme="dark"
-        onClose={onClose}
-      />,
+      <TerminalPane transport={harness.transport} threadId="inactive-recovery" onClose={onClose} />,
     )
     await screen.findByText('Connected')
     view.rerender(
       <TerminalPane
         transport={harness.transport}
         threadId="inactive-recovery"
-        theme="dark"
         active={false}
         onClose={onClose}
       />,
@@ -682,12 +629,7 @@ describe('TerminalPane', () => {
   it('resumes with a new size after recovery even if the old size was already sent', async () => {
     const harness = fakeTransport()
     render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="resize-recovery"
-        theme="dark"
-        onClose={vi.fn()}
-      />,
+      <TerminalPane transport={harness.transport} threadId="resize-recovery" onClose={vi.fn()} />,
     )
     await screen.findByText('Connected')
     const viewport = document.querySelector<HTMLElement>('.terminal-pane__viewport')!
@@ -720,7 +662,6 @@ describe('TerminalPane', () => {
           terminalKey="strict-delayed"
           transport={harness.transport}
           threadId="strict-owner"
-          theme="dark"
           onClose={vi.fn()}
         />
       </StrictMode>,
@@ -746,7 +687,6 @@ describe('TerminalPane', () => {
         terminalKey="transport-tab"
         transport={first.transport}
         threadId="same-owner"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -756,7 +696,6 @@ describe('TerminalPane', () => {
         terminalKey="transport-tab"
         transport={second.transport}
         threadId="same-owner"
-        theme="dark"
         onClose={vi.fn()}
       />,
     )
@@ -774,7 +713,6 @@ describe('TerminalPane', () => {
           terminalKey="right-terminal"
           transport={harness.transport}
           projectPath="/workspace/project"
-          theme="dark"
           onClose={onClose}
         />
       </StrictMode>,
@@ -805,7 +743,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-exit"
         height={260}
-        theme="dark"
         onClose={onClose}
       />,
     )
@@ -832,7 +769,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-resize"
         height={260}
-        theme="dark"
         onHeightChange={onHeightChange}
         onClose={vi.fn()}
       />,
@@ -873,7 +809,6 @@ describe('TerminalPane', () => {
           transport={harness.transport}
           threadId="thread-resize-baseline"
           height={260}
-          theme="dark"
           onHeightChange={onHeightChange}
           onClose={vi.fn()}
         />
@@ -943,7 +878,6 @@ describe('TerminalPane', () => {
         transport={harness.transport}
         threadId="thread-resize-requests"
         height={260}
-        theme="dark"
         onHeightChange={vi.fn()}
         onClose={vi.fn()}
       />,
@@ -983,7 +917,6 @@ describe('TerminalPane', () => {
       <TerminalPane
         transport={harness.transport}
         threadId="thread-workspace"
-        theme="dark"
         mode="workspace"
         onClose={vi.fn()}
       />,
@@ -1022,6 +955,66 @@ describe('TerminalPane', () => {
     expect(xterm.instances.at(-1)?.unicode.activeVersion).toBe('11')
   })
 
+  it.each([
+    ['workspace', { background: '#eff1f5' }, { background: '#0d0d0d' }],
+    ['inline', { red: '#ca4a55' }, { red: '#e06c75' }],
+  ] as const)(
+    'repaints a %s terminal once the app applies a theme switch',
+    async (mode, light, dark) => {
+      const harness = fakeTransport()
+      // App writes the theme onto the root in its own layout effect, which
+      // React runs after the terminal's.
+      function App(props: { theme: 'light' | 'dark' }) {
+        useLayoutEffect(() => {
+          document.documentElement.dataset['theme'] = props.theme
+        }, [props.theme])
+        return (
+          <TerminalPane
+            transport={harness.transport}
+            threadId="thread-theme"
+            mode={mode}
+            onClose={vi.fn()}
+          />
+        )
+      }
+      document.documentElement.dataset['theme'] = 'light'
+      const view = render(<App theme="light" />)
+      const instance = xterm.instances[0]!
+      expect(instance.options['theme']).toMatchObject(light)
+
+      view.rerender(<App theme="dark" />)
+      await waitFor(() => expect(instance.options['theme']).toMatchObject(dark))
+      view.rerender(<App theme="light" />)
+      await waitFor(() => expect(instance.options['theme']).toMatchObject(light))
+      expect(xterm.instances).toHaveLength(1)
+    },
+  )
+
+  it('repaints when the backdrop changes the terminal background, and only then', async () => {
+    const harness = fakeTransport()
+    render(
+      <TerminalPane
+        transport={harness.transport}
+        threadId="thread-backdrop"
+        mode="workspace"
+        onClose={vi.fn()}
+      />,
+    )
+    const instance = xterm.instances[0]!
+    const initial = instance.options['theme']
+
+    await act(async () => document.documentElement.style.setProperty('--rail-glass', '0.2'))
+    expect(instance.options['theme']).toBe(initial)
+
+    act(() => document.documentElement.style.setProperty('--terminal-workspace-bg', '#1b1f2a'))
+    await waitFor(() =>
+      expect(instance.options['theme']).toMatchObject({
+        background: '#1b1f2a',
+        cursorAccent: '#1b1f2a',
+      }),
+    )
+  })
+
   it('closes a workspace terminal tab when its shell exits', async () => {
     const harness = fakeTransport()
     const onClose = vi.fn()
@@ -1029,7 +1022,6 @@ describe('TerminalPane', () => {
       <TerminalPane
         transport={harness.transport}
         threadId="thread-workspace-exit"
-        theme="dark"
         mode="workspace"
         onClose={onClose}
       />,
@@ -1058,7 +1050,6 @@ describe('TerminalPane', () => {
         <TerminalPane
           transport={harness.transport}
           threadId="workspace-loading"
-          theme="dark"
           mode="workspace"
           onClose={vi.fn()}
         />,
@@ -1106,7 +1097,6 @@ describe('TerminalPane', () => {
       <TerminalPane
         transport={harness.transport}
         threadId="workspace-loading-error"
-        theme="dark"
         mode="workspace"
         onClose={vi.fn()}
       />,
@@ -1126,12 +1116,7 @@ describe('TerminalPane', () => {
       method === 'terminal.open' ? opened.promise : undefined,
     )
     render(
-      <TerminalPane
-        transport={harness.transport}
-        threadId="inline-loading"
-        theme="dark"
-        onClose={vi.fn()}
-      />,
+      <TerminalPane transport={harness.transport} threadId="inline-loading" onClose={vi.fn()} />,
     )
     expect(screen.getByText('Connecting…').classList.contains('visually-hidden')).toBe(false)
     expect(screen.queryByRole('status')).toBeNull()
@@ -1145,7 +1130,6 @@ describe('TerminalPane', () => {
       <TerminalPane
         transport={harness.transport}
         projectPath="/workspace/current-project"
-        theme="dark"
         mode="workspace"
         onClose={vi.fn()}
       />,

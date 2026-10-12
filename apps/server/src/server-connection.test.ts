@@ -5,12 +5,22 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { WebSocket, type ServerOptions, type WebSocketServer } from 'ws'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { startServer } from './server.js'
 
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
   threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
+  historyPage: vi.fn(),
+  read: [] as string[],
+  reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
+  shutdown: [] as string[],
+  historyClosed: Promise.resolve(),
+  historySources: [] as string[][],
+  historyLoads: [] as string[],
+  failGrokHistory: false,
+  failHistoryService: false,
 }))
 const temporary: string[] = []
 
@@ -28,28 +38,65 @@ vi.mock('./store.js', () => ({
     }
     recoverInterruptedThreads() {}
     nextLifecycleRefreshAt() {}
+    threadApproval() {
+      return undefined
+    }
     close() {}
   },
 }))
 vi.mock('./orchestrator.js', () => ({
   resolveWorkspacePath: (workspace: string) => workspace,
   Orchestrator: class {
+    constructor(_store: unknown, handlers: { reservedPreviewPorts?: ReadonlySet<number> }) {
+      state.reservedPreviewPorts.push(handlers.reservedPreviewPorts)
+    }
     async protectStoredCheckpoints() {}
     refreshLifecycle() {}
     async recoverWorktrees() {}
+    async closeAllTerminals() {
+      state.shutdown.push('terminals')
+    }
     async disposeAll() {}
+    historyPage(threadId: string, page: unknown) {
+      return state.historyPage(threadId, page) as unknown
+    }
+    isTurnRunning() {
+      return true
+    }
+    markThreadRead(threadId: string) {
+      state.read.push(threadId)
+    }
+    async submitTurn() {
+      return { queued: false, turnId: 'turn' }
+    }
   },
 }))
 vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
+    constructor(_store: unknown, sources: Array<{ provider: string }>) {
+      if (state.failHistoryService) throw new Error('history service failed')
+      state.historySources.push(sources.map(({ provider }) => provider))
+    }
     async refresh() {}
-    async close() {}
+    async load(threadId: string) {
+      state.historyLoads.push(threadId)
+      return false
+    }
+    async close() {
+      state.shutdown.push('history')
+      await state.historyClosed
+    }
   },
 }))
 vi.mock('@harness/adapter-codex', () => ({ createCodexHistorySource: () => ({}) }))
 vi.mock('@harness/adapter-claude-code', () => ({ createClaudeHistorySource: () => ({}) }))
-vi.mock('@harness/adapter-grok', () => ({ createGrokHistorySource: () => ({}) }))
+vi.mock('@harness/adapter-grok', () => ({
+  createGrokHistorySource: () => {
+    if (state.failGrokHistory) throw new Error('grok history failed')
+    return {}
+  },
+}))
 vi.mock('ws', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ws')>()
   return {
@@ -71,6 +118,15 @@ afterEach(async () => {
   state.servers.length = 0
   state.projects.length = 0
   state.threads.clear()
+  state.historyPage.mockReset()
+  state.read.length = 0
+  state.reservedPreviewPorts.length = 0
+  state.shutdown.length = 0
+  state.historyClosed = Promise.resolve()
+  state.historySources.length = 0
+  state.historyLoads.length = 0
+  state.failGrokHistory = false
+  state.failHistoryService = false
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -164,6 +220,17 @@ describe('rejected websocket connections', () => {
         client.terminate()
       }
     }
+  })
+
+  it('keeps Design previews off the control port and the trusted renderer port', async () => {
+    vi.stubEnv('HARNESS_RENDERER_ORIGIN', 'http://127.0.0.1:6100')
+    await listen()
+    await running?.close()
+    vi.stubEnv('HARNESS_RENDERER_ORIGIN', 'file://')
+    await listen()
+
+    // `listen` asks for port 0, so that is the control port reserved here.
+    expect(state.reservedPreviewPorts).toEqual([new Set([0, 6100]), new Set([0])])
   })
 
   it('rejects a malformed authentication URL without throwing from the listener', async () => {
@@ -321,5 +388,140 @@ describe('workspace search requests', () => {
     expect(await search(port, { projectPath, ...params })).toMatchObject({
       error: { message: 'invalid params for workspace.searchFiles' },
     })
+  })
+})
+
+describe('server shutdown', () => {
+  it('starts closing terminals before it waits on provider history', async () => {
+    let finishHistory: () => void = () => {}
+    state.historyClosed = new Promise<void>((resolve) => {
+      finishHistory = resolve
+    })
+    await listen()
+    const closed = running!.close()
+    running = undefined
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(state.shutdown).toEqual(['terminals', 'history'])
+
+    finishHistory()
+    await closed
+  })
+})
+
+describe('paged history requests', () => {
+  async function history(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'history', method: 'thread.history', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+  const turn = {
+    seq: 7,
+    event: {
+      type: 'turn.started',
+      turn: { id: 'turn', threadId: 't', status: 'running', createdAt: 1 },
+    },
+  }
+
+  it('returns the newest page with its cursor and marks only that page read', async () => {
+    state.historyPage.mockResolvedValue({
+      events: [turn],
+      page: { olderCursor: 'older', snapshotSeq: 7 },
+    })
+    const { port } = await listen()
+    expect(await history(port, { threadId: 't', page: { turnLimit: 10 } })).toEqual({
+      id: 'history',
+      result: {
+        events: [turn],
+        running: true,
+        approval: 'ask',
+        page: { olderCursor: 'older', snapshotSeq: 7 },
+      },
+    })
+    expect(state.historyPage).toHaveBeenCalledWith('t', { turnLimit: 10 })
+    expect(state.read).toEqual(['t'])
+  })
+
+  it('passes a reset through and leaves read state alone for older pages', async () => {
+    state.historyPage.mockResolvedValue({
+      events: [turn],
+      page: { olderCursor: null, snapshotSeq: 7 },
+      reset: true,
+    })
+    const { port } = await listen()
+    expect(
+      await history(port, { threadId: 't', page: { before: 'cursor', turnLimit: 20 } }),
+    ).toMatchObject({
+      result: { reset: true, page: { olderCursor: null, snapshotSeq: 7 } },
+    })
+    expect(state.read).toEqual([])
+  })
+
+  it('answers a cursor it never issued as a bad request', async () => {
+    state.historyPage.mockRejectedValue(new InvalidHistoryCursorError())
+    const { port } = await listen()
+    expect(await history(port, { threadId: 't', page: { before: 'forged' } })).toEqual({
+      id: 'history',
+      error: { code: 'bad_request', message: 'invalid history cursor' },
+    })
+  })
+})
+
+describe('unavailable provider history', () => {
+  async function request(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'request', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+  const opened = { result: { events: [], page: { olderCursor: null, snapshotSeq: 0 } } }
+  const sent = { id: 'request', result: { queued: false, turnId: 'turn' } }
+
+  it('keeps every other chat working when one provider source cannot load', async () => {
+    state.failGrokHistory = true
+    state.historyPage.mockResolvedValue(opened.result)
+    const { port } = await listen()
+
+    expect(await request(port, 'thread.history', { threadId: 'local', page: {} })).toMatchObject(
+      opened,
+    )
+    expect(await request(port, 'thread.sendTurn', { threadId: 'local', text: 'hi' })).toEqual(sent)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
+    ).toMatchObject(opened)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:grok:s', page: {} }),
+    ).toMatchObject({ error: { message: 'grok history failed' } })
+    expect(
+      await request(port, 'thread.sendTurn', { threadId: 'external:grok:s', text: 'hi' }),
+    ).toMatchObject({ error: { message: 'grok history failed' } })
+    expect(state.historySources).toEqual([['codex', 'claude-code']])
+    expect(state.historyLoads).toEqual(['local', 'local', 'external:codex:s'])
+  })
+
+  it('fails only imported chats when the history service cannot start', async () => {
+    state.failHistoryService = true
+    state.historyPage.mockResolvedValue(opened.result)
+    const { port } = await listen()
+
+    expect(await request(port, 'thread.history', { threadId: 'local', page: {} })).toMatchObject(
+      opened,
+    )
+    expect(await request(port, 'thread.sendTurn', { threadId: 'local', text: 'hi' })).toEqual(sent)
+    expect(
+      await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
+    ).toMatchObject({ error: { message: 'history service failed' } })
   })
 })

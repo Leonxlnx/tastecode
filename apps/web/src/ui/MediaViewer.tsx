@@ -56,16 +56,20 @@ export function MediaViewer(props: {
   const close = useRef<HTMLButtonElement>(null)
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
+  // Read through a ref: the keyboard effect depends on togglePlayback, and
+  // re-running it on a load error moved focus out and back to Close.
+  const videoFailed = useRef(videoError)
+  videoFailed.current = videoError
 
   const togglePlayback = useCallback(() => {
     const element = video.current
-    if (!element || videoError) return
+    if (!element || videoFailed.current) return
     if (element.paused) {
       void element.play().catch(() => setVideoError(true))
     } else {
       element.pause()
     }
-  }, [videoError])
+  }, [])
 
   const seekBy = useCallback((seconds: number) => {
     const element = video.current

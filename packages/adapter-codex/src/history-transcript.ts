@@ -1,6 +1,7 @@
 import type { DomainEvent, ProviderHistorySession, Turn } from '@harness/contracts'
 import { object, timestamp } from './history-values.js'
 import { historyItem, responseItem, type HistoryItem } from './history-items.js'
+import { turnDiff } from './turn-diff.js'
 
 type RecordValue = Record<string, unknown>
 type Entry = {
@@ -29,12 +30,14 @@ export function parseCodexHistory(
   const turns: SavedTurn[] = []
   const nativeTurns = new Map<string, SavedTurn>()
   let current: SavedTurn | undefined
-  function turn(id: unknown, createdAt: number): SavedTurn {
+  function turn(id: unknown, createdAt: number, start = false): SavedTurn {
     const nativeId = typeof id === 'string' ? id : undefined
     const existing = nativeId ? nativeTurns.get(nativeId) : undefined
     if (existing) {
-      current = existing
-      return current
+      // A late item or end of an earlier turn joins it, but the records
+      // without a turn ID that follow still belong to the current turn.
+      if (start) current = existing
+      return existing
     }
     if (current && !nativeId) return current
     if (current && !current.status) {
@@ -57,7 +60,7 @@ export function parseCodexHistory(
       record.type === 'turn_context' ||
       (record.type === 'event_msg' && payload.type === 'task_started')
     ) {
-      turn(payload.turn_id, timestamp(payload.started_at, createdAt))
+      turn(payload.turn_id, timestamp(payload.started_at, createdAt), true)
       return
     }
     if (
@@ -120,7 +123,7 @@ export function parseCodexHistory(
     },
   ]
   for (const saved of turns) {
-    const items = turnItems(saved)
+    const items = turnItems(saved, session.workspacePath)
     if (items.length === 0) continue
     const status = saved.status ?? 'interrupted'
     const mapped: Turn = {
@@ -135,8 +138,8 @@ export function parseCodexHistory(
       events.push({ type: 'item.completed', item })
       if (diff) diffs.push(diff)
     }
-    if (diffs.length)
-      events.push({ type: 'diff.updated', turnId: saved.id, diff: diffs.join('\n') })
+    const patch = turnDiff(diffs)
+    if (patch) events.push({ type: 'diff.updated', turnId: saved.id, diff: patch })
     events.push({
       type: 'turn.completed',
       turnId: saved.id,
@@ -147,7 +150,7 @@ export function parseCodexHistory(
   return events
 }
 
-function turnItems(turn: SavedTurn): HistoryItem[] {
+function turnItems(turn: SavedTurn, root: string): HistoryItem[] {
   const mapped: Array<HistoryItem & { kind: Entry['kind']; index: number }> = []
   const richIds = new Set(
     turn.entries
@@ -179,7 +182,7 @@ function turnItems(turn: SavedTurn): HistoryItem[] {
       status: 'completed' as const,
     }
     let items: HistoryItem[]
-    if (entry.kind === 'rich') items = historyItem(entry.payload, base)
+    if (entry.kind === 'rich') items = historyItem(entry.payload, base, root)
     else if (entry.kind === 'response') {
       if (
         (typeof entry.payload.id === 'string' && richIds.has(entry.payload.id)) ||
@@ -231,17 +234,21 @@ function turnItems(turn: SavedTurn): HistoryItem[] {
       const { item } = result
       const dedup = item.type === 'message' || item.type === 'reasoning'
       const key = `${item.type}:${item.role ?? ''}:${item.text ?? ''}`
+      // A reasoning item also counts once for each part, so its part events match it.
+      const keys = [key, ...(result.parts ?? []).map((part) => `${item.type}::${part}`)]
       const occurrence = (occurrences.get(key) ?? 0) + 1
-      occurrences.set(key, occurrence)
+      for (const each of keys) occurrences.set(each, (occurrences.get(each) ?? 0) + 1)
       if (dedup && occurrence <= (counts.get(key) ?? 0)) {
         const original = acceptedByContent.get(key)?.[occurrence - 1]
         if (original) original.index = Math.min(original.index, result.index)
         continue
       }
       accepted.push(result)
-      const byContent = acceptedByContent.get(key) ?? []
-      byContent.push(result)
-      acceptedByContent.set(key, byContent)
+      for (const each of keys) {
+        const byContent = acceptedByContent.get(each) ?? []
+        byContent.push(result)
+        acceptedByContent.set(each, byContent)
+      }
     }
     for (const [key, count] of occurrences) counts.set(key, Math.max(counts.get(key) ?? 0, count))
   }

@@ -29,8 +29,9 @@ export function validateDesignSourceQuality(
   // Reference-bound geometry is judged against the actual images in visual Review.
   const referenceBound =
     !!page?.sections.length && page.sections.every((section) => section.referenceDirectionId)
-  // Native chart/icon SVG belongs to the implemented dashboard, not the acquired asset set.
-  // Visual Review checks its purpose and geometry against the locked screen references.
+  // Native chart/icon SVG, inline or as a standalone icon file, belongs to the implemented
+  // dashboard, not the acquired asset set. Visual Review checks its purpose and geometry
+  // against the locked screen references.
   const nativeDashboard =
     referenceBound &&
     page?.architecture?.mode === 'operate_monitor' &&
@@ -102,7 +103,8 @@ function designSourceViolations(
     const source = bytes.toString('utf8').replace(/\/\*[\s\S]*?\*\//g, '')
 
     if (extension === '.svg') {
-      if (!approvedSvgFiles.has(normalized)) {
+      // A standalone illustration in a dashboard is still a drawn substitute for real imagery.
+      if (!approvedSvgFiles.has(normalized) && !(nativeDashboard && isIconSvg(source))) {
         violations.push(
           `${normalized}: unmanifested standalone SVG substitute ${sourceFingerprint(source)}`,
         )
@@ -136,6 +138,50 @@ function designSourceViolations(
     }
   }
   return (referenceBound ? violations : [...violations, ...cardRails]).sort()
+}
+
+/** Icon sets ship glyphs of a few hundred bytes to a few KB; larger files are artwork. */
+const ICON_SVG_MAX_BYTES = 6_000
+
+/**
+ * A standalone SVG that reads as one icon glyph: small, roughly square, and free of raster
+ * images, text, gradients, patterns and filters, which mark illustrations and drawn stand-ins.
+ */
+function isIconSvg(source: string): boolean {
+  const markup = source.replace(/<!--[\s\S]*?-->/g, '')
+  if (Buffer.byteLength(markup) > ICON_SVG_MAX_BYTES) return false
+  if (/<(?:image|text|foreignObject|linearGradient|radialGradient|pattern|filter)\b/i.test(markup))
+    return false
+  const root = /<svg\b[^>]*>/i.exec(markup)?.[0]
+  const box = root ? svgBox(root) : undefined
+  if (!box) return false
+  const ratio = box.width / box.height
+  return ratio >= 0.5 && ratio <= 2
+}
+
+/** The drawing box of a root `<svg>` tag from its viewBox, or from numeric width and height. */
+function svgBox(tag: string): { width: number; height: number } | undefined {
+  const viewBox = /(?<![\w:-])viewBox\s*=\s*["']([^"']*)["']/i.exec(tag)?.[1]
+  if (viewBox !== undefined) {
+    const [, , width, height, ...rest] = viewBox
+      .trim()
+      .split(/[\s,]+/)
+      .map(Number)
+    return width! > 0 && height! > 0 && !rest.length
+      ? { width: width!, height: height! }
+      : undefined
+  }
+  const length = (name: string) => {
+    const value = new RegExp(
+      `(?<![\\w:-])${name}\\s*=\\s*["']\\s*([\\d.]+)(?:px)?\\s*["']`,
+      'i',
+    ).exec(tag)?.[1]
+    const amount = Number(value)
+    return amount > 0 ? amount : undefined
+  }
+  const width = length('width')
+  const height = length('height')
+  return width && height ? { width, height } : undefined
 }
 
 function sourceFingerprint(source: string): string {
@@ -277,7 +323,8 @@ function isCardLike(value: string): boolean {
   )
 }
 
-function designSourceFiles(workspacePath: string): string[] {
+/** Workspace source the Design checks scan: generated code, not dependencies, builds or tests. */
+export function designSourceFiles(workspacePath: string): string[] {
   const extensions = new Set([
     '.css',
     '.scss',
@@ -294,12 +341,10 @@ function designSourceFiles(workspacePath: string): string[] {
     '.svelte',
     '.svg',
   ])
+  // Dependency and cache trees are already opaque to every workspace scan.
   const ignoredDirectories = new Set([
     '.git',
     '.taste',
-    '.next',
-    '.turbo',
-    'node_modules',
     'dist',
     'build',
     'out',

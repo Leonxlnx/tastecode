@@ -122,10 +122,14 @@ function parseSkillFrontmatter(markdown: string): SkillFrontmatter {
   const fields: Record<string, string> = {}
   let current: string | undefined
   for (const line of match[1]!.split(/\r?\n/)) {
-    const field = /^([A-Za-z][\w]*)\s*:\s*(.*?)\s*$/.exec(line)
+    // Agent Skills keys such as `allowed-tools` are hyphenated; every top-level key
+    // must end the previous field so its nested lines are not folded into it.
+    const field = /^([A-Za-z][\w-]*)\s*:\s*(.*?)\s*$/.exec(line)
     if (field) {
       current = field[1]!
-      fields[current] = unquote(field[2] ?? '')
+      const value = field[2] ?? ''
+      // A block scalar indicator (`>-`, `|`, `|2+`) only introduces the indented lines.
+      fields[current] = /^[|>](?:[1-9]?[+-]?|[+-][1-9])$/.test(value) ? '' : unquote(value)
       continue
     }
     if (current && /^\s+\S/.test(line)) {

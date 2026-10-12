@@ -7,7 +7,8 @@ import { ProviderHistory } from './provider-history.js'
 import { Store } from './store.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { orderProviderHistory } from './provider-history-order.js'
-import { RESTORE_CONTEXT_NOTICE } from './provider-session.js'
+import { createProjectListProjector, type ProjectListState } from './project-list.js'
+import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
 let store: Store
 const histories: ProviderHistory[] = []
@@ -213,6 +214,109 @@ describe('provider history integration', () => {
         .filter((item) => item.role === 'user')
         .map((item) => item.text),
     ).toEqual(['Hello'])
+  })
+
+  it('recognizes a steer that the provider saved as a turn of its own', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const message = (id: string, turnId: string, role: 'user' | 'assistant', text: string) =>
+      ({
+        type: 'item.completed',
+        item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: 1000 },
+      }) satisfies DomainEvent
+    const started = (id: string, threadId: string) =>
+      ({
+        type: 'turn.started',
+        turn: { id, threadId, status: 'running', createdAt: 1000 },
+      }) satisfies DomainEvent
+    // The steer and its answer stay in the turn they steered.
+    for (const event of [
+      started('local-turn', 'local'),
+      message('prompt', 'local-turn', 'user', 'Hello'),
+      message('story', 'local-turn', 'assistant', 'Story'),
+      message('steer', 'local-turn', 'user', 'Steer'),
+      message('steer-answer', 'local-turn', 'assistant', 'Answer to the steer'),
+      { type: 'turn.completed', turnId: 'local-turn', status: 'completed' },
+    ] satisfies DomainEvent[])
+      store.append('local', event)
+    const { history, source } = setup()
+    // Claude's transcript starts a turn at every prompt, the steer included.
+    vi.mocked(source.read).mockResolvedValue([
+      transcript()[0]!,
+      started('native-a', 'native'),
+      message('native-prompt', 'native-a', 'user', 'Hello'),
+      message('native-story', 'native-a', 'assistant', 'Story'),
+      { type: 'turn.completed', turnId: 'native-a', status: 'interrupted' },
+      started('native-b', 'native'),
+      message('native-steer', 'native-b', 'user', 'Steer'),
+      message('native-steer-answer', 'native-b', 'assistant', 'Answer to the steer'),
+      { type: 'turn.completed', turnId: 'native-b', status: 'completed' },
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      'Story',
+      'Steer',
+      'Answer to the steer',
+    ])
+  })
+
+  it('hides Design phase prompts that the provider saved as turns of their own', async () => {
+    store.addThread({
+      id: 'local',
+      projectPath: process.cwd(),
+      provider: 'codex',
+      providerSessionId: 'native',
+      title: 'Local',
+    })
+    const message = (id: string, turnId: string, role: 'user' | 'assistant', text: string) =>
+      ({
+        type: 'item.completed',
+        item: { id, turnId, type: 'message', role, status: 'completed', text, createdAt: 1000 },
+      }) satisfies DomainEvent
+    const started = (id: string, threadId: string) =>
+      ({
+        type: 'turn.started',
+        turn: { id, threadId, status: 'running', createdAt: 1000 },
+      }) satisfies DomainEvent
+    // Locally, a Design run shows the request and each phase as Design activity.
+    for (const event of [
+      started('local-brief', 'local'),
+      message('request', 'local-brief', 'user', 'A bakery page'),
+      { type: 'turn.completed', turnId: 'local-brief', status: 'completed' },
+      started('local-page', 'local'),
+      { type: 'turn.completed', turnId: 'local-page', status: 'interrupted' },
+    ] satisfies DomainEvent[])
+      store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([
+      transcript()[0]!,
+      started('native-brief', 'native'),
+      message('brief', 'native-brief', 'user', `${DESIGN_PHASE_NOTICE}Brief: A bakery page`),
+      message('brief-json', 'native-brief', 'assistant', '{"status":"complete"}'),
+      { type: 'turn.completed', turnId: 'native-brief', status: 'completed' },
+      started('native-page', 'native'),
+      message('page', 'native-page', 'user', `${RESTORE_CONTEXT_NOTICE}${DESIGN_PHASE_NOTICE}Page`),
+      message('page-json', 'native-page', 'assistant', '{"version":1}'),
+      { type: 'turn.completed', turnId: 'native-page', status: 'interrupted' },
+      started('native-outside', 'native'),
+      message('outside', 'native-outside', 'user', 'Asked outside TasteCode'),
+      message('outside-answer', 'native-outside', 'assistant', 'Outside answer'),
+      { type: 'turn.completed', turnId: 'native-outside', status: 'completed' },
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'A bakery page',
+      'Asked outside TasteCode',
+      'Outside answer',
+    ])
   })
 
   it('never imports provider-owned helper chats', async () => {
@@ -782,6 +886,44 @@ describe('provider history integration', () => {
       closedAt: 8000,
       lastActiveAt: 8000,
     })
+  })
+  it('keeps chats archived in the provider out of the project list', async () => {
+    const { history } = setup([
+      metadata(),
+      { ...metadata('archived'), archived: true, updatedAt: 8000 },
+    ])
+    await history.refresh()
+    const list = createProjectListProjector()
+    const state: ProjectListState = {
+      isTurnRunning: () => false,
+      inboxStatus: () => 'idle',
+      revision: () => 0,
+    }
+    const listed = () =>
+      list(store.projects(), store.sidebarThreads(), store.queuedThreadIds(), state)
+        .projects.flatMap((project) => project.sessions)
+        .map((session) => session.id)
+
+    expect(listed()).toEqual(['external:codex:native'])
+    store.closeThread('external:codex:native')
+    expect(listed()).toEqual([])
+  })
+  it('lists a chat archived in the provider again once it is unarchived there', async () => {
+    const archived = { ...metadata('archived'), archived: true, updatedAt: 8000 }
+    const { history, source } = setup([archived])
+    await history.refresh()
+    expect(store.thread('external:codex:archived')?.closedAt).toBe(8000)
+
+    vi.mocked(source.list).mockResolvedValue([
+      { ...archived, archived: false, revision: '2', updatedAt: 9000 },
+    ])
+    await history.refresh()
+
+    expect(store.thread('external:codex:archived')?.closedAt).toBeUndefined()
+    expect(
+      store.sidebarThreads().find((thread) => thread.id === 'external:codex:archived'),
+    ).not.toHaveProperty('closedAt')
+    expect(store.thread('external:codex:archived')?.lastActiveAt).toBe(9000)
   })
   it('matches repeated prompts once and keeps a distinct outside turn', async () => {
     store.addProject(process.cwd())

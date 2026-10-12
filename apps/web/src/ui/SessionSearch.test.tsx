@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { SessionSearchResult } from '@harness/contracts'
+import type { ProviderId, SessionSearchResult } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../test-transport.js'
 import { SessionSearch } from './SessionSearch.js'
@@ -75,6 +75,97 @@ describe('cross-session search', () => {
     expect(document.activeElement).toBe(search)
   })
 
+  it('lists the agent filter in provider order with Claude Code first', () => {
+    const chat = (id: string, provider: ProviderId) => ({
+      id,
+      title: `Chat ${id}`,
+      provider,
+      createdAt: 1,
+    })
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: [
+              chat('1', 'api'),
+              chat('2', 'cursor'),
+              chat('3', 'codex'),
+              chat('4', 'claude-code'),
+            ],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
+    expect(
+      screen
+        .getAllByRole('option', { name: /^(All agents|Claude Code|Codex|Cursor|API connection)$/ })
+        .map((option) => option.textContent),
+    ).toEqual(['All agents', 'Claude Code', 'Codex', 'Cursor', 'API connection'])
+  })
+
+  it('highlights title matches whose folded form changes length', () => {
+    const titles = ['İzmir deploy', 'ｄｅｐｌｏｙ checklist', 'Cafe\u0301 deploy']
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: titles.map((title, index) => ({
+              id: `thread-${index}`,
+              title,
+              provider: 'codex' as const,
+              createdAt: index,
+            })),
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    const search = screen.getByRole('combobox', { name: 'Search every chat' })
+    const marks = () => Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)
+
+    fireEvent.change(search, { target: { value: 'deploy' } })
+    expect(marks().sort()).toEqual(['deploy', 'deploy', 'ｄｅｐｌｏｙ'])
+
+    fireEvent.change(search, { target: { value: 'café' } })
+    expect(marks()).toEqual(['Cafe\u0301'])
+  })
+
+  it('highlights a Greek title match that ends in a capital sigma', () => {
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: [{ id: 'greek', title: 'ΟΔΟΣ plan', provider: 'codex', createdAt: 0 }],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'οδος' },
+    })
+
+    expect(Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual([
+      'ΟΔΟΣ',
+    ])
+  })
+
   it('does not keep old content results when the next query fails', async () => {
     vi.useFakeTimers()
     const request = vi
@@ -126,14 +217,19 @@ describe('cross-session search', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
     fireEvent.click(screen.getByRole('option', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
-    expect(screen.getByRole('option', { name: 'Codex' })).toBeTruthy()
-    expect(screen.getByRole('option', { name: 'Grok' })).toBeTruthy()
+    expect(
+      screen
+        .getAllByRole('option', { name: /^(All agents|Codex|Grok|ACP)$/ })
+        .map((option) => option.textContent),
+    ).toEqual(['All agents', 'Codex', 'Grok', 'ACP'])
     expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     const search = screen.getByLabelText('Search every chat')
     fireEvent.change(search, { target: { value: 'regres' } })
 
     expect(screen.getByRole('option', { name: /Regression planning/ })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true })
+    expect(onSelect).not.toHaveBeenCalled()
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onSelect).toHaveBeenCalledWith('title-thread', undefined)
     onSelect.mockClear()

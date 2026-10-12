@@ -16,6 +16,7 @@ it('selects operational motion from the brief or saved page architecture', () =>
   expect(dashboard).toContain('keyboard operation')
   expect(dashboard).toContain('prefers-reduced-motion')
   expect(dashboard).not.toContain('Plan and implement a visible hero entrance')
+  expect(dashboard).toContain('Use one shared duration and easing pair for these transitions')
   // SAFETY: Only architecture.mode is read from this saved-page fixture.
   expect(
     designMotionGuidance(undefined, { architecture: { mode: 'operate_monitor' } } as PageBlueprint),
@@ -27,6 +28,14 @@ it('selects operational motion from the brief or saved page architecture', () =>
     }),
   ).toBe(DESIGN_MOTION_GUIDANCE)
   expect(designMotionGuidance()).toBe(DESIGN_MOTION_GUIDANCE)
+})
+
+it('gives a website one reused motion vocabulary instead of an effect per section', () => {
+  expect(DESIGN_MOTION_GUIDANCE).toContain(
+    'Give the page one motion vocabulary: two or three named reveal types (for example rise, slide and media) with shared durations, easing and stagger, reused across sections',
+  )
+  expect(DESIGN_MOTION_GUIDANCE).toContain('instead of inventing its own effect')
+  expect(DESIGN_MOTION_GUIDANCE).toContain('Do not apply the same fade-up to every section')
 })
 
 describe('reference reveal lifecycle', () => {

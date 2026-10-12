@@ -24,8 +24,8 @@ const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
 const LOCAL_USAGE_PROVIDERS = [
-  'codex',
   'claude-code',
+  'codex',
   'grok',
   'opencode',
 ] as const satisfies readonly ProviderId[]
@@ -467,15 +467,15 @@ export async function runUsageHistoryScan(
   const previous = await readUsageCache(request.cacheFile)
   const { files, sources } = await discoverUsageSources([
     {
-      provider: 'codex',
-      label: 'Codex',
-      discover: () => discoverJsonlRoot(request.codexSessionsRoot, 'codex', readCodexUsageHistory),
-    },
-    {
       provider: 'claude-code',
       label: 'Claude Code',
       discover: () =>
         discoverJsonlRoot(request.claudeProjectsRoot, 'claude-code', readClaudeUsageHistory),
+    },
+    {
+      provider: 'codex',
+      label: 'Codex',
+      discover: () => discoverJsonlRoot(request.codexSessionsRoot, 'codex', readCodexUsageHistory),
     },
     {
       provider: 'grok',
@@ -703,8 +703,8 @@ type UsageWorkerMessage =
 
 function emptySources(): SourceState[] {
   return [
-    { provider: 'codex', label: 'Codex', available: false },
     { provider: 'claude-code', label: 'Claude Code', available: false },
+    { provider: 'codex', label: 'Codex', available: false },
     { provider: 'grok', label: 'Grok', available: false },
     { provider: 'cursor', label: 'Cursor', available: false },
     { provider: 'opencode', label: 'OpenCode', available: false },

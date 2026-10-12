@@ -69,6 +69,8 @@ function extraDirectories(
     join(home, '.deno', 'bin'),
     join(home, '.volta', 'bin'),
     join(home, '.asdf', 'shims'),
+    // Grok's official installer, whose PATH change a running shell never sees.
+    join(home, '.grok', 'bin'),
   ]
   if (platform === 'win32') {
     return [

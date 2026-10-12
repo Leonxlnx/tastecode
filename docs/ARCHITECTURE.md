@@ -48,6 +48,43 @@ apply, and neither browser cookies nor signed redirect URLs are copied into rend
 _Rejected:_ everything in Electron main (forecloses the web client). tRPC on the wire (ties us
 to a TypeScript client).
 
+**Closing a terminal ends its foreground job, not everything it ever started.** node-pty's
+`kill()` only sends the shell SIGHUP; bash and zsh forward it to their jobs, and when the shell
+exits the kernel sends it to the terminal's foreground process group. Before that hangup the
+server reads the foreground group from a shell it forked as a session leader. A shell still
+running after a grace period is SIGKILLed, and the close is done once the shell is gone. The
+manager then stops the foreground job in the background, so a chat can open a new terminal at
+once: the job gets a grace period to exit on its own, then SIGTERM, then SIGKILL, and a job that
+still cannot be stopped is logged rather than failing anything. On a pane or chat close the
+shell's grace, the job's grace and the wait after SIGTERM are three seconds each, and the wait
+after SIGKILL is one second. Server shutdown waits for every job, under one deadline counted from
+the start of the close: a shell still running is SIGKILLed and jobs get SIGTERM from 0.2 s, jobs
+get SIGKILL at 2 s, and the close gives up at 2.3 s. That keeps the last SIGKILL inside the
+desktop's three-second force stop, and leaves most of the time to SIGTERM, on which servers that
+reload on SIGHUP (gunicorn, nginx, postgres) shut down cleanly. Closing or deleting a chat,
+removing a project's chats and discarding a worktree wait only for the shells; a project's own
+terminal is closed without waiting.
+
+Before each signal the group is listed again. On Linux the job is only signalled while every live
+member is still in the closed shell's session, which keeps a recycled group id from being
+signalled. macOS `ps` prints 0 as every process's session, so there that re-check guards nothing
+and only the shell's session-leader check holds.
+
+Only processes outside the foreground group survive. A job put in the background from the
+interactive prompt gets its own group through job control and stays the shell's business, as in
+a terminal emulator: `nohup … &` and `disown` keep working, and so does a background job that
+ignores SIGHUP, which the OS cannot tell apart from `nohup`. `setsid` leaves the group from
+anywhere. Everything else in the foreground group is ended whatever it does with SIGHUP: a
+foreground `nohup` command, and the `&` or `nohup … &` children of a foreground script or of a
+one-shot `run()` command, which run without job control and stay in the group. On Windows
+node-pty already terminates every process attached to the closed ConPTY (read from its source,
+not yet tried on Windows).
+
+_Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs that
+a terminal emulator leaves running. SIGTERM straight after the hangup: it cut off jobs that need
+more than a moment to shut down cleanly. Waiting for the job in the close itself: closing a chat
+took up to nine seconds and its terminal could not be reopened meanwhile.
+
 ---
 
 ## Desktop shell: Electron
@@ -434,6 +471,27 @@ snapshot first, so a stale branch can never survive a restore. Snapshots duplica
 disk keeps only the 64 most recently written ones, and closing a thread deletes its snapshot. An
 older or closed thread rebuilds its replay from the log when it is opened again.
 
+**Thread history is paged by whole turns.** A `thread.history` request with `page` cuts the
+cached compact replay: the newest page holds the last turns plus the latest usage and the
+approvals and questions older turns left open (a thread error closes them, as in the renderer),
+and `olderCursor` walks back. A page ends only where every turn inside it has emitted its last
+event, so a prompt recorded before its provider's turn start or a late tool completion never
+straddles a cursor; one oversized block may exceed the requested size. Cursors are opaque,
+thread-scoped and name the boundary turn and the replay's sequence. An older page is answered
+from the replay saved at that sequence while it still exists, so a streaming turn never makes a
+page re-compact or rewrite the snapshot; any rewrite of older history deletes that replay. The
+answer is `reset` with the newest page when the boundary turn is gone (a restore removed it), when
+the replay now ends before the cursor's sequence (a truncation with nothing written since), or
+when provider history gained events after that sequence. A truncation that keeps the boundary turn
+and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
+that only retires events is detected only through the re-recorded thread start: the merge records
+`thread.started` again whenever it retires rows. Requests without `page` keep
+the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
+reader bounded before compaction, which is still to do. Until then a thread without a saved
+replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
+events; paging the event log directly also has to keep imported provider turns, which display in
+time order rather than log order, on the right page.
+
 **Streamed turn diffs are stored only when they change.** Providers can resend the same
 working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
 running turn; the latest stored diff is unchanged.
@@ -532,9 +590,17 @@ The rules that solve it:
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
-   must not consume layout, DOM, or image-preview work.
+   must not consume layout, DOM, parsing, or image-preview work: a closed row decides that it
+   can open from its arguments, or from its output once per item, and builds its detail only
+   when it mounts.
 6. **Collapse huge blocks by default** — better UX and better performance.
-7. **Never mount full history on open.** Last N turns, fetch older on demand.
+7. **Never mount full history on open.** A cold open asks for the newest ten turns; twenty more
+   load when the reader nears the top, and the row being read keeps its position as they are
+   prepended. Find in chat and search jumps need every turn, so they fetch the rest in one
+   unpaged read instead of searching only what is loaded. A failed read says so and waits for
+   Retry. Closing find only drops that read's reply: a transport request cannot be aborted, so
+   the server still sends the whole history and the renderer still parses and validates it
+   (about 133 ms for a 4.76 MB chat in the browser) before discarding it.
 8. **Partial background caches do not grow a second transcript.** At most eight inactive
    workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
    in total. Older or larger workers retain only lifecycle and attention state. Their transcript
@@ -554,6 +620,8 @@ The rules that solve it:
 | Cold start → interactive                | < 1.5 s                  |
 | Switch sessions                         | < 100 ms                 |
 | Idle memory, 5 sessions                 | < 500 MB                 |
+| Collapsed 300-call activity, 37.5 MiB   | < 8 MiB, < 200 elements  |
+| Same activity, reopened and closed      | < 2 MiB retained         |
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
@@ -581,7 +649,9 @@ The asset import is complete: a separate dashboard catalog and provenance record
 references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
 344 paired references and 28 desktop-only references.
 Sampling chooses a layout group uniformly, then one variant within that group, so retries do
-not give a composition extra votes. One complete app-shell reference preserves navigation,
+not give a composition extra votes. Since 2026-10-12 the dashboard draw is uniform only among the
+screens whose domain, tags, product name, cue or motifs best match the request's domain words,
+and over all screens when nothing matches. One complete app-shell reference preserves navigation,
 content density and responsive hierarchy. The compiled default-bundle checks passed for all
 200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
 dashboard WebPs have unique matching hashes and valid viewport metadata. The catalog differs
@@ -595,6 +665,14 @@ drawers and charts. Motion follows those state changes, with keyboard access, fo
 and reduced-motion equivalents. Native inline chart SVG in reference-bound dashboard views and
 visibly identified demo values avoid website-only validation blockers; asserted product claims
 still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
+
+Since 2026-10-12, every phase keeps one design language per page: references set each
+section's composition, and one anchor reference sets the type, palette, radius, spacing and
+component language. See [One design language per page](./DESIGN-REFERENCES.md#one-design-language-per-page).
+Dashboards use one family plus optional monospace data, taken from the anchor screen's own
+type, and never add a display face. They are reviewed for shell
+consistency, data density, table and chart readability, visible control states and focus.
+A site, one-pager or Webseite about an app classifies as a website.
 
 Reference-driven Design requires the session's declared image input capability. Unsupported
 sessions reject before inference or persisted Design state; ordinary coding remains available.
@@ -625,6 +703,43 @@ layout votes, or requiring static screenshots in place of working native charts 
 
 ---
 
+## One design language per generated page (nightly)
+
+Owner decision, 2026-10-12: a generated website must not switch design language between sections.
+Randomness stays, but one page keeps one type system (at most two families), one palette, one
+radius and spacing scale, and one button, card and label language. This supersedes the uniform,
+site-agnostic website sampling from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which drew every layout family
+independently and put about eleven source sites into one 14-reference deck.
+
+The first drawn section, normally the hero, is still chosen uniformly by group and becomes the
+anchor; its source host defines the page's language. Each later section takes the requested
+family from the anchor site, then from the three most similar close sites in the optional per-site
+`style-profiles.json` (style score at least 10 of 14). Only a sparse family, one with fewer than
+ten composition groups, may then borrow a compatible family from those sites; otherwise the
+section comes from the uniform pool the family always used. The requested family always beats
+borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
+section to most pages. Profile outliers never anchor a page or count as their site's language. A
+missing or malformed profile file degrades to same-site and uniform sampling rather than failing a
+run. Saved deck entries record `site` and `role`; the anchor also carries a one-line `style`
+summary. Older decks parse unchanged. Details are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
+
+Brand derives the language from the anchor and at most two same-site references instead of the
+whole deck, and every phase is told that the anchor sets type, palette, radii, spacing, controls
+and surfaces while other references give composition only. Review then audits the generated source
+and adds bounded, non-fatal findings for fonts outside the brand and radius drift
+([DESIGN-AGENT.md](./DESIGN-AGENT.md)). The audit is a Review finding rather than a hard source
+gate because Build and Repair get one correction each, so a false positive must never fail a run.
+
+_Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
+the anchor site only (most sites lack some families, which would shrink the deck), a uniform
+draw per family (the source of the mixed-language pages), the anchor site's compatible family
+before a close site's own family (it put other section types into a third of FAQ slots), and
+similar sites with no minimum score or only half the maximum (a few broadly similar sites then
+supplied a rare section, such as the library's only stats section, to a third or more of pages).
+
+---
+
 ## Layout
 
 ```
@@ -643,6 +758,8 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
+| 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
@@ -685,3 +802,5 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
 | 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
+| 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
+| 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |

@@ -511,6 +511,40 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     )
   })
 
+  it('never serves a preview on a port the app reserves for itself', async () => {
+    // With no renderer running, a page served on its port would pass the
+    // control socket's Origin check.
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
+    workspaces.push(workspace)
+    const port = await freePort()
+    writeFileSync(path.join(workspace, 'index.html'), 'Static site')
+    writeFileSync(path.join(workspace, 'preview.mjs'), previewServerSource(port, 'command'))
+    const reserved = new Set([port])
+
+    const staticPreview = await startDesignPreview(
+      workspace,
+      staticPreviewPlan(port),
+      undefined,
+      undefined,
+      reserved,
+    )
+    previews.push(staticPreview)
+    const commandPreview = await startDesignPreview(
+      workspace,
+      plan(port),
+      5_000,
+      undefined,
+      reserved,
+    )
+    previews.push(commandPreview)
+
+    expect(new URL(staticPreview.url).port).not.toBe(String(port))
+    expect(new URL(commandPreview.url).port).not.toBe(String(port))
+    await expect(fetch(commandPreview.url).then((response) => response.text())).resolves.toBe(
+      'command',
+    )
+  })
+
   it.skipIf(process.platform === 'win32')(
     'rejects a stop while an escaped process still holds the preview port',
     async () => {
@@ -652,14 +686,57 @@ createServer((_request, response) => response.end('expected preview')).listen(Nu
     expect(existsSync(marker)).toBe(false)
   })
 
-  it('keeps ordinary package-script arguments working', () => {
+  it.each([
+    ['npm', ['--node-options=--require=../outside/preload.cjs', 'run', 'dev']],
+    // npm reads options after the script name as its own config, too.
+    ['npm', ['run', 'dev', '--node-options=--require=../outside/preload.cjs']],
+    ['pnpm', ['--config.node-options=--require=../outside/preload.cjs', 'run', 'dev']],
+    ['npm', ['--script-shell=../outside/shell', 'run', 'dev']],
+    ['bun', ['--preload=../outside/preload.cjs', 'run', 'dev']],
+    ['pnpm', ['--', 'dev']],
+  ])('rejects %s options that reconfigure what the script runs', async (command, args) => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-options-'))
+    workspaces.push(root)
+    const workspace = path.join(root, 'workspace')
+    const outside = path.join(root, 'outside')
+    const marker = path.join(outside, 'spawned.txt')
+    mkdirSync(workspace)
+    mkdirSync(outside)
+    writeFileSync(
+      path.join(workspace, 'package.json'),
+      JSON.stringify({ scripts: { dev: 'node -e 0' } }),
+    )
+    writeFileSync(
+      path.join(outside, 'preload.cjs'),
+      `require('fs').writeFileSync(${JSON.stringify(marker)}, 'yes')\n`,
+    )
+    const plan = parsePreviewPlan({
+      version: 1,
+      command,
+      args,
+      cwd: '.',
+      url: 'http://127.0.0.1:5173',
+      viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+    })
+
+    await expect(startDesignPreview(workspace, plan, 5_000)).rejects.toThrow(
+      'preview package-manager options other than --silent and --if-present are not allowed',
+    )
+    expect(existsSync(marker)).toBe(false)
+  })
+
+  it.each([
+    ['pnpm', ['dev', '--host', '127.0.0.1']],
+    ['pnpm', ['--if-present', 'run', 'dev', '--port', '5173']],
+    ['npm', ['--silent', 'run', 'dev', '--', '--host', '127.0.0.1', '--port', '5173']],
+  ])('keeps ordinary %s package-script arguments working', (command, args) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-preview-'))
     workspaces.push(workspace)
     writeFileSync(path.join(workspace, 'package.json'), JSON.stringify({ scripts: { dev: 'x' } }))
     const plan = parsePreviewPlan({
       version: 1,
-      command: 'pnpm',
-      args: ['dev', '--host', '127.0.0.1'],
+      command,
+      args,
       cwd: '.',
       url: 'http://127.0.0.1:5173',
       viewports: [{ name: 'desktop', width: 1440, height: 1000 }],

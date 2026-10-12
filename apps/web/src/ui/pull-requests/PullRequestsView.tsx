@@ -89,6 +89,9 @@ export function PullRequestsView(props: {
   const [filters, setFilters] = useState<PullRequestFilters>(DEFAULT_PULL_REQUEST_FILTERS)
   const [query, setQuery] = useState('')
   const [selectedKey, setSelectedKey] = useState<string>()
+  // An action can move the open pull request out of the view (merging it under
+  // Open). It stays listed and open, with its result, until the view changes.
+  const [pinnedKey, setPinnedKey] = useState<string>()
   const [setupStarting, setSetupStarting] = useState(false)
   const [setupError, setSetupError] = useState<string>()
   const request = useRef(0)
@@ -133,8 +136,13 @@ export function PullRequestsView(props: {
     }
   }, [load])
 
+  // Only a setup that finishes after mount forces a refresh; a revisit keeps the cache.
+  const setupRevision = useRef(props.setupRefreshRevision ?? 0)
   useEffect(() => {
-    if ((props.setupRefreshRevision ?? 0) > 0) void load(true)
+    const revision = props.setupRefreshRevision ?? 0
+    if (revision <= setupRevision.current) return
+    setupRevision.current = revision
+    void load(true)
   }, [load, props.setupRefreshRevision])
 
   const normalizedQuery = query.trim().toLowerCase()
@@ -148,6 +156,7 @@ export function PullRequestsView(props: {
   const visible = useMemo(
     () =>
       relationshipItems.filter((item) => {
+        if (pullRequestKey(item) === pinnedKey) return true
         if (!matchesPullRequestFilters(item, filters)) return false
         if (!normalizedQuery) return true
         return [
@@ -160,7 +169,7 @@ export function PullRequestsView(props: {
           listStateLabel(item),
         ].some((value) => value.toLowerCase().includes(normalizedQuery))
       }),
-    [filters, normalizedQuery, relationshipItems],
+    [filters, normalizedQuery, pinnedKey, relationshipItems],
   )
 
   useEffect(() => {
@@ -171,13 +180,18 @@ export function PullRequestsView(props: {
   }, [selectedKey, visible])
 
   const syncDetail = useCallback((next: PullRequestDetail) => {
+    setPinnedKey(pullRequestKey(next))
     setResult((current) => {
       if (!current) return current
       const key = pullRequestKey(next)
       return {
         ...current,
         items: current.items
-          .map((item) => (pullRequestKey(item) === key ? listItemFromDetail(next) : item))
+          .map((item) =>
+            pullRequestKey(item) === key
+              ? listItemFromDetail(next, syncedRelationship(item.relationship, next.relationship))
+              : item,
+          )
           .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)),
       }
     })
@@ -246,7 +260,10 @@ export function PullRequestsView(props: {
                 role="tab"
                 aria-selected={filter === value}
                 className={filter === value ? 'is-active' : undefined}
-                onClick={() => setFilter(value)}
+                onClick={() => {
+                  setFilter(value)
+                  setPinnedKey(undefined)
+                }}
               >
                 {capitalize(value)}
                 <span>{counts[value]}</span>
@@ -259,7 +276,10 @@ export function PullRequestsView(props: {
               <Search size={14} aria-hidden />
               <input
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
+                onChange={(event) => {
+                  setQuery(event.target.value)
+                  setPinnedKey(undefined)
+                }}
                 placeholder="Search pull requests"
                 aria-label="Search pull requests"
               />
@@ -267,7 +287,10 @@ export function PullRequestsView(props: {
             <PullRequestFilterMenu
               value={filters}
               items={relationshipItems}
-              onChange={setFilters}
+              onChange={(next) => {
+                setFilters(next)
+                setPinnedKey(undefined)
+              }}
             />
           </div>
         </header>
@@ -607,7 +630,20 @@ function ListMessage(props: {
   )
 }
 
-function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
+// Detail only knows who authored the PR. The list's searches also know whether
+// the viewer reviewed it, so a "both" PR keeps its place on the Reviewing tab.
+// An authored PR that only the reviewed search returned is "both" too.
+function syncedRelationship(
+  listed: PullRequestListItem['relationship'],
+  detail: PullRequestListItem['relationship'],
+): PullRequestListItem['relationship'] {
+  return listed === 'reviewing' && detail === 'authored' ? 'both' : listed
+}
+
+function listItemFromDetail(
+  detail: PullRequestDetail,
+  relationship: PullRequestListItem['relationship'],
+): PullRequestListItem {
   return {
     id: detail.id,
     repository: detail.repository,
@@ -633,7 +669,7 @@ function listItemFromDetail(detail: PullRequestDetail): PullRequestListItem {
           mergeStateStatus: detail.mergeStateStatus,
         }
       : {}),
-    relationship: detail.relationship,
+    relationship,
     ...(detail.localProjectPath
       ? {
           localProjectPath: detail.localProjectPath,

@@ -6,9 +6,11 @@ import {
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
+  prependOlderHistory,
   reduce,
   reduceDeltas,
   reduceEventLog,
+  removeOptimisticMessage,
   threadItemAt,
   threadItemById,
   threadItems,
@@ -320,6 +322,32 @@ describe('thread reducer', () => {
     expect(state.items[0]?.attachments).toEqual(['/work/reference.png'])
     expect(state.running).toBe(true)
     expect(state.activeTurn?.id).toMatch(/^local-turn:/)
+  })
+
+  it('streams into one row after a queued local echo leaves the live turn', () => {
+    const answered = apply([
+      { type: 'item.completed', item: item({ id: 'u0', role: 'user', status: 'completed' }) },
+    ])
+    const optimistic = beginOptimisticTurn(answered, 'queue this', 'submission-queued')
+    const running = reduce(optimistic, {
+      type: 'turn.started',
+      turn: { id: 't2', threadId: 'thread-1', status: 'running', createdAt: 1 },
+    })
+    const queued = removeOptimisticMessage(running, 'submission-queued')
+    const started = reduce(queued, {
+      type: 'item.started',
+      item: item({ id: 'a2', turnId: 't2', text: '' }),
+    })
+    const deltas = [
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: 'Hello' },
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: ' world' },
+    ] satisfies ItemDeltaEvent[]
+    const streamed = deltas.reduce(reduce, started)
+
+    expect(threadItems(streamed).map(({ id, text }) => [id, text])).toEqual([
+      ['u0', undefined],
+      ['a2', 'Hello world'],
+    ])
   })
 
   it('reconciles a provisional local timer to the durable server boundary', () => {
@@ -1052,6 +1080,67 @@ describe('overnight regression pins', () => {
       textDelta: 'lo',
     })
     expect(threadItems(delta)[0]?.text).toBe('Hello')
+  })
+})
+
+describe('older history pages', () => {
+  const usage = (totalTokens: number) => ({
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens,
+  })
+  const turnEvents = (turnId: string, at: number, items: Item[]): DomainEvent[] => [
+    {
+      type: 'turn.started',
+      turn: { id: turnId, threadId: 'thread', status: 'running', createdAt: at },
+    },
+    ...items.map((completed): DomainEvent => ({ type: 'item.completed', item: completed })),
+    { type: 'turn.completed', turnId, status: 'completed', completedAt: at + 1 },
+  ]
+  const entries = (events: DomainEvent[]) => events.map((event) => ({ event }))
+
+  it('puts older rows and timing above the loaded turns without taking their newer state', () => {
+    const newest = reduceEventLog(
+      emptyThread,
+      entries([
+        ...turnEvents('turn-2', 20, [item({ id: 'a2', turnId: 'turn-2', status: 'completed' })]),
+        { type: 'usage.updated', usage: usage(200) },
+        {
+          type: 'item.started',
+          item: item({ id: 'live', turnId: 'turn-3', status: 'started', text: 'Str' }),
+        },
+      ]),
+    )
+    const streaming = reduceDeltas({ ...newest, olderCursor: 'cursor' }, [
+      { type: 'item.delta', itemId: 'live', turnId: 'turn-3', textDelta: 'eaming' },
+    ])
+
+    const next = prependOlderHistory(
+      streaming,
+      entries([
+        ...turnEvents('turn-1', 10, [
+          item({ id: 'a1', turnId: 'turn-1', status: 'completed' }),
+          // A row the loaded page already has stays where it is.
+          item({ id: 'a2', turnId: 'turn-2', status: 'completed', text: 'stale' }),
+        ]),
+        { type: 'usage.updated', usage: usage(100) },
+      ]),
+      'older',
+    )
+
+    expect(next.items.map((row) => row.id)).toEqual(['a1', 'a2', 'live'])
+    expect(threadItemById(next, 'live')?.text).toBe('Streaming')
+    expect(threadItemById(next, 'a2')?.text).toBeUndefined()
+    expect(next.liveStart).toBe(streaming.liveStart + 1)
+    expect(next.turnTiming).toEqual({
+      'turn-1': { startedAt: 10, completedAt: 11 },
+      'turn-2': { startedAt: 20, completedAt: 21 },
+    })
+    expect(next.usage?.totalTokens).toBe(200)
+    expect(next.olderCursor).toBe('older')
+    expect('olderCursor' in prependOlderHistory(next, [], null)).toBe(false)
   })
 })
 

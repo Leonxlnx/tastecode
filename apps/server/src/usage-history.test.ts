@@ -416,8 +416,8 @@ describe('local usage history', () => {
     mkdirSync(codexRoot, { recursive: true })
     mkdirSync(claudeRoot, { recursive: true })
     const providers: ProviderId[] = [
-      'codex',
       'claude-code',
+      'codex',
       'grok',
       'cursor',
       'opencode',
