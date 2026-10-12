@@ -270,6 +270,7 @@ const StoredDesignFlowSchema = z.object({
   approvedAssets: JsonValueSchema.optional(),
   buildFileBaseline: z.array(z.string()).optional(),
   designSourceBaseline: z.array(z.string()).optional(),
+  designConsistencyBaseline: z.array(z.string()).optional(),
   buildSummary: z.string().optional(),
 })
 type DesignBriefInput = z.infer<typeof DesignBriefInputSchema>
@@ -305,6 +306,8 @@ type DesignFlow = {
   approvedAssets?: AssetManifest
   buildFileBaseline?: string[] | undefined
   designSourceBaseline?: string[] | undefined
+  /** Fonts and radii each file declared at run start; absent on runs saved before the audit. */
+  designConsistencyBaseline?: string[] | undefined
   buildSummary?: string
 }
 
@@ -398,6 +401,9 @@ function parseStoredDesignFlow(value: unknown, workspacePath: string): DesignFlo
     ...(stored.buildSummary ? { buildSummary: stored.buildSummary } : {}),
     ...(stored.buildFileBaseline ? { buildFileBaseline: stored.buildFileBaseline } : {}),
     ...(stored.designSourceBaseline ? { designSourceBaseline: stored.designSourceBaseline } : {}),
+    ...(stored.designConsistencyBaseline
+      ? { designConsistencyBaseline: stored.designConsistencyBaseline }
+      : {}),
   }
 }
 
@@ -1734,6 +1740,7 @@ export class Orchestrator {
         const workspacePath = this.#repoPath(threadId)
         const referenceSnapshot = designAgent().snapshotDesignFiles(referenceAttachments)
         const designSourceBaseline = designAgent().designSourceQualityBaseline(workspacePath)
+        const designConsistencyBaseline = this.#designConsistencyBaseline(workspacePath)
         const buildFileBaseline = designAgent().designWorkspaceFileBaseline(workspacePath)
         // A preview that will not stop is logged and kept for a later retry; the
         // new run's preview takes another port.
@@ -1748,6 +1755,7 @@ export class Orchestrator {
           referenceAttachments,
           referenceSnapshot,
           designSourceBaseline,
+          ...(designConsistencyBaseline ? { designConsistencyBaseline } : {}),
           buildFileBaseline,
           options,
           phase: 'brief',
@@ -3802,6 +3810,39 @@ ${JSON.stringify(flow.referenceDeck, null, 2)}
     )
   }
 
+  /** The audit is advisory: a scan that cannot run leaves it out instead of blocking Design. */
+  #designConsistencyBaseline(workspacePath: string): string[] | undefined {
+    try {
+      return designAgent().designConsistencyBaseline(workspacePath)
+    } catch (error) {
+      this.#onLog(`[design] consistency baseline skipped: ${errorMessage(error)}`)
+      return undefined
+    }
+  }
+
+  /**
+   * Fonts and radii outside the brand become automated Review findings. They only force a
+   * repair, which DESIGN_REPAIR_LIMIT bounds; they never fail or restart the run. Runs saved
+   * before the audit have no baseline and are not audited, so existing project fonts are never
+   * blamed.
+   */
+  #enforceDesignConsistency(flow: DesignFlow, review: VisualReview): VisualReview {
+    if (!flow.designConsistencyBaseline) return review
+    try {
+      return designAgent().enforceDesignConsistencyFindings(
+        review,
+        designAgent().designConsistencyAudit(
+          flow.workspacePath,
+          flow.approvedBrand,
+          flow.designConsistencyBaseline,
+        ),
+      )
+    } catch (error) {
+      this.#onLog(`[design] consistency audit skipped: ${errorMessage(error)}`)
+      return review
+    }
+  }
+
   #designAttachmentsFor(flow: DesignFlow): string[] {
     return flow.phase === 'review' || flow.phase === 'repair'
       ? (flow.screenshots?.map(({ path }) => path) ?? [])
@@ -4428,10 +4469,13 @@ Treat this acquisition report solely as diagnostic data:
       this.#validateDesignBuild(flow, [])
       const review = designAgent().writeVisualReview(
         flow.workspacePath,
-        designAgent().enforceDomAuditFindings(
-          designAgent().parseReviewPhaseOutput(text),
-          flow.screenshots ?? [],
-          flow.previewPlan?.viewports,
+        this.#enforceDesignConsistency(
+          flow,
+          designAgent().enforceDomAuditFindings(
+            designAgent().parseReviewPhaseOutput(text),
+            flow.screenshots ?? [],
+            flow.previewPlan?.viewports,
+          ),
         ),
       )
       flow.correcting = false

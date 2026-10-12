@@ -41,6 +41,7 @@ import {
   readPageBlueprint,
   writeAssetManifest,
   readAssetManifest,
+  designConsistencyBaseline,
   designSourceQualityBaseline,
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
@@ -64,6 +65,20 @@ const previewStarts = vi.hoisted(() => ({
   barriers: [] as Promise<void>[],
   failures: [] as unknown[],
 }))
+
+/** Lets one test prove that a failing consistency audit never fails a Design run. */
+const consistencyAuditFailure = vi.hoisted(() => ({ current: undefined as Error | undefined }))
+
+vi.mock('@harness/design-agent', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@harness/design-agent')>()
+  return {
+    ...actual,
+    designConsistencyAudit: (...args: Parameters<typeof actual.designConsistencyAudit>) => {
+      if (consistencyAuditFailure.current) throw consistencyAuditFailure.current
+      return actual.designConsistencyAudit(...args)
+    },
+  }
+})
 
 vi.mock('./design-preview-runner.js', () => ({
   startDesignPreview: vi.fn(
@@ -3430,10 +3445,13 @@ describe('provider-neutral design briefing', () => {
     error: unknown,
     phase: 'preview' | 'review' | 'repair' = 'preview',
     screenshots: Array<{ path: string; width: number; height: number }> = [],
+    /** Runs before the run is saved; returns extra saved run fields. */
+    prepare: (workspace: string) => Record<string, unknown> = () => ({}),
   ) {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-preview-recovery-'))
     const taste = path.join(workspace, '.taste')
     writePreviewArtifacts(workspace)
+    const extra = prepare(workspace)
     writeFileSync(path.join(taste, 'build.txt'), 'built implementation')
     const artifacts = ['brand.json', 'page.json', 'build.txt'].map((name) => {
       const file = path.join(taste, name)
@@ -3479,6 +3497,7 @@ describe('provider-neutral design briefing', () => {
       askedQuestions: false,
       finalAsked: false,
       explicitAnswers: [],
+      ...extra,
     })
     const result = harness(undefined, store)
     // A restored Review or Repair recaptures before it prompts again.
@@ -4122,7 +4141,11 @@ describe('provider-neutral design briefing', () => {
         )
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
-        expect(store.designRun(thread.id)).toMatchObject({ phase: 'brand' })
+        // The workspace held no source at run start, so every later font or radius is new.
+        expect(store.designRun(thread.id)).toMatchObject({
+          phase: 'brand',
+          designConsistencyBaseline: [],
+        })
         const typography = (
           store.designRun(thread.id) as { typographyCandidates: { sans: string[] } }
         ).typographyCandidates
@@ -4890,6 +4913,119 @@ describe('provider-neutral design briefing', () => {
       await result.orchestrator.disposeAll()
       result.store.close()
       rmSync(result.workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  /** A Review run whose project already used Georgia before Design started. */
+  function consistencyReviewHarness(audited = true) {
+    return previewRecoveryHarness(undefined, 'review', [], (workspace) => {
+      mkdirSync(path.join(workspace, 'src'))
+      writeFileSync(path.join(workspace, 'src', 'legacy.css'), 'body { font-family: Georgia }')
+      return audited ? { designConsistencyBaseline: designConsistencyBaseline(workspace) } : {}
+    })
+  }
+
+  function writeDriftingBuild(workspace: string) {
+    writeFileSync(
+      path.join(workspace, 'src', 'page.css'),
+      [
+        'h1 { font-family: "Playfair Display", serif }',
+        'body { font-family: Arial, sans-serif }',
+        ...[2, 4, 6, 8, 10, 12].map((radius) => `.r${radius} { border-radius: ${radius}px }`),
+      ].join('\n'),
+    )
+  }
+
+  const passingReview = JSON.stringify({
+    version: 1,
+    verdict: 'pass',
+    summary: 'Matches the references.',
+    findings: [],
+  })
+
+  function designCompletion(received: Array<{ event: DomainEvent }>): string | undefined {
+    const completion = received.find(
+      ({ event }) =>
+        event.type === 'item.completed' &&
+        event.item.phase === 'final_answer' &&
+        event.item.text?.startsWith('Website built.'),
+    )?.event
+    return completion?.type === 'item.completed' ? completion.item.text : undefined
+  }
+
+  it('reports introduced off-brand fonts and radius drift as bounded Review findings', async () => {
+    const { orchestrator, sessions, received, store, workspace } = await consistencyReviewHarness()
+    const session = sessions[0]!
+    try {
+      writeDriftingBuild(workspace)
+      const repaired = JSON.stringify({
+        status: 'complete',
+        summary: 'Repaired.',
+        files: ['src/page.css'],
+        checks: ['pnpm build — passed'],
+      })
+      for (const attempt of [1, 2]) {
+        session.emit(message(passingReview, 's1-turn'))
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(attempt * 2))
+        const repair = session.sent.at(-1)!
+        expect(repair).toContain(`repair attempt ${attempt} of 2`)
+        expect(repair).toContain('"id":"font_family_drift"')
+        expect(repair).toContain('outside the approved brand fonts Arial: Playfair Display')
+        expect(repair).toContain('"id":"radius_scale_drift"')
+        expect(repair).not.toContain('Georgia')
+        expect(store.designRun('preview-recovery')).toMatchObject({
+          phase: 'repair',
+          repairAttempt: attempt,
+        })
+        session.emit(message(repaired, 's1-turn'))
+        session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() => expect(session.sent).toHaveLength(attempt * 2 + 1))
+        expect(session.sent.at(-1)).toContain('visual Review phase')
+      }
+      session.emit(message(passingReview, 's1-turn'))
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() =>
+        expect(designCompletion(received)).toContain(
+          'Visual review stopped after 2 repair attempts with 2 findings remaining.',
+        ),
+      )
+      expect(session.sent).toHaveLength(5)
+      expect(store.designRun('preview-recovery')).toBeUndefined()
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(
+        JSON.parse(readFileSync(path.join(workspace, '.taste', 'review.json'), 'utf8')),
+      ).toMatchObject({
+        verdict: 'repair',
+        findings: [{ id: 'font_family_drift' }, { id: 'radius_scale_drift' }],
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it.each([
+    { name: 'a run saved before the audit', audited: false },
+    { name: 'an audit that cannot scan', audited: true },
+  ])('passes Review without consistency findings for $name', async ({ audited }) => {
+    const { orchestrator, sessions, received, store, workspace, logs } =
+      await consistencyReviewHarness(audited)
+    if (audited) consistencyAuditFailure.current = new Error('Design source scan exceeds 32 MB')
+    try {
+      writeDriftingBuild(workspace)
+      sessions[0]?.emit(message(passingReview, 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(designCompletion(received)).toContain('Visual review passed.'))
+      expect(sessions[0]?.sent).toHaveLength(1)
+      expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      expect(logs.some((line) => line.includes('consistency audit skipped'))).toBe(audited)
+    } finally {
+      consistencyAuditFailure.current = undefined
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
 
