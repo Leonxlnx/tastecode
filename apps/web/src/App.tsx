@@ -3936,6 +3936,8 @@ export function App() {
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
+      // Thread ids are never reused, so a saved setup outlives its chat forever.
+      removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined

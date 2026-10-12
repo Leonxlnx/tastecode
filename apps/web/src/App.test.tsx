@@ -1380,6 +1380,26 @@ describe('web client', () => {
     })
   })
 
+  it("forgets a deleted chat's saved model setup and keeps the others", async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const saved = JSON.stringify({ modelKey: 'codex:gpt-6.1-sol', effort: 'high' })
+    localStorage.setItem('harness.modelByThread:doomed-thread', saved)
+    localStorage.setItem('harness.modelByThread:untouched-thread', saved)
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+        threadId: 'doomed-thread',
+      }),
+    )
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelByThread:doomed-thread')).toBeNull(),
+    )
+    expect(localStorage.getItem('harness.modelByThread:untouched-thread')).not.toBeNull()
+  })
+
   it('cancels a deletion safety check when the chat is selected again', async () => {
     const request = transport.request.getMockImplementation()!
     let release!: (work: typeof serverUnsavedWork) => void
