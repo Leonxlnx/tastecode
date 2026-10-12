@@ -51,7 +51,10 @@
   --text: #ededed;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #a3a3a3;
-  --text-3: #6f6f6f;
+  /* Muted copy (section labels, meta, timestamps) still has to be read: this
+     grey clears 4.5:1 on every dark surface up to --surface-2 and stays a
+     clear step below --text-2. */
+  --text-3: #8a8a8a;
   --queue-text: #ededed;
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
@@ -101,7 +104,7 @@
   --chrome-recessed: #101010;
   /* Chevron for restyled native selects. A data URI cannot read currentColor,
      so each theme carries its own text-3-coloured copy. */
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6f6f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #303030;
   --chrome-highlight: transparent;
   --chrome-shadow: none;
