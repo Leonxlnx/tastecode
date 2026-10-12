@@ -643,17 +643,17 @@ family from the anchor site, then from the three most similar close sites in the
 ten composition groups, may then borrow a compatible family from those sites; otherwise the
 section comes from the uniform pool the family always used. The requested family always beats
 borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
-section to most pages. Profile outliers never anchor
-a page or count as their site's language. A missing or malformed profile file degrades to
-same-site and uniform sampling rather than failing a run. Saved deck entries record `site` and
-`role`; the anchor also carries a one-line `style` summary. Older decks parse unchanged. Details
-are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
+section to most pages. Profile outliers never anchor a page or count as their site's language. A
+missing or malformed profile file degrades to same-site and uniform sampling rather than failing a
+run. Saved deck entries record `site` and `role`; the anchor also carries a one-line `style`
+summary. Older decks parse unchanged. Details are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
 
 _Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
 the anchor site only (most sites lack some families, which would shrink the deck), a uniform
 draw per family (the source of the mixed-language pages), the anchor site's compatible family
 before a close site's own family (it put other section types into a third of FAQ slots), and
-similar sites without a minimum score (one site's only stats section reached a third of pages).
+similar sites with no minimum score or only half the maximum (a few broadly similar sites then
+supplied a rare section, such as the library's only stats section, to a third or more of pages).
 
 ---
 

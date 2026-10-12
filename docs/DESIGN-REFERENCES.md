@@ -46,11 +46,12 @@ point per shared mood word, at most 3, so 14 at most. A close site scores at lea
 the same heading and body type, theme and radius plus one more trait. Half the maximum is about the
 median pair among the 53 profiled sites: it would call every second site close and put the
 library's single stats reference on a third of all pages. With 10, about the closest 8% of site
-pairs qualify; anchors without a close site fill missing families from the uniform pool. Entries a profile lists as `outliers` do not share their site's language: they never
-anchor a page and never fill tiers 1-3, but remain in the uniform fallback. An anchor site without
-a profile skips the close-site tiers. A missing or
-malformed profile file means no profiles; same-site sampling still applies and selection never fails
-because of it. A library configured below can ship its own `style-profiles.json`.
+pairs qualify; anchors without a close site fill missing families from the uniform pool. Entries a
+profile lists as `outliers` do not share their site's language: they never anchor a page and never
+fill tiers 1-3, but remain in the uniform fallback. An anchor site without a profile skips the
+close-site tiers. A missing or malformed profile file means no profiles; same-site sampling still
+applies and selection never fails because of it. A library configured below can ship its own
+`style-profiles.json`.
 
 Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar-site` or
 `fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
