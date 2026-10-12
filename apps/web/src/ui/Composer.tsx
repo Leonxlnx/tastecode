@@ -498,6 +498,13 @@ function ComposerComponent(props: {
    * draft, so the owner must keep the file itself.
    */
   onPendingAttachment?: ((savedPath: Promise<string | undefined>) => void) | undefined
+  /**
+   * Register a queued-prompt edit with the current draft's owner before it can
+   * change. Resolves with the removed prompt only when this composer no longer
+   * shows that draft, so the owner must put the prompt back itself.
+   */
+  onPendingQueuedEdit?:
+    ((removed: Promise<Pick<QueuedTurn, 'text' | 'attachments'> | undefined>) => void) | undefined
   onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
@@ -1264,10 +1271,22 @@ function ComposerComponent(props: {
     if (editingQueue.current.has(queuedTurn.id)) return
     editingQueue.current.add(queuedTurn.id)
     const owner = draftRequestRef.current?.request
+    let handBack: (prompt: Pick<QueuedTurn, 'text' | 'attachments'> | undefined) => void = () => {}
+    props.onPendingQueuedEdit?.(
+      new Promise((resolve) => {
+        handBack = resolve
+      }),
+    )
     setQueueError(undefined)
     try {
       const removed = await props.onDeleteQueuedTurn(queuedTurn.id)
-      if (!mounted.current || draftRequestRef.current?.request !== owner) return
+      if (!mounted.current || draftRequestRef.current?.request !== owner) {
+        // The prompt already left the queue, so the draft it was edited from
+        // must keep it now that this composer shows another one.
+        if (removed === true)
+          handBack({ text: queuedTurn.text, attachments: queuedTurn.attachments })
+        return
+      }
       if (removed !== true) {
         setQueueError(
           'Could not remove the queued prompt. It may have already started; no copy was added.',
@@ -1285,6 +1304,7 @@ function ComposerComponent(props: {
         )
       }
     } finally {
+      handBack(undefined)
       editingQueue.current.delete(queuedTurn.id)
     }
   }

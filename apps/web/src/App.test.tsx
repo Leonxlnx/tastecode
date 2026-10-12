@@ -8803,6 +8803,74 @@ describe('live sessions', () => {
     })
   })
 
+  it('returns an edited queued prompt to its chat when the user switches chats mid-delete', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let resolveSend: ((result: unknown) => void) | undefined
+    const sendResult = new Promise((resolve) => {
+      resolveSend = resolve
+    })
+    let resolveDelete: ((result: unknown) => void) | undefined
+    const deleteResult = new Promise((resolve) => {
+      resolveDelete = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn') return sendResult
+      if (method === 'thread.deleteQueuedTurn') return deleteResult
+      return request(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = call
+        ? methods['thread.sendTurn'].params.parse(call[1]).clientSubmissionId!
+        : ''
+      expect(submissionId).toMatch(/^local:/)
+    })
+    await act(async () =>
+      resolveSend?.({
+        queued: true,
+        queuedTurn: { id: submissionId, text: 'Queue this next', attachments: [], createdAt: 1 },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queue this next' }))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-2')
+    })
+    await act(async () => resolveDelete?.({}))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-1')
+    })
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Queue this next',
+      ),
+    )
+  })
+
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
     serverProjects = [
       {
