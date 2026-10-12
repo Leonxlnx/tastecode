@@ -4,8 +4,9 @@ import { persistentApiSession } from './api-session-state.js'
 
 const createdAt = 1_700_001_234_567
 
-function fakeSession(content: string): ApiAgentSession {
+function fakeSession(content: string, model: string): ApiAgentSession {
   return {
+    model,
     snapshot: () => ({
       thread: {
         id: 'thread-1',
@@ -23,8 +24,9 @@ function fakeSession(content: string): ApiAgentSession {
   } as unknown as ApiAgentSession
 }
 
-function sessionWith(messages: unknown[]): ApiAgentSession {
+function sessionWith(messages: unknown[], model = 'gpt-4o'): ApiAgentSession {
   return {
+    model,
     snapshot: () => ({
       thread: {
         id: 'thread-1',
@@ -40,7 +42,7 @@ function sessionWith(messages: unknown[]): ApiAgentSession {
 }
 
 function snapshot(apiKey: string, content = 'hello', model = 'gpt-4o') {
-  return persistentApiSession(fakeSession(content), model, apiKey).snapshot!() as {
+  return persistentApiSession(fakeSession(content, model), apiKey).snapshot!() as {
     model: string
     state: { thread: { createdAt: number }; messages: Array<{ role: string; content: string }> }
   }
@@ -80,7 +82,6 @@ describe('persistentApiSession', () => {
           toolCalls: [{ id: 'call_1', name: 'shell', input: { [key]: { nested: [key] } } }],
         },
       ]),
-      'gpt-4o',
       key,
     ).snapshot!()
     expect(JSON.stringify(saved)).not.toContain(key)
@@ -104,7 +105,6 @@ describe('persistentApiSession', () => {
         { role: 'tool', content: 'files', toolCallId: 'toolu_01', isError: false },
         { role: 'assistant', content: 'ok', toolCalls: [], transportState: clean },
       ]),
-      'gpt-4o',
       'u_01',
     ).snapshot!() as { state: { messages: Array<Record<string, unknown>> } }
     const [, withKey, result, withoutKey] = saved.state.messages
@@ -122,6 +122,13 @@ describe('persistentApiSession', () => {
     const once = snapshot('dact', 'a dact key')
     const again = snapshot('dact', once.state.messages[0]!.content)
     expect(again.state.messages[0]?.content).toBe(once.state.messages[0]?.content)
+  })
+
+  it('saves the model the session runs on now, not the one it started with', () => {
+    const session = sessionWith([{ role: 'user', content: 'hi' }], 'model-a')
+    const persistent = persistentApiSession(session, 'sk-test-0123456789abcdef')
+    ;(session as unknown as { model: string }).model = 'model-b'
+    expect(persistent.snapshot!()).toMatchObject({ model: 'model-b' })
   })
 
   it('never rewrites the saved model', () => {

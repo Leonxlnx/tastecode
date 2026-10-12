@@ -1,10 +1,26 @@
 import { ChildProcess } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { DomainEvent } from '@harness/contracts'
-import { describe, expect, it } from 'vitest'
+import { spawnOwned } from '@harness/proc/kill'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
 import { resetCursorIndexForTests } from './models.js'
+
+vi.mock('@harness/proc/kill', async (original) => ({
+  ...(await original<typeof import('@harness/proc/kill')>()),
+  spawnOwned: vi.fn(),
+}))
+
+const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
+afterEach(() => {
+  Object.defineProperty(process, 'platform', platform)
+  vi.unstubAllEnvs()
+  vi.mocked(spawnOwned).mockReset()
+})
 
 class FakeChild extends ChildProcess {
   override stdin = new PassThrough()
@@ -86,6 +102,65 @@ describe('Cursor adapter', () => {
         expect.objectContaining({ type: 'turn.completed', status: 'completed' }),
       ]),
     )
+  })
+
+  it('starts the bundled node.exe on Windows so a multi-line first prompt survives', async () => {
+    // cursor-agent.cmd forwards its arguments through cmd.exe, which cannot
+    // carry the line breaks every first prompt has. The node.exe the shim
+    // itself starts takes them through native argv quoting.
+    const localAppData = mkdtempSync(path.join(tmpdir(), 'cursor-launch-'))
+    const version = path.join(localAppData, 'cursor-agent', 'versions', '2026.07.23-e383d2b')
+    mkdirSync(version, { recursive: true })
+    writeFileSync(path.join(version, 'node.exe'), '')
+    writeFileSync(path.join(version, 'index.js'), '')
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    vi.stubEnv('LOCALAPPDATA', localAppData)
+    vi.mocked(spawnOwned).mockImplementation(() => new FakeChild())
+    const adapter = new CursorAdapter()
+    try {
+      const thread = await adapter.startThread('C:\\repo', { instructions: 'Answer plainly.' })
+      await adapter.sendTurn(thread.id, 'line one\nline two')
+
+      expect(spawnOwned).toHaveBeenCalledWith(
+        path.join(version, 'node.exe'),
+        [
+          path.join(version, 'index.js'),
+          '--print',
+          '--output-format',
+          'stream-json',
+          '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nline one\nline two',
+        ],
+        expect.objectContaining({ cwd: 'C:\\repo' }),
+      )
+      expect(vi.mocked(spawnOwned).mock.calls[0]?.[2]).not.toHaveProperty(
+        'windowsVerbatimArguments',
+      )
+    } finally {
+      await adapter.dispose()
+      rmSync(localAppData, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the session instructions for the next turn when the CLI cannot start', async () => {
+    const prompts: string[] = []
+    let attempts = 0
+    const adapter = new CursorAdapter({
+      spawn: (_command, args) => {
+        attempts += 1
+        if (attempts === 1) throw new Error('spawn failed')
+        prompts.push(args.at(-1)!)
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { instructions: 'Answer plainly.' })
+
+    await expect(adapter.sendTurn(thread.id, 'first')).rejects.toThrow('spawn failed')
+    await adapter.sendTurn(thread.id, 'retry')
+
+    expect(prompts).toEqual([
+      '<system-instructions>\nAnswer plainly.\n</system-instructions>\n\nretry',
+    ])
+    adapter.dispose()
   })
 
   it('resumes, force-maps trusted modes and interrupts honestly', async () => {

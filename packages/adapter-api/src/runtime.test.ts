@@ -270,6 +270,30 @@ describe('ApiAgentSession', () => {
     })
   })
 
+  it('runs a turn on the model chosen for it', async () => {
+    const requested: string[] = []
+    const events: DomainEvent[] = []
+    const session = new ApiAgentSession({
+      model: 'model-a',
+      transport: async function* (input) {
+        requested.push(input.model)
+        yield { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    await session.waitForTurn(await session.sendTurn(thread.id, 'First'))
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Second', [], { model: 'model-b' }))
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Third'))
+
+    expect(requested).toEqual(['model-a', 'model-b', 'model-b'])
+    expect(session.model).toBe('model-b')
+    expect(
+      events.flatMap((event) => (event.type === 'usage.updated' ? [event.usage.model] : [])),
+    ).toEqual(['model-a', 'model-b', 'model-b'])
+  })
+
   it('runs approved tools through the injected TasteCode executor', async () => {
     let request = 0
     const seenMessages: unknown[] = []
@@ -311,6 +335,50 @@ describe('ApiAgentSession', () => {
       },
       { role: 'tool', content: 'hello', toolCallId: 'call-1', isError: false },
     ])
+  })
+
+  it('answers a call the review rejects with a tool error instead of failing the turn', async () => {
+    let request = 0
+    let executions = 0
+    const seenMessages: unknown[] = []
+    const events: DomainEvent[] = []
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: async function* (input) {
+        seenMessages.push(structuredClone(input.messages))
+        if (request++ === 0) {
+          yield {
+            type: 'tool_call',
+            call: { id: 'call-1', name: 'write_file', input: { path: '../outside.txt' } },
+          }
+          yield { type: 'finish', reason: 'tool_calls' }
+        } else {
+          yield { type: 'text', delta: 'I will stay inside the workspace.' }
+          yield { type: 'finish', reason: 'stop' }
+        }
+      },
+      reviewTool: () => {
+        throw new Error('path escapes the workspace')
+      },
+      executeTool: async () => {
+        executions++
+        return { content: 'written' }
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Write it')
+    await session.waitForTurn(turnId)
+
+    expect(executions).toBe(0)
+    expect(seenMessages[1]).toContainEqual({
+      role: 'tool',
+      content: 'Tool execution failed.',
+      toolCallId: 'call-1',
+      isError: true,
+    })
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'completed' })
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
   })
 
   it('classifies assistant text from the transport finish reason', async () => {
@@ -377,6 +445,42 @@ describe('ApiAgentSession', () => {
 
     expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
     expect(JSON.stringify({ events, logs })).not.toContain(secret)
+  })
+
+  it('runs no further tool calls of a batch after Stop', async () => {
+    const executed: string[] = []
+    const events: DomainEvent[] = []
+    let started: (() => void) | undefined
+    const running = new Promise<void>((resolve) => (started = resolve))
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: transport(
+        { type: 'tool_call', call: { id: 'call-1', name: 'run_command', input: {} } },
+        { type: 'tool_call', call: { id: 'call-2', name: 'write_file', input: {} } },
+        { type: 'tool_call', call: { id: 'call-3', name: 'write_file', input: {} } },
+        { type: 'finish', reason: 'tool_calls' },
+      ),
+      executeTool: async (call, signal) => {
+        executed.push(call.id)
+        if (call.name !== 'run_command') return { content: 'written' }
+        started?.()
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))
+        throw new DOMException('interrupted', 'AbortError')
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Test and write')
+    await running
+    await session.interrupt(thread.id)
+
+    expect(executed).toEqual(['call-1'])
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+    expect(session.snapshot().messages.filter((message) => message.role === 'tool')).toEqual([
+      expect.objectContaining({ toolCallId: 'call-1', isError: true }),
+      expect.objectContaining({ toolCallId: 'call-2', content: 'Tool execution was interrupted.' }),
+      expect.objectContaining({ toolCallId: 'call-3', content: 'Tool execution was interrupted.' }),
+    ])
   })
 
   it('closes partial streamed items before a failed turn', async () => {

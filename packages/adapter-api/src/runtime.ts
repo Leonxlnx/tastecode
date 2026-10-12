@@ -69,9 +69,11 @@ interface RedactedDelta {
   pending: string
 }
 
+type ToolReview = Omit<ApprovalRequest, 'id' | 'createdAt'>
+
 export class ApiAgentSession extends EventEmitter<Events> {
   readonly capabilities = API_CAPABILITIES
-  readonly #model: string
+  #model: string
   readonly #transport: ApiTransport
   readonly #tools: readonly ApiTool[]
   readonly #executeTool: (call: ApiToolCall, signal: AbortSignal) => Promise<ApiToolResult>
@@ -154,10 +156,21 @@ export class ApiAgentSession extends EventEmitter<Events> {
     })
   }
 
-  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+  /** The model the next turn runs on; a turn may switch it within the connection. */
+  get model(): string {
+    return this.#model
+  }
+
+  async sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[] = [],
+    options: { model?: string } = {},
+  ): Promise<string> {
     const thread = this.#requireThread(threadId)
     if (this.#active) throw new Error('a turn is already running')
     if (attachments.length > 0) throw new Error('direct API attachments are not supported yet')
+    if (options.model) this.#model = options.model
 
     const turnId = `${thread.id}-turn-${++this.#turnCounter}`
     const controller = new AbortController()
@@ -220,6 +233,10 @@ export class ApiAgentSession extends EventEmitter<Events> {
         if (response.calls.length === 0) throw new Error('missing tool calls')
 
         for (const call of response.calls) {
+          // A tool that was stopped reports a failed result rather than a
+          // throw, and full access skips the review that would notice the
+          // abort; without this check the rest of the batch still runs.
+          signal.throwIfAborted()
           if (++toolCalls > this.#maxToolCalls) throw new Error('tool call limit exceeded')
           await this.#runTool(turnId, call, signal)
         }
@@ -448,7 +465,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
     })
 
     let result: ApiToolResult
-    if (await this.#approved(call, signal)) {
+    const reviewed = this.#review(call)
+    if (!reviewed) {
+      // Arguments the review cannot accept (a path outside the workspace, a
+      // missing cwd) fail this call exactly as they do in full access, so the
+      // model can correct them instead of the whole turn failing.
+      result = { content: 'Tool execution failed.', isError: true }
+    } else if (await this.#approved(call, reviewed.review, signal)) {
       try {
         result = await this.#executeTool(call, signal)
       } catch {
@@ -492,8 +515,19 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#openItems.clear()
   }
 
-  async #approved(call: ApiToolCall, signal: AbortSignal): Promise<boolean> {
-    const review = this.#reviewTool(call)
+  #review(call: ApiToolCall): { review: ToolReview | undefined } | undefined {
+    try {
+      return { review: this.#reviewTool(call) }
+    } catch {
+      return undefined
+    }
+  }
+
+  async #approved(
+    call: ApiToolCall,
+    review: ToolReview | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     // Include every reviewed field and exact structured input. A command can
     // run different code in another directory even when its display is equal.
     const approvalKey = review

@@ -395,6 +395,9 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       { model: this.#model, effort: this.#effort },
       options,
     )
+    // v1 parses the model synchronously. Do it before the turn opens: a throw
+    // after turn.started left #turnId set and refused every later turn.
+    const model = this.#protocol === 'v1' ? parseModel(selection.model) : undefined
     this.#model = selection.model
     this.#effort = selection.effort
     const turnId = `${threadId}-turn-${randomUUID()}`
@@ -409,7 +412,6 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       void this.#sendV2Turn(text, turnId).catch(() => this.#failTurn(turnId))
       return turnId
     }
-    const model = parseModel(this.#model)
     const variant =
       this.#effort && this.#effort !== OPENCODE_DEFAULT_VARIANT ? this.#effort : undefined
     void this.#client!.session.promptAsync({

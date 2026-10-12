@@ -35,16 +35,14 @@ export const ApiRuntimeStateSchema = z.object({
 })
 
 /** Keep the credential out of durable state even when a prompt or tool echoed it. */
-export function persistentApiSession(
-  session: ApiAgentSession,
-  model: string,
-  apiKey: string,
-): AgentSession {
+export function persistentApiSession(session: ApiAgentSession, apiKey: string): AgentSession {
   return new Proxy(session, {
     get(target, key) {
       if (key === 'snapshot') {
         return () => {
           const state = target.snapshot()
+          // A turn can switch models within the connection; resume on the current one.
+          const model = target.model
           return ApiRuntimeStateSchema.parse({
             version: 1,
             model,

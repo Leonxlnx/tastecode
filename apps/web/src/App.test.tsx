@@ -93,11 +93,17 @@ interface ThreadCallbacks {
   decideApproval: ThreadProps['onDecide'] | undefined
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
   undoChanges: ThreadProps['onUndoChanges'] | undefined
+  threadId: ThreadProps['threadId']
+  searchJump: ThreadProps['searchJump']
+  searchJumpDone: ThreadProps['onSearchJumpDone']
 }
 const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   decideApproval: undefined,
   answerUserInput: undefined,
   undoChanges: undefined,
+  threadId: undefined,
+  searchJump: undefined,
+  searchJumpDone: undefined,
 }))
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
@@ -178,6 +184,9 @@ vi.mock('./ui/Thread.js', async () => {
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
+            threadCallbacks.threadId = props.threadId
+            threadCallbacks.searchJump = props.searchJump
+            threadCallbacks.searchJumpDone = props.onSearchJumpDone
           }}
         >
           {items.map((base, index) => (
@@ -392,6 +401,9 @@ beforeEach(() => {
   transport.urls.length = 0
   threadCallbacks.decideApproval = undefined
   threadCallbacks.answerUserInput = undefined
+  threadCallbacks.threadId = undefined
+  threadCallbacks.searchJump = undefined
+  threadCallbacks.searchJumpDone = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -9848,6 +9860,64 @@ describe('live sessions', () => {
       expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
     )
     expect(document.activeElement).toBe(composer)
+  })
+
+  it('runs a search jump once instead of again on every return to the chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'chat-a', title: 'Chat A' },
+        { id: 'chat-b', title: 'Chat B' },
+      ]),
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              {
+                projectPath: '/work/project',
+                projectName: 'project',
+                threadId: 'chat-a',
+                threadTitle: 'Chat A',
+                turnId: 'turn-old',
+                provider: 'codex',
+                createdAt: 0,
+                snippet: [{ text: 'needle', highlighted: true }],
+              },
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Chat A,/ })
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    const jump = threadCallbacks.searchJump
+    expect(jump).toMatchObject({ turnId: 'turn-old' })
+    // The thread lands on the hit and says so.
+    act(() => threadCallbacks.searchJumpDone?.(jump!.request))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-b'))
+    fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    // A fresh entry opens at the end rather than at the old hit.
+    expect(threadCallbacks.searchJump).toBeUndefined()
+
+    // Choosing the same hit again is a new jump.
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' }))
+    expect(threadCallbacks.searchJump!.request).not.toBe(jump!.request)
   })
 
   it('keeps app shortcuts from acting behind chat search', async () => {

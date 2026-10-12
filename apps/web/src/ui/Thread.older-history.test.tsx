@@ -265,6 +265,44 @@ describe('Thread older history', () => {
     expect(loadComplete).toHaveBeenCalledOnce()
   })
 
+  it('reports a search jump as done once it lands, and only once', async () => {
+    const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
+    let finish: () => void = noop
+    const loadComplete = vi.fn(
+      (_threadId: string, _signal: AbortSignal) =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        }),
+    )
+    const done = vi.fn()
+    render(
+      <StrictMode>
+        <Thread
+          frameStore={store}
+          threadId="thread"
+          onDecide={noop}
+          onAnswerUserInput={noop}
+          onLoadOlderHistory={() => new Promise<void>(noop)}
+          onLoadCompleteHistory={loadComplete}
+          searchJump={{ turnId: 'turn-3', request: 4 }}
+          onSearchJumpDone={done}
+        />
+      </StrictMode>,
+    )
+    // Still waiting for the turn: the owner must keep the jump.
+    expect(done).not.toHaveBeenCalled()
+
+    await act(async () => {
+      store.publish(paged(turns(0, 161)))
+      finish()
+    })
+    expect(layout.jumps).toEqual([3])
+    expect(done).toHaveBeenCalledExactlyOnceWith(4)
+
+    act(() => store.publish(paged(turns(0, 162))))
+    expect(done).toHaveBeenCalledOnce()
+  })
+
   it('asks again for a search jump read that StrictMode cancelled while replaying effects', () => {
     const store = new ThreadFrameStore(paged(turns(150, 160), 'cursor'))
     const loadComplete = vi.fn((_threadId: string, _signal: AbortSignal) => new Promise<void>(noop))

@@ -190,7 +190,7 @@ function grouped(declarations: readonly Declaration[]): Array<{ label: string; f
 }
 
 function collectDeclarations(workspacePath: string): Declaration[] {
-  const declarations = new Map<string, Declaration>()
+  const sources: Array<{ file: string; source: string }> = []
   let totalBytes = 0
   for (const file of designSourceFiles(workspacePath)) {
     const extension = path.extname(file).toLowerCase()
@@ -208,6 +208,12 @@ function collectDeclarations(workspacePath: string): Declaration[] {
         .replace(/&#0*39;|&apos;/gi, "'")
         .replace(/&amp;/gi, '&')
     }
+    sources.push({ file, source })
+  }
+  // A named Tailwind radius means what the workspace theme maps it to, wherever that is declared.
+  const theme = new Map(sources.flatMap(({ source }) => [...tailwindRadiusTheme(source)]))
+  const declarations = new Map<string, Declaration>()
+  for (const { file, source } of sources) {
     const add = (kind: Declaration['kind'], key: string, label: string) => {
       const declaration = { kind, file, key, label }
       const id = declarationKey(declaration)
@@ -216,7 +222,7 @@ function collectDeclarations(workspacePath: string): Declaration[] {
     for (const family of fontFamilies(source)) {
       if (!ignoredFamily(family)) add('font', familyKey(family), family)
     }
-    for (const radius of cornerRadii(source)) add('radius', radius, radius)
+    for (const radius of cornerRadii(source, theme)) add('radius', radius, radius)
   }
   return [...declarations.values()]
 }
@@ -301,7 +307,7 @@ export function fontFamilies(source: string): string[] {
       const end = balancedEnd(source, start)
       if (end === undefined) continue
       const body = source.slice(start + 1, end - 1)
-      const values = opening === '{' ? topLevelValues(body) : [body]
+      const values = opening === '{' ? topLevelEntries(body).map(({ value }) => value) : [body]
       for (const value of values) add(firstStringLiteral(value))
     } else {
       add(stringLiteralAt(source, start))
@@ -449,8 +455,32 @@ const TAILWIND_ROUNDED = new RegExp(
   'g',
 )
 const BARE_ROUNDED = new RegExp(`^rounded${TAILWIND_SIDE}$`)
+const TAILWIND_THEME_RADIUS = /(?<![\w-])--radius-(xs|sm|md|lg|xl|2xl|3xl|4xl)\s*:\s*([^;{}]*)/g
 
-export function cornerRadii(source: string): string[] {
+/**
+ * Named radius sizes the workspace's own Tailwind theme redefines: v4 `--radius-<size>` variables
+ * and a config's `borderRadius` object, where `DEFAULT` is bare `rounded`. Build maps brand radius
+ * tokens this way, so `rounded-lg` then means the mapped value rather than Tailwind's default. A
+ * value the audit cannot read, such as an imported constant, maps to undefined and never counts.
+ */
+function tailwindRadiusTheme(source: string): Map<string, string | undefined> {
+  const theme = new Map<string, string | undefined>()
+  for (const match of source.matchAll(TAILWIND_THEME_RADIUS)) theme.set(match[1]!, match[2]!)
+  for (const match of source.matchAll(/\bborderRadius\s*:\s*\{/g)) {
+    const start = match.index + match[0].length - 1
+    const end = balancedEnd(source, start)
+    if (end === undefined) continue
+    for (const { key, value } of topLevelEntries(source.slice(start + 1, end - 1))) {
+      theme.set(key.replace(/^(["'`])(.*)\1$/s, '$2'), stringLiteralAt(value.trim(), 0))
+    }
+  }
+  return theme
+}
+
+export function cornerRadii(
+  source: string,
+  theme: ReadonlyMap<string, string | undefined> = new Map(),
+): string[] {
   const radii: string[] = []
   const addValue = (value: string) => {
     for (const token of topLevelTokens(value.replace(/["'`]/g, ' ').replace(/!important/gi, ''))) {
@@ -459,6 +489,14 @@ export function cornerRadii(source: string): string[] {
         const radius = canonicalRadius(part)
         if (radius) radii.push(radius)
       }
+    }
+  }
+  const addNamed = (size: string, fallback: string | undefined) => {
+    if (theme.has(size)) {
+      const value = theme.get(size)
+      if (value !== undefined) addValue(value)
+    } else if (fallback) {
+      radii.push(fallback)
     }
   }
 
@@ -483,10 +521,7 @@ export function cornerRadii(source: string): string[] {
   for (const match of source.matchAll(TAILWIND_ROUNDED)) {
     const size = match[1]!
     if (size.startsWith('[')) addValue(size.slice(1, -1).replaceAll('_', ' '))
-    else {
-      const radius = TAILWIND_RADII.get(size)
-      if (radius) radii.push(radius)
-    }
+    else addNamed(size, TAILWIND_RADII.get(size))
   }
   // A bare `rounded` is also an English word, so it only counts inside a class attribute.
   for (const match of source.matchAll(
@@ -496,7 +531,7 @@ export function cornerRadii(source: string): string[] {
     for (const token of classes.split(/\s+/)) {
       // Variants (md:, hover:, [&>*]:) end at the last colon; `!` marks important in v3 and v4.
       const utility = token.slice(token.lastIndexOf(':') + 1).replace(/^!|!$/g, '')
-      if (BARE_ROUNDED.test(utility)) radii.push(TAILWIND_DEFAULT_RADIUS)
+      if (BARE_ROUNDED.test(utility)) addNamed('DEFAULT', TAILWIND_DEFAULT_RADIUS)
     }
   }
   return radii
@@ -636,10 +671,11 @@ function balancedEnd(source: string, index: number): number | undefined {
   return undefined
 }
 
-/** The value of each top-level `key: value` entry in an object literal body. */
-function topLevelValues(body: string): string[] {
-  const values: string[] = []
+/** Each top-level `key: value` entry in an object literal body, key as written. */
+function topLevelEntries(body: string): Array<{ key: string; value: string }> {
+  const entries: Array<{ key: string; value: string }> = []
   let depth = 0
+  let entryStart = 0
   let valueStart: number | undefined
   for (let cursor = 0; cursor <= body.length; cursor += 1) {
     const character = body[cursor]
@@ -654,9 +690,15 @@ function topLevelValues(body: string): string[] {
     } else if (character === ':' && depth === 0 && valueStart === undefined) {
       valueStart = cursor + 1
     } else if ((character === ',' || character === undefined) && depth === 0) {
-      if (valueStart !== undefined) values.push(body.slice(valueStart, cursor))
+      if (valueStart !== undefined) {
+        entries.push({
+          key: body.slice(entryStart, valueStart - 1).trim(),
+          value: body.slice(valueStart, cursor),
+        })
+      }
+      entryStart = cursor + 1
       valueStart = undefined
     }
   }
-  return values
+  return entries
 }

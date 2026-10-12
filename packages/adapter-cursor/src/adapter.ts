@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, readNdjson, runCli, spawnCli } from '@harness/proc'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
+import { spawnCursorAgent } from './launch.js'
 import {
   collapseCursorModels,
   getCursorIndex,
@@ -62,7 +63,7 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   constructor(options: { spawn?: Spawn; run?: Run } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnCli
+    this.#spawn = options.spawn ?? spawnCursorAgent
     this.#run = options.run ?? runCli
   }
 
@@ -155,7 +156,6 @@ export class CursorAdapter extends EventEmitter<Events> {
       this.#instructionsPending && this.#options.instructions
         ? `<system-instructions>\n${this.#options.instructions}\n</system-instructions>\n\n${text}`
         : text
-    this.#instructionsPending = false
     const args = [
       '--print',
       '--output-format',
@@ -168,6 +168,9 @@ export class CursorAdapter extends EventEmitter<Events> {
       prompt,
     ]
     const child = this.#spawn('cursor-agent', args, { cwd: this.#workspacePath })
+    // The instructions count as sent only once the CLI has started; a spawn
+    // that throws keeps them for the retry.
+    this.#instructionsPending = false
     this.#child = child
     this.#turnId = turnId
     this.#mapper = new CursorEventMapper(turnId)

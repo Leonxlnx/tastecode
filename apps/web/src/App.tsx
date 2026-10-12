@@ -796,6 +796,7 @@ export function App() {
     turnId: string
     request: number
   }>()
+  const searchJumpRequests = useRef(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const [composerDraft, setComposerDraft] = useState<
     | {
@@ -4704,18 +4705,19 @@ export function App() {
   )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
-      setSearchJump((current) =>
-        turnId
-          ? {
-              threadId,
-              turnId,
-              request: (current?.request ?? 0) + 1,
-            }
-          : undefined,
+      // Counted outside the state: a used jump is cleared, and a new one must
+      // still never reuse the request number of one a thread already ran.
+      setSearchJump(
+        turnId ? { threadId, turnId, request: ++searchJumpRequests.current } : undefined,
       )
       void selectSession(threadId)
     },
     [selectSession],
+  )
+  const finishSearchJump = useCallback(
+    (request: number) =>
+      setSearchJump((current) => (current?.request === request ? undefined : current)),
+    [],
   )
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(requestSettingsSection(section))
@@ -5438,6 +5440,7 @@ export function App() {
                           threadId={activeId}
                           transport={transport}
                           searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                          onSearchJumpDone={finishSearchJump}
                           revealRequest={threadRevealRequest}
                           checkpoints={checkpoints}
                           onDecide={decideApproval}
