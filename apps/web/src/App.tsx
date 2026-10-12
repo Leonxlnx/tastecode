@@ -4523,6 +4523,12 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
+  // The bottom panel unmounts while no project is active and forgets which
+  // toggle it last handled. Without this reset it would treat the old count as
+  // a new toggle on remount and open a terminal nobody asked for.
+  useEffect(() => {
+    if (!activePath) setBottomTerminalToggleRequest(0)
+  }, [activePath])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])

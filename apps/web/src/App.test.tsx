@@ -8043,6 +8043,46 @@ describe('global shortcuts', () => {
     expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
+  it('keeps the bottom panel closed when it remounts after the active project is removed', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    const remounted = await screen.findByTestId('bottom-terminal')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(remounted.classList.contains('is-open')).toBe(false)
+    expect(screen.queryByTestId('terminal-pane')).toBeNull()
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
