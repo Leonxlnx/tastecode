@@ -1743,7 +1743,13 @@ function SessionRow(props: {
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
-        {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        {/* Both sit in the gutter under the project's folder mark, so the
+            title never moves. Unread outranks the pin. */}
+        {props.session.unread ? (
+          <span className="sess__unread-dot" aria-hidden />
+        ) : props.standalone ? (
+          <Pin className="sess__lead" size={12} aria-hidden />
+        ) : null}
         <span className="sess__title">{props.session.title}</span>
         {sessionStatusMark(props.session.status) ?? (
           <span className="sess__source" aria-hidden>

@@ -1108,15 +1108,7 @@
 }
 
 .pinned-sessions {
-  margin: 0 0 10px;
-}
-
-.sessrow.is-pinned .sess {
-  padding-left: 7px;
-}
-
-.sessrow.is-pinned > .rename--session {
-  padding-left: 7px;
+  margin: 0 0 8px;
 }
 
 /* Chats are children of their project, so they read lighter than it: the
@@ -1138,12 +1130,33 @@
   color: var(--rail-text);
 }
 
+/* Gutter marks are centred on the folder mark's column (8px + 14px / 2), so
+   they never push the title: an inline dot used to shift it 13px right. */
+.sess__unread-dot,
+.sess__lead {
+  position: absolute;
+  top: 50%;
+  pointer-events: none;
+}
+
 .sess__unread-dot {
+  left: 12px;
   width: 6px;
   height: 6px;
+  margin-top: -3px;
   border-radius: var(--r-circle);
   background: var(--light);
-  flex: none;
+}
+
+.sess__lead {
+  left: 9px;
+  margin-top: -6px;
+  color: var(--text-3);
+}
+
+.sess__unread-dot + .sess__title {
+  color: var(--rail-text);
+  font-weight: 500;
 }
 
 /* The trailing slot: provider mark or live status, always 14px wide. */
