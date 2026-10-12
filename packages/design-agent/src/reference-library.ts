@@ -305,7 +305,12 @@ export function selectReviewedReferences(
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
   const unused = (entry: ReferenceDirection) => !groups.has(groupOf(entry))
-  const siteOf = (entry: ReferenceDirection) => referenceSite(entry.source)
+  // Every tier asks for sites again; parse each source URL once per selection.
+  const sites = new Map<ReferenceDirection, string | undefined>()
+  const siteOf = (entry: ReferenceDirection) => {
+    if (!sites.has(entry)) sites.set(entry, referenceSite(entry.source))
+    return sites.get(entry)
+  }
   const consistent = (entry: ReferenceDirection) =>
     !isStyleOutlier(profiles.get(siteOf(entry) ?? ''), entry)
   let anchor: { site?: string | undefined; profile?: ReferenceStyleProfile | undefined } | undefined
