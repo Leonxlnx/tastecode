@@ -314,6 +314,10 @@ function DitherChoiceRow(props: {
         if (props.disabled) return
         event.preventDefault()
         event.stopPropagation()
+        // preventDefault also cancels the focus a click would give the slider,
+        // which left it in the search field: arrow keys after a click then
+        // edited the query instead of moving the effort.
+        event.currentTarget.focus({ preventScroll: true })
         prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
