@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-04 main e29c3382 · checkpoint identity correction</span>
+        <span class="meta">2026-10-12 main 0e792a64 · Claude Code first, current models</span>
       </div>
     </div>
 
@@ -275,8 +275,11 @@
               ><input type="checkbox" /><span
                 >Live model list from the provider
                 <span class="d"
-                  >the known catalog stays in Settings except superseded GPT-5.2; first-run
-                  visibility includes only GPT-5.6 Sol, Terra, Luna, and 5.3-Codex-Spark</span
+                  >only models the installed CLI still ships, in Codex's own order: GPT-6-Astra
+                  (default, visible), then GPT-5.6 Sol, Terra and Luna, then the legacy GPT-5.5, all
+                  hidden by default; removed models such as GPT-5.4 and 5.3-Codex-Spark are no
+                  longer re-added, and a chat saved on one still opens and sends with a model Codex
+                  still has</span
                 ></span
               ></label
             >
@@ -306,7 +309,9 @@
                   grant-and-scope wire shape; MCP tool approvals show the tool and its arguments and
                   answer Codex's elicitation action, remembering the tool when Codex offers it for
                   the session; Stop uses the original thread and turn IDs; automatic review runs
-                  without status or result cards in the chat</span
+                  without status or result cards in the chat; questions with blank headers, text or
+                  option descriptions are filled from their other fields, and one that still cannot
+                  be shown is answered empty instead of blocking the turn</span
                 ></span
               ></label
             >
@@ -366,9 +371,11 @@
                 >Versioned SDK models without the synthetic Default row, merged with the full
                 catalog
                 <span class="d"
-                  >Fable 5.1, Fable 5 and Opus 5 context aliases collapse to one row each; default
-                  visibility includes Fable 5.1, Fable 5, Opus 5, Sonnet 5, Haiku 4.5, and Opus 4.8
-                  while older rows remain available in Settings</span
+                  >the current lineup leads in tier order: Fable 5.1, Opus 5.5 (default), Sonnet 5.5
+                  and Haiku 5.5, then older generations newest first; the opus, sonnet and haiku
+                  aliases and 1M-context variants collapse into their resolved row; default
+                  visibility includes that lineup while older rows remain available in Settings, and
+                  the static fallback lists the same lineup when discovery fails</span
                 ></span
               ></label
             >
@@ -377,7 +384,9 @@
             <label
               ><input type="checkbox" /><span
                 >Effort slider per the documented table
-                <span class="d">low to max, Haiku has none, Opus 4.7 defaults xhigh</span></span
+                <span class="d"
+                  >low to max, Haiku 5.5 included, Haiku 4.5 has none, Opus 4.7 defaults xhigh</span
+                ></span
               ></label
             >
           </li>
@@ -627,19 +636,20 @@
               ><input type="checkbox" /><span
                 >One fixed setup and account row grammar
                 <span class="d"
-                  >Codex, Claude Code, and Grok keep mark, identity, status, issue, and actions in
-                  stable slots across loading, ready, setup, busy, and failure states; the roster is
-                  open type instead of a card, and a wire between the provider name and its account
-                  carries the state: solid between two terminals once an account is attached, a
-                  dotted leader while the provider waits for one, absent when the provider is not
-                  installed, flowing dashes while work is in flight, and the error colour after an
-                  announced failure; connected providers read in full ink and the rest are dimmed;
-                  hovering a row lights its wire; empty action slots stay hidden; in narrow rosters
-                  the wire steps aside and account details sit below the provider name between
-                  hairlines; primary and secondary actions share the right edge on desktop and
-                  narrow layouts; CLI versions live in the provider-mark tooltip instead of widening
-                  account rows; account labels use the same email-or-signed-in grammar; error
-                  tooltips stay inside the viewport and support keyboard dismissal;
+                  >Claude Code, Codex, and Grok, listed in that order here and in onboarding, MCP
+                  options, and the search agent filter, keep mark, identity, status, issue, and
+                  actions in stable slots across loading, ready, setup, busy, and failure states;
+                  the roster is open type instead of a card, and a wire between the provider name
+                  and its account carries the state: solid between two terminals once an account is
+                  attached, a dotted leader while the provider waits for one, absent when the
+                  provider is not installed, flowing dashes while work is in flight, and the error
+                  colour after an announced failure; connected providers read in full ink and the
+                  rest are dimmed; hovering a row lights its wire; empty action slots stay hidden;
+                  in narrow rosters the wire steps aside and account details sit below the provider
+                  name between hairlines; primary and secondary actions share the right edge on
+                  desktop and narrow layouts; CLI versions live in the provider-mark tooltip instead
+                  of widening account rows; account labels use the same email-or-signed-in grammar;
+                  error tooltips stay inside the viewport and support keyboard dismissal;
                   <a href="./screenshots/provider-roster-wired.png">desktop</a> and
                   <a href="./screenshots/provider-roster-wired-390.png">390 px</a> evidence</span
                 ></span
@@ -654,7 +664,8 @@
                   >Windows discovery, provider launch and terminal environments preserve mixed-case
                   Path entries and emit one PATH key. Missing program errors no longer claim that
                   the project folder is unavailable; packaged checks exercise a real provider-helper
-                  command launch.</span
+                  command launch. Version probes and one-shot CLI commands end stdin, so a CLI that
+                  reads until end of input answers instead of timing out.</span
                 ></span
               ></label
             >
@@ -822,13 +833,16 @@
               ><input type="checkbox" /><span
                 >Compact model picker grouped by stable source identity with provider logos, with a
                 content-sized menu and the compact dither effort slider, with aligned pointer stops
-                and a direction-aware 75% drag threshold; the flat list is the first-run layout,
-                while both layouts share full-catalog search, arrow-key entry into filtered results,
-                and selection preservation; new-chat source changes keep readiness checks silent;
-                default visibility hides superseded GPT 6 Sol, GPT 5.6 variants, Opus 5 and Sonnet
-                5; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and Claude 5.5 stay enabled when
-                discovered; new models start enabled, and saved visibility choices persist after the
-                one-time defaults update</span
+                and a direction-aware 75% drag threshold; groups keep one order (Claude Code, Codex,
+                Grok, then custom harnesses) while models load, and a first launch without a stored
+                provider starts on Claude Code; the flat list is the first-run layout, while both
+                layouts share full-catalog search, arrow-key entry into filtered results, and
+                selection preservation; new-chat source changes keep readiness checks silent;
+                default visibility hides GPT 5.6 variants, GPT-5.5, Fable 5, Opus 5, Sonnet 5 and
+                older Claude rows; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5
+                lineup including Haiku 5.5 stay enabled when discovered; new models start enabled,
+                and a defaults update moves only the models whose default changed, so other saved
+                visibility choices persist</span
               ></label
             >
           </li>
@@ -849,7 +863,8 @@
                   preserve the last valid same-source choice; cross-provider overrides never reach a
                   bound thread. Design completion resets only that chat's one-shot Design mode.
                   Permission edits during startup reach the created chat; reconnect and pending-turn
-                  recovery restore the saved approval mode.</span
+                  recovery restore the saved approval mode. Deleting a chat forgets its saved setup
+                  once the server confirms the delete.</span
                 ></span
               ></label
             >
@@ -940,7 +955,8 @@
                   shows definite retry and indeterminate reconciliation states instead of spinning
                   forever; real provider startup events immediately own the Design phase, while a
                   30-second start-only watchdog fails silent starts visibly without timing out
-                  running work; terminal provider errors end briefing activity, remain visible, and
+                  running work; a start that throws before the provider runs releases its turn and
+                  checkout; terminal provider errors end briefing activity, remain visible, and
                   cannot idle a newer turn; retired approval warnings are omitted from new and saved
                   transcripts; recoverable preview startup retries once, including invalid entry
                   types and missing package scripts; Node script directory and port arguments are
@@ -1301,7 +1317,9 @@
                   active work. Saved Claude task notifications stay internal, and Design follow-up
                   instructions are matched to the original user message during history import. Codex
                   helper sessions stay internal; old read-only reviewer copies are cleaned up while
-                  active chats and locally authored replies remain intact.</span
+                  active chats and locally authored replies remain intact. A history source that
+                  fails to load affects only that provider's imported chats; local and native chats
+                  keep opening and sending.</span
                 ></span
               ></label
             >
@@ -1327,15 +1345,17 @@
                   >project loading and failures remain explicit; Retry remains available and a
                   reconnect recovers automatically; the no-project action uses the existing folder
                   picker; dropping one or many folders onto either Desktop sidebar adds every unique
-                  valid folder with a clear drop target; the first empty Desktop run opens a
-                  full-window five-page setup (welcome, name with live identicon, theme applied on
-                  choice, three-provider readiness, choose a folder) beside a live app preview that
-                  receives each answer as it is given, with Enter to continue, Back, Skip, and a
-                  page that survives a Settings round trip; opening an empty project's drawer
-                  reveals No chats without replacing or collapsing the current chat; switching chats
-                  reveals the selected project without collapsing other open projects, and manual
-                  project folding remains available; compact folder rows align directly below
-                  Projects and expanded Show more actions have no extra leading spacer;
+                  valid folder with a clear drop target; when some folders fail, the added ones stay
+                  and the error names the failed ones; a folder picker failure shows in the composer
+                  error; the first empty Desktop run opens a full-window five-page setup (welcome,
+                  name with live identicon, theme applied on choice, three-provider readiness with
+                  Claude Code first, choose a folder) beside a live app preview that receives each
+                  answer as it is given, with Enter to continue, Back, Skip, and a page that
+                  survives a Settings round trip; opening an empty project's drawer reveals No chats
+                  without replacing or collapsing the current chat; switching chats reveals the
+                  selected project without collapsing other open projects, and manual project
+                  folding remains available; compact folder rows align directly below Projects and
+                  expanded Show more actions have no extra leading spacer;
                   <a href="./screenshots/empty-project.png">production evidence</a></span
                 ></span
               ></label
@@ -1376,7 +1396,11 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Private git worktree per session, requested and managed from the UI</span
+                >Private git worktree per session, requested and managed from the UI
+                <span class="d"
+                  >when a chat's nested project folder is deleted, uncommitted work at the checkout
+                  root still asks before discard, and the checkout is not dropped</span
+                ></span
               ></label
             >
           </li>
@@ -2076,7 +2100,9 @@
                 Preparing instead of a frozen 100 percent while it is verified and handed to the
                 system updater. Regression tests inject EBUSY for locked leftovers and EACCES for
                 denied writes, preserving real download and stream-error checks across platforms
-                (#1394)</span
+                (#1394). On macOS, a DMG image that cannot be detached afterwards no longer fails a
+                prepared update, and a refused DMG keeps its real reason and is discarded (#1487,
+                not yet run on a real Mac)</span
               ></label
             >
           </li>
@@ -2129,7 +2155,10 @@
             <label
               ><input type="checkbox" /><span
                 >One local WebSocket server with typed zod contracts
-                <span class="d">127.0.0.1:4311</span></span
+                <span class="d"
+                  >127.0.0.1:4311; the renderer transport isolates each connection-state listener,
+                  so one that throws cannot stop reconnects, the handshake, or later listeners</span
+                ></span
               ></label
             >
           </li>
