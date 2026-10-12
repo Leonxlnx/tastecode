@@ -947,7 +947,10 @@ function SidebarComponent(props: {
                         close()
                       }}
                     >
-                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Edit profile" />
+                      <DialogAction
+                        icon={<UserRound size={14} aria-hidden />}
+                        title="Edit profile"
+                      />
                     </button>
                     <button
                       type="button"
