@@ -40,10 +40,21 @@ const ACP_AGENTS = {
 } satisfies Record<string, ProviderPresentation>
 
 /**
- * The one order every provider list follows: Claude Code, then Codex, then
- * Grok. The server reports `providers.list` in the same order.
+ * The one order every provider list follows: Claude Code, then Codex and
+ * Grok, then the other CLIs, then ACP agents and API connections. The server
+ * reports `providers.list` in the same order.
  */
-export const PROVIDER_ORDER: readonly ProviderId[] = ['claude-code', 'codex', 'grok']
+export const PROVIDER_ORDER: readonly ProviderId[] = [
+  'claude-code',
+  'codex',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+]
 
 /** A provider's place in `PROVIDER_ORDER`; one it does not name sorts last. */
 export function providerRank(provider: ProviderId): number {
