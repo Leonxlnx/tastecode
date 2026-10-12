@@ -6080,6 +6080,25 @@ describe('persisted threads', () => {
     expect(resumedOptions[0]?.instructions).toContain('Do not use em dashes')
   })
 
+  it('resumes a persisted thread with the model options of the turn that wakes it', async () => {
+    const store = new Store(':memory:')
+    store.addProject('/repo')
+    store.addThread({
+      id: 'persisted-thread',
+      projectPath: '/repo',
+      provider: 'codex',
+      title: 'Persisted',
+    })
+    const { orchestrator, resumedOptions, sessions } = harness(undefined, store)
+    const options = { model: 'model-a', effort: 'high', serviceTier: 'fast' } as const
+
+    await orchestrator.submitTurn('persisted-thread', 'continue', [], options)
+
+    // A runtime opened without them restarts its CLI as soon as the turn applies them.
+    expect(resumedOptions[0]).toMatchObject(options)
+    expect(sessions[0]?.sentOptions).toEqual([options])
+  })
+
   it('persists and resumes Grok native identity across store and orchestrator recreation', async () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-restart-'))
     const database = path.join(directory, 'harness.db')
