@@ -200,7 +200,7 @@ import {
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
-const PROVIDER_IDS = ['codex', 'claude-code', 'grok'] as const satisfies readonly ProviderId[]
+const PROVIDER_IDS = ['claude-code', 'codex', 'grok'] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
 /** Which custom harness source was chosen. The key names predate custom
  *  harnesses; renaming them would forget every stored choice. */
@@ -502,7 +502,9 @@ export function App() {
   }, [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
-    return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
+    // Only a launch without a usable stored provider starts here, and the
+    // first ready provider in providers.list order replaces it if needed.
+    return PROVIDER_IDS.find((id) => id === stored) ?? 'claude-code'
   })
   const providerRef = useRef(provider)
   providerRef.current = provider
