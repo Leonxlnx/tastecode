@@ -1958,6 +1958,71 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.provider')).toBe('codex')
   })
 
+  it('starts a first launch on Claude Code until the server lists providers', async () => {
+    localStorage.removeItem('harness.provider')
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list' ? new Promise(() => {}) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'claude-code' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+  })
+
+  it('keeps a stored provider instead of the Claude Code default', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'providers.list' ? new Promise(() => {}) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', {
+      provider: 'claude-code',
+    })
+  })
+
+  it('lands a first launch on Claude Code when the server lists it first', async () => {
+    localStorage.removeItem('harness.provider')
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'claude-code', displayName: 'Claude Code' },
+      serverProviders[0]!,
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      const input = methods['models.list'].params.parse(params)
+      return Promise.resolve({
+        models: [
+          {
+            id: `${input.provider}-default`,
+            displayName: `${input.provider} default`,
+            isDefault: true,
+            reasoningEfforts: [],
+            serviceTiers: [],
+          },
+        ],
+      })
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(localStorage.getItem('harness.model')).toBe('claude-code:claude-code-default')
+    })
+    expect(localStorage.getItem('harness.provider')).toBe('claude-code')
+  })
+
   it('defers the closed workspace panel until first intent and then retains it', async () => {
     render(<App />)
 
