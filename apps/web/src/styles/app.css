@@ -970,11 +970,13 @@
     center / 14px 14px no-repeat;
 }
 
+/* The parent carries the weight; its chats below stay regular. */
 .proj__name {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 500;
 }
 
 /* 'auto' cannot be transitioned, but 0fr → 1fr can, and it measures the real
@@ -1125,6 +1127,9 @@
   padding-left: 7px;
 }
 
+/* Chats are children of their project, so they read lighter than it: the
+   same size, regular weight, secondary colour. The open chat and a hovered
+   one come up to the full rail colour. */
 .sess__title {
   flex: 1;
   /* min-width lets the title shrink and ellipsize first, so the status dot
@@ -1133,12 +1138,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
-:root[data-theme='dark'] .sess__title {
-  color: color-mix(in srgb, var(--rail-text) 78%, transparent);
+.sessrow:is(:hover, .is-active) .sess__title {
+  color: var(--rail-text);
 }
 
 .sess__unread-dot {
