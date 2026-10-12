@@ -36,6 +36,7 @@ class FakeAcpRpc implements AcpRpc {
   failTransport: ((error: Error) => void) | undefined
   loadSession = false
   methods: string[] = []
+  configOptions: unknown[] = []
   /** Client-to-agent notifications and permission answers, in wire order. */
   wire: string[] = []
 
@@ -64,12 +65,13 @@ class FakeAcpRpc implements AcpRpc {
   ): Promise<Result>
   request<Result>(
     method: string,
-    _params: unknown = {},
+    params: unknown = {},
     options: JsonRpcRequestOptions | ParsedJsonRpcRequestOptions<Result> = {},
   ): Promise<JsonRpcValue | undefined | Result> {
     const parse = (value: JsonRpcValue) =>
       'result' in options ? options.result.parse(value) : value
     this.methods.push(method)
+    if (method === 'session/set_config_option') this.configOptions.push(params)
     if (method === 'initialize') {
       return Promise.resolve(
         parse({
@@ -424,6 +426,26 @@ describe('ACP spec-valid null fields', () => {
       }),
     )
     await adapter.dispose()
+  })
+})
+
+describe('ACP in-session model selection', () => {
+  it('switches the model of a running chat through its config option', async () => {
+    rpc = new FakeAcpRpc()
+    // The built-in Kimi spec selects its model through a session config option.
+    const current = new AcpAdapter('kimi')
+    await current.startThread('C:\\repo', { model: 'model-a' })
+    const transport = activeRpc()
+    vi.mocked(spawnCli).mockClear()
+
+    await current.sendTurn('acp-kimi-sess-1', 'go', [], { model: 'model-b' })
+
+    expect(spawnCli).not.toHaveBeenCalled()
+    expect(transport.configOptions).toEqual([
+      { sessionId: 'sess-1', configId: 'model', value: 'model-a' },
+      { sessionId: 'sess-1', configId: 'model', value: 'model-b' },
+    ])
+    expect(transport.methods.slice(-2)).toEqual(['session/set_config_option', 'session/prompt'])
   })
 })
 
