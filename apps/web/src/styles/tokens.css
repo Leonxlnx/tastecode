@@ -213,15 +213,15 @@
   --focus-ring-offset: 2px;
   --focus-ring-inset: -2px;
 
-  --dur-fast: 180ms;
-  --dur-slow: 260ms;
-
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   /* Hover colour changes: long enough to read as a fade, short enough that a
      control never feels late. */
   --dur-hover: 120ms;
   --dur-press: 140ms;
+  --dur-fast: 180ms;
+  --dur-slow: 260ms;
+
   /* The rail is the largest thing that moves. The quick ease-out above spends
      most of its distance in the first few frames, which reads as a snap on a
      whole column; this curve keeps a steady middle and settles instead. */
