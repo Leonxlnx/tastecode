@@ -4,13 +4,17 @@ export function configureRendererLifecycle(
   contents: Pick<WebContents, 'on' | 'reload' | 'isDestroyed'>,
   options: {
     cancelCaptures: () => void
+    /** The page was replaced, so state tied to the old page's listeners is stale. */
+    onPageReplaced: () => void
     isQuitting: () => boolean
     onRepeatedCrash: () => void
   },
 ): void {
   let recovered = false
   contents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) options.cancelCaptures()
+    if (!details.isMainFrame || details.isSameDocument) return
+    options.cancelCaptures()
+    options.onPageReplaced()
   })
   contents.on('destroyed', options.cancelCaptures)
   contents.on('render-process-gone', () => {

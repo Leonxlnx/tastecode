@@ -488,12 +488,6 @@ function createWindow(): void {
   window.webContents.once('did-finish-load', () =>
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
-  window.webContents.on('did-start-navigation', (details) => {
-    if (!details.isMainFrame || details.isSameDocument) return
-    nativeMenuDispatch.reset(window.webContents)
-    // A reload during shortcut recording must not leave accelerators off.
-    window.webContents.setIgnoreMenuShortcuts(false)
-  })
   window.webContents.on('render-process-gone', () => nativeMenuDispatch.reset(window.webContents))
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
@@ -545,6 +539,11 @@ function createWindow(): void {
   let recoveryPromptOpen = false
   configureRendererLifecycle(window.webContents, {
     cancelCaptures: () => previewCaptures.cancelAll(),
+    onPageReplaced: () => {
+      nativeMenuDispatch.reset(window.webContents)
+      // A reload during shortcut recording must not leave accelerators off.
+      window.webContents.setIgnoreMenuShortcuts(false)
+    },
     isQuitting: () => appIsQuitting,
     onRepeatedCrash: () => {
       if (recoveryPromptOpen) return

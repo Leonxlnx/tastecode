@@ -10,6 +10,7 @@ function fixture() {
   })
   const options = {
     cancelCaptures: vi.fn(),
+    onPageReplaced: vi.fn(),
     isQuitting: vi.fn(() => false),
     onRepeatedCrash: vi.fn(),
   }
@@ -35,6 +36,7 @@ describe('renderer lifecycle', () => {
     expect(test.cancelCaptures).not.toHaveBeenCalled()
     test.contents.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
     expect(test.cancelCaptures).toHaveBeenCalledOnce()
+    expect(test.onPageReplaced).toHaveBeenCalledOnce()
     test.contents.emit('destroyed')
     expect(test.cancelCaptures).toHaveBeenCalledTimes(2)
   })
