@@ -280,10 +280,6 @@
   opacity: 1;
 }
 
-:root[data-glass='on'] .rail__actions::after {
-  display: none;
-}
-
 /* New chat and search share one row: the search icon rides on the right,
    quiet by default, surfaced only on hover or focus. */
 .rail__row {
@@ -425,15 +421,14 @@
   pointer-events: none;
 }
 
-@supports (animation-timeline: scroll()) {
-  .rail__foot::before {
-    animation: rail-edge-fade-out linear both;
-    animation-timeline: --rail-body;
-    animation-range: calc(100% - 24px) 100%;
-  }
+.rail__foot::before {
+  animation: rail-edge-fade-out linear both;
+  animation-timeline: --rail-body;
+  animation-range: calc(100% - 24px) 100%;
 }
 
 /* A painted fade would show as a band on the translucent rail. */
+:root[data-glass='on'] .rail__actions::after,
 :root[data-glass='on'] .rail__foot::before {
   display: none;
 }
@@ -441,9 +436,6 @@
 @keyframes rail-edge-fade-out {
   from {
     opacity: 1;
-  }
-  to {
-    opacity: 0;
   }
 }
 
@@ -494,7 +486,7 @@
   transition: background var(--dur-fast) var(--ease-out);
 }
 
-.rail__foot .menutrigger:hover .account {
+.rail__foot .menutrigger:is(:hover, :focus-visible) .account {
   background: var(--control-hover);
 }
 
@@ -508,19 +500,11 @@
   outline-offset: -2px;
 }
 
-.rail__foot .menutrigger:focus-visible .account {
-  background: var(--control-hover);
-}
-
 .account__avatar {
   position: relative;
-  display: grid;
-  place-items: center;
   width: 24px;
   height: 24px;
-  background: var(--surface-3);
   border-radius: var(--r-circle);
-  color: var(--text-2);
   overflow: hidden;
 }
 
@@ -545,17 +529,12 @@
   place-items: center;
   width: 100%;
   height: 100%;
-  background: hsl(var(--avatar-hue) 16% 26%);
-  color: hsl(var(--avatar-hue) 30% 80%);
+  background: light-dark(hsl(var(--avatar-hue) 26% 88%), hsl(var(--avatar-hue) 16% 26%));
+  color: light-dark(hsl(var(--avatar-hue) 32% 32%), hsl(var(--avatar-hue) 30% 80%));
   font-size: var(--t-xs);
   font-weight: 600;
   letter-spacing: 0.02em;
   line-height: 1;
-}
-
-:root[data-theme='light'] .account__initials {
-  background: hsl(var(--avatar-hue) 26% 88%);
-  color: hsl(var(--avatar-hue) 32% 32%);
 }
 
 .account__text {
@@ -577,7 +556,7 @@
 
 /* Dark --text-3 is 3.7:1 on the rail; one step above it there. */
 .account__usage {
-  color: color-mix(in srgb, var(--text-2) 55%, var(--text-3));
+  color: light-dark(var(--text-3), color-mix(in srgb, var(--text-2) 55%, var(--text-3)));
   font-size: var(--t-xs);
   font-variant-numeric: tabular-nums;
   line-height: 14px;
@@ -588,10 +567,6 @@
   .account__usage {
     opacity: 0;
   }
-}
-
-:root[data-theme='light'] .account__usage:not(.is-low) {
-  color: var(--text-3);
 }
 
 .account__usage.is-low {
@@ -3755,10 +3730,6 @@
      absolute action layer at the rail's 240px minimum. */
   .sessrow .sess {
     padding-right: 56px;
-  }
-
-  .sess__source {
-    max-width: 68px;
   }
 
   .sessrow .sess__actions,
