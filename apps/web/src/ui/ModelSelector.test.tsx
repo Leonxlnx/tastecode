@@ -291,9 +291,17 @@ describe('ModelSelector', () => {
       'Effort: Extra High',
     )
     expect(onEffortChange).not.toHaveBeenCalled()
-    expect(slider.querySelectorAll('canvas')).toHaveLength(2)
-    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(slider.className).toContain('is-dragging')
+    // The knob follows the pointer itself, not the nearest stop.
+    expect(Number(slider.style.getPropertyValue('--effort-drag-p'))).toBeCloseTo(232 / 244, 3)
+    expect(slider.querySelector('.model-selector__slider-bubble')?.textContent).toBe('Extra High')
+    expect(slider.querySelectorAll('canvas')).toHaveLength(0)
+    expect(
+      slider.querySelectorAll(
+        '.model-selector__slider-stops:not(.model-selector__slider-stops--passed) > .model-selector__slider-stop',
+      ),
+    ).toHaveLength(4)
+    expect(slider.querySelectorAll('.model-selector__slider-knob')).toHaveLength(1)
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -301,6 +309,65 @@ describe('ModelSelector', () => {
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
+    // Letting go hands the knob back to the chosen stop, which it settles onto.
+    expect(slider.className).not.toContain('is-dragging')
+    expect(slider.style.getPropertyValue('--effort-drag-p')).toBe('')
+  })
+
+  it('moves the knob to a pressed stop without starting a drag', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 30,
+      right: 380,
+      bottom: 50,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(slider, { clientX: 362, pointerId: 5 })
+    fireEvent.pointerMove(slider, { clientX: 363, pointerId: 5 })
+    expect(slider.getAttribute('aria-valuetext')).toBe('Extra High')
+    expect(slider.style.getPropertyValue('--effort-p')).toBe('1')
+    expect(slider.className).not.toContain('is-dragging')
+    expect(slider.style.getPropertyValue('--effort-drag-p')).toBe('')
+
+    fireEvent.pointerUp(slider, { clientX: 363, pointerId: 5 })
+    expect(onEffortChange).toHaveBeenCalledWith('xhigh')
+  })
+
+  it('keeps a grabbed knob under the pointer instead of re-centring it', async () => {
+    renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 30,
+      right: 380,
+      bottom: 50,
+      toJSON: () => ({}),
+    })
+    // Medium is the second of four stops: 100 + 18 + 244 / 3 ≈ 199.3.
+    fireEvent.pointerDown(slider, { clientX: 205, pointerId: 6 })
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
+    fireEvent.pointerMove(slider, { clientX: 215, pointerId: 6 })
+
+    const progress = Number(slider.style.getPropertyValue('--effort-drag-p'))
+    expect(progress).toBeCloseTo((199.33 + 10 - 118) / 244, 2)
+    fireEvent.pointerCancel(slider, { pointerId: 6 })
+    expect(slider.style.getPropertyValue('--effort-drag-p')).toBe('')
+    expect(slider.getAttribute('aria-valuetext')).toBe('Medium')
   })
 
   it('takes keyboard focus from the model search when the effort slider is pressed', async () => {

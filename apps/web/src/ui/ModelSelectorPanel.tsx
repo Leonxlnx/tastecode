@@ -11,7 +11,6 @@ import { IconCheck as Check, IconBolt as Zap } from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
-import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SourceIdentity } from './SourceIdentity.js'
@@ -19,6 +18,7 @@ import {
   SLIDER_DITHER_INSET,
   SLIDER_DITHER_MIN_WIDTH,
   getEffortIndexFromPointer,
+  getEffortProgressFromPointer,
   getFastModeOffValue,
   getFastServiceTier,
   getFriendlyEffortLabel,
@@ -222,7 +222,29 @@ function hasPointerCaptureSafe(target: HTMLDivElement, pointerId: number): boole
   return typeof target.hasPointerCapture === 'function' ? target.hasPointerCapture(pointerId) : true
 }
 
-function DitherChoiceRow(props: {
+/** Where `getEffortProgressFromPointer` puts the first and last stop, so the
+ *  drawn stops and knob sit exactly where the pointer maths expects them. */
+const EFFORT_RAIL_INSET = SLIDER_DITHER_INSET + SLIDER_DITHER_MIN_WIDTH / 2
+/** A press has to travel this far before the knob starts following it, so a
+ *  plain click glides to its stop instead of flashing the drag bubble. */
+const EFFORT_DRAG_THRESHOLD = 3
+/** A press this close to the knob centre grabs the knob where it was held. */
+const EFFORT_KNOB_GRAB_RADIUS = 12
+
+type EffortGesture = {
+  pointerId: number
+  startX: number
+  /** Knob centre minus press position, kept for the whole drag so a grabbed
+   *  knob does not jump to centre itself under the pointer. */
+  grabOffset: number
+  dragging: boolean
+}
+
+function effortProgress(index: number, stopCount: number): number {
+  return index < 0 || stopCount < 2 ? 0.5 : index / (stopCount - 1)
+}
+
+function EffortRail(props: {
   label: string
   ariaLabel?: string
   optionLabels: string[]
@@ -232,39 +254,59 @@ function DitherChoiceRow(props: {
   onCommitIndex: (index: number) => void
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
+  const [dragging, setDragging] = useState(false)
   const pointerIndexRef = useRef<number | null>(null)
+  const gesture = useRef<EffortGesture | null>(null)
 
+  const stopCount = props.optionLabels.length
   const displayIndex = pointerIndex ?? props.selectedIndex
   const displayedLabel =
     props.optionLabels[displayIndex] ?? props.optionLabels[props.selectedIndex] ?? 'Default'
-  const selectedProgress =
-    displayIndex < 0 || props.optionLabels.length < 2
-      ? 0.5
-      : displayIndex / (props.optionLabels.length - 1)
-  const ditherWidthOffset =
-    (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
-  const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
-  const sliderVars = {
-    '--model-selector-slider-width': ditherWidth,
-    '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
+  // The knob, fill and bubble all read this one progress value and move by
+  // transform. A drag overrides it with a continuous --effort-drag-p that is
+  // written straight to the element, so following the pointer re-renders
+  // only when the nearest stop changes.
+  const railVars = {
+    '--effort-p': effortProgress(displayIndex, stopCount),
+    '--effort-inset': `${EFFORT_RAIL_INSET}px`,
   } as CSSProperties
 
-  const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const nextIndex = getEffortIndexFromPointer({
-      clientX: event.clientX,
+  const stops = props.optionLabels.map((option, index) => (
+    <span
+      className="model-selector__slider-stop"
+      style={{ '--model-selector-stop': effortProgress(index, stopCount) } as CSSProperties}
+      key={option}
+    />
+  ))
+
+  const pointerX = (event: PointerEvent<HTMLDivElement>) =>
+    event.clientX + (gesture.current?.grabOffset ?? 0)
+
+  const indexAtPointer = (event: PointerEvent<HTMLDivElement>, rect: DOMRect) =>
+    getEffortIndexFromPointer({
+      clientX: pointerX(event),
       left: rect.left,
       width: rect.width,
-      stopCount: props.optionLabels.length,
+      stopCount,
       currentIndex: pointerIndexRef.current,
     })
-    if (pointerIndexRef.current !== nextIndex) {
-      const previousIndex = pointerIndexRef.current ?? displayIndex
-      pointerIndexRef.current = nextIndex
-      setPointerIndex(nextIndex)
-      props.onPreviewIndex(nextIndex)
-      if (nextIndex !== previousIndex) performAppHaptic('alignment')
-    }
+
+  const previewIndex = (nextIndex: number) => {
+    if (pointerIndexRef.current === nextIndex) return
+    const previousIndex = pointerIndexRef.current ?? displayIndex
+    pointerIndexRef.current = nextIndex
+    setPointerIndex(nextIndex)
+    props.onPreviewIndex(nextIndex)
+    if (nextIndex !== previousIndex) performAppHaptic('alignment')
+  }
+
+  const endGesture = (target: HTMLDivElement) => {
+    gesture.current = null
+    target.style.removeProperty('--effort-drag-p')
+    pointerIndexRef.current = null
+    setPointerIndex(null)
+    setDragging(false)
+    props.onPreviewIndex(null)
   }
 
   const commitIndex = (nextIndex: number) => {
@@ -273,16 +315,18 @@ function DitherChoiceRow(props: {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (props.disabled || props.optionLabels.length === 0) return
+    // A key press is keyboard use again, so the knob's focus ring returns.
+    delete event.currentTarget.dataset.pointerFocus
+    if (props.disabled || stopCount === 0) return
     let nextIndex = props.selectedIndex < 0 ? 0 : props.selectedIndex
     if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
       nextIndex = Math.max(0, nextIndex - 1)
     } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
-      nextIndex = Math.min(props.optionLabels.length - 1, nextIndex + 1)
+      nextIndex = Math.min(stopCount - 1, nextIndex + 1)
     } else if (event.key === 'Home') {
       nextIndex = 0
     } else if (event.key === 'End') {
-      nextIndex = props.optionLabels.length - 1
+      nextIndex = stopCount - 1
     } else {
       return
     }
@@ -297,11 +341,11 @@ function DitherChoiceRow(props: {
       aria-label={props.ariaLabel ?? props.label}
       aria-disabled={props.disabled}
       aria-valuemin={0}
-      aria-valuemax={Math.max(0, props.optionLabels.length - 1)}
+      aria-valuemax={Math.max(0, stopCount - 1)}
       aria-valuenow={Math.max(0, displayIndex)}
       aria-valuetext={displayedLabel}
-      className={`model-selector__slider${props.disabled ? ' is-disabled' : ''}${pointerIndex !== null ? ' is-dragging' : ''}`}
-      style={sliderVars}
+      className={`model-selector__slider${props.disabled ? ' is-disabled' : ''}${pointerIndex !== null ? ' is-pressed' : ''}${dragging ? ' is-dragging' : ''}`}
+      style={railVars}
       onClick={(event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -310,6 +354,9 @@ function DitherChoiceRow(props: {
         if (!props.disabled) prepareAppHaptics()
       }}
       onKeyDown={handleKeyDown}
+      onBlur={(event) => {
+        delete event.currentTarget.dataset.pointerFocus
+      }}
       onPointerDown={(event) => {
         if (props.disabled) return
         event.preventDefault()
@@ -318,72 +365,93 @@ function DitherChoiceRow(props: {
         // focus in the model search: arrow keys after a click typed there
         // instead of moving the effort.
         event.currentTarget.focus({ preventScroll: true })
+        // Focus moved here from the search field still matches :focus-visible,
+        // which ringed the knob after every click. Mark it as pointer focus.
+        event.currentTarget.dataset.pointerFocus = ''
         prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
-        previewFromPointer(event)
+        const rect = event.currentTarget.getBoundingClientRect()
+        const knobX =
+          rect.left +
+          EFFORT_RAIL_INSET +
+          effortProgress(displayIndex, stopCount) * (rect.width - EFFORT_RAIL_INSET * 2)
+        gesture.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          grabOffset:
+            Math.abs(event.clientX - knobX) <= EFFORT_KNOB_GRAB_RADIUS ? knobX - event.clientX : 0,
+          dragging: false,
+        }
+        // A press anywhere on the rail moves the knob to that stop right away;
+        // releasing without a drag keeps it there.
+        previewIndex(indexAtPointer(event, rect))
       }}
       onPointerMove={(event) => {
-        if (!props.disabled && hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
-          previewFromPointer(event)
+        const active = gesture.current
+        const target = event.currentTarget
+        if (
+          props.disabled ||
+          !active ||
+          active.pointerId !== event.pointerId ||
+          !hasPointerCaptureSafe(target, event.pointerId)
+        ) {
+          return
         }
+        if (!active.dragging) {
+          if (Math.abs(event.clientX - active.startX) < EFFORT_DRAG_THRESHOLD) return
+          active.dragging = true
+          setDragging(true)
+        }
+        const rect = target.getBoundingClientRect()
+        const progress = getEffortProgressFromPointer({
+          clientX: pointerX(event),
+          left: rect.left,
+          width: rect.width,
+        })
+        target.style.setProperty('--effort-drag-p', String(progress))
+        previewIndex(indexAtPointer(event, rect))
       }}
       onPointerUp={(event) => {
-        if (props.disabled || !hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
+        const target = event.currentTarget
+        if (props.disabled || !gesture.current || !hasPointerCaptureSafe(target, event.pointerId)) {
           // Capture can be lost without a pointercancel — a re-render under
           // the drag, the menu closing mid-gesture. Leaving the preview state
           // set showed an effort the composer was not going to send.
-          if (pointerIndexRef.current !== null) {
-            pointerIndexRef.current = null
-            setPointerIndex(null)
-            props.onPreviewIndex(null)
-          }
+          if (gesture.current || pointerIndexRef.current !== null) endGesture(target)
           return
         }
         event.preventDefault()
         event.stopPropagation()
-        const rect = event.currentTarget.getBoundingClientRect()
-        const nextIndex = getEffortIndexFromPointer({
-          clientX: event.clientX,
-          left: rect.left,
-          width: rect.width,
-          stopCount: props.optionLabels.length,
-          currentIndex: pointerIndexRef.current,
-        })
-        releasePointerCaptureSafe(event.currentTarget, event.pointerId)
-        pointerIndexRef.current = null
-        requestAnimationFrame(() => {
-          commitIndex(nextIndex)
-          setPointerIndex(null)
-          props.onPreviewIndex(null)
-        })
+        const nextIndex = indexAtPointer(event, target.getBoundingClientRect())
+        releasePointerCaptureSafe(target, event.pointerId)
+        // Dropping the drag position and committing land in the same frame,
+        // so the knob settles from where it was let go to the chosen stop.
+        endGesture(target)
+        commitIndex(nextIndex)
       }}
       onPointerCancel={(event) => {
         if (hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
           releasePointerCaptureSafe(event.currentTarget, event.pointerId)
         }
-        pointerIndexRef.current = null
-        setPointerIndex(null)
-        props.onPreviewIndex(null)
+        endGesture(event.currentTarget)
       }}
     >
-      <div className="model-selector__slider-track">
-        <div className="model-selector__slider-fill">
-          <DitherSlider active={!props.disabled && pointerIndex !== null} />
-        </div>
-        <div className="model-selector__slider-stops" aria-hidden>
-          {props.optionLabels.map((option, index) => (
-            <span
-              className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
-              style={
-                {
-                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
-                } as CSSProperties
-              }
-              key={option}
-            />
-          ))}
-        </div>
+      <div className="model-selector__slider-rail" aria-hidden>
+        <div className="model-selector__slider-fill" />
       </div>
+      <div className="model-selector__slider-stops" aria-hidden>
+        {stops}
+      </div>
+      <div
+        className="model-selector__slider-stops model-selector__slider-stops--passed"
+        aria-hidden
+      >
+        <div className="model-selector__slider-stops-inner">{stops}</div>
+      </div>
+      <span className="model-selector__slider-knob" aria-hidden />
+      <span className="model-selector__slider-bubble" aria-hidden>
+        {displayedLabel}
+      </span>
     </div>
   )
 }
@@ -463,7 +531,7 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           </div>
 
           {effortOptions.length > 0 ? (
-            <DitherChoiceRow
+            <EffortRail
               label="Effort"
               ariaLabel="Reasoning effort"
               optionLabels={effortLabels}
