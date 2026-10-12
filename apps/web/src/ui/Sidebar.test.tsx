@@ -529,13 +529,13 @@ describe('Sidebar chat actions', () => {
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     const accountActions = screen
       .getAllByRole('button')
-      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
+      .filter((button) => ['Edit profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
     expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
     expect(
       within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Profile',
+        name: 'Edit profile',
       }),
     ).toBeTruthy()
     expect(
@@ -543,7 +543,7 @@ describe('Sidebar chat actions', () => {
         name: 'Settings',
       }),
     ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
 
