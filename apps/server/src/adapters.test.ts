@@ -228,7 +228,20 @@ vi.mock('@harness/proc/cli', async (importOriginal) => ({
   },
 }))
 
-const { providerRuntime } = await import('./adapters.js')
+const { providerRuntime, compatibleProviderFor } = await import('./adapters.js')
+
+describe('compatible API connection presets', () => {
+  it.each([
+    ['openai', 'custom'],
+    ['anthropic', 'custom'],
+    ['openrouter', 'openrouter'],
+    ['kimi', 'kimi'],
+    ['zai', 'zai'],
+    ['custom', 'custom'],
+  ] as const)('maps %s to %s', (preset, expected) => {
+    expect(compatibleProviderFor(preset)).toBe(expected)
+  })
+})
 
 afterEach(() => {
   constructed.length = 0
