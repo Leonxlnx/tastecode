@@ -836,7 +836,9 @@ export function startServer(
           }
         }
         const reset =
-          p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
+          p.afterSeq !== undefined &&
+          (store.providerHistoryChangedAfter(p.threadId, p.afterSeq) ||
+            store.historyRewrittenAfter(p.threadId, p.afterSeq))
         const history = await orchestrator.historyForResponse(
           p.threadId,
           reset ? 0 : (p.afterSeq ?? 0),
@@ -958,12 +960,16 @@ export function startServer(
 
       case 'thread.restore': {
         const p = parseParams(method, params)
-        return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
+        const restored = await orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
+        // Other clients still show the removed turns. Have them reload the chat.
+        push.broadcast('providerHistory.changed', { threadIds: [p.threadId] })
+        return restored
       }
 
       case 'thread.undoRestore': {
         const p = parseParams(method, params)
         await orchestrator.undoRestore(p.threadId, p.undo)
+        push.broadcast('providerHistory.changed', { threadIds: [p.threadId] })
         return {}
       }
 
