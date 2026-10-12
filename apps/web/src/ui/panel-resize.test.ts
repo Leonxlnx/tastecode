@@ -27,13 +27,13 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function start(style: CSSStyleDeclaration | undefined) {
+function start(style: CSSStyleDeclaration | undefined, initialSize = 400) {
   const onFinish = vi.fn()
   cancel = beginPanelResize(
     { clientX: 500, clientY: 0, timeStamp: 0 },
     {
       axis: 'clientX',
-      initialSize: 400,
+      initialSize,
       minSize: 280,
       maxSize: 600,
       style,
@@ -83,6 +83,15 @@ describe('panel resize', () => {
     window.dispatchEvent(new Event('pointerup'))
     expect(style.width).toBe('480px')
     expect(onFinish).toHaveBeenCalledExactlyOnceWith(480, false)
+  })
+
+  it('drags a saved size wider than the space from the size the panel is drawn at', () => {
+    const style = document.createElement('div').style
+    const onFinish = start(style, 1200)
+    move(550)
+    window.dispatchEvent(new Event('pointerup'))
+    expect(style.width).toBe('550px')
+    expect(onFinish).toHaveBeenCalledExactlyOnceWith(550, true)
   })
 
   it('does not give tracking feedback when the panel surface is absent', () => {

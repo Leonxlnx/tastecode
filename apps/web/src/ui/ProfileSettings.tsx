@@ -27,6 +27,7 @@ import {
 import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import '../styles/profile-settings.css'
 
 const PROFILE_ACTIVITY_DAYS = 365
@@ -201,7 +202,8 @@ export function ProfileSettings(props: {
     setTrial(undefined)
   }
   const onTrialKey = (event: ReactKeyboardEvent) => {
-    if (event.key === 'Enter') keepTrial()
+    if (isComposingKey(event)) return
+    if (isConfirmEnter(event)) keepTrial()
     if (event.key !== 'Escape') return
     // Leave the trial, not Settings.
     event.preventDefault()

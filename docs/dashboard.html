@@ -291,7 +291,7 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-09 handoff · included main 3e67df35 · latest main f9e5549a</span>
+        <span class="meta">2026-10-12 nightly · includes main d4461e93</span>
       </div>
     </div>
 
@@ -300,13 +300,13 @@
         <p>
           <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
           work, exact verification, local workspace risks and every open PR/issue. Nightly includes
-          main through 3e67df35; 13 later main commits through f9e5549a still need synchronization.
-          The latest published desktop remains 0.1.1. The existing 0.1.2 draft is an older packaging
-          proof, not a release of this nightly source.
+          main through d4461e93, synchronized on 2026-10-12. The latest published desktop remains
+          0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
+          source.
         </p>
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through 3e67df35. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through d4461e93. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
@@ -837,12 +837,14 @@
                     repair captures reload that tab after the guest is ready, and HTTP loopback
                     input normalizes to 127.0.0.1. Lazy file trees and Temporary chat use the active
                     session checkout; Temporary chat presents the normal thread and composer without
-                    a duplicate parent-status header and erases its transcript when closed; one
-                    fixed in-chat toggle opens a 2-by-2-plus-one icon launcher and swaps its icon in
-                    place to close; it stays visible throughout the closing transition. Aligned
-                    dividers stay square, resizing preserves a 360 px center chat with or without
-                    the left sidebar, missing workspace items fail without exposing raw paths,
-                    startup is bounded, and 390 px layouts do not overflow</span
+                    a duplicate parent-status header and erases its transcript when its last tab
+                    closes; one fixed in-chat toggle opens a 2-by-2-plus-one icon launcher and swaps
+                    its icon in place to close; it stays visible throughout the closing transition.
+                    The right panel resizes from 300 px and there stacks its launcher and its Review
+                    and Files trees; both panels reflow their tools by the panel's own width.
+                    Aligned dividers stay square, resizing preserves a 360 px center chat with or
+                    without the left sidebar, missing workspace items fail without exposing raw
+                    paths, startup is bounded, and 390 px layouts do not overflow</span
                   >
                 </span>
               </li>
@@ -1146,7 +1148,9 @@
                     state at +87 ms without a reload flash, duplicate status, timer restart, or
                     limit-induced layout shift. Fresh opens now receive a state-equivalent compact
                     replay: the real 6,495-event trace fell from 18.81 MB and 466 ms to 1.85 MB and
-                    109 ms, while reconnect tails remain exact</span
+                    109 ms, while reconnect tails remain exact. Long chats now open with only their
+                    newest ten turns and load earlier ones while scrolling up (#957): a seeded
+                    10,375-event chat's open reply fell from 4.76 MB to 405 KB</span
                   >
                 </span>
               </li>

@@ -46,7 +46,12 @@ import {
   revealPath,
   writeClipboardText,
 } from '../bridge.js'
-import { isEditableTarget, matchesShortcut } from '../shortcuts.js'
+import {
+  isEditableTarget,
+  matchesShortcut,
+  NEXT_TURN_SHORTCUT,
+  PREVIOUS_TURN_SHORTCUT,
+} from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
@@ -74,6 +79,9 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
+import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { shiftPendingScrollIndex } from './pending-scroll.js'
+import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 import {
@@ -139,6 +147,10 @@ export interface ThreadProps {
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onUndoChanges?:
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
+  /** Load turns above the transcript; needs a stable identity. */
+  onLoadOlderHistory?: ((threadId: string, turnLimit?: number) => Promise<void>) | undefined
+  /** Load every turn above the transcript in one read; an aborted read is dropped. */
+  onLoadCompleteHistory?: ((threadId: string, signal: AbortSignal) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
   /** Keep agent questions inside this thread instead of the main composer. */
@@ -198,6 +210,27 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  const {
+    status: olderHistory,
+    loadOlder,
+    canLoadOnScroll,
+    completeStatus,
+    loadComplete,
+    cancelComplete,
+  } = useOlderHistory(
+    props.threadId,
+    props.frameStore,
+    props.onLoadOlderHistory,
+    props.onLoadCompleteHistory,
+  )
+  const searchJumpRef = useRef(props.searchJump)
+  searchJumpRef.current = props.searchJump
+  const closeFind = useCallback(() => {
+    setFinding(false)
+    const jump = searchJumpRef.current
+    // A search jump still waiting for its turn keeps the read it shares with find.
+    if (!jump || completedSearchJump.current === jump.request) cancelComplete()
+  }, [cancelComplete])
   const liveItems = thread.liveItems
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
@@ -211,6 +244,47 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       overscanVisibleRows(range, (index) => virtualizerRef.current?.measurementsCache[index]?.size),
     [],
   )
+
+  // Older rows arrived above: remember which row sits at the top of the
+  // viewport and how far into it, so the same pixels stay there after the
+  // virtualizer lays the new rows out. Computed once per items array, so a
+  // repeated render never re-reads measurements that already include them.
+  // The baseline moves in render, together with the shifts below: a render
+  // React throws away has still moved those refs, and the next render must not
+  // shift them by the same rows again.
+  const shiftedItems = useRef({ threadId: props.threadId, items: thread.items })
+  const prepend = useRef<PrependAnchor | undefined>(undefined)
+  if (prepend.current?.items !== thread.items) {
+    const shifted = shiftedItems.current
+    const shift =
+      shifted.threadId === props.threadId ? prependedRowCount(shifted.items, thread.items) : 0
+    const previous = virtualizerRef.current
+    const offset = previous?.scrollOffset ?? null
+    const row =
+      shift > 0 && offset !== null && modeRef.current !== 'follow-end'
+        ? previous?.getVirtualItemForOffset(offset)
+        : undefined
+    if (shift > 0) {
+      // Row indexes recorded against the old rows now name rows `shift`
+      // further down. Move them here, in render: FrameScrollFollower is a
+      // child, so its layout effect runs before this component's and would
+      // otherwise pin, measure or release the anchored turn by a stale index.
+      anchorIndex.current += shift
+      if (previous) shiftPendingScrollIndex(previous, shift)
+    }
+    prepend.current =
+      shift > 0
+        ? {
+            items: thread.items,
+            applied: false,
+            previousSize: previous?.getTotalSize() ?? 0,
+            ...(row && offset !== null
+              ? { index: row.index + shift, offset: offset - row.start }
+              : {}),
+          }
+        : undefined
+  }
+  shiftedItems.current = { threadId: props.threadId, items: thread.items }
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
@@ -276,7 +350,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       modeRef.current = nextMode
       setMode(nextMode)
     }
-  }, [])
+    if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
+  }, [canLoadOnScroll, loadOlder])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -326,16 +401,35 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
+  // The older-history hook stops waiting for the complete read when its effects
+  // are torn down, which StrictMode also does on mount; the next run must ask again.
+  useEffect(
+    () => () => {
+      searchJumpRead.current = undefined
+    },
+    [props.threadId],
+  )
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
     const index = thread.items.findIndex((item) => item.turnId === target.turnId)
-    if (index < 0) return
+    if (index < 0) {
+      // Ask once per jump and cursor. Structural updates keep arriving while
+      // the read is out, and after a failure the retry is the reader's call.
+      const cursor = thread.olderCursor
+      const asked = searchJumpRead.current
+      if (cursor && (asked?.request !== target.request || asked.cursor !== cursor)) {
+        searchJumpRead.current = { request: target.request, cursor }
+        loadComplete()
+      }
+      return
+    }
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [thread.items, props.searchJump, virtualizer])
+  }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadComplete])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
@@ -344,8 +438,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || isEditableTarget(event.target)) return
       if (
-        !matchesShortcut(event, { key: 'arrowup', alt: true }) &&
-        !matchesShortcut(event, { key: 'arrowdown', alt: true })
+        !matchesShortcut(event, PREVIOUS_TURN_SHORTCUT) &&
+        !matchesShortcut(event, NEXT_TURN_SHORTCUT)
       )
         return
       // The first VISIBLE row, not rows[0] — that one is up to `overscan`
@@ -364,7 +458,44 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [props.keyboardActive, turns, virtualizer])
 
+  const anchor = prepend.current
+  if (anchor && anchor.grown === undefined) {
+    // Reveal-hold reads growth past the held height as new content below;
+    // rows arriving above are not that.
+    anchor.grown = virtualizer.getTotalSize() - anchor.previousSize
+    heldHeight.current += anchor.grown
+  }
+  if (anchor?.index !== undefined && anchor.top === undefined) {
+    virtualizer.getTotalSize()
+    const start = virtualizer.measurementsCache[anchor.index]?.start
+    if (start !== undefined) anchor.top = Math.max(0, start + anchor.offset!)
+  }
+  if (anchor?.top !== undefined && !anchor.applied) virtualizer.scrollOffset = anchor.top
   const rows = virtualizer.getVirtualItems()
+
+  useLayoutEffect(() => {
+    const anchor = prepend.current
+    if (!anchor || anchor.items !== thread.items || anchor.applied) return
+    anchor.applied = true
+    const el = scroller.current
+    // The virtualizer may already have corrected its offset for newly
+    // measured rows above the fold during this commit; follow its value.
+    if (el && anchor.top !== undefined) writeScrollTop(el, virtualizer.scrollOffset ?? anchor.top)
+  }, [props.threadId, thread.items, virtualizer, writeScrollTop])
+
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || !thread.olderCursor || props.loading || thread.items.length === 0) return
+    if (olderHistory !== 'idle' || completeStatus === 'loading') return
+    if (nearOlderHistoryEdge(el)) void loadOlder()
+  }, [
+    thread.olderCursor,
+    thread.items.length,
+    props.loading,
+    olderHistory,
+    completeStatus,
+    loadOlder,
+  ])
 
   // measureElement without a ResizeObserver entry returns the cached size, so
   // a disclosure that just changed its row's height has to hand over a fresh
@@ -431,6 +562,18 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       ? virtualizer.getTotalSize()
       : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
 
+  // Find shows its own read in the find bar; a search jump's read shows here.
+  const completeFailed = !finding && completeStatus === 'failed'
+  const olderPill =
+    olderHistory === 'loading' || (!finding && completeStatus === 'loading')
+      ? 'loading'
+      : olderHistory === 'failed' || completeFailed
+        ? 'failed'
+        : 'idle'
+  // While find reads the rest of the chat, the find bar's status speaks for
+  // both reads; two live regions at once would talk over each other.
+  const olderAnnouncement = finding && completeStatus === 'loading' ? 'idle' : olderPill
+
   return (
     // The overlays live OUTSIDE the scroller: an absolutely positioned child
     // of a scroll container scrolls away with the content — Ctrl+F used to
@@ -445,8 +588,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               liveItems={liveItems}
               frameStore={props.frameStore}
               threadId={props.threadId}
+              hasOlder={thread.olderCursor !== undefined}
+              olderStatus={completeStatus}
+              onLoadOlder={loadComplete}
               onJump={jumpTo}
-              onClose={() => setFinding(false)}
+              onClose={closeFind}
             />
           </Suspense>
         ) : null}
@@ -578,6 +724,34 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           writeScrollTop={writeScrollTop}
           setMode={setMode}
         />
+
+        {/* Mounted for as long as older turns exist: a live region announces
+            changes to its text, not its own arrival. The pills below stay
+            out of the reading. */}
+        {thread.olderCursor ? (
+          <div className="visually-hidden" role="status">
+            {olderAnnouncement === 'loading'
+              ? 'Loading earlier messages'
+              : olderAnnouncement === 'failed'
+                ? 'Couldn’t load earlier messages'
+                : ''}
+          </div>
+        ) : null}
+        {thread.olderCursor && olderPill === 'loading' ? (
+          <div className="thread__older" aria-hidden>
+            <LoaderCircle className="spinner" aria-hidden />
+            Loading earlier messages
+          </div>
+        ) : null}
+        {thread.olderCursor && olderPill === 'failed' ? (
+          <button
+            className="thread__older"
+            onClick={() => (completeFailed ? loadComplete() : void loadOlder())}
+          >
+            <RotateCcw size={13} aria-hidden />
+            Couldn’t load earlier messages. Retry
+          </button>
+        ) : null}
 
         {mode === 'free' ? (
           <button
@@ -741,6 +915,19 @@ function FrameScrollFollower({
   })
 
   return null
+}
+
+/** Where the viewport stood when older rows were prepended above it. */
+type PrependAnchor = {
+  items: Item[]
+  applied: boolean
+  /** The runway height before the rows arrived. */
+  previousSize: number
+  /** How much the runway grew, once measured against the new rows. */
+  grown?: number
+  index?: number
+  offset?: number
+  top?: number
 }
 
 /** A disclosure's row height change, waiting for the runway to commit it. */
@@ -1259,8 +1446,10 @@ const Row = memo(function Row({
   }
 
   if (item.type === 'reasoning') {
-    const text = item.text?.trim()
-    if (!text) return null
+    const raw = item.text ?? ''
+    if (!/\S/.test(raw)) return null
+    // Streamed Markdown appends a delta only when the text grew by exactly that delta.
+    const text = live && item.status === 'started' ? raw : raw.trim()
     return (
       <ReasoningDisclosure
         item={item}
@@ -1351,15 +1540,14 @@ function lastActivityItemForRender({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
-  const detail =
-    item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
-      ? activityDetail(item)
-      : isContextCompaction(item)
-        ? undefined
-        : (imageViewDetail(item) ?? item.text)
-
   const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
-  const expandable = Boolean(detail) && !phase
+  // An open row needs its detail anyway, so the detail answers whether it has
+  // any; a closed row asks without building it.
+  const detail = useMemo(
+    () => (!phase && disclosure.contentMounted ? auxDetail(item) : undefined),
+    [item, phase, disclosure.contentMounted],
+  )
+  const expandable = !phase && (disclosure.contentMounted ? Boolean(detail) : hasAuxDetail(item))
   const label = live ? summariseLive(item) : activityItemLabel(item)
 
   return (
@@ -1396,7 +1584,7 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         ) : null}
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
-      {detail && expandable ? (
+      {expandable ? (
         <div
           ref={disclosure.revealRef}
           className="aux__reveal"
@@ -1408,17 +1596,9 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
               disclosure.finishTransition()
           }}
         >
-          {disclosure.contentMounted ? (
+          {detail ? (
             <div className="aux__reveal-clip">
-              {isImageView(item) && item.status === 'completed' ? (
-                <ViewedImagePreview
-                  reference={detail}
-                  active={disclosure.expanded}
-                  fallbackClassName="aux__out"
-                />
-              ) : (
-                <ActivityDetail item={item} detail={detail} className="aux__out" />
-              )}
+              <AuxDetail item={item} detail={detail} active={disclosure.expanded} />
             </div>
           ) : null}
         </div>
@@ -1426,6 +1606,60 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
     </div>
   )
 }
+
+/** What a standalone row opens to, or nothing beyond its label. */
+function auxDetail(item: Item): string | undefined {
+  return item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
+    ? activityDetail(item)
+    : isContextCompaction(item)
+      ? undefined
+      : (imageViewDetail(item) ?? item.text)
+}
+
+const auxDetailPresence = new WeakMap<Item, boolean>()
+
+/**
+ * Whether a closed row has detail to open, decided without building it. A
+ * tool's output can be hundreds of kilobytes of JSON: arguments already answer
+ * for almost every call, and any other row reads its output once per item
+ * rather than on every render of the stack around it. Items are immutable; a
+ * live update arrives as a new object. An open row builds its detail instead.
+ */
+function hasAuxDetail(item: Item): boolean {
+  let present = auxDetailPresence.get(item)
+  if (present === undefined) {
+    present = hasToolArguments(item) || Boolean(auxDetail(item))
+    auxDetailPresence.set(item, present)
+  }
+  return present
+}
+
+/** A tool call's arguments are part of its detail, so a call with any has detail. */
+function hasToolArguments(item: Item): boolean {
+  return (
+    item.type === 'tool_call' &&
+    !isContextCompaction(item) &&
+    designPhaseLabel(toolText(item)) === undefined &&
+    toolArgumentEntries(parseToolCall(item.text).args).length > 0
+  )
+}
+
+/** Rendered only while its reveal is mounted, and not again on a parent render. */
+const AuxDetail = memo(function AuxDetail({
+  item,
+  detail,
+  active,
+}: {
+  item: Item
+  detail: string
+  active: boolean
+}) {
+  return isImageView(item) && item.status === 'completed' ? (
+    <ViewedImagePreview reference={detail} active={active} fallbackClassName="aux__out" />
+  ) : (
+    <ActivityDetail item={item} detail={detail} className="aux__out" />
+  )
+})
 
 /**
  * What opens under a tool row. A tool call shows what it was asked and what

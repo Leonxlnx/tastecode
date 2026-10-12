@@ -7,6 +7,8 @@ import {
   customModelKey,
   filterModelChoicesByQuery,
   isCustomModelChoice,
+  migrateHiddenModels,
+  MODEL_VISIBILITY_VERSION,
   modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
@@ -162,7 +164,6 @@ describe('model catalog', () => {
 
   it.each([
     ['gpt-6-astra', true],
-    ['gpt-6-sol', false],
     ['gpt-6-luna', true],
     ['gpt-6.1-sol', true],
     ['gpt-daybreak-blue-latest', true],
@@ -185,7 +186,8 @@ describe('model catalog', () => {
     ['claude-sonnet-5', false],
     ['claude-sonnet-5-5', true],
     ['claude-opus-4-8', false],
-    ['haiku', false],
+    ['haiku', true],
+    ['claude-haiku-5-5', true],
     ['claude-haiku-4-5', false],
     ['CLAUDE-HAIKU-4-5[1m]', false],
     ['claude-opus-4-5', false],
@@ -199,6 +201,41 @@ describe('model catalog', () => {
     ['provider-model-added-tomorrow', true],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
+  })
+
+  describe('model visibility migration', () => {
+    const claudeChoices = choicesFor(
+      { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+      ['opus', 'haiku', 'claude-opus-4-8', 'claude-fable-5'].map((id) => ({ ...model, id })),
+    )
+    // Haiku was hidden by the old defaults; the user also hid Opus 5.5 and
+    // re-enabled Opus 4.8 by hand. A key outside this catalog stays as saved.
+    const saved = new Set([
+      'claude-code:haiku',
+      'claude-code:opus',
+      'claude-code:claude-fable-5',
+      'codex:gpt-5.5',
+    ])
+
+    it('reveals only the changed ids for a version 4 profile', () => {
+      expect([...migrateHiddenModels(saved, '4', claudeChoices)]).toEqual([
+        'claude-code:opus',
+        'claude-code:claude-fable-5',
+        'codex:gpt-5.5',
+      ])
+    })
+
+    it.each([null, '3', 'unknown'])('resets every listed model for version %s', (version) => {
+      expect([...migrateHiddenModels(saved, version, claudeChoices)].sort()).toEqual([
+        'claude-code:claude-fable-5',
+        'claude-code:claude-opus-4-8',
+        'codex:gpt-5.5',
+      ])
+    })
+
+    it('leaves a current profile untouched', () => {
+      expect(migrateHiddenModels(saved, MODEL_VISIBILITY_VERSION, claudeChoices)).toEqual(saved)
+    })
   })
 
   it('keeps an effort that the next model supports', () => {

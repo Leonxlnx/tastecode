@@ -4,11 +4,14 @@ import { mockKeyboardModifierState } from './test-keyboard.js'
 import {
   createDefaultKeybindings,
   findKeybindingConflict,
+  isComposingKey,
+  isConfirmEnter,
   isEditableTarget,
   KEYBINDING_STORAGE_KEY,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
+  reservedShortcutLabel,
   shortcutFromKeyboardEvent,
   shortcutLabel,
   shortcutRoute,
@@ -90,6 +93,27 @@ describe('shortcuts', () => {
     expect(shortcutFromKeyboardEvent(new KeyboardEvent('keydown', { key: 'a' }))).toBeUndefined()
   })
 
+  it('names the owner of each chord the app keeps for itself', () => {
+    expect(reservedShortcutLabel({ key: '1', primary: true })).toBe('Open recent chat')
+    expect(reservedShortcutLabel({ key: '9', primary: true })).toBe('Open recent chat')
+    expect(reservedShortcutLabel({ key: 'd', primary: true, alt: true, shift: true })).toBe(
+      'Debug settings',
+    )
+    expect(reservedShortcutLabel({ key: 'f', primary: true })).toBe('Find in chat')
+    expect(reservedShortcutLabel({ key: 'arrowup', alt: true })).toBe('Previous turn')
+    expect(reservedShortcutLabel({ key: 'arrowdown', alt: true })).toBe('Next turn')
+    for (const tool of WORKSPACE_TOOL_SHORTCUTS) {
+      expect(reservedShortcutLabel(tool.shortcut)).toBe(tool.label)
+    }
+    expect(reservedShortcutLabel({ key: '0', primary: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: '1', primary: true, shift: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: '1', alt: true })).toBeUndefined()
+    expect(reservedShortcutLabel({ key: 't', primary: true, shift: true })).toBeUndefined()
+    for (const shortcut of Object.values(createDefaultKeybindings())) {
+      if (shortcut) expect(reservedShortcutLabel(shortcut)).toBeUndefined()
+    }
+  })
+
   it.each(['macOS', 'Windows', 'Linux'])('matches all assigned shortcuts on %s', (platform) => {
     const shortcuts: Shortcut[] = [
       ...Object.values(createDefaultKeybindings()).filter((shortcut) => shortcut !== null),
@@ -123,6 +147,14 @@ describe('shortcuts', () => {
     expect(shortcutFromKeyboardEvent(ctrlEvent)).toEqual(shortcut)
   })
 
+  it('does not record a dead key it cannot resolve to a base key', () => {
+    expect(
+      shortcutFromKeyboardEvent(
+        new KeyboardEvent('keydown', { key: 'Dead', code: 'Equal', ctrlKey: true }),
+      ),
+    ).toBeUndefined()
+  })
+
   it('preserves keyboard-layout letters and existing symbol bindings', () => {
     expect(
       shortcutFromKeyboardEvent(
@@ -144,6 +176,27 @@ describe('shortcuts', () => {
         }),
         { key: '?', primary: true, shift: true },
       ),
+    ).toBe(true)
+  })
+
+  it('confirms on Enter only outside an IME composition', () => {
+    const enter = (key: string, isComposing: boolean) =>
+      isConfirmEnter({ key, nativeEvent: new KeyboardEvent('keydown', { key, isComposing }) })
+    expect(enter('Enter', false)).toBe(true)
+    expect(enter('Enter', true)).toBe(false)
+    expect(enter('a', false)).toBe(false)
+  })
+
+  it('recognises keys that belong to an open IME composition', () => {
+    const composing = (init: KeyboardEventInit) =>
+      isComposingKey(new KeyboardEvent('keydown', { key: 'Escape', ...init }))
+    expect(composing({ isComposing: true })).toBe(true)
+    expect(composing({ keyCode: 229 })).toBe(true)
+    expect(composing({})).toBe(false)
+    expect(
+      isComposingKey({
+        nativeEvent: new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }),
+      }),
     ).toBe(true)
   })
 

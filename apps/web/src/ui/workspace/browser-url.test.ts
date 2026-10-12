@@ -10,6 +10,8 @@ describe('browserUrl', () => {
     expect(browserUrl('localhost:4311')).toBe('http://127.0.0.1:4311/')
     expect(browserUrl('http://[::1]:4311')).toBe('http://127.0.0.1:4311/')
     expect(browserUrl('127.0.0.1:5183/preview')).toBe('http://127.0.0.1:5183/preview')
+    expect(browserUrl('localhost:3000?x')).toBe('http://127.0.0.1:3000/?x')
+    expect(browserUrl('127.0.0.1:3000#frag')).toBe('http://127.0.0.1:3000/#frag')
   })
 
   it('rejects privileged protocols', () => {

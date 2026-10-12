@@ -7,6 +7,7 @@ export const releaseRepository = 'Leonxlnx/tastecode'
 const releasePage = `https://github.com/${releaseRepository}/releases`
 const releaseApi = `https://api.github.com/repos/${releaseRepository}/releases`
 const FEED_ENTRIES = 10
+const RELEASE_LIST_TTL = 24 * 60 * 60 * 1000
 const tagLink = new RegExp(`href="${releasePage.replaceAll('.', '\\.')}/tag/([^"?#]+)"`, 'g')
 const assetSchema = z.object({
   name: z.string(),
@@ -134,6 +135,7 @@ export function assetFromUpdateInfo(info: UpdateInfo): ReleaseAsset {
 export class GitHubReleaseProvider extends Provider<UpdateInfo> {
   private readonly platform: string
   private readonly fetch: ReleaseFetch
+  private releaseList: { checkedAt: number; latest: UpdateInfo } | undefined
 
   constructor(
     options: ReleaseProviderOptions,
@@ -172,7 +174,7 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
     // Installs behind one office or VPN address share GitHub's unauthenticated
     // API limit of 60 requests an hour, and a 304 still counts. The release
     // feed is not part of that limit, so a check that finds nothing newer
-    // spends none of it.
+    // spends none of it, apart from a daily look past a full feed.
     const feed = await this.request(`${releasePage}.atom`, 'application/atom+xml')
     if (!feed) throw new Error('GitHub could not find the TasteCode release feed.')
     const atom = await feed.text()
@@ -206,7 +208,15 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       const version = versionFromTag(tag)
       return version !== undefined && eq(version, current)
     })
-    if (entries >= FEED_ENTRIES && !listsInstalled) return this.latestFromReleaseList()
+    if (entries >= FEED_ENTRIES) {
+      // A higher version published before the installed one can be pushed out
+      // even while the installed release is listed. Only the release list shows
+      // it, and an hourly read of that would spend the shared API limit.
+      const listed = this.releaseList
+      if (!listsInstalled || !listed || Date.now() - listed.checkedAt >= RELEASE_LIST_TTL)
+        return this.latestFromReleaseList()
+      if (gt(listed.latest.version, current)) return listed.latest
+    }
     return {
       version: current,
       files: [],
@@ -228,8 +238,11 @@ export class GitHubReleaseProvider extends Provider<UpdateInfo> {
       const rows: unknown = await response?.json()
       if (!Array.isArray(rows)) throw new Error('GitHub returned an invalid release list.')
       releases.push(...rows)
-      if (rows.length < 100)
-        return releaseUpdateInfo(selectLatestRelease(releases), this.platform, process.arch)
+      if (rows.length < 100) {
+        const latest = releaseUpdateInfo(selectLatestRelease(releases), this.platform, process.arch)
+        this.releaseList = { checkedAt: Date.now(), latest }
+        return latest
+      }
     }
     throw new Error('GitHub release history exceeded the update lookup limit.')
   }

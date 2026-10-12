@@ -44,6 +44,29 @@ describe('workspace review tree virtualization', () => {
     expect(screen.getByTitle('generated/output-00049.ts')).toBeTruthy()
   })
 
+  it.each([10, 1_000])(
+    'shows a deleted file and the folder that replaced it among %i files',
+    (count) => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+      render(
+        <ReviewTree
+          files={[
+            { path: 'app/foo', status: 'deleted', binary: false, hunks: [] },
+            { path: 'app/foo/bar.ts', status: 'added', binary: false, hunks: [] },
+            ...files(count),
+          ]}
+          onSelect={() => {}}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: 'foo' }).getAttribute('aria-expanded')).toBe('true')
+      expect(screen.getByTitle('app/foo/bar.ts')).toBeTruthy()
+      expect(screen.getByTitle('app/foo')).toBeTruthy()
+      expect(error).not.toHaveBeenCalled()
+      error.mockRestore()
+    },
+  )
+
   it('mounts only the large review window and retains folder interaction', () => {
     const onSelect = vi.fn()
     render(<ReviewTree files={files(1_000)} onSelect={onSelect} />)

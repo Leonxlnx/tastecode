@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Model } from '@harness/contracts'
 import { useState, type ReactNode } from 'react'
-import type { ModelChoice } from '../model-catalog.js'
+import { providerMark, type ModelChoice } from '../model-catalog.js'
 
 const haptics = vi.hoisted(() => ({
   performAppHaptic: vi.fn(),
@@ -444,14 +444,19 @@ describe('ModelSelector', () => {
     }
 
     expect(groupModelsBySource([...MODELS, claudeModel]).map((group) => group.name)).toEqual([
-      'Codex',
       'Claude Code',
+      'Codex',
     ])
 
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
     await openSelector()
 
     expect(screen.getByRole('group', { name: 'Providers' })).toBeTruthy()
+    expect(
+      within(screen.getByRole('group', { name: 'Providers' }))
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('title')),
+    ).toEqual(['Claude Code', 'Codex'])
     expect(
       screen.getByRole('button', { name: 'Show Codex models' }).getAttribute('aria-pressed'),
     ).toBe('true')
@@ -500,6 +505,75 @@ describe('ModelSelector', () => {
     expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
       'acp:gemini',
       'acp:qwen',
+    ])
+  })
+
+  it('keeps providers in one order however discovery settles', () => {
+    const source = (
+      provider: ModelChoice['provider'],
+      sourceName: string,
+      agentId?: string,
+    ): ModelChoice => ({
+      ...MODELS[0]!,
+      key: `${agentId ? `${provider}:${agentId}` : provider}:default`,
+      provider,
+      sourceName,
+      mark: providerMark(provider),
+      ...(agentId ? { agent: { id: agentId, name: sourceName } } : {}),
+    })
+    const claude = source('claude-code', 'Claude Code')
+    const codex = source('codex', 'Codex')
+    const grok = source('grok', 'Grok')
+    const work = source('codex', 'Work agent', 'work')
+    const home = source('claude-code', 'Home agent', 'home')
+    const names = (models: ModelChoice[]) => groupModelsBySource(models).map((group) => group.name)
+
+    // Stock providers take their fixed place; custom harnesses follow as they arrived.
+    expect(names([work, grok, home, codex, claude])).toEqual([
+      'Claude Code',
+      'Codex',
+      'Grok',
+      'Work agent',
+      'Home agent',
+    ])
+    expect(names([home, codex, work, grok, claude])).toEqual([
+      'Claude Code',
+      'Codex',
+      'Grok',
+      'Home agent',
+      'Work agent',
+    ])
+  })
+
+  it('places ACP agents and API connections between the CLIs and custom harnesses', () => {
+    const source = (
+      provider: ModelChoice['provider'],
+      sourceName: string,
+      identity: Pick<ModelChoice, 'agent' | 'connectionId'> = {},
+    ): ModelChoice => ({
+      ...MODELS[0]!,
+      key: `${provider}:${sourceName}:default`,
+      provider,
+      sourceName,
+      mark: providerMark(provider),
+      ...identity,
+    })
+    const claude = source('claude-code', 'Claude Code')
+    const cursor = source('cursor', 'Cursor')
+    const gemini = source('acp', 'Gemini CLI', { agent: { id: 'gemini', name: 'Gemini CLI' } })
+    const kimi = source('acp', 'Kimi CLI', { agent: { id: 'kimi', name: 'Kimi CLI' } })
+    const router = source('api', 'Work OpenRouter', { connectionId: 'router' })
+    const work = source('codex', 'Work agent', { agent: { id: 'work', name: 'Work agent' } })
+    const names = (models: ModelChoice[]) => groupModelsBySource(models).map((group) => group.name)
+
+    // ACP agents carry an agent like custom harnesses do, but keep ACP's place.
+    expect(names([work, router, kimi, cursor, gemini, claude])).toEqual([
+      'Claude Code',
+      'Cursor',
+      'Kimi CLI',
+      'Gemini CLI',
+      'Work OpenRouter',
+      'Work agent',
     ])
   })
 

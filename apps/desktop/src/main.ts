@@ -4,6 +4,7 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import {
   app,
@@ -46,7 +47,11 @@ import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
 import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
-import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
+import {
+  allowsMicrophoneRequest,
+  allowsOwnRendererRequest,
+  isOwnRendererPermission,
+} from './media-permissions.js'
 import {
   parseNativeMenuShortcuts,
   type NativeMenuAction,
@@ -54,7 +59,7 @@ import {
   type NativeMenuShortcuts,
 } from './menu-contract.js'
 import { NativeMenuDispatch } from './native-menu-dispatch.js'
-import { isRendererFileUrl } from './own-renderer.js'
+import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
 import { ownedServerEnvironment } from './owned-server-env.js'
@@ -618,7 +623,7 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(rendererIndexPath())
+    void window.loadURL(rendererFileUrl(rendererIndexPath()))
   }
 }
 
@@ -720,6 +725,31 @@ ipcMain.handle('harness:setDiagnosticsEnabled', (event, enabled: unknown) => {
 ipcMain.handle('harness:openDiagnostics', async (event) => {
   requireOwnRenderer(event.sender)
   return openDiagnosticsDirectory()
+})
+
+ipcMain.handle('harness:crashAgents', async (event) => {
+  requireOwnRenderer(event.sender)
+  return (await import('./crash-agent.js')).crashAgentAvailability()
+})
+
+// The renderer names only an agent from a fixed list; the command line, the
+// prompt and the launcher are all built here. Crash details only reach a file.
+ipcMain.handle('harness:launchCrashAgent', async (event, agent: unknown, details: unknown) => {
+  requireOwnRenderer(event.sender)
+  const { isCrashAgentId, launchCrashAgent, parseCrashDetails } = await import('./crash-agent.js')
+  if (!isCrashAgentId(agent)) throw new Error('Unknown crash agent')
+  await launchCrashAgent(agent, parseCrashDetails(details), {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? '',
+    chromeVersion: process.versions.chrome ?? '',
+    platform: process.platform,
+    osRelease: os.release(),
+    arch: process.arch,
+    time: new Date().toISOString(),
+    diagnosticsLog: diagnostics?.isEnabled()
+      ? path.join(diagnostics.directory, 'errors.log')
+      : undefined,
+  })
 })
 
 ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
@@ -1196,7 +1226,7 @@ async function createAttachmentThumbnail(
   return bytes.byteLength > 0 ? bytes : undefined
 }
 
-/** Allow this app's own renderer to request audio and enumerate installed fonts. */
+/** Allow this app's own renderer audio, installed fonts and element fullscreen. */
 function configureRendererPermissions(): void {
   // Chromium's synchronous check path (navigator.permissions.query, device
   // enumeration) never consults the request handler below and defaults to
@@ -1220,7 +1250,7 @@ function configureRendererPermissions(): void {
         return
       }
       if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission))
+        callback(allowsOwnRendererRequest(permission))
         return
       }
       if (!allowsMicrophoneRequest(details)) {

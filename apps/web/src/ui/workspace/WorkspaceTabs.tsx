@@ -1,9 +1,75 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { useTabDrag } from './useTabDrag.js'
 import { performAppHaptic } from '../../haptics.js'
 import { IconX } from '@tabler/icons-react'
 
 export type WorkspaceTabLabel = { id: string; title: string; icon: ReactNode }
+
+/** Characters a shrinking label always keeps before its ellipsis. */
+const READABLE_PREFIX = 5
+
+/**
+ * A long title is split after a fixed prefix so only the rest can give way to
+ * an ellipsis: a shrinking tab never reads as one letter. Shorter titles stay
+ * whole. The split keeps the tab's text the plain title (the stylesheet adds
+ * the tail's ellipsis anchor as generated content), and the tab's aria-label
+ * carries the title too, so its accessible name never changes.
+ */
+function TabLabel(props: { title: string }) {
+  const characters = Array.from(props.title)
+  if (characters.length <= READABLE_PREFIX + 2) {
+    return <span className="workspace-tabs__label">{props.title}</span>
+  }
+  return (
+    <span className="workspace-tabs__label workspace-tabs__label--split">
+      <span className="workspace-tabs__label-head">
+        {characters.slice(0, READABLE_PREFIX).join('')}
+      </span>
+      <span className="workspace-tabs__label-tail">
+        {characters.slice(READABLE_PREFIX).join('')}
+      </span>
+    </span>
+  )
+}
+
+export type WorkspaceTabsFit = 'labels' | 'compact'
+
+/**
+ * Chooses how a tab strip fits and records it on the strip's data-fit:
+ * "labels" while every tab fits with at least its readable prefix, otherwise
+ * "compact", where inactive tabs keep only their icon; only a compact strip
+ * that still overflows scrolls. The labelled layout is what gets measured, in
+ * either mode, so the choice depends on the strip's width and tabs alone and
+ * cannot flip back and forth at a boundary. A compact strip is measured by
+ * switching it to labels for one synchronous layout, before anything paints;
+ * the attribute only ends up changed when the mode does.
+ */
+export function fitWorkspaceTabs(strip: HTMLElement): WorkspaceTabsFit {
+  if (strip.dataset['fit'] === 'compact') strip.dataset['fit'] = 'labels'
+  // A pixel of slack absorbs subpixel rounding in scrollWidth.
+  const fit: WorkspaceTabsFit = strip.scrollWidth - strip.clientWidth > 1 ? 'compact' : 'labels'
+  if (strip.dataset['fit'] !== fit) strip.dataset['fit'] = fit
+  return fit
+}
+
+/**
+ * Scrolls an overflowing strip just far enough to show the active tab whole,
+ * and the add button too when the active tab is the last one, which is where
+ * a newly opened tab lands. A strip that fits is left alone.
+ */
+export function revealActiveTab(strip: HTMLElement): void {
+  if (strip.scrollWidth <= strip.clientWidth) return
+  const active = strip.querySelector<HTMLElement>('.workspace-tabs__tab.is-active')
+  if (!active) return
+  const next = active.nextElementSibling
+  const last =
+    next instanceof HTMLElement && next.classList.contains('workspace-tabs__add') ? next : active
+  const style = getComputedStyle(strip)
+  const start = active.offsetLeft - (Number.parseFloat(style.paddingLeft) || 0)
+  const end = last.offsetLeft + last.offsetWidth + (Number.parseFloat(style.paddingRight) || 0)
+  if (start < strip.scrollLeft) strip.scrollLeft = start
+  else if (end > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = end - strip.clientWidth
+}
 
 /** Animate live tabs and their neighbours without resizing text or repainting widths. */
 export function WorkspaceTabs(props: {
@@ -22,6 +88,25 @@ export function WorkspaceTabs(props: {
   const [closing, setClosing] = useState(new Set<string>())
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
+
+  // Stable, so the observer below is created once per mount. It runs when the
+  // strip resizes or its tabs change, never per streamed message: the tab list
+  // is memoized on the panel's tabs.
+  const fit = useCallback(() => {
+    if (!host.current) return
+    fitWorkspaceTabs(host.current)
+    revealActiveTab(host.current)
+  }, [])
+  useLayoutEffect(() => {
+    const strip = host.current
+    if (!strip || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(fit)
+    observer.observe(strip)
+    return () => observer.disconnect()
+  }, [fit])
+  // Before the motion effect below, so tabs animate into the chosen mode. The
+  // active tab matters for what is revealed, not for the mode.
+  useLayoutEffect(fit, [fit, props.tabs, props.activeId])
 
   useLayoutEffect(() => {
     const container = host.current
@@ -159,6 +244,8 @@ export function WorkspaceTabs(props: {
             type="button"
             role="tab"
             aria-selected={tab.id === props.activeId}
+            aria-label={tab.title}
+            title={tab.title}
             onClick={() => props.onSelect(tab.id)}
             onKeyDown={(event) => {
               if (!event.altKey || !props.onReorder) return
@@ -173,7 +260,7 @@ export function WorkspaceTabs(props: {
             }}
           >
             {tab.icon}
-            <span>{tab.title}</span>
+            <TabLabel title={tab.title} />
           </button>
           <button
             type="button"

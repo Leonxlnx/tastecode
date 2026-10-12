@@ -13,6 +13,7 @@ import type {
 import {
   contentBlocks,
   historyItems,
+  isInterruptMarker,
   isPrompt,
   object,
   string,
@@ -278,6 +279,12 @@ function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): Domain
   for (const row of rows) {
     if (row.type !== 'user' && row.type !== 'assistant') continue
     const at = timestamp(row.timestamp) ?? lastAt
+    if (isInterruptMarker(row)) {
+      // A Stop ends the turn it interrupted instead of starting one of its own; a
+      // tool result saved beside it still belongs to that turn.
+      if (!turnId) continue
+      completed = false
+    }
     if (isPrompt(row)) finish()
     if (!turnId) {
       turnId = `${session.id}:${String(row.uuid)}`
@@ -368,8 +375,9 @@ export function createClaudeHistorySource(
           present.add(locator)
           try {
             const info = await stat(locator)
-            // Reimport saved transcripts that previously exposed machine notifications.
-            const revision = `2:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+            // Reimport saved transcripts that previously exposed machine notifications
+            // or Stop markers.
+            const revision = `3:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
               const id = file.name.slice(0, -6)

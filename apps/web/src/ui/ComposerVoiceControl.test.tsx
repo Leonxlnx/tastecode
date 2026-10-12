@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ComposerVoiceControl } from './ComposerVoiceControl.js'
 
@@ -56,11 +56,13 @@ describe('voice draft ownership', () => {
       }
       const view = render(<ComposerVoiceControl {...props} contextKey="chat-a" />)
       fireEvent.click(screen.getByRole('button', { name: 'Record voice note' }))
-      fireEvent.click(
-        await screen.findByRole('button', {
-          name: sendAfter ? 'Transcribe and send voice note' : 'Stop and transcribe voice note',
-        }),
-      )
+      const stop = await screen.findByRole<HTMLButtonElement>('button', {
+        name: sendAfter ? 'Transcribe and send voice note' : 'Stop and transcribe voice note',
+      })
+      // The control shows, disabled, while the microphone starts, and a click
+      // then does nothing. Wait for recording on slow machines.
+      await waitFor(() => expect(stop.disabled).toBe(false))
+      fireEvent.click(stop)
       await screen.findByRole('button', { name: 'Cancel transcription' })
       view.rerender(<ComposerVoiceControl {...props} contextKey="chat-b" />)
       await act(async () => finish('Private words from chat A'))

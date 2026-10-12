@@ -48,7 +48,7 @@ describe('workspace diffs', () => {
   it('uses dev-null and previous paths for file status changes', () => {
     expect(
       workspaceDiffFilePatch({ ...modifiedFile, status: 'added', path: 'src/new.ts' }).startsWith(
-        'diff --git a/src/new.ts b/src/new.ts\n--- /dev/null\n+++ b/src/new.ts\n',
+        'diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n',
       ),
     ).toBe(true)
     expect(
@@ -97,5 +97,35 @@ describe('workspace diffs', () => {
     expect(result.fallbacks).toEqual([])
     expect(result.items.map((item) => item.fileDiff.type)).toEqual(['new', 'rename-pure'])
     expect(result.items[1]?.fileDiff.prevName).toBe('src/old.ts')
+  })
+
+  it('names files whose paths contain spaces, tabs or newlines exactly', () => {
+    const result = workspaceDiffCollection('tree-4', [
+      { path: 'docs/a b/new file.md', status: 'added', binary: false, hunks: [] },
+      { ...modifiedFile, path: 'src/tab\tname.ts' },
+      { ...modifiedFile, path: 'src/line\nbreak.ts' },
+      { ...modifiedFile, status: 'renamed', previousPath: 'old dir/a.ts', path: 'new dir/a.ts' },
+    ])
+
+    expect(result.fallbacks).toEqual([])
+    expect(result.items.map(({ fileDiff }) => [fileDiff.name, fileDiff.prevName])).toEqual([
+      ['docs/a b/new file.md', undefined],
+      ['src/tab\tname.ts', undefined],
+      ['src/line\nbreak.ts', undefined],
+      ['new dir/a.ts', 'old dir/a.ts'],
+    ])
+    expect(workspaceDiffFilePatch({ ...modifiedFile, path: 'src/"q"\\\tx.ts' })).toContain(
+      String.raw`diff --git "a/src/\"q\"\\\tx.ts" "b/src/\"q\"\\\tx.ts"`,
+    )
+  })
+
+  it('marks added and deleted files with content as new and deleted', () => {
+    const result = workspaceDiffCollection('tree-3', [
+      { ...modifiedFile, status: 'added', path: 'src/new.ts' },
+      { ...modifiedFile, status: 'deleted', path: 'src/old.ts' },
+    ])
+
+    expect(result.fallbacks).toEqual([])
+    expect(result.items.map((item) => item.fileDiff.type)).toEqual(['new', 'deleted'])
   })
 })
