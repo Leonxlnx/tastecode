@@ -206,6 +206,16 @@
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
   --dur-press: 140ms;
+  /* One keyboard focus ring for every control. It is the text colour at 60%,
+     so it reads at 3:1 or better on every surface in both themes without the
+     browser's heavy black default. Standalone controls draw it 2px outside;
+     rows that run edge to edge in a scroller draw it inside, where nothing
+     clips it. */
+  --focus-ring-color: color-mix(in srgb, var(--text) 60%, transparent);
+  --focus-ring: 2px solid var(--focus-ring-color);
+  --focus-ring-offset: 2px;
+  --focus-ring-inset: -2px;
+
   --dur-fast: 180ms;
   --dur-slow: 260ms;
 
