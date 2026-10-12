@@ -6895,6 +6895,44 @@ describe('new chats', () => {
     )
   })
 
+  it('saves a fast mode toggle from the menu to the open chat setup', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
+    localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              cachedCodexChoice().model,
+              {
+                ...cachedCodexChoice().model,
+                id: 'gpt-5.6-mini',
+                displayName: 'GPT-5.6 Mini',
+                isDefault: false,
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '' }],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+    const savedTier = () =>
+      JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!).serviceTier
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    // The model picker is lazy-loaded.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await screen.findByRole('button', { name: 'Disable fast mode' })
+
+    act(() => nativeMenu.listener?.('toggleFastMode'))
+    await screen.findByRole('button', { name: 'Enable fast mode' })
+
+    await waitFor(() => expect(savedTier()).not.toBe('priority'))
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
