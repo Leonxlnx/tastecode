@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
 import type { AccountLimitsState } from './AccountLimits.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -587,6 +588,57 @@ describe('Sidebar chat actions', () => {
     expect(trigger.querySelector('.account__name')?.textContent).toBe('Local profile')
     // The composer provider's plan is not the profile's, so it is not shown here.
     expect(trigger.querySelector('.account__text')?.textContent).toBe('Local profile')
+  })
+
+  it('draws the rail avatar as the photo, the initials, or a tinted person mark', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        profileIdentity={profileIdentity}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+
+    const rendered = render(view({ displayName: 'Leon Lin' }))
+    const initials = avatar().querySelector<HTMLElement>('.account__initials')
+    expect(initials?.textContent).toBe('LL')
+    expect(initials?.style.getPropertyValue('--avatar-hue')).not.toBe('')
+
+    rendered.rerender(view({ displayName: '  émile  ' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('É')
+
+    rendered.rerender(view({ displayName: '' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('')
+    expect(avatar().querySelector('.account__initials svg')).not.toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+
+    rendered.rerender(
+      view({ displayName: 'Leon Lin', avatarDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
+    )
+    expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgo=',
+    )
+    expect(avatar().querySelector('.account__initials')).toBeNull()
   })
 
   it('shows direct Tabler rename and archive actions for each chat', () => {

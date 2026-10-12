@@ -57,6 +57,7 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
+import { generatedAvatar } from '../generated-avatar.js'
 import { providerDisplayName, providerPresentation } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { sidebarRail } from '../sidebar-order.js'
@@ -67,7 +68,6 @@ import {
   shortcutAria,
   type Keybindings,
 } from '../shortcuts.js'
-import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
@@ -907,11 +907,7 @@ function SidebarComponent(props: {
             trigger={() => (
               <span className="account">
                 <span className="account__avatar">
-                  {props.profileIdentity?.avatarDataUrl ? (
-                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                  ) : (
-                    <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
-                  )}
+                  <AccountAvatar identity={props.profileIdentity} />
                 </span>
                 <span className="account__text">
                   <span className="account__name">{profileDisplayName}</span>
@@ -1994,6 +1990,34 @@ function displayName(project: Project): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+/**
+ * The profile's picture in the rail: the photo when there is one, otherwise
+ * the name's initials on a tint of its seal colour, so it still matches the
+ * profile page. The seal itself is a dozen tiles over three rings; at 24px
+ * it read as a speckled blob, so it stays where it has room. A profile with
+ * no name yet shows a person mark on the same tint rather than invented
+ * initials.
+ */
+function AccountAvatar(props: { identity: ProfileIdentityPreferences | undefined }) {
+  const seed = avatarSeedName(props.identity)
+  const hue = useMemo(() => generatedAvatar(seed).hue, [seed])
+  const name = props.identity?.displayName.trim() ?? ''
+  if (props.identity?.avatarDataUrl) return <img src={props.identity.avatarDataUrl} alt="" />
+  return (
+    <span className="account__initials" style={{ '--avatar-hue': hue } as CSSProperties}>
+      {name ? nameInitials(name) : <UserRound size={14} aria-hidden />}
+    </span>
+  )
+}
+
+/** First letter of the first and last word: "Leon Lin" → "LL", "Leon" → "L". */
+function nameInitials(name: string): string {
+  const words = name.split(/\s+/u).filter(Boolean)
+  const first = Array.from(words[0] ?? '')[0] ?? ''
+  const last = words.length > 1 ? (Array.from(words.at(-1) ?? '')[0] ?? '') : ''
+  return `${first}${last}`.toLocaleUpperCase()
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {
