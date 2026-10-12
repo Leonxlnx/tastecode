@@ -901,7 +901,7 @@ function SidebarComponent(props: {
             drop="up"
             gap={6}
             label="Account"
-            panelClassName="menu--compact menu--settings menu--account"
+            panelClassName="menu--compact menu--settings"
             panelRole="dialog"
             panelLabel="Account and plan limits"
             trigger={() => (

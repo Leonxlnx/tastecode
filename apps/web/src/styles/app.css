@@ -447,13 +447,6 @@
   }
 }
 
-.account-menu__actions {
-  display: grid;
-  flex: none;
-  gap: 0;
-  padding-top: 0;
-}
-
 .search {
   display: flex;
   align-items: center;
@@ -2797,17 +2790,6 @@
   box-shadow: var(--shadow-flyout);
 }
 
-.menu--settings {
-  /* Stay close to the account trigger without letting a wide rail turn this
-     small status surface into a large sheet. */
-  min-width: 0;
-  width: min(224px, calc(100vw - 16px));
-  max-height: min(500px, calc(100vh - 24px));
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
 .menu--compact {
   gap: 0;
   padding: 3px;
@@ -2827,39 +2809,6 @@
 .menu--compact .menu__item {
   padding: 4px 7px;
   border-radius: var(--r-md);
-}
-
-.menu--settings .menu__item {
-  padding: 4px 6px;
-}
-
-/* The account menu: as wide as the profile row, concentric corners. */
-.menu--account {
-  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
-  padding: 4px;
-  border-radius: var(--r-lg);
-}
-
-.menu--account .menu__item,
-.menu--account .account-menu__usage-head {
-  min-height: 30px;
-  padding: 5px 8px;
-}
-
-/* An inset rule under the usage block. */
-.menu--account .account-menu__usage {
-  position: relative;
-  margin-bottom: 4px;
-  padding-bottom: 4px;
-  border-bottom: 0;
-}
-
-.menu--account .account-menu__usage::after {
-  content: '';
-  position: absolute;
-  inset: auto 8px 0;
-  height: 1px;
-  background: var(--menu-line);
 }
 
 .menu--compact .menu__name {

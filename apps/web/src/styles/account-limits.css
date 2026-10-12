@@ -1,3 +1,45 @@
+/* The account menu rises from the profile row: exactly as wide as it, with
+   4px inside a 12px panel so the 8px rows sit concentric, and 30px rows
+   whose icons centre on the avatar's axis. It lives with the menu's lazy
+   contents to keep the startup stylesheet small; the chunk is preloaded
+   when the rail mounts. */
+.menu.menu--settings {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
+  min-width: 0;
+  max-height: min(500px, calc(100vh - 24px));
+  padding: 4px;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.menu.menu--settings :is(.menu__item, .account-menu__usage-head) {
+  min-height: 30px;
+  padding: 5px 8px;
+}
+
+.account-menu__actions {
+  display: grid;
+  flex: none;
+}
+
+/* The rule under the usage block stops short of the panel's edges. */
+.menu--settings .account-menu__usage {
+  position: relative;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 0;
+}
+
+.menu--settings .account-menu__usage::after {
+  content: '';
+  position: absolute;
+  inset: auto 8px 0;
+  height: 1px;
+  background: var(--menu-line);
+}
+
 .account-menu__usage {
   min-height: 0;
   display: grid;
