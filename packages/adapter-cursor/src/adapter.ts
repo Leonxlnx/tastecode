@@ -3,6 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, readNdjson, runCli, spawnCli } from '@harness/proc'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
+import { spawnCursorAgent } from './launch.js'
 import {
   collapseCursorModels,
   getCursorIndex,
@@ -62,7 +63,7 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   constructor(options: { spawn?: Spawn; run?: Run } = {}) {
     super()
-    this.#spawn = options.spawn ?? spawnCli
+    this.#spawn = options.spawn ?? spawnCursorAgent
     this.#run = options.run ?? runCli
   }
 
