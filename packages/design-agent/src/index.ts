@@ -1,4 +1,5 @@
 export {
+  isDashboardBrief,
   parseDesignBrief,
   readDesignBrief,
   writeDesignBrief,

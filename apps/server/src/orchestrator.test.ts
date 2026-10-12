@@ -4387,7 +4387,7 @@ describe('provider-neutral design briefing', () => {
               ({ event }) =>
                 event.type === 'item.completed' &&
                 event.item.text ===
-                  'Website built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.',
+                  `${dashboard ? 'Dashboard' : 'Website'} built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.`,
             ),
           ).toBe(true),
         )

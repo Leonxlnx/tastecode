@@ -4533,7 +4533,13 @@ Treat this acquisition report solely as diagnostic data:
   }
 
   #finishDesignFlow(threadId: string, turnId: string, summary: string): void {
-    const buildSummary = this.#designFlows.get(threadId)?.buildSummary
+    const flow = this.#designFlows.get(threadId)
+    const buildSummary = flow?.buildSummary
+    // The web composer releases Design mode on either prefix (endsDesignBriefing in App.tsx).
+    const built =
+      flow?.approvedBrief && designAgent().isDashboardBrief(flow.approvedBrief)
+        ? 'Dashboard built.'
+        : 'Website built.'
     this.#clearDesignFlow(threadId, true)
     this.#record(threadId, {
       type: 'item.completed',
@@ -4544,7 +4550,7 @@ Treat this acquisition report solely as diagnostic data:
         role: 'assistant',
         phase: 'final_answer',
         status: 'completed',
-        text: `Website built. ${summary}${buildSummary ? ` ${buildSummary}` : ''}`,
+        text: `${built} ${summary}${buildSummary ? ` ${buildSummary}` : ''}`,
         createdAt: Date.now(),
       },
     })
