@@ -61,7 +61,12 @@ plus complete desktop captures, so differently labeled collections remain reacha
 
 The selected catalog records and file hashes are persisted with the Design run. Brand, page,
 asset, build and visual review turns receive the actual selected desktop and paired mobile
-images. Resuming a run retains the selection and rejects changed reference files. Existing
+images. Brand sees only the anchor and at most two other compositions from the anchor's site, both
+attached and listed, so it reads one language instead of averaging the deck. Page sees the whole
+deck, and later phases see the compositions the page selected. Every phase's reference footer
+says the anchor defines the type, palette, radii, spacing, controls and surfaces, and the other
+references contribute composition only. Decks saved without an anchor keep the full Brand input
+and the earlier footer. Resuming a run retains the selection and rejects changed reference files. Existing
 pre-v0.5 runs retain their original bundled reference behavior. User-attached references take
 precedence and do not require a configured catalog.
 

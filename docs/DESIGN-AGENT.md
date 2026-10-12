@@ -432,7 +432,10 @@ provider's file report. A persisted baseline captured before the first Design tu
 unrelated existing user code while making newly introduced violations enforceable. The gate rejects card-edge borders,
 pseudo-elements, inset shadows, narrow hard-stop gradients, child strips, equivalent utility
 classes, and standalone or inline SVG substitutes not backed by an explicit functional asset in
-`assets.json`, then permits one bounded source edit to remove the new output. Representative
+`assets.json`, then permits one bounded source edit to remove the new output. A reference-bound
+operating dashboard draws its own charts and icons, so it may keep inline SVG and standalone icon
+files: at most 6 KB, an aspect ratio between 1:2 and 2:1, and no raster image, text, gradient,
+pattern or filter. Larger or decorated standalone SVG still needs the asset manifest. Representative
 interface or operational data may make a one-shot page feel complete, but Build returns it in a
 `Verify before publishing:` summary that the final Harness message surfaces after Preview instead
 of adding a disclaimer to the website.
@@ -503,6 +506,16 @@ The latest visual review contains:
 A passing review cannot contain findings. A repair verdict must contain at least one finding in
 practice, and TasteCode stops after at most two Repair attempts. The final artifact is the latest
 review, not a history of every review iteration.
+
+After the model's review and the DOM audit findings, TasteCode audits the generated source for
+design-language drift and adds at most two automated findings. `font_family_drift` names font
+families the source declares or loads outside the approved `brand.json` typefaces, ignoring generic
+families, system-ui keywords and icon fonts. `radius_scale_drift` reports corner radii outside the brand radius tokens or,
+without tokens, more than five distinct non-zero, non-pill radii. A run records which fonts and radii
+each file already declared before the first Design turn, so a redesign is never blamed for the
+project's existing fonts; runs saved before the audit have no such baseline and are not audited.
+These findings only turn a pass into a repair, which the two-attempt limit bounds. A scan that
+cannot run is logged and skipped, never failing the run.
 
 This phase deliberately makes only claims supported by screenshots and attached DOM audits. It
 does not infer factual accuracy, working interactions, conversion, user comprehension, loading

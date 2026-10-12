@@ -645,6 +645,13 @@ same-site and uniform sampling rather than failing a run. Saved deck entries rec
 `role`; the anchor also carries a one-line `style` summary. Older decks parse unchanged. Details
 are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
 
+Brand derives the language from the anchor and at most two same-site references instead of the
+whole deck, and every phase is told that the anchor sets type, palette, radii, spacing, controls
+and surfaces while other references give composition only. Review then audits the generated source
+and adds bounded, non-fatal findings for fonts outside the brand and radius drift
+([DESIGN-AGENT.md](./DESIGN-AGENT.md)). The audit is a Review finding rather than a hard source
+gate because Build and Repair get one correction each, so a false positive must never fail a run.
+
 _Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
 the anchor site only (most sites lack some families, which would shrink the deck), and a uniform
 draw per family (the source of the mixed-language pages).
