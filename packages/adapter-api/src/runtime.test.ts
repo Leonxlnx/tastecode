@@ -270,6 +270,30 @@ describe('ApiAgentSession', () => {
     })
   })
 
+  it('runs a turn on the model chosen for it', async () => {
+    const requested: string[] = []
+    const events: DomainEvent[] = []
+    const session = new ApiAgentSession({
+      model: 'model-a',
+      transport: async function* (input) {
+        requested.push(input.model)
+        yield { type: 'usage', usage: { inputTokens: 1, outputTokens: 1 } }
+        yield { type: 'finish', reason: 'stop' }
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    await session.waitForTurn(await session.sendTurn(thread.id, 'First'))
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Second', [], { model: 'model-b' }))
+    await session.waitForTurn(await session.sendTurn(thread.id, 'Third'))
+
+    expect(requested).toEqual(['model-a', 'model-b', 'model-b'])
+    expect(session.model).toBe('model-b')
+    expect(
+      events.flatMap((event) => (event.type === 'usage.updated' ? [event.usage.model] : [])),
+    ).toEqual(['model-a', 'model-b', 'model-b'])
+  })
+
   it('runs approved tools through the injected TasteCode executor', async () => {
     let request = 0
     const seenMessages: unknown[] = []

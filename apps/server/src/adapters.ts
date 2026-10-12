@@ -122,7 +122,7 @@ export function apiRuntime(
       if (!model) throw new Error(`choose a model for "${connection.displayName}"`)
       const session = await createSession(workspacePath, options, model)
       const thread = session.startThread(workspacePath, connection.id)
-      return { thread, session: persistentApiSession(session, model, apiKey) }
+      return { thread, session: persistentApiSession(session, apiKey) }
     },
     async resume(threadId, workspacePath, options) {
       const saved = ApiRuntimeStateSchema.safeParse(options.resumeState)
@@ -137,7 +137,7 @@ export function apiRuntime(
       }
       const session = await createSession(workspacePath, options, model)
       const thread = session.resumeThread({ ...state, thread: { ...state.thread, workspacePath } })
-      return { thread, session: persistentApiSession(session, model, apiKey) }
+      return { thread, session: persistentApiSession(session, apiKey) }
     },
     async listModels() {
       const { listAnthropicModels, listOpenAiCompatibleModels, listOpenAiModels } =

@@ -73,7 +73,7 @@ type ToolReview = Omit<ApprovalRequest, 'id' | 'createdAt'>
 
 export class ApiAgentSession extends EventEmitter<Events> {
   readonly capabilities = API_CAPABILITIES
-  readonly #model: string
+  #model: string
   readonly #transport: ApiTransport
   readonly #tools: readonly ApiTool[]
   readonly #executeTool: (call: ApiToolCall, signal: AbortSignal) => Promise<ApiToolResult>
@@ -156,10 +156,21 @@ export class ApiAgentSession extends EventEmitter<Events> {
     })
   }
 
-  async sendTurn(threadId: string, text: string, attachments: string[] = []): Promise<string> {
+  /** The model the next turn runs on; a turn may switch it within the connection. */
+  get model(): string {
+    return this.#model
+  }
+
+  async sendTurn(
+    threadId: string,
+    text: string,
+    attachments: string[] = [],
+    options: { model?: string } = {},
+  ): Promise<string> {
     const thread = this.#requireThread(threadId)
     if (this.#active) throw new Error('a turn is already running')
     if (attachments.length > 0) throw new Error('direct API attachments are not supported yet')
+    if (options.model) this.#model = options.model
 
     const turnId = `${thread.id}-turn-${++this.#turnCounter}`
     const controller = new AbortController()
