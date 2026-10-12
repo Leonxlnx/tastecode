@@ -509,6 +509,38 @@ describe('Grok adapter', () => {
     expect(child.wasKilled).toBe(false)
   })
 
+  it('reports the reason from an error frame when grok exits without a result', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo', { model: 'no-such-model' })
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    // Captured from grok 1.0.40 with a model it no longer lists: one error
+    // frame on stdout, no end frame, exit code 1.
+    child.stdout.end(
+      `${JSON.stringify({
+        type: 'error',
+        message:
+          "Couldn't set model 'no-such-model': Invalid params: \"unknown model id\". Run 'grok models' to see available models.",
+      })}\n`,
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    child.emit('close', 1)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([
+      {
+        type: 'thread.error',
+        threadId: thread.id,
+        message:
+          "Couldn't set model 'no-such-model': Invalid params: \"unknown model id\". Run 'grok models' to see available models.",
+      },
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'failed' })
+  })
+
   it.each(['close', 'error'] as const)('handles stopped turns on %s', async (signal) => {
     const children: FakeChild[] = []
     const adapter = new GrokAdapter({
