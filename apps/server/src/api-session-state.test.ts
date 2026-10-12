@@ -56,6 +56,12 @@ describe('persistentApiSession', () => {
     expect(saved.state.messages[0]?.content).toBe('my key is [redacted] and "[redacted]"')
   })
 
+  it('keeps text intact for a placeholder key shorter than the live redaction minimum', () => {
+    // The live session ignores such keys too; rewriting them corrupts the history
+    // the model is resumed with while the visible transcript still looks right.
+    expect(snapshot('1', 'port 3001').state.messages[0]?.content).toBe('port 3001')
+  })
+
   it('keeps the saved state valid when a placeholder key matches its structure', () => {
     // Local OpenAI-compatible servers are often given keys like these.
     for (const key of ['1', '1234', 'a', 'version', 'assistant']) {
@@ -82,7 +88,7 @@ describe('persistentApiSession', () => {
   })
 
   it('drops provider replay state that holds the key instead of corrupting its ids', () => {
-    // A placeholder key such as "1" also occurs in provider ids. Rewriting the
+    // A key can also occur inside provider ids ("u_01" in "toolu_01"). Rewriting the
     // id inside the replay state but not in the tool result would make the
     // provider reject the resumed conversation.
     const toolUse = { type: 'tool_use', id: 'toolu_01', name: 'shell', input: { command: 'ls' } }
@@ -99,7 +105,7 @@ describe('persistentApiSession', () => {
         { role: 'tool', content: 'files', toolCallId: 'toolu_01', isError: false },
         { role: 'assistant', content: 'ok', toolCalls: [], transportState: clean },
       ]),
-      '1',
+      'u_01',
     ).snapshot!() as { state: { messages: Array<Record<string, unknown>> } }
     const [, withKey, result, withoutKey] = saved.state.messages
     expect(withKey).not.toHaveProperty('transportState')
@@ -111,10 +117,10 @@ describe('persistentApiSession', () => {
   })
 
   it('does not grow text that was already redacted when saved again', () => {
-    // "[redacted]" itself contains short keys such as "e"; a resumed thread is
+    // "[redacted]" itself contains keys such as "dact"; a resumed thread is
     // saved again after every turn.
-    const once = snapshot('e', 'hello')
-    const again = snapshot('e', once.state.messages[0]!.content)
+    const once = snapshot('dact', 'a dact key')
+    const again = snapshot('dact', once.state.messages[0]!.content)
     expect(again.state.messages[0]?.content).toBe(once.state.messages[0]?.content)
   })
 
