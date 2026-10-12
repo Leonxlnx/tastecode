@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../ui/Sidebar.tsx', import.meta.url), 'utf8')
 const accountLimitsCss = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8')
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
+const accountCardCss = readFileSync(new URL('./account-card.css', import.meta.url), 'utf8')
 
 describe('sidebar theme CSS', () => {
   it('uses the quieter rail width for new and legacy profiles', () => {
@@ -137,18 +138,26 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps the account trigger compact and shows its disclosure state on the right', () => {
-    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px;/s)
-    expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)
-    expect(appCss).toMatch(
-      /\.account__chevron \{[^}]*margin-left: auto;[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
+  it('ends the rail in a raised identity card instead of a hard rule', () => {
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 8px 8px;/s)
+    expect(appCss).not.toMatch(/\.rail__foot \{[^}]*border-top/s)
+    expect(accountCardCss).toMatch(
+      /\.account-card \{[^}]*border-radius: var\(--r-card\);[^}]*background: var\(--rail-raised\);[^}]*var\(--shadow-raised\);/s,
     )
-    expect(appCss).toMatch(
-      /\.rail__foot \.menutrigger\[aria-expanded='true'\] \.account__chevron \{[^}]*transform: rotate\(180deg\);/s,
+    expect(accountCardCss).toMatch(
+      /\.account-card__trigger\.menutrigger \{[^}]*width: 100%;[^}]*min-height: 46px;/s,
     )
-    expect(sidebarSource).toContain('IconChevronUp as ChevronUp')
+    expect(accountCardCss).toMatch(/\.account__avatar \{[^}]*width: 32px;[^}]*height: 32px;/s)
+    expect(accountCardCss).toMatch(
+      /\.account__meter > span \{[^}]*transform-origin: left center;[^}]*transition: transform/s,
+    )
+    expect(accountCardCss).toMatch(
+      /\.account-card__settings \{[^}]*width: 28px;[^}]*height: 28px;[^}]*border-radius: var\(--r-circle\);/s,
+    )
+    expect(accountCardCss).toMatch(
+      /\.menu\.menu--account \{[^}]*width: min\(var\(--menu-trigger-w, 224px\), calc\(100vw - 16px\)\);/s,
+    )
+    expect(sidebarSource).not.toContain('IconChevronUp')
   })
 
   it('uses the light foreground color for unread chat dots', () => {

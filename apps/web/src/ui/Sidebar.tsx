@@ -26,7 +26,6 @@ import type {
 } from '@harness/contracts'
 import {
   IconTrash as Trash,
-  IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
@@ -73,6 +72,7 @@ import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import '../styles/account-card.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -183,6 +183,8 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+/** Matches the account menu's own limit bars, which turn red at the same point. */
+const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
@@ -884,78 +886,103 @@ function SidebarComponent(props: {
         )}
 
         <div className="rail__foot">
-          <Menu
-            drop="up"
-            gap={14}
-            label="Account"
-            panelClassName="menu--compact menu--settings"
-            panelRole="dialog"
-            panelLabel="Account and plan limits"
-            trigger={() => (
-              <span className="account">
-                <span className="account__avatar">
-                  {props.profileIdentity?.avatarDataUrl ? (
-                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                  ) : (
-                    <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
-                  )}
-                </span>
-                <span className="account__name">{profileDisplayName}</span>
-                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
-                  <span
-                    className="account__usage"
-                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
-                  >
-                    {Math.round(usageRemaining)}%
+          <div className="account-card">
+            <Menu
+              drop="up"
+              gap={8}
+              label="Account"
+              triggerClassName="account-card__trigger"
+              panelClassName="menu--compact menu--settings menu--account"
+              panelRole="dialog"
+              panelLabel="Account and plan limits"
+              trigger={() => (
+                <span className="account">
+                  <span className="account__avatar">
+                    {props.profileIdentity?.avatarDataUrl ? (
+                      <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                    ) : (
+                      <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
+                    )}
                   </span>
-                ) : null}
-                <ChevronUp className="account__chevron" size={13} aria-hidden />
-              </span>
-            )}
-          >
-            {(close) => {
-              const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
-              return (
-                <>
-                  {props.usageStates ? (
-                    <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
-                      <RenderedAccountLimits
-                        states={props.usageStates}
-                        onRetry={props.onRetryUsage ?? noop}
-                        onConsumeReset={props.onConsumeReset}
-                      />
-                    </Suspense>
-                  ) : null}
-                  <div className="account-menu__actions">
-                    <button
-                      type="button"
-                      className="menu__item"
-                      onClick={() => {
-                        props.onOpenSettings('profile')
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                    </button>
-                    <button
-                      type="button"
-                      className="menu__item"
-                      aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                      onClick={() => {
-                        props.onOpenSettings()
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                    </button>
-                  </div>
-                </>
-              )
-            }}
-          </Menu>
+                  <span className="account__identity">
+                    <span className="account__name">{profileDisplayName}</span>
+                    {usageLimit && usageRemaining !== undefined ? (
+                      <span
+                        className="account__usage"
+                        title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                      >
+                        <span
+                          className="account__meter"
+                          data-low={usageRemaining <= USAGE_LOW_PERCENT ? '' : undefined}
+                          aria-hidden
+                        >
+                          <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
+                        </span>
+                        <span className="account__usage-value">
+                          {Math.round(usageRemaining)}% left
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              )}
+            >
+              {(close) => {
+                const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
+                return (
+                  <>
+                    {props.usageStates ? (
+                      <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
+                        <RenderedAccountLimits
+                          states={props.usageStates}
+                          onRetry={props.onRetryUsage ?? noop}
+                          onConsumeReset={props.onConsumeReset}
+                        />
+                      </Suspense>
+                    ) : null}
+                    <div className="account-menu__actions">
+                      <button
+                        type="button"
+                        className="menu__item"
+                        onClick={() => {
+                          props.onOpenSettings('profile')
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                      </button>
+                      <button
+                        type="button"
+                        className="menu__item"
+                        aria-keyshortcuts={shortcutAria(keybindings.settings)}
+                        onClick={() => {
+                          props.onOpenSettings()
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                      </button>
+                    </div>
+                  </>
+                )
+              }}
+            </Menu>
+            <button
+              type="button"
+              className="account-card__settings"
+              aria-label="Settings"
+              title="Settings"
+              aria-keyshortcuts={shortcutAria(keybindings.settings)}
+              onClick={() => {
+                props.onOpenSettings()
+                closeOnNarrowViewport()
+              }}
+            >
+              <Settings size={15} aria-hidden />
+            </button>
+          </div>
           {isDesktop ? <AppUpdateNotice /> : null}
         </div>
       </nav>

@@ -9736,9 +9736,10 @@ describe('reopening a session', () => {
         page: NEWEST_PAGE,
       })
     })
-    expect(screen.queryByText('75% left')).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Account and plan limits' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    expect(await screen.findByText('75% left')).toBeTruthy()
+    const account = await screen.findByRole('dialog', { name: 'Account and plan limits' })
+    expect(await within(account).findByText('75% left')).toBeTruthy()
   })
 
   it('uses a visible same-source model when the remembered one is hidden', async () => {

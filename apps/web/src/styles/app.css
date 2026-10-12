@@ -123,6 +123,9 @@
   --rail-font-size: 13px;
   --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
+  /* One raised surface for the rail: the account card and the active chat. */
+  --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
+  --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -141,6 +144,8 @@
 
 :root[data-theme='light'] .rail {
   --rail-text: var(--text);
+  --rail-raised: var(--bg-prompt);
+  --rail-raised-ring: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .rail__folder-drop {
@@ -385,8 +390,7 @@
 .rail__foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 6px;
-  border-top: 1px solid var(--line-strong);
+  padding: 4px 8px 8px;
 }
 
 .account-menu__actions {
@@ -411,88 +415,6 @@
 
 .search:focus-within {
   border-color: var(--text-3);
-}
-
-.account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.account__avatar {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  background: var(--surface-3);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-circle);
-  color: var(--text-2);
-  font-size: 9px;
-  font-weight: 600;
-  overflow: hidden;
-}
-
-.account__avatar img,
-.account__avatar svg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.account__name {
-  min-width: 0;
-  font-size: var(--rail-font-size);
-  font-weight: 460;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account__usage {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.account__usage + .account__chevron {
-  margin-left: 0;
-}
-
-.account__chevron {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger[aria-expanded='true'] .account__chevron {
-  transform: rotate(180deg);
-}
-
-/* The full-width hit area stays easy to target while the visible content
-   leaves room for the disclosure state at the right. */
-.rail__foot .menutrigger {
-  width: 100%;
-  min-height: 28px;
-  padding: 3px 6px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--rail-text);
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger:hover:not(:disabled),
-.rail__foot .menutrigger[aria-expanded='true'] {
-  background: var(--control-hover);
-  color: var(--rail-text);
 }
 
 /* Inline rename, sized to sit exactly where the label was. */
