@@ -1047,16 +1047,10 @@
   letter-spacing: var(--rail-letter-spacing);
 }
 
+/* Pinned chats keep the same 28px title indent as project chats, so every
+   chat title in the rail starts on one line under the project names. */
 .pinned-sessions {
   margin: 0 0 10px;
-}
-
-.sessrow.is-pinned .sess {
-  padding-left: 7px;
-}
-
-.sessrow.is-pinned > .rename--session {
-  padding-left: 7px;
 }
 
 .sess__title {
@@ -1075,12 +1069,19 @@
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
 }
 
+/* The dot sits in the row's left gutter, centred under the project folder
+   mark (7px inset + half of its 13px), so marking a chat unread never pushes
+   its title off the shared text line. */
 .sess__unread-dot {
+  position: absolute;
+  top: calc(50% - 3px);
+  left: 10.5px;
   width: 6px;
   height: 6px;
   border-radius: var(--r-circle);
   background: var(--light);
   flex: none;
+  pointer-events: none;
 }
 
 .sess__source {
