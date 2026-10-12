@@ -1682,7 +1682,59 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+  })
+
+  it('reveals Haiku 5.5 for a version 4 profile and keeps its other choices', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          images: false,
+        },
+      },
+    ]
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem(
+      'harness.hiddenModels',
+      '["codex:gpt-5.5","claude-code:opus","claude-code:haiku"]',
+    )
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: false,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return Promise.resolve({
+        models:
+          methods['models.list'].params.parse(params).provider === 'claude-code'
+            ? ['opus', 'haiku', 'claude-opus-4-8'].map(listed)
+            : [cachedCodexChoice().model, listed('gpt-5.5')],
+      })
+    })
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe(
+        '["codex:gpt-5.5","claude-code:opus"]',
+      ),
+    )
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {

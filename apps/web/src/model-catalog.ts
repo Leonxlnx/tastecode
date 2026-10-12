@@ -51,7 +51,6 @@ const DEFAULT_HIDDEN_MODELS = new Set([
   'claude-sonnet-5',
   'claude-fable-5',
   'claude-haiku-4-5',
-  'haiku',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
@@ -69,16 +68,43 @@ export function modelVisibleByDefault(model: Model): boolean {
   return !DEFAULT_HIDDEN_MODELS.has(visibilityId(model))
 }
 
-/** Raise when the defaults above change for models a saved profile already lists. */
-export const MODEL_VISIBILITY_VERSION = '4'
+/**
+ * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
+ * above changes for models a saved profile already lists.
+ */
+export const MODEL_VISIBILITY_VERSION = '5'
+
+/**
+ * Ids whose default visibility changed, by the version that changed them. A
+ * profile saved at version 4 or later only has these ids moved to their new
+ * default, so its other manual choices survive the upgrade.
+ */
+const MODEL_VISIBILITY_CHANGES = new Map<number, readonly string[]>([
+  // Claude Code's `haiku` alias now resolves to Haiku 5.5, the current small model.
+  [5, ['haiku']],
+])
+const FIRST_INCREMENTAL_VISIBILITY_VERSION = 4
 
 /** Move a saved visibility profile onto the current defaults for the models in `choices`. */
 export function migrateHiddenModels(
   hidden: ReadonlySet<string>,
+  storedVersion: string | null,
   choices: readonly ModelChoice[],
 ): Set<string> {
   const migrated = new Set(hidden)
+  if (storedVersion === MODEL_VISIBILITY_VERSION) return migrated
+  const from = Number(storedVersion)
+  const to = Number(MODEL_VISIBILITY_VERSION)
+  // Older or unknown profiles predate incremental changes and take every default once.
+  let changed: Set<string> | undefined
+  if (Number.isInteger(from) && from >= FIRST_INCREMENTAL_VISIBILITY_VERSION && from < to) {
+    changed = new Set()
+    for (let version = from + 1; version <= to; version += 1) {
+      for (const id of MODEL_VISIBILITY_CHANGES.get(version) ?? []) changed.add(id)
+    }
+  }
   for (const choice of choices) {
+    if (changed && !changed.has(visibilityId(choice.model))) continue
     if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
     else migrated.add(choice.key)
   }

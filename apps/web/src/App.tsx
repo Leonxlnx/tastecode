@@ -1890,11 +1890,9 @@ export function App() {
         modelVisibilityInitialized.current = true
         hiddenChanged = true
       }
-      if (
-        directCatalogReady &&
-        readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION
-      ) {
-        hidden = migrateHiddenModels(hidden, directCatalog)
+      const visibilityVersion = readSetting(MODEL_VISIBILITY_VERSION_KEY)
+      if (directCatalogReady && visibilityVersion !== MODEL_VISIBILITY_VERSION) {
+        hidden = migrateHiddenModels(hidden, visibilityVersion, directCatalog)
         hiddenChanged = true
         writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
       }
