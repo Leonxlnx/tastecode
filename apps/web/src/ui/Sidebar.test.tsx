@@ -898,15 +898,15 @@ describe('Sidebar chat actions', () => {
       const commitsBeforeSameRangeScroll = commitCount
       list.scrollTop = 1
       fireEvent.scroll(list)
-      list.scrollTop = 26
+      list.scrollTop = 29
       fireEvent.scroll(list)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll)
 
-      list.scrollTop = 27
+      list.scrollTop = 30
       fireEvent.scroll(list)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll + 1)
 
-      list.scrollTop = sessionCount * 27
+      list.scrollTop = sessionCount * 30
       fireEvent.scroll(list)
 
       const last = screen.getByRole('button', { name: `Chat ${sessionCount}, Codex` }).closest('li')
@@ -948,7 +948,7 @@ describe('Sidebar chat actions', () => {
     const view = render(content(sessions, 'thread-1'))
     fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
     const list = screen.getByRole('list', { name: 'Large project chats' })
-    list.scrollTop = 60 * 27
+    list.scrollTop = 60 * 30
     fireEvent.scroll(list)
 
     view.rerender(
@@ -957,15 +957,15 @@ describe('Sidebar chat actions', () => {
         'thread-1',
       ),
     )
-    expect(list.scrollTop).toBe(60 * 27)
+    expect(list.scrollTop).toBe(60 * 30)
     expect(screen.getByRole('button', { name: 'Chat 62, Codex' })).toBeTruthy()
 
     view.rerender(content(sessions, 'thread-1'))
-    expect(list.scrollTop).toBe(60 * 27)
+    expect(list.scrollTop).toBe(60 * 30)
     expect(screen.getByRole('button', { name: 'Chat 61, Codex' })).toBeTruthy()
 
     view.rerender(content(sessions, 'thread-40'))
-    expect(list.scrollTop).toBe(39 * 27 - 8 * 27)
+    expect(list.scrollTop).toBe(39 * 30 - 8 * 30)
   })
 
   it('starts with only the active project expanded', () => {

@@ -188,7 +188,8 @@ const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
-const VIRTUAL_SESSION_ROW_HEIGHT = 27
+/** A 28px chat row plus the 2px gap between rows. */
+const VIRTUAL_SESSION_ROW_HEIGHT = 30
 const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
 const VIRTUAL_SESSION_OVERSCAN = 6
 const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
@@ -755,7 +756,7 @@ function SidebarComponent(props: {
                     }
                   }}
                 >
-                  <SquarePen size={13} aria-hidden />
+                  <SquarePen size={14} aria-hidden />
                   <span>New chat</span>
                 </button>
                 <button
@@ -766,7 +767,7 @@ function SidebarComponent(props: {
                   title="Search chats"
                   aria-keyshortcuts={shortcutAria(keybindings.searchSessions)}
                 >
-                  <Search size={13} aria-hidden />
+                  <Search size={14} aria-hidden />
                 </button>
               </div>
               <button
@@ -777,7 +778,7 @@ function SidebarComponent(props: {
                 }}
                 aria-keyshortcuts={shortcutAria(keybindings.newProject)}
               >
-                <FolderPen size={13} aria-hidden />
+                <FolderPen size={14} aria-hidden />
                 <span>New project</span>
               </button>
               {props.onOpenPullRequests ? (
@@ -788,7 +789,7 @@ function SidebarComponent(props: {
                   aria-keyshortcuts={shortcutAria(keybindings.openPullRequests)}
                   onClick={openPullRequests}
                 >
-                  <GitPullRequest size={13} aria-hidden />
+                  <GitPullRequest size={14} aria-hidden />
                   <span>Pull requests</span>
                 </button>
               ) : null}

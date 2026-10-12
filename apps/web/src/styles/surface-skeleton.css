@@ -7,8 +7,8 @@
 /* ---------- sidebar tree (app.css: .proj, .sess) ---------- */
 
 .rail-skeleton__mark {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
   border-radius: var(--r-sm);
 }
 
