@@ -278,11 +278,7 @@
      holds until the last stretch of the list and is gone at the end. A list
      that fits has no scroll range, so it never fades. */
   --model-list-fade-size: 24px;
-  mask-image: linear-gradient(
-    to bottom,
-    #000 calc(100% - var(--model-list-fade)),
-    transparent
-  );
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--model-list-fade)), transparent);
   animation: model-list-fade linear both;
   animation-timeline: scroll(self);
   animation-range: calc(100% - var(--model-list-fade-size)) 100%;
