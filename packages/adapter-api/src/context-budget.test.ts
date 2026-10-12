@@ -11,6 +11,26 @@ describe('API context budget', () => {
     expect(contextBudgetBytes('claude-sonnet-4-6')).toBe(65536)
   })
 
+  it('recognizes router-prefixed ids and current large-window families', () => {
+    for (const model of [
+      'anthropic/claude-sonnet-4.5',
+      'openai/gpt-5',
+      'claude-fable-5',
+      'o3',
+      'o4-mini',
+      'openai/o3',
+      'kimi-k2-0905-preview',
+      'moonshotai/kimi-k2',
+      'glm-4.6',
+      'z-ai/glm-4.5-air',
+    ]) {
+      expect(contextBudgetBytes(model), model).toBe(65536)
+    }
+    for (const model of ['vendor/custom-small-model', 'openai/gpt-4-0613', 'o1x', 'llama3:8b']) {
+      expect(contextBudgetBytes(model), model).toBe(8192)
+    }
+  })
+
   it('drops whole historical turns, preserving tool pairs and current intent', () => {
     const messages: ApiMessage[] = [
       { role: 'user', content: 'old' },
