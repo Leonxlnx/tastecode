@@ -99,7 +99,8 @@ describe('sidebar theme CSS', () => {
       /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 9px;[^}]*padding: 0;/s,
     )
     expect(appCss).toMatch(/\.sess \{[^}]*padding: 0 12px 0 28px;/s)
-    expect(appCss).toMatch(/\.sessrow\.is-pinned \.sess \{[^}]*padding-left: 7px;/s)
+    // Pinned chats share the project-chat indent; no override may pull them left.
+    expect(appCss).not.toMatch(/\.sessrow\.is-pinned[^{]*\{[^}]*padding-left/s)
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
   })
 
@@ -155,6 +156,15 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(
       /\.sess__unread-dot \{[^}]*width: 6px;[^}]*height: 6px;[^}]*background: var\(--light\);/s,
     )
+  })
+
+  it('keeps unread chat titles on the shared text line', () => {
+    // An inline dot took flex space and pushed unread titles 13px right of
+    // every other chat title. It lives in the row's left gutter instead.
+    expect(appCss).toMatch(
+      /\.sess__unread-dot \{[^}]*position: absolute;[^}]*top: calc\(50% - 3px\);[^}]*left: 10\.5px;/s,
+    )
+    expect(appCss).toMatch(/^\.sessrow \{[^}]*position: relative;/m)
   })
 
   it('gives project rows a consistent readable rhythm', () => {
