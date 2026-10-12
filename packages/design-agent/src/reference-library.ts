@@ -14,6 +14,12 @@ import {
 import { readRasterMetadata } from './raster-metadata.js'
 import { generatedReferenceCandidates } from './reference-library-index.js'
 import {
+  referenceRelevance,
+  relevanceScore,
+  relevanceWords,
+  type ReferenceRelevance,
+} from './reference-relevance.js'
+import {
   isStyleOutlier,
   loadReferenceStyleProfiles,
   referenceSite,
@@ -71,7 +77,20 @@ export function referenceLibraryRoot(): string {
   return existsSync(unpacked) ? unpacked : bundled
 }
 
-export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {
+/**
+ * A loaded catalog entry. Dashboards keep their catalog words for domain relevance; a selected
+ * deck never contains them.
+ */
+export type LibraryReference = ReferenceDirection & { relevance?: ReferenceRelevance }
+
+function catalogText(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : []
+}
+
+export function loadReviewedReferences(root = referenceLibraryRoot()): LibraryReference[] {
   try {
     const catalogFiles = ['catalog.json']
     if (existsSync(path.join(root, 'dashboard-catalog.json')))
@@ -122,6 +141,19 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
         {
           ...reference!,
           cue: `${reference!.cue} Review: ${entry.reviewNotes}${entry.mobileImagePath ? ` Responsive pairing: ${entry.pairEvidence}` : ' No verified mobile reference: derive and visually test the responsive layout from this desktop composition.'}`,
+          // Review notes describe the inspection, not the product, so only catalog words count.
+          ...(reference!.family === 'dashboard'
+            ? {
+                relevance: referenceRelevance(
+                  [
+                    ...(reference!.tags ?? []),
+                    ...catalogText(entry.domain),
+                    ...catalogText(entry.sourceName),
+                  ],
+                  [reference!.cue, ...catalogText(entry.motifs)],
+                ),
+              }
+            : {}),
         },
       ]
     })
@@ -163,10 +195,10 @@ function compatibleFamilies(family: PageLayoutFamily): readonly PageLayoutFamily
 }
 
 /** Content topics can use a compatible image's geometry without relabeling that image. */
-export function referenceCandidatesForFamily(
+export function referenceCandidatesForFamily<Entry extends ReferenceDirection>(
   family: PageLayoutFamily,
-  references: readonly ReferenceDirection[],
-): ReferenceDirection[] {
+  references: readonly Entry[],
+): Entry[] {
   const native = references.filter((entry) => entry.family === family)
   if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
   const alternatives = compatibleFamilies(family)
@@ -211,10 +243,10 @@ function groupOf(entry: ReferenceDirection): string {
 }
 
 /** Revisions share a vote: choose a group first, then one of its revisions. */
-function drawGroupFirst(
-  pool: readonly ReferenceDirection[],
+function drawGroupFirst<Entry extends ReferenceDirection>(
+  pool: readonly Entry[],
   chooseIndex: (length: number) => number,
-): ReferenceDirection {
+): Entry {
   const groupNames = [...new Set(pool.map(groupOf))]
   const chosenGroup = groupNames[chooseIndex(groupNames.length)]
   const revisions = pool.filter((entry) => groupOf(entry) === chosenGroup)
@@ -291,8 +323,8 @@ export function selectReviewedReferences(
   }
   const drawRelated = (
     family: PageLayoutFamily,
-    uniformPool: readonly ReferenceDirection[],
-  ): { entry: ReferenceDirection; role: ReferenceRole } | undefined => {
+    uniformPool: readonly LibraryReference[],
+  ): { entry: LibraryReference; role: ReferenceRole } | undefined => {
     const native = (entry: ReferenceDirection) => entry.family === family
     const compatible = (entry: ReferenceDirection) =>
       compatibleFamilies(family).includes(entry.family)
@@ -302,7 +334,7 @@ export function selectReviewedReferences(
       : []
     const similar = similarSites(candidates)
     const related = candidates.filter((entry) => similar.has(siteOf(entry) ?? ''))
-    const tiers: [ReferenceDirection[], ReferenceRole][] = [
+    const tiers: [LibraryReference[], ReferenceRole][] = [
       [sameSite.filter(native), 'same-site'],
       [sameSite.filter(compatible), 'same-site'],
       [related.filter(native), 'similar-site'],
@@ -311,6 +343,28 @@ export function selectReviewedReferences(
     ]
     const tier = tiers.find(([pool]) => pool.length)
     return tier && { entry: drawGroupFirst(tier[0], chooseIndex), role: tier[1] }
+  }
+  // A finance request should get a finance shell, not a random 3D or audio editor. Ties and
+  // requests without a matching domain stay uniform.
+  const requestWords = dashboard
+    ? relevanceWords(
+        [
+          brief.originalRequest ?? '',
+          brief.subject ?? '',
+          ...(brief.requiredContent ?? []),
+          ...(brief.explicitAnswers ?? []).map((answer) => answer.answer),
+        ].join(' '),
+      )
+    : new Set<string>()
+  const mostRelevant = (entries: LibraryReference[]): LibraryReference[] => {
+    const scores = entries.map((entry) =>
+      relevanceScore(
+        requestWords,
+        entry.relevance ?? referenceRelevance(entry.tags ?? [], [entry.cue]),
+      ),
+    )
+    const top = Math.max(0, ...scores)
+    return top > 0 ? entries.filter((_, index) => scores[index] === top) : entries
   }
   const relation = (family: PageLayoutFamily, entry: ReferenceDirection): ReferenceRole =>
     anchor?.site && siteOf(entry) === anchor.site
@@ -329,14 +383,18 @@ export function selectReviewedReferences(
       (entry) => entry.source && containsSource(request, entry.source),
     )
     const explicitPool = explicit.length ? explicit : explicitSource
-    const pool = explicitPool.length ? explicitPool : familyEntries
+    const pool = explicitPool.length
+      ? explicitPool
+      : family === 'dashboard'
+        ? mostRelevant(familyEntries)
+        : familyEntries
     // Repeated content sections need distinct compositions within the same page too.
     const count = Math.min(
       new Set(pool.map(groupOf)).size,
       family === 'feature' ? 3 : family === 'about' ? 2 : 1,
     )
     for (let index = 0; index < count; index++) {
-      let pick: { entry: ReferenceDirection; role: ReferenceRole } | undefined
+      let pick: { entry: LibraryReference; role: ReferenceRole } | undefined
       if (explicitPool.length) {
         const entry = drawGroupFirst(explicitPool.filter(unused), chooseIndex)
         pick = { entry, role: anchor ? relation(family, entry) : 'anchor' }
@@ -354,7 +412,7 @@ export function selectReviewedReferences(
       const site = siteOf(entry)
       if (role === 'anchor') anchor = { site, profile: site ? profiles.get(site) : undefined }
       groups.add(groupOf(entry))
-      const { site: _site, role: _role, style: _style, ...base } = entry
+      const { site: _site, role: _role, style: _style, relevance: _relevance, ...base } = entry
       const style = role === 'anchor' ? styleProfileSummary(anchor?.profile) : undefined
       selected.push({
         ...base,

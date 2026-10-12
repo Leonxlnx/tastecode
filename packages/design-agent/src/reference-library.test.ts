@@ -112,10 +112,12 @@ describe('reviewed reference library', () => {
     const dashboards = references.filter(({ family }) => family === 'dashboard')
     expect(dashboards).toHaveLength(200)
     expect(new Set(dashboards.map(({ group }) => group)).size).toBe(200)
+    // No domain words, so every bundled screen stays equally reachable.
     const appBrief = {
       ...brief,
-      pageType: 'mobile fitness app',
-      originalRequest: 'Build a mobile fitness app',
+      subject: 'Acme',
+      pageType: 'mobile app',
+      originalRequest: 'Build a mobile app',
     }
     const selectedGroups = new Set<string>()
     const images = new Set<string>()
@@ -136,6 +138,80 @@ describe('reviewed reference library', () => {
     }
     expect(selectedGroups.size).toBe(200)
     expect(images.size).toBe(400)
+    // A domain request narrows the same bundle to screens named for that domain.
+    const financeDeck = selectReviewedReferences(
+      { ...appBrief, originalRequest: 'Build a finance dashboard' },
+      references,
+      () => 0,
+    )
+    expect(financeDeck[0]?.tags?.join(' ')).toContain('financ')
+    // Loading 372 references and decoding 400 rasters exceeds the default limit on a busy machine.
+  }, 60_000)
+
+  it('prefers dashboards named for the requested domain and stays uniform without a match', () => {
+    const root = library()
+    save(root, [entry])
+    const dashboard = (
+      id: string,
+      domain: string,
+      sourceName: string,
+      cue: string,
+      motifs?: string[],
+    ) => ({
+      ...entry,
+      id,
+      group: id,
+      family: 'dashboard',
+      tags: ['dashboard', 'full-screen', 'generated', domain],
+      domain,
+      sourceName,
+      ...(motifs ? { motifs } : {}),
+      cue,
+      assetType: 'generated-reference',
+      mobileImagePath: 'hero.webp',
+      pairEvidence: 'Both views preserve the same toolbar and data regions.',
+    })
+    writeFileSync(
+      path.join(root, 'dashboard-catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          dashboard('dash-ledger', 'finance', 'Ledgerly', 'Dense ledger table with balances.'),
+          dashboard('dash-budget', 'business-finance', 'Budgeteer', 'Budget envelopes.'),
+          dashboard('dash-notes', 'notes', 'Notely', 'Notes editor with a small finance widget.'),
+          dashboard('dash-gym', 'fitness', 'Gymbook', 'Workout calendar.', ['heart-rate rings']),
+        ],
+      }),
+    )
+    const references = loadReviewedReferences(root)
+    const reachable = (originalRequest: string, extra: Partial<DesignBrief> = {}) => {
+      const seen = new Set<string>()
+      for (let index = 0; index < 4; index++) {
+        const deck = selectReviewedReferences(
+          { ...brief, pageType: 'dashboard', originalRequest, ...extra },
+          references,
+          (length) => index % length,
+        )
+        expect(deck).toHaveLength(1)
+        expect(deck[0]).not.toHaveProperty('relevance')
+        expect(parseReferenceDeck(deck)).toEqual(deck)
+        seen.add(deck[0]!.id)
+      }
+      return [...seen].sort()
+    }
+    // Domain and product names outweigh a passing mention in another screen's cue.
+    expect(reachable('Build a finance dashboard')).toEqual(['dash-budget', 'dash-ledger'])
+    expect(reachable('Build an app like Gymbook')).toEqual(['dash-gym'])
+    expect(reachable('An app with heart-rate rings')).toEqual(['dash-gym'])
+    expect(reachable('Build an app', { subject: 'Ledgerly clone' })).toEqual(['dash-ledger'])
+    expect(reachable('Build an app', { requiredContent: ['Workout log'] })).toEqual(['dash-gym'])
+    expect(reachable('Build an internal admin dashboard')).toEqual([
+      'dash-budget',
+      'dash-gym',
+      'dash-ledger',
+      'dash-notes',
+    ])
+    expect(reachable('Use dash-notes for our finance dashboard')).toEqual(['dash-notes'])
   })
 
   it('makes every hero group an equally eligible anchor despite source sites, profiles and revision counts', () => {
