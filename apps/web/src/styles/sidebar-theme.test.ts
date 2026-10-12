@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const sidebarSource = readFileSync(new URL('../ui/Sidebar.tsx', import.meta.url), 'utf8')
+const menuSource = readFileSync(new URL('../ui/Menu.tsx', import.meta.url), 'utf8')
 const accountLimitsCss = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8')
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 
@@ -117,8 +118,20 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('keeps the account popup flush with its trigger', () => {
+    // Menu publishes the trigger width and left-aligns the panel to it, but
+    // clamps the panel to its viewport gutter. The footer inset has to equal
+    // that gutter or the popup starts 2px right of the trigger.
+    expect(menuSource).toContain("currentPanel.style.setProperty('--menu-trigger-w'")
+    const gutter = menuSource.match(/const VIEWPORT_GUTTER = (\d+)/)?.[1]
+    expect(gutter).toBe('8')
+    expect(appCss).toMatch(new RegExp(`\\.rail__foot \\{[^}]*padding: 6px ${gutter}px;`, 's'))
+    expect(appCss).toMatch(
+      /\.menu--settings \{[^}]*min-width: 0;[^}]*width: min\(var\(--menu-trigger-w, 224px\), calc\(100vw - 16px\)\);/s,
+    )
+  })
+
   it('keeps the account popup compact and pins its actions below scrolling limits', () => {
-    expect(appCss).toMatch(/\.menu--settings \{[^}]*width: min\(224px, calc\(100vw - 16px\)\);/s)
     expect(appCss).toMatch(
       /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
     )
@@ -139,7 +152,7 @@ describe('sidebar theme CSS', () => {
   })
 
   it('keeps the account trigger compact and shows its disclosure state on the right', () => {
-    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px;/s)
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px 8px;/s)
     expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
     expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)

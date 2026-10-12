@@ -382,10 +382,12 @@
   scrollbar-gutter: stable;
 }
 
+/* The 8px side inset matches Menu's viewport gutter. At 6px the trigger sat
+   left of the edge a menu may use, so its popup could not line up with it. */
 .rail__foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 6px;
+  padding: 6px 8px;
   border-top: 1px solid var(--line-strong);
 }
 
@@ -2676,10 +2678,11 @@
 }
 
 .menu--settings {
-  /* Stay close to the account trigger without letting a wide rail turn this
-     small status surface into a large sheet. */
+  /* Flush with the account trigger: Menu aligns the left edges and publishes
+     the trigger's width. The fallback only covers the frame before the first
+     measurement, and min-width yields so the base .menu minimum cannot win. */
   min-width: 0;
-  width: min(224px, calc(100vw - 16px));
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
