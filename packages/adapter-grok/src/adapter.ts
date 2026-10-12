@@ -319,6 +319,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
    *  --system-prompt-override would REPLACE the agent's own prompt, which is
    *  more than session instructions should do. */
   #instructionsPending = false
+  /** Set by dispose. A turn waiting on the previous child must not launch after it. */
+  #disposed = false
 
   constructor(options: { spawn?: SpawnFn } = {}) {
     super()
@@ -396,6 +398,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     attachments: string[] = [],
     options: GrokTurnOptions = {},
   ): Promise<string> {
+    if (this.#disposed) throw new Error('Grok session is closed')
     if (threadId !== this.#threadId) {
       throw new Error(`Grok adapter is attached to a different TasteCode thread`)
     }
@@ -430,6 +433,12 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
     // A turn already in flight would be orphaned by the reassignment below.
     if (this.#child) await this.#stop(this.#child)
+    // dispose() can run during that wait. A child launched after it would be
+    // an agent turn nobody owns, still editing the workspace.
+    if (this.#disposed) {
+      rmSync(promptDirectory, { recursive: true, force: true })
+      throw new Error('Grok session is closed')
+    }
     let child: ChildProcessWithoutNullStreams
     try {
       child = this.#spawn(grokCommand(), args, {
@@ -724,6 +733,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
   }
 
   dispose(): Promise<void> {
+    this.#disposed = true
     const stopped = this.#child ? this.#stop(this.#child) : this.#processStop
     this.#child = undefined
     this.#processStop = stopped

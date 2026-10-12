@@ -1,5 +1,5 @@
 import { ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -563,6 +563,52 @@ describe('Grok adapter', () => {
     expect(children[2]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+  })
+
+  it('does not launch a turn when the session is disposed while the previous child stops', async () => {
+    const children: FakeChild[] = []
+    const promptFiles: string[] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, args) => {
+        promptFiles.push(args[args.indexOf('--prompt-file') + 1]!)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const firstTurnId = await adapter.sendTurn(thread.id, 'first')
+    children[0]!.stdout.write(`${JSON.stringify({ type: 'end', stopReason: 'end_turn' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The first child is still alive after its end frame, so the follow-up
+    // waits for it to stop. Closing the chat lands inside that wait.
+    const promptDirectories = () =>
+      new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('harness-grok-')))
+    const before = promptDirectories()
+    const followUp = adapter.sendTurn(thread.id, 'queued follow-up')
+    const followUpDirectories = [...promptDirectories()].filter((name) => !before.has(name))
+    const disposed = adapter.dispose()
+    await expect(followUp).rejects.toThrow('Grok session is closed')
+    await disposed
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(children).toHaveLength(1)
+    expect(children[0]!.wasKilled).toBe(true)
+    expect(
+      events.filter((event) => event.type === 'turn.started').map((event) => event.turn.id),
+    ).toEqual([firstTurnId])
+    expect(promptFiles.every((file) => !existsSync(file))).toBe(true)
+    expect(followUpDirectories).not.toHaveLength(0)
+    expect(followUpDirectories.filter((name) => existsSync(path.join(os.tmpdir(), name)))).toEqual(
+      [],
+    )
+    await expect(adapter.sendTurn(thread.id, 'after close')).rejects.toThrow(
+      'Grok session is closed',
+    )
+    expect(children).toHaveLength(1)
   })
 
   it('records how long a thought ran on the completed reasoning item', async () => {
