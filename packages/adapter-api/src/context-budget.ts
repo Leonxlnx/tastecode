@@ -1,11 +1,14 @@
 import type { ApiMessage, ApiTool } from './runtime.js'
 
+// These families support larger windows; unknown/custom endpoints stay conservative.
+const LARGE_WINDOW_MODEL =
+  /^(?:gpt-4(?:\.1|o)(?:-|$)|gpt-5(?:[.-]|$)|o[1-9](?:-|$)|claude-|kimi-k2|glm-4\.\d)/i
+
 /** Conservative serialized-byte budgets, not a claim about a vendor's tokenizer. */
 export function contextBudgetBytes(model: string): number {
-  // These families support larger windows; unknown/custom endpoints stay conservative.
-  return /^(?:gpt-4(?:\.1|o)(?:-|$)|gpt-5(?:[.-]|$)|claude-(?:sonnet|opus|haiku|3))/i.test(model)
-    ? 64 * 1024
-    : 8 * 1024
+  // Routers such as OpenRouter prefix the vendor: "anthropic/claude-sonnet-4.5".
+  const id = model.slice(model.lastIndexOf('/') + 1)
+  return LARGE_WINDOW_MODEL.test(id) ? 64 * 1024 : 8 * 1024
 }
 
 export function boundedContext(
