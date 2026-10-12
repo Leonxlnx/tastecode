@@ -307,7 +307,9 @@ CREATE TABLE IF NOT EXISTS threads (
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
   parent_thread_id TEXT,
-  restore_context_pending INTEGER NOT NULL DEFAULT 0
+  restore_context_pending INTEGER NOT NULL DEFAULT 0,
+  history_rewrite_after   INTEGER,
+  history_rewrite_through INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS sidebar_settings (
@@ -518,6 +520,8 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
+  { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
 ]
 
 type SqliteInteger = number | bigint
@@ -1559,6 +1563,18 @@ export class Store {
       const thread = toThread(row)
       return thread ? [thread] : []
     })
+  }
+
+  /** Whether a client whose cursor is `seq` may still show events a restore removed. */
+  historyRewrittenAfter(threadId: string, seq: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM threads
+           WHERE id = ? AND history_rewrite_after < ? AND history_rewrite_through >= ?`,
+        )
+        .get(threadId, seq, seq) !== undefined
+    )
   }
 
   providerHistoryChangedAfter(threadId: string, seq: number): boolean {
@@ -3490,6 +3506,17 @@ export class Store {
   #truncateAfter(threadId: string, seq: number): void {
     this.#deleteReplaySnapshot.run(threadId)
     this.#deleteCachedReplaySnapshot(threadId)
+    // Sequence numbers are never reused, so a client that saw a removed event
+    // holds a cursor in (seq, through]. Widen the range across restores.
+    this.#db
+      .prepare(
+        `UPDATE threads SET
+           history_rewrite_after = MIN(COALESCE(history_rewrite_after, ?), ?),
+           history_rewrite_through = MAX(COALESCE(history_rewrite_through, 0), removed.through)
+         FROM (SELECT MAX(seq) AS through FROM events WHERE thread_id = ? AND seq > ?) AS removed
+         WHERE id = ? AND removed.through IS NOT NULL`,
+      )
+      .run(seq, seq, threadId, seq, threadId)
     this.#db
       .prepare(
         `DELETE FROM session_search
