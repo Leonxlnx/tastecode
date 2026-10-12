@@ -106,7 +106,7 @@ describe('desktop preview capture ownership', () => {
     })
     const first = test.owner.capture(request())
     await vi.advanceTimersByTimeAsync(0)
-    renderer.emit('did-start-navigation', { isMainFrame: true, isSameDocument: false })
+    renderer.emit('did-navigate', {}, 'file:///app/index.html', 200, 'OK')
     const retry = test.owner.capture(request(2))
     await expect(first).resolves.toMatchObject({
       status: 'failed',
