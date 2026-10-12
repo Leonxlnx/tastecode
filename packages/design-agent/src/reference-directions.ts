@@ -737,6 +737,29 @@ export function referenceDirectionsForPage(
   })
 }
 
+/** Same-site references Brand sees next to the anchor; more would blur the anchor's language. */
+export const BRAND_SAME_SITE_REFERENCE_LIMIT = 2
+
+/**
+ * The references that define the page's design language, which is all Brand needs: the anchor
+ * and at most two other compositions from the anchor's source site, in deck order. Page still
+ * plans from the full deck. Decks saved before anchor sampling have no anchor and are returned
+ * whole, so their Brand phase sees what it always saw.
+ */
+export function referenceDirectionsForBrand(
+  deck: readonly ReferenceDirection[],
+): ReferenceDirection[] {
+  const anchor = deck.find(({ role }) => role === 'anchor')
+  if (!anchor) return [...deck]
+  let sameSite = 0
+  return deck.filter((entry) => {
+    if (entry === anchor) return true
+    if (!anchor.site || entry.site !== anchor.site) return false
+    sameSite += 1
+    return sameSite <= BRAND_SAME_SITE_REFERENCE_LIMIT
+  })
+}
+
 export function lockPageReferenceDirections(
   page: PageBlueprint,
   deck: readonly ReferenceDirection[],

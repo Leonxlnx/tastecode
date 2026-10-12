@@ -48,11 +48,13 @@ export {
 } from './page.js'
 export { designPagePrompt, parsePagePhaseOutput } from './page-phase.js'
 export {
+  BRAND_SAME_SITE_REFERENCE_LIMIT,
   lockPageReferenceDirections,
   REFERENCE_DIRECTIONS,
   REFERENCE_ROLES,
   referenceDirectionAttachmentPath,
   referenceDirectionAttachments,
+  referenceDirectionsForBrand,
   referenceDirectionsForPage,
   selectReferenceDirectionDeck,
   type ReferenceDirection,
