@@ -268,6 +268,41 @@ describe('designConsistencyAudit radii', () => {
       expect(audited.radiiOutsideTokens).toEqual([])
     }
   })
+
+  it('resolves named Tailwind radii through the theme the workspace maps to its tokens', () => {
+    const tokens = { radius: { scale: ['10px', '16px', '24px'] } }
+    const v4 = workspace({
+      'src/index.css': `:root { --radius-1: 10px; --radius-2: 16px; --radius-3: 24px }
+        @theme { --radius-md: var(--radius-1); --radius-lg: var(--radius-2);
+          --radius-xl: var(--radius-3); --radius-2xl: 1.5rem }`,
+    })
+    const baseline = designConsistencyBaseline(v4)
+    write(v4, {
+      'src/Hero.tsx':
+        'export const Hero = () => <div className="rounded-md rounded-lg rounded-xl rounded-2xl" />',
+    })
+    const audit = designConsistencyAudit(v4, brand(['Inter'], tokens), baseline)
+    expect(audit.radii).toEqual([{ value: '24px', files: ['src/Hero.tsx'] }])
+    expect(designConsistencyFindings(audit)).toEqual([])
+    write(v4, { 'src/Card.tsx': 'export const Card = () => <div className="rounded-sm" />' })
+    expect(
+      designConsistencyAudit(v4, brand(['Inter'], tokens), baseline).radiiOutsideTokens,
+    ).toEqual(['4px'])
+
+    const v3 = workspace({
+      'tailwind.config.ts': `export default { theme: { extend: { borderRadius: {
+        lg: 'var(--radius)', md: "calc(var(--radius) - 2px)", sm: \`calc(var(--radius) - 4px)\`,
+        DEFAULT: '0.625rem', '2xl': '1rem', ...preset.borderRadius,
+      } } } }`,
+      'src/App.tsx':
+        'export const App = () => <div className="rounded rounded-sm rounded-md rounded-lg rounded-xl rounded-2xl" />',
+    })
+    expect(designConsistencyAudit(v3).radii.map(({ value }) => value)).toEqual([
+      '10px',
+      '12px',
+      '16px',
+    ])
+  })
 })
 
 describe('design consistency review findings', () => {
