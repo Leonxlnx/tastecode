@@ -427,7 +427,15 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
 
   /** Restart with launch-only settings, keeping the session through `session/load`. */
   async #applySettings(settings: AcpTurnSettings): Promise<void> {
-    if (!this.#argsFor) return
+    if (!this.#argsFor) {
+      // An agent that selects its model in-session (Kimi) switches without a
+      // relaunch; skipping this silently kept every turn on the start model.
+      if (settings.model && settings.model !== this.#model && this.#spec.modelConfigId) {
+        await this.#selectSessionModel(settings.model)
+        this.#model = settings.model
+      }
+      return
+    }
     const next = {
       model: settings.model ?? this.#settings.model,
       effort: settings.effort ?? this.#settings.effort,
