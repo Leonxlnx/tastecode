@@ -105,7 +105,7 @@ For every visible section, compare its screenshot geometry first against referen
 
 ${ONE_DESIGN_LANGUAGE}${dashboard ? '\n\nThis is an operating dashboard: judge it as one working screen rather than a marketing page. Review shell and navigation consistency, data density, table and chart readability, visible selected, sorted and open control states, and keyboard focus instead of Hero criteria.' : ''}
 
-Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
+Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, reuse the page's two or three named reveal types instead of a different effect per section or one generic fade-up everywhere, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
 
 Apply the following pass blockers to every screenshot:
 - The page breaks its one design language: sections use different font families, heading styles, type scales, button styles, radius families, label systems or card and surface treatments, or a section imports its own reference's styling instead of the brand's.

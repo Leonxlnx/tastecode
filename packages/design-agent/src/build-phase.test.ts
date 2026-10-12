@@ -89,6 +89,9 @@ describe('build phase', () => {
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain("Implement each section's recorded motion decision")
+    expect(prompt).toContain(
+      "Implement the page's motion vocabulary once, as two or three named reveal types with shared timing",
+    )
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
     expect(prompt).toContain(

@@ -133,6 +133,7 @@ describe('review and repair phases', () => {
     expect(prompt).toContain('visibly stretched, cropped, cut off, or oversized')
     expect(prompt).toContain('replaces the reference alignment')
     expect(prompt).toContain("each section's recorded motion decision")
+    expect(prompt).toContain("reuse the page's two or three named reveal types")
     expect(prompt).toContain('referenceDirectionId')
     expect(prompt).toContain('Invented grids, separator rules, card-edge rails')
     expect(prompt).toContain('SVG is acceptable only for an explicit functional icon, logo')
