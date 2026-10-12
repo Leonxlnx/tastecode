@@ -96,19 +96,30 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('aligns project and chat labels on one text grid without a nesting rail', () => {
+  it('hangs project chats off a soft guide under the folder mark', () => {
     expect(appCss).not.toContain('.proj__chevron')
     expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
-    expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 28px;/s)
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*--sess-indent: 7px;[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
     )
-    // The provider mark fills the gutter under the folder mark (7px + 13px +
-    // 8px), so chat titles start on the project name's line, pinned or not.
-    expect(appCss).toMatch(/\.sess \{[^}]*gap: 8px;[^}]*padding: 0 8px 0 7px;/s)
-    expect(appCss).toMatch(/\.sess__provider \{[^}]*width: 13px;[^}]*height: 13px;/s)
-    expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
+    // Pinned chats keep the outer gutter (7px); a project's chats indent past
+    // the guide, which sits on the folder mark's centre (7px + 13px / 2).
+    expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indent: 22px;/s)
+    expect(appCss).toMatch(
+      /\.proj::after \{[^}]*position: absolute;[^}]*left: 13px;[^}]*width: 1px;[^}]*background: var\(--rail-guide\);[^}]*pointer-events: none;/s,
+    )
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
+    // Every text that sits in a chat row starts where the title does:
+    // indent + 13px mark + 8px gap.
+    expect(appCss).toMatch(/\.sess \{[^}]*gap: 8px;[^}]*padding: 0 8px 0 var\(--sess-indent\);/s)
+    expect(appCss).toMatch(/\.sess__provider \{[^}]*width: 13px;[^}]*height: 13px;/s)
+    expect(appCss).toMatch(
+      /\.proj__sessions-toggle \{[^}]*padding: 0 8px 0 calc\(var\(--sess-indent\) \+ 21px\);/s,
+    )
+    expect(appCss).toMatch(
+      /\.proj__sessions > \.rail__hint \{[^}]*padding-left: calc\(var\(--sess-indent\) \+ 21px\);/s,
+    )
+    expect(appCss).not.toMatch(/\.sessrow\.is-pinned \.sess \{/s)
   })
 
   it('gives project actions room away from the scrollbar', () => {
@@ -186,7 +197,7 @@ describe('sidebar theme CSS', () => {
     )
     expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 28px;[^}]*border-radius: var\(--r-md\);/ms)
     expect(sessRule).toContain('height: 28px;')
-    expect(sessRule).toContain('padding: 0 8px 0 7px;')
+    expect(sessRule).toContain('padding: 0 8px 0 var(--sess-indent);')
     expect(sessRule).toContain('font-size: var(--rail-font-size);')
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
@@ -206,4 +217,5 @@ describe('sidebar theme CSS', () => {
       /\.sessrow\.is-active \{[^}]*--sess-bg: color-mix\(in srgb, var\(--surface-2\) 75%, var\(--bg-rail-tint\)\);[^}]*box-shadow: none;/s,
     )
   })
+
 })

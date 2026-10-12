@@ -126,6 +126,8 @@
   /* One raised surface for the rail: the account card and the active chat. */
   --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
   --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
+  /* The hairline that hangs a project's chats off its folder mark. */
+  --rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -477,7 +479,8 @@
   content: '';
   position: absolute;
   z-index: 2;
-  left: 26px;
+  /* Starts where the title does. */
+  left: calc(var(--sess-indent) + 19px);
   right: 6px;
   height: 2px;
   border-radius: var(--r-pill);
@@ -865,10 +868,31 @@
 }
 
 .proj__drawer > .proj__sessions {
+  /* A project's chats indent past the guide under its folder mark. */
+  --sess-indent: 22px;
   min-height: 0;
 }
 
+/* The guide drops from just under the folder mark (13px + half a pixel is
+   the mark's centre) to the middle of the last row. It hangs on the project
+   rather than the list so the drawer's clip cannot cut its top, and it grows
+   and shrinks with the drawer for free: once the drawer is shorter than the
+   offsets, the box has no height and nothing paints. */
+.proj::after {
+  content: '';
+  position: absolute;
+  top: 24px;
+  bottom: 22px;
+  left: 13px;
+  width: 1px;
+  border-radius: var(--r-pill);
+  background: var(--rail-guide);
+  pointer-events: none;
+}
+
 .proj__sessions {
+  /* Pinned chats have no parent, so they keep the outer gutter. */
+  --sess-indent: 7px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
@@ -907,7 +931,7 @@
   width: 100%;
   max-width: 100%;
   height: 28px;
-  padding: 0 28px;
+  padding: 0 8px 0 calc(var(--sess-indent) + 21px);
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -947,9 +971,8 @@
   letter-spacing: var(--rail-letter-spacing);
   /* No standing reservation for the hover actions: they overlay the right
      edge with their own fade, so the title keeps the full row width and the
-     rail stays honest at any size. The provider mark sits in the gutter under
-     the project's folder, so every title starts on the project name's line. */
-  padding: 0 8px 0 7px;
+     rail stays honest at any size. */
+  padding: 0 8px 0 var(--sess-indent);
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -968,7 +991,8 @@
 
 .sessrow > .rename--session {
   height: 28px;
-  padding: 0 12px 0 28px;
+  /* The field's text starts where the title did: indent + mark + gap. */
+  padding: 0 12px 0 calc(var(--sess-indent) + 21px);
   color: color-mix(in srgb, var(--text-2) 82%, transparent);
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
@@ -977,6 +1001,10 @@
 
 .pinned-sessions {
   margin: 0 0 10px;
+}
+
+.proj__sessions > .rail__hint {
+  padding-left: calc(var(--sess-indent) + 21px);
 }
 
 .sess__title {

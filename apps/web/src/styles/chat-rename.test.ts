@@ -30,7 +30,7 @@ describe('chat rename fields', () => {
     const sidebar = rule('.sessrow > .rename--session')
 
     expect(sidebar).toContain('height: 28px;')
-    expect(sidebar).toContain('padding: 0 12px 0 28px;')
+    expect(sidebar).toContain('padding: 0 12px 0 calc(var(--sess-indent) + 21px);')
     expect(sidebar).toContain('color: color-mix(in srgb, var(--text-2) 82%, transparent);')
     expect(sidebar).toContain('font-size: var(--rail-font-size);')
   })
