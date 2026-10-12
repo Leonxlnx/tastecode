@@ -49,6 +49,22 @@ async function preview() {
 }
 
 describe('static Design media preview', () => {
+  it('reports an entry page over the markup limit as too large', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'taste-static-large-'))
+    roots.push(root)
+    writeFileSync(path.join(root, 'index.html'), `<h1>Large</h1>${' '.repeat(2 * 1024 * 1024)}`)
+    await expect(
+      startStaticDesignPreview(root, {
+        version: 1,
+        kind: 'static',
+        cwd: '.',
+        entry: 'index.html',
+        url: 'http://127.0.0.1:0/',
+        viewports: [{ name: 'desktop', width: 1440, height: 1000 }],
+      }),
+    ).rejects.toThrow('static preview HTML is too large')
+  })
+
   it('starts with local media and serves video, audio and PDF MIME types', async () => {
     const { url } = await preview()
     for (const [file, type] of [
