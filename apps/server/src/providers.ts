@@ -44,7 +44,8 @@ type Probe = {
 /**
  * The order here is the order `providers.list` reports, and the renderer
  * builds its catalog, first-run choice and update list from that answer.
- * Claude Code leads, then Codex, then Grok.
+ * Claude Code leads, then Codex and Grok, then the other CLIs. ACP is one
+ * entry over many agents and `scanProviders` appends it after these.
  */
 const PROBES: Probe[] = [
   {

@@ -545,6 +545,38 @@ describe('ModelSelector', () => {
     ])
   })
 
+  it('places ACP agents and API connections between the CLIs and custom harnesses', () => {
+    const source = (
+      provider: ModelChoice['provider'],
+      sourceName: string,
+      identity: Pick<ModelChoice, 'agent' | 'connectionId'> = {},
+    ): ModelChoice => ({
+      ...MODELS[0]!,
+      key: `${provider}:${sourceName}:default`,
+      provider,
+      sourceName,
+      mark: providerMark(provider),
+      ...identity,
+    })
+    const claude = source('claude-code', 'Claude Code')
+    const cursor = source('cursor', 'Cursor')
+    const gemini = source('acp', 'Gemini CLI', { agent: { id: 'gemini', name: 'Gemini CLI' } })
+    const kimi = source('acp', 'Kimi CLI', { agent: { id: 'kimi', name: 'Kimi CLI' } })
+    const router = source('api', 'Work OpenRouter', { connectionId: 'router' })
+    const work = source('codex', 'Work agent', { agent: { id: 'work', name: 'Work agent' } })
+    const names = (models: ModelChoice[]) => groupModelsBySource(models).map((group) => group.name)
+
+    // ACP agents carry an agent like custom harnesses do, but keep ACP's place.
+    expect(names([work, router, kimi, cursor, gemini, claude])).toEqual([
+      'Claude Code',
+      'Cursor',
+      'Kimi CLI',
+      'Gemini CLI',
+      'Work OpenRouter',
+      'Work agent',
+    ])
+  })
+
   it('searches every rail source without changing the selected model', async () => {
     localStorage.setItem('harness.modelPickerLayout', 'rail')
     const claudeModel: ModelChoice = {

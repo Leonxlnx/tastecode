@@ -2076,7 +2076,8 @@ describe('web client', () => {
   })
 
   it('moves a launch without a usable stored provider to the first ready one', async () => {
-    localStorage.setItem('harness.provider', 'cursor')
+    // Every provider main parks is usable on nightly, so store one neither branch knows.
+    localStorage.setItem('harness.provider', 'retired-provider')
     serverProviders = [
       { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
       serverProviders[0]!,
