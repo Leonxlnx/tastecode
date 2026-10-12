@@ -329,7 +329,10 @@
   --line: #ebebed;
   --line-strong: #dedee2;
   --queue-line: #eeeeef;
-  --skeleton: var(--surface-3);
+  /* A bare --surface-3 bar is 1.18:1 on white, so loading controls read as
+     missing. A step of text keeps it quiet but visible, and follows the
+     backdrop tint the way --surface-3 does. */
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--surface-3));
   --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
   --text: #27272a;
