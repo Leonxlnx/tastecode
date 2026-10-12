@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { Transport } from '../transport.js'
 import { Diff } from './Diff.js'
 
 const DIFF = `diff --git a/src/app.ts b/src/app.ts
@@ -67,5 +68,33 @@ describe('change summary', () => {
       'The files changed after this edit.',
     )
     expect(screen.getByLabelText('Edited files')).toBeTruthy()
+  })
+
+  it('shows the turn patch from Review in a chat that works in the project checkout', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('diff review requires an isolated session'))
+    const { container } = render(
+      <Diff diff={DIFF} threadId="thread-1" transport={{ request } as unknown as Transport} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByText('@@ -1 +1 @@')).toBeTruthy()
+    expect(container.querySelector('.diff__body')).not.toBeNull()
+    expect(screen.queryByText('Review unavailable')).toBeNull()
+    expect(screen.queryByText(/isolated session/)).toBeNull()
+    expect(request).toHaveBeenCalledWith('thread.diff', { threadId: 'thread-1' })
+  })
+
+  it('still explains other review failures', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('git is not installed'))
+    const { container } = render(
+      <Diff diff={DIFF} threadId="thread-1" transport={{ request } as unknown as Transport} />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
+
+    expect(await screen.findByText('git is not installed')).toBeTruthy()
+    expect(screen.getByText('Review unavailable')).toBeTruthy()
+    expect(container.querySelector('.diff__body')).toBeNull()
   })
 })

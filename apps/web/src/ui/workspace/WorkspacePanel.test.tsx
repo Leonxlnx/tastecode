@@ -135,6 +135,20 @@ describe('WorkspacePanel', () => {
     )
   })
 
+  it('lets the right panel narrow to 300px and stops it there', () => {
+    const props = defaults()
+    const { container } = render(<WorkspacePanel {...props} />)
+    container.className = 'workspace-layout'
+    Object.defineProperty(container, 'clientWidth', { configurable: true, value: 1000 })
+    const handle = screen.getByRole('separator')
+    Object.defineProperty(handle, 'setPointerCapture', { configurable: true, value: vi.fn() })
+    fireEvent.pointerDown(handle, { clientX: 500, clientY: 500, pointerId: 9 })
+    fireEvent.pointerMove(window, { clientX: 900, clientY: 500, pointerId: 9 })
+    fireEvent.blur(window)
+    expect(props.onWidthChange).toHaveBeenCalledWith(300)
+    expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('300px')
+  })
+
   it('keeps a shell when hidden with the panel toggle, and closes it on shell exit', async () => {
     const props = defaults()
     const view = render(<WorkspacePanel {...props} terminalToggleRequest={1} />)
@@ -197,5 +211,50 @@ describe('WorkspacePanel', () => {
     await screen.findByRole('textbox', { name: 'Browser address' })
     expect(screen.getByRole('button', { name: 'Exit terminal', hidden: true })).toBeTruthy()
     expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  it('reorders tab labels without moving the mounted surfaces', async () => {
+    const props = defaults()
+    const preview = (requestId: string) => ({ requestId, url: 'http://127.0.0.1:5173/' })
+    const view = render(<WorkspacePanel {...props} designPreviewRequest={preview('a')} />)
+    await screen.findByRole('textbox', { name: 'Browser address' })
+    const terminal = { request: 1, kind: 'terminal' as const }
+    view.rerender(
+      <WorkspacePanel
+        {...props}
+        designPreviewRequest={preview('a')}
+        externalToolRequest={terminal}
+      />,
+    )
+    await screen.findByRole('button', { name: 'Exit terminal' })
+    const body = view.container.querySelector('.workspace-panel__body')!
+    const surfaces = Array.from(body.children)
+    const observer = new MutationObserver(() => undefined)
+    observer.observe(body, { childList: true })
+    const tabTitles = () => screen.getAllByRole('tab').map((tab) => tab.textContent)
+
+    view.rerender(
+      <WorkspacePanel
+        {...props}
+        designPreviewRequest={preview('b')}
+        externalToolRequest={terminal}
+      />,
+    )
+    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), {
+      key: 'ArrowLeft',
+      altKey: true,
+    })
+    expect(tabTitles()).toEqual(['Browser', 'Terminal 1'])
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Terminal 1' }), {
+      key: 'ArrowLeft',
+      altKey: true,
+    })
+    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
+
+    const removed = observer.takeRecords().flatMap((record) => Array.from(record.removedNodes))
+    observer.disconnect()
+    expect(removed).toEqual([])
+    expect(Array.from(body.children)).toEqual(surfaces)
   })
 })

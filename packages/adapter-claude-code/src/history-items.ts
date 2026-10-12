@@ -19,12 +19,31 @@ export function contentBlocks(row: SavedRecord): SavedRecord[] {
   return Array.isArray(content) ? content.map(object) : []
 }
 
+// Claude Code saves a Stop as a user row holding only one of these texts, and shows
+// that row as a notice on the interrupted turn rather than as a prompt.
+const INTERRUPT_MARKERS = new Set([
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]',
+])
+
+export function isInterruptMarker(row: SavedRecord): boolean {
+  const blocks = contentBlocks(row).filter((block) => block.type !== 'tool_result')
+  return (
+    row.type === 'user' &&
+    blocks.length > 0 &&
+    blocks.every(
+      (block) => block.type === 'text' && INTERRUPT_MARKERS.has(string(block.text) ?? ''),
+    )
+  )
+}
+
 export function isPrompt(row: SavedRecord): boolean {
   return (
     row.type === 'user' &&
     !row.isMeta &&
     !row.isCompactSummary &&
-    contentBlocks(row).some((block) => block.type !== 'tool_result')
+    contentBlocks(row).some((block) => block.type !== 'tool_result') &&
+    !isInterruptMarker(row)
   )
 }
 

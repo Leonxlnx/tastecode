@@ -1,5 +1,11 @@
 import { DEFAULT_PORT, startServer } from './server.js'
 
+// The desktop's legacy launch runs this server as Electron in Node mode.
+// Electron reads the switch only while it starts; left here, every terminal
+// and provider CLI would inherit it, and an Electron app started from one of
+// them would come up as plain Node.
+delete process.env['ELECTRON_RUN_AS_NODE']
+
 const port = Number(process.env['HARNESS_PORT'] ?? DEFAULT_PORT)
 const server = startServer({
   port,

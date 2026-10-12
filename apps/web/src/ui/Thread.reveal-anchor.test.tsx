@@ -345,6 +345,39 @@ describe('disclosure scroll anchoring', () => {
     expect(jumpButton()).toBeTruthy()
   })
 
+  it('keeps holding a tall reveal when older turns arrive above it', () => {
+    const items = [
+      item('prompt', 1, { role: 'user', text: 'Fix it' }),
+      item('command', 1_001, { type: 'command', command: 'pnpm test', text: 'ok' }),
+      item('answer', 3_001, { role: 'assistant', phase: 'final_answer', text: 'Fixed.' }),
+    ]
+    const store = new ThreadFrameStore({ ...emptyThread, items, olderCursor: 'cursor' })
+    render(
+      <Thread
+        frameStore={store}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+        onLoadOlderHistory={() => new Promise<void>(() => undefined)}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(jumpButton()).toBeNull()
+
+    act(() =>
+      store.publish({
+        ...emptyThread,
+        items: [
+          item('older-prompt', 0, { turnId: 'older', role: 'user', text: 'Start' }),
+          item('older-answer', 0, { turnId: 'older', role: 'assistant', text: 'Started.' }),
+          ...items,
+        ],
+      }),
+    )
+
+    // The runway grew above the reader, not below the held details.
+    expect(jumpButton()).toBeNull()
+  })
+
   it('offers the jump once the user scrolls away from a held reveal', () => {
     const items = [
       item('prompt', 1, { role: 'user', text: 'Fix it' }),

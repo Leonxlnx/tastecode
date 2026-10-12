@@ -2,7 +2,14 @@ import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
+import {
+  ErrorCode,
+  methods,
+  PROTOCOL_VERSION,
+  type MethodName,
+  type ProviderHistorySource,
+  type ProviderId,
+} from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -27,6 +34,7 @@ import {
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 
@@ -172,6 +180,9 @@ export function startServer(
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
+    // A preview on the control port or the trusted renderer's port would pass
+    // the Origin check whenever nothing else holds that port.
+    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
@@ -199,32 +210,47 @@ export function startServer(
   lifecycleScheduler.refreshNow()
   let historyClosing = false
   let historySessionStarts = 0
-  const providerHistory = Promise.all([
-    import('@harness/adapter-codex').then(({ createCodexHistorySource }) => ({
-      provider: 'codex' as const,
-      history: createCodexHistorySource(),
-    })),
-    import('@harness/adapter-claude-code').then(({ createClaudeHistorySource }) => ({
-      provider: 'claude-code' as const,
-      history: createClaudeHistorySource(),
-    })),
-    import('@harness/adapter-grok').then(({ createGrokHistorySource }) => ({
-      provider: 'grok' as const,
-      history: createGrokHistorySource(),
-    })),
-  ]).then(
-    (sources) =>
-      new ProviderHistory(store, sources, {
-        isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
-        canImport: () => historySessionStarts === 0,
-        changed: (threadIds) => {
-          if (!historyClosing) {
-            lifecycleScheduler.changed()
-            push.broadcast('providerHistory.changed', { threadIds })
-          }
+  // Each provider's saved chats load on their own: an adapter that cannot be
+  // loaded must not keep local chats, or another provider's, from opening.
+  const historySources = [
+    {
+      provider: 'codex',
+      load: async () => (await import('@harness/adapter-codex')).createCodexHistorySource(),
+    },
+    {
+      provider: 'claude-code',
+      load: async () => (await import('@harness/adapter-claude-code')).createClaudeHistorySource(),
+    },
+    {
+      provider: 'grok',
+      load: async () => (await import('@harness/adapter-grok')).createGrokHistorySource(),
+    },
+  ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
+  /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
+  const unavailableHistory = new Map<string, unknown>()
+  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
+    (results) =>
+      new ProviderHistory(
+        store,
+        historySources.flatMap(({ provider }, index) => {
+          const result = results[index]!
+          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+          unavailableHistory.set(`external:${provider}:`, result.reason)
+          console.log(`[history] ${provider} history could not be loaded`)
+          return []
+        }),
+        {
+          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+          canImport: () => historySessionStarts === 0,
+          changed: (threadIds) => {
+            if (!historyClosing) {
+              lifecycleScheduler.changed()
+              push.broadcast('providerHistory.changed', { threadIds })
+            }
+          },
+          log: (message) => console.log(`[history] ${message}`),
         },
-        log: (message) => console.log(`[history] ${message}`),
-      }),
+      ),
   )
   const refreshProviderHistory = () => {
     if (!historyClosing)
@@ -241,7 +267,17 @@ export function startServer(
   void initialProviderHistory.catch(() => undefined)
 
   async function loadProviderHistory(threadId: string): Promise<void> {
-    const history = await initialProviderHistory
+    let history: ProviderHistory
+    try {
+      history = await initialProviderHistory
+    } catch (error) {
+      // Only an imported chat depends on the history service for its transcript.
+      if (threadId.startsWith('external:')) throw error
+      return
+    }
+    for (const [prefix, reason] of unavailableHistory) {
+      if (threadId.startsWith(prefix)) throw reason
+    }
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
   // A previous run killed mid-session leaves git believing in checkouts that
@@ -320,6 +356,10 @@ export function startServer(
     } catch (error) {
       if (error instanceof InvalidParamsError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
+        return
+      }
+      if (error instanceof InvalidHistoryCursorError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
       }
       respondError(
@@ -730,8 +770,10 @@ export function startServer(
           )
         }
         // The sidebar entry can disappear while its history remains available
-        // when the project is added again. Running processes still need an owner.
-        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
+        // when the project is added again. Running processes still need an
+        // owner, so stop them — but do not archive the chats, or none of them
+        // could be continued after the project is added back.
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.stopThread(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
@@ -834,6 +876,19 @@ export function startServer(
       case 'thread.history': {
         const p = parseParams(method, params)
         await loadProviderHistory(p.threadId)
+        if (p.page) {
+          const history = await orchestrator.historyPage(p.threadId, p.page)
+          const running = orchestrator.isTurnRunning(p.threadId)
+          const approval = store.threadApproval(p.threadId) ?? 'ask'
+          if (p.page.before === undefined) orchestrator.markThreadRead(p.threadId)
+          return {
+            events: history.events,
+            running,
+            approval,
+            ...(history.reset ? { reset: true } : {}),
+            page: history.page,
+          }
+        }
         const reset =
           p.afterSeq !== undefined && store.providerHistoryChangedAfter(p.threadId, p.afterSeq)
         const history = await orchestrator.historyForResponse(
@@ -1102,6 +1157,9 @@ export function startServer(
     close: async () => {
       historyClosing = true
       clearInterval(providerHistoryTimer)
+      // Terminal jobs get a fixed shutdown budget; waiting on provider history
+      // first would spend it. disposeAll below waits for the same close.
+      void orchestrator.closeAllTerminals().catch(() => undefined)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true
@@ -1169,6 +1227,11 @@ export function allowedOrigin(
     return false
   }
   return Boolean(accessToken) || origin === rendererOrigin
+}
+
+function httpOriginPort(origin: string): number[] {
+  const url = URL.parse(origin)
+  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(

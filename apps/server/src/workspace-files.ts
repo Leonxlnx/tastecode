@@ -1,7 +1,11 @@
 import { stat as callbackStat, type Dirent } from 'node:fs'
 import { open, opendir, readdir, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { assertPublicWorkspaceFile, isSecretWorkspaceName } from './api-workspace-paths.js'
+import {
+  assertPublicWorkspaceFile,
+  isCredentialWorkspace,
+  isSecretWorkspaceName,
+} from './api-workspace-paths.js'
 
 const MAX_TEXT_BYTES = 2 * 1024 * 1024
 const BINARY_SAMPLE_BYTES = 8 * 1024
@@ -41,7 +45,7 @@ export async function listWorkspaceDirectory(
 
   const protocolDirectory = toProtocolPath(path.relative(workspace, directory))
   const children = await readdir(directory, { withFileTypes: true })
-  const entries = await workspaceEntries(protocolDirectory, directory, children)
+  const entries = await workspaceEntries(workspace, protocolDirectory, directory, children)
 
   return { path: protocolDirectory, entries }
 }
@@ -70,7 +74,9 @@ export async function searchWorkspaceFiles(
         if (!child.isSymbolicLink() && (child.isDirectory() || child.isFile())) {
           const relativeChild = path.join(protocolDirectory, child.name)
           if (toProtocolPath(relativeChild).toLowerCase().includes(needle)) {
-            entries.push(...(await workspaceEntries(protocolDirectory, directory, [child])))
+            entries.push(
+              ...(await workspaceEntries(workspace, protocolDirectory, directory, [child])),
+            )
           }
           if (child.isDirectory()) {
             if (depth < MAX_SEARCH_DEPTH) {
@@ -97,6 +103,7 @@ export async function searchWorkspaceFiles(
 
 /** Queue every stat for maximum file-system throughput without one promise per child. */
 function workspaceEntries(
+  workspace: string,
   protocolDirectory: string,
   directory: string,
   children: Dirent[],
@@ -105,7 +112,10 @@ function workspaceEntries(
     const entries: Array<WorkspaceFileEntry | undefined> = []
     entries.length = children.length
     const absoluteDirectory = directory.endsWith(path.sep) ? directory : `${directory}${path.sep}`
-    const directoryRestricted = protocolDirectory.split('/').some(isSecretWorkspaceName)
+    // Reading refuses every file of a workspace opened on or inside a credential
+    // folder such as ~/.aws, so the tree must show them locked rather than openable.
+    const directoryRestricted =
+      isCredentialWorkspace(workspace) || protocolDirectory.split('/').some(isSecretWorkspaceName)
     let entryCount = 0
     let pending = 0
     let queued = true
@@ -166,7 +176,7 @@ export async function readWorkspaceTextFile(
 ): Promise<WorkspaceFileContents> {
   const workspace = await realpath(workspacePath)
   const file = await containedRealPath(workspace, relativeFile)
-  assertPublicWorkspaceFile(file)
+  assertPublicWorkspaceFile(file, workspace)
   const metadata = await stat(file)
   if (!metadata.isFile()) throw new Error('path must be a file')
 

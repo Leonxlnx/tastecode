@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { DomainEvent, ResultOf } from '@harness/contracts'
-import { ThreadController } from './thread-controller.js'
+import { NEWEST_HISTORY_TURNS, OLDER_HISTORY_TURNS, ThreadController } from './thread-controller.js'
 import { TestTransport } from './test-transport.js'
 import { emptyThread, reduce, threadItems } from './thread-store.js'
 
@@ -199,6 +199,16 @@ describe('ThreadController lifecycle owner', () => {
       attachments: ['image'],
     })
     expect(controller.hasPending('thread')).toBe(false)
+  })
+
+  it('recovers into a draft with no text without a leading blank line', () => {
+    const controller = new ThreadController(new TestTransport())
+    controller.editDraft('thread', { text: '', attachments: ['/work/kept.png'] })
+    controller.recoverDraft('thread', { text: 'recover me', attachments: ['/work/sent.png'] })
+    expect(controller.draft('thread')).toMatchObject({
+      text: 'recover me',
+      attachments: ['/work/kept.png', '/work/sent.png'],
+    })
   })
 
   it('retains bounded inactive caches and invalidates old recovery epochs', () => {
@@ -405,5 +415,312 @@ describe('history gap recovery', () => {
     }
     expect(controller.snapshot('background')!.running).toBe(true)
     expect(controller.cursor('background')).toBeUndefined()
+  })
+})
+
+describe('paged history', () => {
+  const turn = (index: number, seq: number) => ({
+    seq,
+    event: {
+      type: 'item.completed' as const,
+      item: {
+        id: `answer-${index}`,
+        turnId: `turn-${index}`,
+        type: 'message' as const,
+        role: 'assistant' as const,
+        status: 'completed' as const,
+        text: `Answer ${index}`,
+        createdAt: index,
+      },
+    },
+  })
+  const newest = (olderCursor: string | null): ResultOf<'thread.history'> => ({
+    events: [turn(2, 7), turn(3, 9)],
+    running: false,
+    page: { olderCursor, snapshotSeq: 9 },
+  })
+  const older: ResultOf<'thread.history'> = {
+    events: [turn(0, 2), turn(1, 4)],
+    running: false,
+    page: { olderCursor: null, snapshotSeq: 9 },
+  }
+  const pageOf = (params: unknown) => (params as { page?: { before?: string } }).page
+  const texts = (controller: ThreadController) =>
+    controller.snapshot('thread')!.items.map((item) => item.text)
+
+  it('opens with the newest turns and prepends older pages on demand', async () => {
+    const transport = new TestTransport((_, params) =>
+      pageOf(params)?.before === 'cursor' ? older : newest('cursor'),
+    )
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    expect(transport.requests[0]!.params).toEqual({
+      threadId: 'thread',
+      page: { turnLimit: NEWEST_HISTORY_TURNS },
+    })
+    expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+    expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+    expect(controller.cursor('thread')).toBe(9)
+    const liveStart = controller.snapshot('thread')!.liveStart
+
+    // Scrolling and find can ask at once; one read serves both.
+    await Promise.all([
+      controller.loadOlderHistory('thread'),
+      controller.loadOlderHistory('thread'),
+    ])
+    expect(transport.requests.slice(1).map((request) => request.params)).toEqual([
+      { threadId: 'thread', page: { before: 'cursor', turnLimit: OLDER_HISTORY_TURNS } },
+    ])
+    expect(texts(controller)).toEqual(['Answer 0', 'Answer 1', 'Answer 2', 'Answer 3'])
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    // Indexes past the prepended rows still name the same live tail.
+    expect(controller.snapshot('thread')!.liveStart).toBe(liveStart + 2)
+    expect(controller.cursor('thread')).toBe(9)
+
+    await controller.loadOlderHistory('thread')
+    expect(transport.requests).toHaveLength(2)
+  })
+
+  it('keeps the cursor through a live catch-up read', async () => {
+    const transport = new TestTransport((_, params) =>
+      (params as { afterSeq?: number }).afterSeq === 9
+        ? { events: [turn(4, 11)], running: false }
+        : newest('cursor'),
+    )
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    await controller.loadHistory('thread', 9)
+    expect(transport.requests[1]!.params).toEqual({ threadId: 'thread', afterSeq: 9 })
+    expect(texts(controller)).toEqual(['Answer 2', 'Answer 3', 'Answer 4'])
+    expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+    expect(controller.cursor('thread')).toBe(11)
+  })
+
+  it('opens the whole history from a server that does not page', async () => {
+    const transport = new TestTransport(() => ({
+      events: [turn(0, 2), turn(1, 4)],
+      running: false,
+    }))
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    expect(controller.cursor('thread')).toBe(4)
+    await controller.loadOlderHistory('thread')
+    expect(transport.requests).toHaveLength(1)
+  })
+
+  it('reopens from the newest page when a restore removed the cursor turn', async () => {
+    let restored = false
+    const transport = new TestTransport((_, params) => {
+      if (pageOf(params)?.before === 'cursor') {
+        restored = true
+        return { ...newest(null), events: [turn(0, 2)], reset: true }
+      }
+      return restored ? { ...newest(null), events: [turn(0, 2)] } : newest('cursor')
+    })
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    await controller.loadOlderHistory('thread')
+    expect(transport.requests.map((request) => pageOf(request.params))).toEqual([
+      { turnLimit: NEWEST_HISTORY_TURNS },
+      { before: 'cursor', turnLimit: OLDER_HISTORY_TURNS },
+      { turnLimit: NEWEST_HISTORY_TURNS },
+    ])
+    expect(texts(controller)).toEqual(['Answer 0'])
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+  })
+
+  it('drops an older page whose cursor a reload has replaced', async () => {
+    let reply!: (value: ResultOf<'thread.history'>) => void
+    let opens = 0
+    const transport = new TestTransport((_, params) => {
+      if (pageOf(params)?.before) return new Promise((resolve) => (reply = resolve))
+      opens += 1
+      return newest(opens === 1 ? 'first' : 'second')
+    })
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    const read = controller.loadOlderHistory('thread')
+    await controller.loadHistory('thread')
+    reply(older)
+    await read
+    expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+    expect(controller.snapshot('thread')!.olderCursor).toBe('second')
+  })
+
+  describe('complete history for find', () => {
+    const answer = (index: number, seq: number, text: string) => {
+      const entry = turn(index, seq)
+      return { seq, event: { ...entry.event, item: { ...entry.event.item, text } } }
+    }
+    const deferred = () => {
+      let reply!: (value: ResultOf<'thread.history'>) => void
+      const transport = new TestTransport((_, params) => {
+        const page = pageOf(params)
+        if (page === undefined) return new Promise((resolve) => (reply = resolve))
+        return page.before === 'cursor'
+          ? { events: [turn(1, 4)], running: false, page: { olderCursor: 'top', snapshotSeq: 9 } }
+          : newest('cursor')
+      })
+      return { transport, reply: (value: ResultOf<'thread.history'>) => reply(value) }
+    }
+    const complete: ResultOf<'thread.history'> = {
+      events: [turn(0, 2), turn(1, 4), answer(2, 7, 'Answer 2 as replayed'), turn(3, 9)],
+      running: false,
+    }
+
+    it('adds every older turn from one unpaged read and keeps the loaded rows', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const liveStart = controller.snapshot('thread')!.liveStart
+      const read = controller.loadCompleteHistory('thread')
+      expect(transport.requests[1]!.params).toEqual({ threadId: 'thread' })
+
+      // A row streamed while the read was out is already loaded.
+      controller.receive({ threadId: 'thread', seq: 11, event: turn(4, 11).event }, () => false)
+      reply(complete)
+      await read
+
+      expect(texts(controller)).toEqual([
+        'Answer 0',
+        'Answer 1',
+        'Answer 2',
+        'Answer 3',
+        'Answer 4',
+      ])
+      expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+      expect(controller.snapshot('thread')!.liveStart).toBe(liveStart + 2)
+      expect(controller.cursor('thread')).toBe(11)
+      expect(transport.requests).toHaveLength(2)
+    })
+
+    it('drops a read its caller gave up on', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const abort = new AbortController()
+      const read = controller.loadCompleteHistory('thread', abort.signal)
+      abort.abort()
+      reply(complete)
+      await read
+      expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+      expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+    })
+
+    it('adds only what an older page that landed first left out', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const read = controller.loadCompleteHistory('thread')
+      await controller.loadOlderHistory('thread')
+      expect(texts(controller)).toEqual(['Answer 1', 'Answer 2', 'Answer 3'])
+      reply(complete)
+      await read
+      expect(texts(controller)).toEqual(['Answer 0', 'Answer 1', 'Answer 2', 'Answer 3'])
+      expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    })
+
+    it('reopens from the newest page and fails when the history lacks the first loaded row', async () => {
+      const { transport, reply } = deferred()
+      const controller = new ThreadController(transport)
+      await controller.loadHistory('thread')
+      const read = controller.loadCompleteHistory('thread')
+      reply({ events: [turn(0, 2), turn(3, 9)], running: false })
+      // Nothing older was added, so find must not count the read as done.
+      await expect(read).rejects.toThrow('thread history changed while reading it')
+      expect(transport.requests.map((request) => pageOf(request.params))).toEqual([
+        { turnLimit: NEWEST_HISTORY_TURNS },
+        undefined,
+        { turnLimit: NEWEST_HISTORY_TURNS },
+      ])
+      expect(texts(controller)).toEqual(['Answer 2', 'Answer 3'])
+    })
+  })
+
+  it('drops an older page when flushing compacts its background thread', async () => {
+    let reply!: (value: ResultOf<'thread.history'>) => void
+    const transport = new TestTransport((_, params) =>
+      pageOf(params)?.before
+        ? new Promise((resolve) => (reply = resolve))
+        : {
+            events: [
+              turn(2, 7),
+              {
+                seq: 8,
+                event: {
+                  type: 'turn.started',
+                  turn: { id: 'turn-4', threadId: 'thread', status: 'running', createdAt: 4 },
+                },
+              },
+              {
+                seq: 9,
+                event: {
+                  type: 'item.started',
+                  item: {
+                    id: 'long',
+                    turnId: 'turn-4',
+                    type: 'message',
+                    role: 'assistant',
+                    status: 'started',
+                    // Past the running-transcript budget a background thread may keep.
+                    text: 'x'.repeat(300 * 1024),
+                    createdAt: 4,
+                  },
+                },
+              },
+            ],
+            running: true,
+            page: { olderCursor: 'cursor', snapshotSeq: 9 },
+          },
+    )
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    controller.activate('other')
+    const read = controller.loadOlderHistory('thread')
+    const unprotected = () => false
+    const delta = (seq: number, characters: number) =>
+      controller.receive(
+        {
+          threadId: 'thread',
+          seq,
+          event: {
+            type: 'item.delta',
+            turnId: 'turn-4',
+            itemId: 'long',
+            textDelta: 'y'.repeat(characters),
+          },
+        },
+        unprotected,
+      )
+    // 63 KB of streamed text is flushed by the next structural event; the
+    // 2 KB after it stay buffered until the page arrives and flushes them.
+    delta(10, 63 * 1024)
+    controller.receive(
+      {
+        threadId: 'thread',
+        seq: 11,
+        event: {
+          type: 'usage.updated',
+          usage: {
+            inputTokens: 1,
+            cachedInputTokens: 0,
+            outputTokens: 1,
+            reasoningTokens: 0,
+            totalTokens: 2,
+          },
+        },
+      },
+      unprotected,
+    )
+    delta(12, 2 * 1024)
+    expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+
+    reply(older)
+    await read
+    // That flush crossed the compaction check and dropped the rows the cursor
+    // pointed above, so the page has nowhere to go.
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    expect(texts(controller)).not.toContain('Answer 0')
   })
 })

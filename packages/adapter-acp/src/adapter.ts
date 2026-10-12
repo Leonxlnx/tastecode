@@ -606,16 +606,24 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
     const call = request.toolCall ?? {}
-    const id = call.toolCallId ?? `approval-${Date.now()}`
+    // Never replace a pending responder: two requests sharing a tool call id,
+    // or arriving without one in the same millisecond, left the first one
+    // unanswered and the agent blocked on it.
+    const id =
+      call.toolCallId && !this.#pendingApprovals.has(call.toolCallId)
+        ? call.toolCallId
+        : `approval-${crypto.randomUUID()}`
     const options = request.options ?? []
 
     // This is the only place a permissioned call is described. Its completion
     // update carries neither kind nor title, so record them now or the finished
-    // command shows up as an anonymous "tool".
+    // command shows up as an anonymous "tool". A proposed edit is kept too, and
+    // reaches the turn diff only if the call completes.
     if (call.toolCallId) {
       this.#streamer?.note(call.toolCallId, {
         ...(call.kind ? { kind: call.kind } : {}),
         ...(call.title ? { title: call.title } : {}),
+        ...(call.content ? { content: call.content } : {}),
       })
     }
 

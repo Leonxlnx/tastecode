@@ -128,7 +128,7 @@ function normalizeHex(value: unknown): string | undefined {
 
 function rgba(value: string, alpha: number): string {
   const channels = [1, 3, 5].map((index) => Number.parseInt(value.slice(index, index + 2), 16))
-  return `rgba(${channels.join(', ')} / ${alpha})`
+  return `rgba(${channels.join(', ')}, ${alpha})`
 }
 
 function integer(value: unknown, field: string, minimum: number, maximum: number): number {

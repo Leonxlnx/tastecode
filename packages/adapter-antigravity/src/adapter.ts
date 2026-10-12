@@ -3,7 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, spawnOwned, readNdjson } from '@harness/proc'
+import { killTree, ProtocolFrameError, spawnOwned, readNdjson } from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import {
@@ -317,6 +317,12 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
       (line) => this.emit('log', `unparsable stdout: ${line.slice(0, 200)}`),
       {
         onError: (error) => {
+          // A frame that does not match the schema, or a throwing event
+          // listener, leaves the stream intact; keep reading it.
+          if (!(error instanceof ProtocolFrameError)) {
+            this.emit('log', `Antigravity event handling failed: ${error.message}`)
+            return
+          }
           finishProcess(error.message)
           void killTree(child)
         },

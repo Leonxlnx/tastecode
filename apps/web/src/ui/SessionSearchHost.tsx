@@ -20,6 +20,8 @@ const SessionSearch = lazy(() =>
 export type SessionSearchHandle = {
   open: (initialProjectPath?: string) => void
   close: () => void
+  /** Read at key time; the open state stays here so opening never renders the app shell. */
+  isOpen: () => boolean
 }
 
 type SessionSearchHostProps = Omit<
@@ -66,7 +68,7 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
       if (canReceiveRestoredFocus(target)) target.focus()
     }, [request])
 
-    useImperativeHandle(ref, () => ({ open, close }), [close, open])
+    useImperativeHandle(ref, () => ({ open, close, isOpen: () => opened.current }), [close, open])
 
     if (!request) return null
     return (

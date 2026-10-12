@@ -637,6 +637,20 @@ describe('InboxSidebar', () => {
     ).toEqual(['New Alpha', 'Older Alpha'])
   })
 
+  it('keeps a rename open for the Enter that confirms an IME conversion', () => {
+    const view = props([
+      { path: '/alpha', name: 'Alpha', sessions: [active('alpha', 'Alpha chat', 10)] },
+    ])
+    render(<InboxSidebar {...view} />)
+    fireEvent.doubleClick(screen.getByText('Alpha chat').closest('button')!)
+    const input = screen.getByRole('textbox', { name: 'Rename Alpha chat' })
+    fireEvent.change(input, { target: { value: 'にほんご' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(view.onRenameSession).not.toHaveBeenCalled()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(view.onRenameSession).toHaveBeenCalledWith('alpha', 'にほんご')
+  })
+
   it('orders snoozes, pages settled work, and keeps a deep selected row visible', () => {
     const sessions: Session[] = [
       {

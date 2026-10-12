@@ -20,6 +20,10 @@ const COMMANDS = new Set(['bun', 'node', 'npm', 'pnpm', 'yarn'])
 const UNSAFE_ARG = /[&|<>^%!"\r\n()]/
 const PACKAGE_SCOPE_ARG =
   /^-(?:C|F|r|w)|^--(?:cwd|dir|prefix|filter(?:-prod)?|recursive|workspace(?:-root|s)?|include-workspace-root)(?:=|$)/
+// Only output options. Any other package-manager option can reconfigure what
+// the script runs: `--node-options`, `--script-shell`, `--config.*` and other
+// config keys reach the processes the script starts.
+const PACKAGE_MANAGER_OPTIONS = new Set(['--if-present', '--silent'])
 const MAX_OUTPUT_BYTES = 100_000
 const startingPreviewPorts = new Set<number>()
 const PackageManifestSchema = z.object({
@@ -40,13 +44,19 @@ export async function startDesignPreview(
   plan: PreviewPlan,
   timeoutMs = 30_000,
   signal?: AbortSignal,
+  /** The app's own ports: the control socket and the renderer origin it trusts. */
+  reservedPorts: ReadonlySet<number> = new Set(),
 ): Promise<RunningPreview> {
   signal?.throwIfAborted()
   const workspace = realpathSync(workspacePath)
   const cwd = existingWorkspacePath(workspace, plan.cwd, true)
+  // A command preview that is still booting has not bound its port yet, and
+  // a page served on one of the app's ports would pass its Origin check.
+  const unavailable = {
+    has: (port: number) => startingPreviewPorts.has(port) || reservedPorts.has(port),
+  }
   if (plan.kind === 'static') {
-    // A command preview that is still booting has not bound its port yet.
-    const preview = await startStaticDesignPreview(cwd, plan, startingPreviewPorts)
+    const preview = await startStaticDesignPreview(cwd, plan, unavailable)
     if (signal?.aborted) {
       await preview.stop()
       signal.throwIfAborted()
@@ -58,7 +68,7 @@ export async function startDesignPreview(
     throw new Error('preview command argument is unsafe')
   }
   assertRunsWorkspaceCode(workspace, cwd, plan)
-  const { url, releaseStart } = await claimPreviewStart(plan.url)
+  const { url, releaseStart } = await claimPreviewStart(plan.url, unavailable)
   const port = new URL(url).port
   const args = plan.args.map((arg, index) => {
     if (/^--port=\d+$/.test(arg)) return `--port=${port}`
@@ -116,14 +126,12 @@ export async function startDesignPreview(
   }
 }
 
-async function claimPreviewStart(url: string) {
+async function claimPreviewStart(url: string, unavailable: Pick<ReadonlySet<number>, 'has'>) {
   const previewUrl = new URL(url)
   let requestedPort = Number(previewUrl.port)
   for (let attempt = 0; attempt < 10; attempt++) {
-    const port = await availablePreviewPort(
-      startingPreviewPorts.has(requestedPort) ? 0 : requestedPort,
-    )
-    if (port !== undefined && !startingPreviewPorts.has(port)) {
+    const port = await availablePreviewPort(unavailable.has(requestedPort) ? 0 : requestedPort)
+    if (port !== undefined && !unavailable.has(port)) {
       startingPreviewPorts.add(port)
       previewUrl.port = String(port)
       return {
@@ -207,8 +215,20 @@ export function assertRunsWorkspaceCode(
   ) {
     throw new Error('preview package-manager workspace selectors are not allowed')
   }
-  const { script } = packageScriptRun(plan.args)
+  const { script, scriptIndex } = packageScriptRun(plan.args)
   if (!script) throw new Error('preview command must name a package script')
+  // npm also reads options after the script name, up to `--`, as its own config.
+  const optionsEnd =
+    plan.command === 'npm' ? Math.max(scriptIndex, packageManagerArgs.length) : scriptIndex
+  if (
+    plan.args
+      .slice(0, optionsEnd)
+      .some((arg) => arg.startsWith('-') && !PACKAGE_MANAGER_OPTIONS.has(arg))
+  ) {
+    throw new Error(
+      'preview package-manager options other than --silent and --if-present are not allowed',
+    )
+  }
   if (!packageScripts(cwd).has(script)) {
     throw new Error(`preview script "${script}" is not declared in package.json`)
   }
@@ -219,10 +239,12 @@ export function assertRunsWorkspaceCode(
  * Validation and launch share this so the script that runs is the one checked.
  */
 function packageScriptRun(args: readonly string[]) {
-  const named = args.filter((arg) => !arg.startsWith('-'))
-  const explicitRun = named[0] === 'run'
+  const named = args.flatMap((arg, index) => (arg.startsWith('-') ? [] : [index]))
+  const explicitRun = named[0] !== undefined && args[named[0]] === 'run'
+  const scriptIndex = (explicitRun ? named[1] : named[0]) ?? args.length
   return {
-    script: explicitRun ? named[1] : named[0],
+    script: args[scriptIndex],
+    scriptIndex,
     args: explicitRun ? [...args] : ['run', ...args],
   }
 }

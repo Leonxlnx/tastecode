@@ -778,6 +778,38 @@ describe('Transport', () => {
     expect(error).toHaveBeenCalledOnce()
   })
 
+  it('keeps connecting and notifying other owners when a state listener throws', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const states: string[] = []
+    transport.onState(() => {
+      throw new Error('state listener failed')
+    })
+    transport.onState((state) => states.push(state))
+
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    // The open handshake runs after the state announcement.
+    expect(first.sent.some((frame) => frame.includes('client.capabilities'))).toBe(true)
+
+    // Reconnect scheduling announces 'reconnecting' before it sets its timer.
+    first.close()
+    vi.advanceTimersByTime(0)
+    const second = FakeSocket.instances[1]
+    expect(second).toBeDefined()
+    second!.open()
+
+    expect(states).toEqual(['connecting', 'open', 'reconnecting', 'open'])
+    expect(transport.state).toBe('open')
+    expect(error).toHaveBeenCalledTimes(4)
+    expect(error).toHaveBeenCalledWith(
+      '[transport] connection state listener failed',
+      expect.any(Error),
+    )
+    transport.close()
+  })
+
   it('ignores pushes from a socket replaced by a failed health check', async () => {
     const transport = new Transport('ws://test')
     const listener = vi.fn()

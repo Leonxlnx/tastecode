@@ -611,6 +611,8 @@ describe('Sidebar chat actions', () => {
     expect(input.getAttribute('aria-label')).toBe('Rename Polish the sidebar')
     expect(input.closest('.sessrow')?.classList.contains('is-active')).toBe(true)
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
@@ -913,6 +915,58 @@ describe('Sidebar chat actions', () => {
       expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
     },
   )
+
+  it('keeps an expanded long project scrolled in place when a chat is deleted or restored', () => {
+    const sessions = Array.from({ length: 70 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    const content = (projectSessions: typeof sessions, activeSessionId: string) => (
+      <Sidebar
+        projects={[{ path: '/work/large', name: 'Large project', sessions: projectSessions }]}
+        activeProjectPath="/work/large"
+        activeSessionId={activeSessionId}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const view = render(content(sessions, 'thread-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    const list = screen.getByRole('list', { name: 'Large project chats' })
+    list.scrollTop = 60 * 27
+    fireEvent.scroll(list)
+
+    view.rerender(
+      content(
+        sessions.filter((entry) => entry.id !== 'thread-61'),
+        'thread-1',
+      ),
+    )
+    expect(list.scrollTop).toBe(60 * 27)
+    expect(screen.getByRole('button', { name: 'Chat 62, Codex' })).toBeTruthy()
+
+    view.rerender(content(sessions, 'thread-1'))
+    expect(list.scrollTop).toBe(60 * 27)
+    expect(screen.getByRole('button', { name: 'Chat 61, Codex' })).toBeTruthy()
+
+    view.rerender(content(sessions, 'thread-40'))
+    expect(list.scrollTop).toBe(39 * 27 - 8 * 27)
+  })
 
   it('starts with only the active project expanded', () => {
     vi.useFakeTimers()

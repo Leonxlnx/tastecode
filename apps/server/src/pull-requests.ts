@@ -463,7 +463,7 @@ export class PullRequestService {
         if (this.#detailInFlight.get(key) !== pending) {
           throw new Error('Pull request changed while loading. Refresh and try again.')
         }
-        this.#invalidateFiles(key)
+        this.#invalidateFiles(key, value)
         // A detail missing its conversations retries them on the next open.
         if (value.reviewThreadsUnavailable) return value
         const now = this.#now()
@@ -1304,10 +1304,15 @@ export class PullRequestService {
     }
   }
 
-  #invalidateFiles(target: string): void {
+  // Files keys carry both OIDs, so pages of the comparison still in force stay valid.
+  #invalidateFiles(
+    target: string,
+    current?: Pick<PullRequestFilesResult, 'headRefOid' | 'baseRefOid'>,
+  ): void {
+    const kept = current && `${target}:${current.headRefOid}:${current.baseRefOid}:`
     for (const cache of [this.#filesCache, this.#filesInFlight]) {
       for (const key of cache.keys()) {
-        if (key.startsWith(`${target}:`)) cache.delete(key)
+        if (key.startsWith(`${target}:`) && !(kept && key.startsWith(kept))) cache.delete(key)
       }
     }
   }
@@ -1811,11 +1816,7 @@ function mergeReviewers(
   for (const review of reviews) {
     const key = review.author.login.toLowerCase()
     const existing = byLogin.get(key)
-    if (
-      !existing ||
-      existing.submittedAt === undefined ||
-      Date.parse(review.submittedAt) >= Date.parse(existing.submittedAt)
-    ) {
+    if (!existing || supersedes(review, existing)) {
       byLogin.set(key, {
         actor: review.author,
         state: review.state,
@@ -1829,6 +1830,27 @@ function mergeReviewers(
     byLogin.set(actorValue.login.toLowerCase(), { actor: actorValue, state: 'REQUESTED' })
   }
   return [...byLogin.values()]
+}
+
+/**
+ * Whether a review replaces the one already shown for its author.
+ *
+ * GitHub keeps a reviewer's latest opinion: a comment-only review (every reply
+ * to a review thread is one) does not cancel an approval or a change request,
+ * so it only wins over another comment.
+ */
+function supersedes(review: PullRequestReview, existing: PullRequestReviewer): boolean {
+  const opinionated = isOpinionatedReview(review.state)
+  const existingOpinionated = isOpinionatedReview(existing.state)
+  if (opinionated !== existingOpinionated) return opinionated
+  return (
+    existing.submittedAt === undefined ||
+    Date.parse(review.submittedAt) >= Date.parse(existing.submittedAt)
+  )
+}
+
+function isOpinionatedReview(state: PullRequestReviewer['state']): boolean {
+  return state !== 'COMMENTED' && state !== 'PENDING'
 }
 
 function normalizeAutoMerge(
@@ -1906,13 +1928,15 @@ function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['s
     value === 'FAILURE' ||
     value === 'ERROR' ||
     value === 'TIMED_OUT' ||
-    value === 'ACTION_REQUIRED'
+    value === 'ACTION_REQUIRED' ||
+    value === 'STARTUP_FAILURE'
   ) {
     return 'failure'
   }
   if (value === 'CANCELLED') return 'cancelled'
   if (value === 'SKIPPED') return 'skipped'
-  if (value === 'NEUTRAL' || value === 'STALE') return 'neutral'
+  // A check with any conclusion has finished, even one GitHub adds later.
+  if (value === 'NEUTRAL' || value === 'STALE' || raw.conclusion) return 'neutral'
   return 'pending'
 }
 

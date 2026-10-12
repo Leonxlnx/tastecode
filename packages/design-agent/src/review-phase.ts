@@ -4,6 +4,7 @@ import type { AssetManifest } from './assets.js'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
+import { DESIGN_CONSISTENCY_FINDING_IDS } from './design-consistency.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
 import { designMotionGuidance } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
@@ -188,10 +189,11 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
   }
 }
 
-const AUDIT_FINDING_IDS = new Set([
+const AUDIT_FINDING_IDS = new Set<string>([
   'document_h1_count',
   'interactive_target_size',
   'mobile_interactive_target_size',
+  ...DESIGN_CONSISTENCY_FINDING_IDS,
 ])
 
 export function enforceDomAuditFindings(

@@ -26,6 +26,7 @@ import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonCode, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
 import { indexedTextLine, indexTextLines } from '../text-line-index.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 
 type Entry = ResultOf<'workspace.listDirectory'>['entries'][number]
 type FileContents = ResultOf<'workspace.readFile'>
@@ -82,6 +83,9 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   projectName?: string | undefined
   threadId?: string | undefined
 }) {
+  // The server does not know a chat's provisional id while its first message
+  // creates it; stay in the project checkout until the real id arrives.
+  const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
   const [directories, setDirectories] = useState<Map<string, Entry[]>>(new Map())
   const [expanded, setExpanded] = useState<Set<string>>(new Set(['']))
   const [loadingDirectories, setLoadingDirectories] = useState<Set<string>>(new Set())
@@ -103,14 +107,14 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   const context = useCallback(
     () => ({
       projectPath: props.projectPath!,
-      ...(props.threadId ? { threadId: props.threadId } : {}),
+      ...(threadId ? { threadId } : {}),
     }),
-    [props.projectPath, props.threadId],
+    [props.projectPath, threadId],
   )
 
   const loadDirectory = useCallback(
-    async (directory: string) => {
-      if (!props.projectPath) return
+    async (directory: string): Promise<Entry[] | undefined> => {
+      if (!props.projectPath) return undefined
       const mine = directoryGeneration.current
       const request = (directoryRequests.current.get(directory) ?? 0) + 1
       directoryRequests.current.set(directory, request)
@@ -124,6 +128,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         })
         if (isCurrent()) {
           setDirectories((current) => new Map(current).set(directory, result.entries))
+          return result.entries
         }
       } catch (cause) {
         if (isCurrent()) {
@@ -138,6 +143,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
           })
         }
       }
+      return undefined
     },
     [context, props.projectPath, props.transport],
   )
@@ -160,17 +166,18 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
       directoryGeneration.current += 1
       fileGeneration.current += 1
     }
-  }, [fileSelection, loadDirectory, props.projectPath, props.threadId])
+  }, [fileSelection, loadDirectory, props.projectPath, threadId])
 
   const query = filter.trim()
-  const searchKey = JSON.stringify([props.projectPath, props.threadId, query])
+  const searchKey = JSON.stringify([props.projectPath, threadId, query])
   useEffect(() => {
     if (!props.projectPath || !query) {
       setSearch(undefined)
       return
     }
     let cancelled = false
-    setSearch({ key: searchKey })
+    // A refresh repeats the same search; its results stay up until the new ones arrive.
+    setSearch((current) => (current?.key === searchKey ? current : { key: searchKey }))
     const timer = setTimeout(() => {
       void props.transport
         .request('workspace.searchFiles', {
@@ -238,11 +245,14 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
   )
 
   const readFile = useCallback(
-    async (path: string) => {
+    async (path: string, reread = false) => {
       if (!props.projectPath) return
       const mine = ++fileGeneration.current
-      setFile(undefined)
-      setLoadingFile(true)
+      // A reread keeps the open file, and with it the reader's scroll position, until it resolves.
+      if (!reread) {
+        setFile(undefined)
+        setLoadingFile(true)
+      }
       setError(undefined)
       try {
         const result = await props.transport.request('workspace.readFile', {
@@ -252,6 +262,7 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
         if (fileGeneration.current === mine) setFile(result)
       } catch (cause) {
         if (fileGeneration.current === mine) {
+          setFile(undefined)
           setError(cause instanceof Error ? cause.message : String(cause))
         }
       } finally {
@@ -273,32 +284,44 @@ export const WorkspaceFiles = memo(function WorkspaceFiles(props: {
 
   const refreshDirectories = useCallback(() => {
     setError(undefined)
-    for (const directory of expandedRef.current) void loadDirectory(directory)
-    if (selectedPathRef.current) void readFile(selectedPathRef.current)
+    // A folder left open inside a collapsed one still refreshes, so its ancestors do too.
+    const open = new Set([''])
+    for (const directory of expandedRef.current)
+      for (let end = directory.length; end > 0; end = directory.lastIndexOf('/', end - 1))
+        open.add(directory.slice(0, end))
+    const generation = directoryGeneration.current
+    // Parents refresh before their children. A folder missing from its parent's new
+    // listing was deleted or replaced: it is closed rather than requested, since
+    // listing it would only fail and keep reporting the error on every refresh.
+    const refresh = async (directory: string) => {
+      const entries = await loadDirectory(directory)
+      if (!entries || directoryGeneration.current !== generation) return
+      const folders = new Set<string>()
+      for (const entry of entries)
+        if (entry.kind === 'directory' && !entry.restricted) folders.add(entry.path)
+      const prefix = directory ? `${directory}/` : ''
+      const gone = new Set<string>()
+      for (const path of open) {
+        if (path === directory || !path.startsWith(prefix)) continue
+        const end = path.indexOf('/', prefix.length)
+        if (!folders.has(end < 0 ? path : path.slice(0, end))) gone.add(path)
+      }
+      if (gone.size > 0) {
+        setExpanded((current) => new Set([...current].filter((path) => !gone.has(path))))
+        setDirectories((current) => {
+          const next = new Map(current)
+          for (const path of gone) next.delete(path)
+          return next
+        })
+      }
+      for (const folder of folders) if (open.has(folder)) void refresh(folder)
+    }
+    void refresh('')
+    if (selectedPathRef.current) void readFile(selectedPathRef.current, true)
     setSearchRevision((current) => current + 1)
   }, [loadDirectory, readFile])
 
-  useEffect(() => {
-    let refresh: ReturnType<typeof setTimeout> | undefined
-    const schedule = () => {
-      refresh ??= setTimeout(() => {
-        refresh = undefined
-        refreshDirectories()
-      }, 200)
-    }
-    const offEvent = props.transport.on('thread.event', ({ threadId, event }) => {
-      if (event.type === 'turn.completed' && (!props.threadId || threadId === props.threadId))
-        schedule()
-    })
-    const offState = props.transport.onState((state) => {
-      if (state === 'open') schedule()
-    })
-    return () => {
-      clearTimeout(refresh)
-      offEvent()
-      offState()
-    }
-  }, [props.threadId, props.transport, refreshDirectories])
+  useWorkspaceRefresh(props.transport, threadId, refreshDirectories)
 
   const rootEntries = directories.get('') ?? EMPTY_WORKSPACE_ENTRIES
   const visibleRoot = useMemo(
@@ -473,7 +496,8 @@ const WorkspaceFileTree = memo(function WorkspaceFileTree(props: {
           onSelect={props.onSelect}
         />
       ))}
-      {props.loadingDirectories.has('') ? (
+      {/* As for a folder, only a first listing gets placeholder rows; a refresh keeps the rows. */}
+      {props.loadingDirectories.has('') && props.entries.length === 0 ? (
         <SkeletonStatus label="Loading files…" className="workspace-files__tree-skeleton">
           <SkeletonRows rows={9} icon widths={TREE_SKELETON_WIDTHS} />
         </SkeletonStatus>

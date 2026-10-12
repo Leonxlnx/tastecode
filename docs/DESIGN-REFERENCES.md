@@ -1,13 +1,69 @@
 # Design Agent v0.5 reference workflow
 
 New Design runs extract the requested sections and existing brand constraints before selecting
-references. The server samples composition groups uniformly across the entire eligible library,
-independently for each layout family. Style tags and source sites never narrow the random pool;
-alternate revisions do not get extra votes. It selects up to three feature compositions and two
-about compositions without replacement, and one of each other family. Explicit reference IDs or
-source URLs take priority. The page planner uses only sections needed by the brief. Free-form section
-names never filter out needed compositions. Missing families use available compositions with the
-requested content adapted inside them; section topics do not have to match layout family names.
+references.
+
+**One page keeps one design language (owner decision, 2026-10-12).** Randomness stays, but a
+generated website must not switch design language between sections: one type system (at most two
+families), one palette, one radius and spacing scale, and one button, card and label language.
+References from one source site share a design language, so sampling now starts from one anchor
+site. This replaces the earlier policy from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which sampled every family
+independently and uniformly regardless of source site and put about eleven sites on one page.
+
+The server draws the first requested family that has a pool, normally the hero, uniformly by
+composition group across the entire eligible library. That anchor's source site (its host without
+`www.`) defines the page's design language. Every later section comes from the first non-empty tier,
+group-first and uniform inside the tier:
+
+1. the requested family on the anchor site;
+2. the requested family on close profiled sites: sites scoring at least 10 of 14 against the
+   anchor (see below), the best three by score with ties included;
+3. only for a sparse family, one with fewer than ten composition groups in the whole library: a
+   compatible family (see below) on the anchor site, then on close profiled sites;
+4. the uniform pool the family has always used: the family alone when it has at least ten groups,
+   otherwise the family together with its compatible families.
+
+The requested family always wins over compatible geometry. A FAQ, CTA, process or contact slot of
+a family with enough compositions is never filled with another section type; only sparse families
+such as stats and pricing borrow, and only when neither the anchor site nor a close site has that
+family. An earlier order tried the anchor site's compatible family before a close site's exact
+family, which on the 1,129-pair library put another section type into about a third of FAQ slots
+and half of process slots, and gave a fifth of pages two contact sections and no CTA band.
+Alternate revisions do not get extra votes. It selects up to three feature compositions and two
+about compositions without replacement, and one of each other family; the deck size is unchanged.
+Explicit reference IDs or source URLs take priority over every tier. The page planner uses only
+sections needed by the brief. Free-form section names never filter out needed compositions. Missing
+families use available compositions with the requested content adapted inside them; section topics
+do not have to match layout family names.
+
+Similarity comes from `style-profiles.json` beside `catalog.json`, one profile per source host. The
+deterministic score adds: heading type 3 when equal or 2 within the serif group (serif,
+high-contrast serif) or the sans group (grotesk, geometric, humanist, condensed), other types only
+when equal; body type 2 or 1 by the same rule; theme 2 when equal or 1 when either is mixed; radius
+2 when equal or 1 when adjacent on sharp, small, medium, large, pill; density 1; imagery 1; and one
+point per shared mood word, at most 3, so 14 at most. A close site scores at least 10, for example
+the same heading and body type, theme and radius plus one more trait. Half the maximum is about the
+median pair among the 53 profiled sites: it would call every second site close and put the
+library's single stats reference on a third of all pages. With 10, about the closest 8% of site
+pairs qualify; anchors without a close site fill missing families from the uniform pool. Entries a
+profile lists as `outliers` do not share their site's language: they never anchor a page and never
+fill tiers 1-3, but remain in the uniform fallback. An anchor site without a profile skips the
+close-site tiers. A missing or malformed profile file means no profiles; same-site sampling still
+applies and selection never fails because of it. A library configured below can ship its own
+`style-profiles.json`.
+
+Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar-site` or
+`fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
+likely typefaces. Decks saved before this change, without these fields, still parse and resume.
+
+Dashboards keep exactly one complete app screen. Instead of a uniform draw, the server scores each
+eligible screen by the domain words it shares with the request, subject, required content and
+explicit answers. Grammar, surface names (app, dashboard, screen) and interface parts every
+dashboard has (table, chart, filter, sidebar) are ignored. A word matching the screen's domain,
+tags or product name counts 2 and a word found only in its cue or motifs counts 1. The pick is
+uniform by group among the top-scoring screens, uniform over all screens when nothing matches, and
+an explicit ID or source still wins.
 
 The bundled selection pools each contain at least ten distinct composition groups and image files.
 Sparse topics use compatible geometry: metrics use proof/about compositions, pricing and process
@@ -18,7 +74,12 @@ plus complete desktop captures, so differently labeled collections remain reacha
 
 The selected catalog records and file hashes are persisted with the Design run. Brand, page,
 asset, build and visual review turns receive the actual selected desktop and paired mobile
-images. Resuming a run retains the selection and rejects changed reference files. Existing
+images. Brand sees only the anchor and at most two other compositions from the anchor's site, both
+attached and listed, so it reads one language instead of averaging the deck. Page sees the whole
+deck, and later phases see the compositions the page selected. Every phase's reference footer
+says the anchor defines the type, palette, radii, spacing, controls and surfaces, and the other
+references contribute composition only. Decks saved without an anchor keep the full Brand input
+and the earlier footer. Resuming a run retains the selection and rejects changed reference files. Existing
 pre-v0.5 runs retain their original bundled reference behavior. User-attached references take
 precedence and do not require a configured catalog.
 
@@ -161,8 +222,13 @@ The local initial catalog contains ten individually inspected section pairs from
 Ritovex and Scalient. Complete-image discovery expands this installation to 172 composition groups,
 including 24 heroes. The roughly one thousand raw generated images include fragments and revisions;
 they are not one thousand independent layouts and have not all been visually reviewed. Runtime unit
-and orchestration checks cover equal group eligibility, sampling without replacement,
-explicit selection, image attachment transport, catalog validation and persisted selection.
+and orchestration checks cover equal anchor-group eligibility, the anchor-site and close-site
+tiers, the requested family before compatible geometry, the minimum similarity score, outlier
+exclusion, missing or malformed style profiles, dashboard domain relevance, sampling without
+replacement, explicit selection, image attachment transport, catalog validation and persisted
+selection including deck sites and roles. A seeded 2,000-page simulation over the bundled library
+checks that only sparse families borrow geometry and only when their own family is out of reach,
+and that no reference reaches a quarter of all pages.
 Four clean TasteCode site runs have finished. Each was started once
 with Astra medium and one user prompt in a fresh project: Fieldwork, Orbit, Atelier Fern and
 Clearpath. The test app uses isolated data, renderer port 5185 and server port 4315. Earlier

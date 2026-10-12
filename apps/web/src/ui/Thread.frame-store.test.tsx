@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSyncExternalStore } from 'react'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
-import { emptyThread, reduceDeltas } from '../thread-store.js'
+import { emptyThread, reduceDeltas, type ThreadState } from '../thread-store.js'
+import { LiveMarkdownParser } from './live-markdown.js'
 
 const virtualizerRender = vi.hoisted(() => vi.fn())
 
@@ -357,6 +358,44 @@ describe('Thread live frame isolation', () => {
     })
     expect(renders).toBe(2)
     expect(view.getByText('2')).toBeTruthy()
+  })
+
+  it('appends live reasoning deltas that end in whitespace without re-parsing', () => {
+    const item: Item = {
+      id: 'reasoning-1',
+      turnId: 'turn-1',
+      type: 'reasoning',
+      status: 'started',
+      text: '**Plan**',
+      createdAt: 1,
+    }
+    let state: ThreadState = {
+      ...emptyThread,
+      items: [item],
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+    }
+    const store = new ThreadFrameStore(state)
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(view.getByRole('button', { name: /thinking/i }))
+    const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+    const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+
+    for (const textDelta of [' first.\n', 'Second ', 'step. ', 'Done.']) {
+      state = reduceDeltas(state, [
+        { type: 'item.delta', turnId: 'turn-1', itemId: 'reasoning-1', textDelta },
+      ])
+      act(() => store.publish(state))
+    }
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(append).toHaveBeenCalledTimes(4)
+    expect(view.container.querySelector('.reasoning-summary')?.textContent).toContain(
+      'Second step. Done.',
+    )
+    vi.restoreAllMocks()
   })
 
   it('resolves live activity rows when the collapsed disclosure opens', () => {

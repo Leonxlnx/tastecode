@@ -75,3 +75,13 @@ describe('database location migration', () => {
     expect(existsSync(`${legacy}-wal`)).toBe(true)
   })
 })
+
+describe('default database location', () => {
+  it.each(['', 'relative-data'])('ignores a %j platform data directory', (value) => {
+    // XDG treats empty and relative XDG_DATA_HOME as unset; APPDATA gets the same
+    // treatment so an exported but blank variable never lands in the working directory.
+    const location = storeLocation({ XDG_DATA_HOME: value, APPDATA: value })
+    expect(path.isAbsolute(location)).toBe(true)
+    expect(location.startsWith(os.homedir())).toBe(true)
+  })
+})

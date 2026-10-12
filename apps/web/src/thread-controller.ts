@@ -4,6 +4,8 @@ import { ThreadFrameStore } from './thread-frame-store.js'
 import {
   appendUserMessage,
   emptyThread,
+  prependCompleteHistory,
+  prependOlderHistory,
   reduce,
   reduceEventLog,
   removeOptimisticMessage,
@@ -47,6 +49,10 @@ type BufferedEvent = { seq: number | undefined; event: DomainEvent }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
+/** Whole turns in the first page of a cold open; older turns load on demand. */
+export const NEWEST_HISTORY_TURNS = 10
+/** Whole turns per older page while scrolling up. */
+export const OLDER_HISTORY_TURNS = 20
 
 /** Owns transcript, replay, submission, queue and draft lifetimes. React reads
  * snapshots and issues commands; streaming updates publish through the frame store. */
@@ -68,6 +74,7 @@ export class ThreadController {
   #serverQueueRevisions = new Map<string, number>()
   #queueReads = new Map<string, number>()
   #recoveries = new Map<string, Set<object>>()
+  #olderReads = new Map<string, { cursor: string; read: Promise<void> }>()
   #activeId: string | undefined
   #frame: number | undefined
   #recoveryRevision = 0
@@ -165,7 +172,7 @@ export class ThreadController {
   recoverDraft(id: string, rejected: RecoverableDraft): ComposerDraft {
     const current = this.#drafts.get(id)
     return this.editDraft(id, {
-      text: current ? current.text + '\n\n' + rejected.text : rejected.text,
+      text: current?.text ? current.text + '\n\n' + rejected.text : rejected.text,
       attachments: [...new Set([...(current?.attachments ?? []), ...rejected.attachments])],
     })
   }
@@ -307,6 +314,7 @@ export class ThreadController {
     this.#serverQueueRevisions.delete(id)
     this.#queueReads.delete(id)
     this.#recoveries.delete(id)
+    this.#olderReads.delete(id)
   }
   flush(id: string, protectedState: () => boolean = () => this.isProtected(id)): ThreadState {
     const pending = this.#deltas.get(id)
@@ -409,16 +417,20 @@ export class ThreadController {
     this.#histories.set(id, buffers)
     this.#historyOwners.set(id, buffer)
     try {
-      const { events, running, approval, reset } = await this.transport.request(
+      const { events, running, approval, reset, page } = await this.transport.request(
         'thread.history',
-        afterSeq === undefined ? { threadId: id } : { threadId: id, afterSeq },
+        afterSeq === undefined
+          ? { threadId: id, page: { turnLimit: NEWEST_HISTORY_TURNS } }
+          : { threadId: id, afterSeq },
       )
       if (this.#historyOwners.get(id) !== buffer) return
       if (reset) afterSeq = undefined
       const restored = reduceEventLog(reset ? emptyThread : base.state, events, afterSeq)
-      const lastSeq = events.at(-1)?.seq ?? afterSeq ?? 0
+      // A server without paging answers with the whole history and no page.
+      const paged = page?.olderCursor ? { ...restored, olderCursor: page.olderCursor } : restored
+      const lastSeq = page?.snapshotSeq ?? events.at(-1)?.seq ?? afterSeq ?? 0
       const replayed = reduceEventLog(
-        { ...restored, running, activeTurn: running ? restored.activeTurn : undefined },
+        { ...paged, running, activeTurn: running ? paged.activeTurn : undefined },
         buffer,
         lastSeq,
       )
@@ -453,6 +465,71 @@ export class ThreadController {
       if (buffers.size === 0 && this.#histories.get(id) === buffers) this.#histories.delete(id)
       if (this.#historyOwners.get(id) === buffer) this.#historyOwners.delete(id)
     }
+  }
+  /** Load the page above the loaded transcript; callers for one cursor share a read. */
+  loadOlderHistory(id: string, turnLimit = OLDER_HISTORY_TURNS): Promise<void> {
+    const cursor = this.snapshot(id)?.olderCursor
+    if (!cursor) return Promise.resolve()
+    const pending = this.#olderReads.get(id)
+    if (pending?.cursor === cursor) return pending.read
+    const read = this.#readOlderHistory(id, cursor, turnLimit).finally(() => {
+      if (this.#olderReads.get(id)?.read === read) this.#olderReads.delete(id)
+    })
+    this.#olderReads.set(id, { cursor, read })
+    return read
+  }
+  async #readOlderHistory(id: string, cursor: string, turnLimit: number): Promise<void> {
+    const { events, reset, page } = await this.transport.request('thread.history', {
+      threadId: id,
+      page: { before: cursor, turnLimit },
+    })
+    // A reload, restore or eviction replaced the rows this cursor pointed above.
+    if (this.snapshot(id)?.olderCursor !== cursor) return
+    if (reset) {
+      this.invalidateHistory(id)
+      await this.loadHistory(id)
+      return
+    }
+    const current = this.flush(id)
+    // Flushing can compact a background thread, which drops its rows and cursor.
+    if (current.olderCursor !== cursor) return
+    const olderCursor = page?.olderCursor ?? null
+    // A recovery read in flight replays onto its base; keep the page there too.
+    const base = this.#historyBases.get(id)
+    if (base?.state.olderCursor === cursor)
+      base.state = prependOlderHistory(base.state, events, olderCursor)
+    const next = prependOlderHistory(current, events, olderCursor)
+    this.update(id, next)
+    if (id === this.#activeId) this.frames.publish(next)
+  }
+  /**
+   * Load every turn above the loaded transcript in one unpaged read, for find
+   * and search jumps. Loaded rows keep their live state, so nothing streamed
+   * meanwhile needs replaying, and older pages landing first only leave fewer
+   * rows to add. An aborted read is dropped. A history that no longer matches
+   * the loaded rows reopens the thread and rejects.
+   */
+  async loadCompleteHistory(id: string, signal?: AbortSignal): Promise<void> {
+    if (!this.snapshot(id)?.olderCursor) return
+    const { events } = await this.transport.request('thread.history', { threadId: id })
+    if (signal?.aborted || !this.snapshot(id)?.olderCursor) return
+    const current = this.flush(id)
+    // Flushing can compact a background thread, which drops its rows and cursor.
+    if (!current.olderCursor) return
+    const next = prependCompleteHistory(current, events)
+    if (!next) {
+      // The loaded rows no longer match the server's. Reopening adds nothing
+      // older, so the caller must not count this read as done.
+      this.invalidateHistory(id)
+      await this.loadHistory(id)
+      throw new Error('thread history changed while reading it')
+    }
+    // A recovery read in flight replays onto its base; complete it there too.
+    const base = this.#historyBases.get(id)
+    if (base?.state.olderCursor)
+      base.state = prependCompleteHistory(base.state, events) ?? base.state
+    this.update(id, next)
+    if (id === this.#activeId) this.frames.publish(next)
   }
   settleSubmissions(id: string, items: QueuedTurn[], snapshot?: ThreadState): PendingSubmission[] {
     const pending = this.#submissions.get(id)

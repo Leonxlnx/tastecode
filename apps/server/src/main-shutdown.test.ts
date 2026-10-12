@@ -1,10 +1,13 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mocks = vi.hoisted(() => ({ close: vi.fn() }))
+const mocks = vi.hoisted(() => ({ close: vi.fn(), nodeModeAtStart: undefined as unknown }))
 vi.mock('./server.js', () => ({
   DEFAULT_PORT: 4311,
-  startServer: () => ({ close: mocks.close }),
+  startServer: () => {
+    mocks.nodeModeAtStart = process.env['ELECTRON_RUN_AS_NODE']
+    return { close: mocks.close }
+  },
 }))
 
 const handlers = new Map<string, (...args: unknown[]) => void>()
@@ -30,6 +33,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  vi.unstubAllEnvs()
   if (originalParentPort) Object.defineProperty(process, 'parentPort', originalParentPort)
   else Reflect.deleteProperty(process, 'parentPort')
 })
@@ -118,5 +122,15 @@ describe('server main shutdown', () => {
     await settle()
     expect(log).toHaveBeenCalledWith('[server] shutdown failed', error)
     expect(process.exit).toHaveBeenCalledWith(1)
+  })
+})
+
+describe('server main startup', () => {
+  it('drops the Node-mode switch of a legacy desktop launch before starting', async () => {
+    vi.stubEnv('ELECTRON_RUN_AS_NODE', '1')
+    mocks.nodeModeAtStart = 'not started'
+    await import('./main.js')
+    expect(mocks.nodeModeAtStart).toBeUndefined()
+    expect(process.env['ELECTRON_RUN_AS_NODE']).toBeUndefined()
   })
 })

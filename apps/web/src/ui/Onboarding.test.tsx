@@ -4,6 +4,18 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Onboarding, providerReadiness } from './Onboarding.js'
 
+const desktop = vi.hoisted(() => ({
+  enabled: false,
+  setTheme: vi.fn((_preference: string) => Promise.resolve()),
+}))
+vi.mock('../bridge.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../bridge.js')>()),
+  get isDesktop() {
+    return desktop.enabled
+  },
+  setDesktopTheme: desktop.setTheme,
+}))
+
 afterEach(cleanup)
 
 const codexReady: ProviderStatus = {
@@ -91,8 +103,7 @@ describe('first-run onboarding', () => {
 
     const plans = screen.getByRole('list', { name: 'Supported beta plans' })
     expect(plans.querySelectorAll('.onboarding__provider')).toHaveLength(3)
-    expect(plans.textContent).toContain('CodexOpenAIReady')
-    expect(plans.textContent).toContain('Claude CodeAnthropicChecking…')
+    expect(plans.textContent).toContain('Claude CodeAnthropicChecking…CodexOpenAIReady')
     expect(plans.textContent).toContain('GrokxAINot installedSet up')
     expect(screen.getByRole('status').textContent).toContain('Looking for the coding agents')
 
@@ -244,6 +255,28 @@ describe('first-run onboarding', () => {
 
     view.rerender(<Onboarding {...props} />)
     expect(screen.getByRole('heading', { name: 'Your coding agents' })).toBeTruthy()
+  })
+
+  it('pins the window theme again when a pending System choice gives way to the current one', () => {
+    desktop.enabled = true
+    document.documentElement.dataset.theme = 'dark'
+    Object.defineProperty(document, 'startViewTransition', { configurable: true, value: vi.fn() })
+    try {
+      const props = renderOnboarding({ themePreference: 'dark' })
+      fireEvent.click(screen.getByRole('button', { name: /^Get started/ }))
+      next()
+
+      fireEvent.click(screen.getByRole('radio', { name: /^System/ }))
+      expect(desktop.setTheme).toHaveBeenLastCalledWith('system')
+      fireEvent.click(screen.getByRole('radio', { name: /^Dark/ }))
+
+      expect(props.onThemePreferenceChange).toHaveBeenCalledWith('dark')
+      expect(desktop.setTheme).toHaveBeenLastCalledWith('dark')
+    } finally {
+      desktop.enabled = false
+      delete document.documentElement.dataset.theme
+      Reflect.deleteProperty(document, 'startViewTransition')
+    }
   })
 })
 

@@ -7,6 +7,7 @@ import { installState, subscribeInstalls } from '../provider-install.js'
 import type { Transport } from '../transport.js'
 import {
   copyTerminalSelection,
+  followTerminalTheme,
   terminalCopyShortcut,
   terminalFont,
   terminalTheme,
@@ -31,11 +32,14 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
     const container = host.current
     if (!container) return
     const workspace = props.profile === 'workspace'
-    const theme = terminalTheme(props.profile)
-    if (props.appearance === 'notice') {
-      const style = getComputedStyle(container)
-      theme.background = style.getPropertyValue('--menu-bg').trim()
-      theme.cursorAccent = theme.background
+    const palette = () => {
+      const theme = terminalTheme(props.profile)
+      if (props.appearance === 'notice') {
+        const style = getComputedStyle(container)
+        theme.background = style.getPropertyValue('--menu-bg').trim()
+        theme.cursorAccent = theme.background
+      }
+      return theme
     }
 
     const instance = new Terminal({
@@ -45,8 +49,9 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
       lineHeight: workspace ? 1 : 1.25,
       screenReaderMode: true,
       scrollback: 5_000,
-      theme,
+      theme: palette(),
     })
+    const unfollowTheme = followTerminalTheme(instance, palette)
     const fit = new FitAddon()
     instance.loadAddon(fit)
     instance.open(container)
@@ -108,6 +113,7 @@ export const InstallTerminal = memo(function InstallTerminal(props: {
 
     return () => {
       observer.disconnect()
+      unfollowTheme()
       input.dispose()
       offStore()
       instance.dispose()

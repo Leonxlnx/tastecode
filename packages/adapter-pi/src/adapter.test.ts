@@ -173,6 +173,40 @@ describe('Pi adapter', () => {
     adapter.dispose()
   })
 
+  it('logs a throwing event listener instead of failing the session', async () => {
+    const child = new FakeChild()
+    attachRpc(child)
+    let killed = 0
+    child.kill = () => {
+      killed++
+      return true
+    }
+    const adapter = new PiAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    let thrown = false
+    adapter.on('event', (event) => {
+      events.push(event)
+      if (event.type === 'item.delta' && !thrown) {
+        thrown = true
+        throw new Error('listener failed')
+      }
+    })
+    adapter.on('log', (line) => logs.push(line))
+
+    const thread = await adapter.startThread('/repo')
+    const turnId = await adapter.sendTurn(thread.id, 'Hello')
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
+    expect(killed).toBe(0)
+    adapter.dispose()
+  })
+
   it('discovers fork-specific models and thinking levels', async () => {
     const child = new FakeChild()
     const commands = attachRpc(child)
