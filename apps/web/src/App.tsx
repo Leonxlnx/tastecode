@@ -4584,6 +4584,9 @@ export function App() {
     const model = selectedModelChoice?.model
     const fast = getFastServiceTier(model)
     if (!fast) return
+    // Save it to the open chat like the picker does, or the chat's saved tier
+    // comes back the next time it is opened.
+    pendingThreadModelSave.current = activeIdRef.current
     setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
   }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
