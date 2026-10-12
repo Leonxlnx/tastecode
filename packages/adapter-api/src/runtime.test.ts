@@ -423,6 +423,42 @@ describe('ApiAgentSession', () => {
     expect(JSON.stringify({ events, logs })).not.toContain(secret)
   })
 
+  it('runs no further tool calls of a batch after Stop', async () => {
+    const executed: string[] = []
+    const events: DomainEvent[] = []
+    let started: (() => void) | undefined
+    const running = new Promise<void>((resolve) => (started = resolve))
+    const session = new ApiAgentSession({
+      model: 'test-model',
+      transport: transport(
+        { type: 'tool_call', call: { id: 'call-1', name: 'run_command', input: {} } },
+        { type: 'tool_call', call: { id: 'call-2', name: 'write_file', input: {} } },
+        { type: 'tool_call', call: { id: 'call-3', name: 'write_file', input: {} } },
+        { type: 'finish', reason: 'tool_calls' },
+      ),
+      executeTool: async (call, signal) => {
+        executed.push(call.id)
+        if (call.name !== 'run_command') return { content: 'written' }
+        started?.()
+        await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()))
+        throw new DOMException('interrupted', 'AbortError')
+      },
+    })
+    session.on('event', (event) => events.push(event))
+    const thread = session.startThread('C:\\repo', 'connection-1')
+    const turnId = await session.sendTurn(thread.id, 'Test and write')
+    await running
+    await session.interrupt(thread.id)
+
+    expect(executed).toEqual(['call-1'])
+    expect(events).toContainEqual({ type: 'turn.completed', turnId, status: 'interrupted' })
+    expect(session.snapshot().messages.filter((message) => message.role === 'tool')).toEqual([
+      expect.objectContaining({ toolCallId: 'call-1', isError: true }),
+      expect.objectContaining({ toolCallId: 'call-2', content: 'Tool execution was interrupted.' }),
+      expect.objectContaining({ toolCallId: 'call-3', content: 'Tool execution was interrupted.' }),
+    ])
+  })
+
   it('closes partial streamed items before a failed turn', async () => {
     const events: DomainEvent[] = []
     const session = new ApiAgentSession({
