@@ -1928,6 +1928,36 @@ describe('web client', () => {
     })
   })
 
+  it('moves a launch without a usable stored provider to the first ready one', async () => {
+    localStorage.setItem('harness.provider', 'cursor')
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
+      serverProviders[0]!,
+    ]
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('auth.status', { provider: 'grok' })
+      expect(localStorage.getItem('harness.provider')).toBe('grok')
+    })
+  })
+
+  it('keeps a usable stored provider when another one is listed first', async () => {
+    serverProviders = [
+      { ...serverProviders[0]!, id: 'grok', displayName: 'Grok' },
+      serverProviders[0]!,
+    ]
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'grok' })
+    })
+    expect(transport.request).not.toHaveBeenCalledWith('auth.status', { provider: 'grok' })
+    expect(localStorage.getItem('harness.provider')).toBe('codex')
+  })
+
   it('defers the closed workspace panel until first intent and then retains it', async () => {
     render(<App />)
 
