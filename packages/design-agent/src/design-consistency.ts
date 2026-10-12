@@ -301,7 +301,7 @@ export function fontFamilies(source: string): string[] {
       const end = balancedEnd(source, start)
       if (end === undefined) continue
       const body = source.slice(start + 1, end - 1)
-      const values = opening === '{' ? topLevelValues(body) : [body]
+      const values = opening === '{' ? topLevelEntries(body).map(({ value }) => value) : [body]
       for (const value of values) add(firstStringLiteral(value))
     } else {
       add(stringLiteralAt(source, start))
@@ -636,10 +636,11 @@ function balancedEnd(source: string, index: number): number | undefined {
   return undefined
 }
 
-/** The value of each top-level `key: value` entry in an object literal body. */
-function topLevelValues(body: string): string[] {
-  const values: string[] = []
+/** Each top-level `key: value` entry in an object literal body, key as written. */
+function topLevelEntries(body: string): Array<{ key: string; value: string }> {
+  const entries: Array<{ key: string; value: string }> = []
   let depth = 0
+  let entryStart = 0
   let valueStart: number | undefined
   for (let cursor = 0; cursor <= body.length; cursor += 1) {
     const character = body[cursor]
@@ -654,9 +655,15 @@ function topLevelValues(body: string): string[] {
     } else if (character === ':' && depth === 0 && valueStart === undefined) {
       valueStart = cursor + 1
     } else if ((character === ',' || character === undefined) && depth === 0) {
-      if (valueStart !== undefined) values.push(body.slice(valueStart, cursor))
+      if (valueStart !== undefined) {
+        entries.push({
+          key: body.slice(entryStart, valueStart - 1).trim(),
+          value: body.slice(valueStart, cursor),
+        })
+      }
+      entryStart = cursor + 1
       valueStart = undefined
     }
   }
-  return values
+  return entries
 }
