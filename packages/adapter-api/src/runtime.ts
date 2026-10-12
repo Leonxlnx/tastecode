@@ -69,6 +69,8 @@ interface RedactedDelta {
   pending: string
 }
 
+type ToolReview = Omit<ApprovalRequest, 'id' | 'createdAt'>
+
 export class ApiAgentSession extends EventEmitter<Events> {
   readonly capabilities = API_CAPABILITIES
   readonly #model: string
@@ -448,7 +450,13 @@ export class ApiAgentSession extends EventEmitter<Events> {
     })
 
     let result: ApiToolResult
-    if (await this.#approved(call, signal)) {
+    const reviewed = this.#review(call)
+    if (!reviewed) {
+      // Arguments the review cannot accept (a path outside the workspace, a
+      // missing cwd) fail this call exactly as they do in full access, so the
+      // model can correct them instead of the whole turn failing.
+      result = { content: 'Tool execution failed.', isError: true }
+    } else if (await this.#approved(call, reviewed.review, signal)) {
       try {
         result = await this.#executeTool(call, signal)
       } catch {
@@ -492,8 +500,19 @@ export class ApiAgentSession extends EventEmitter<Events> {
     this.#openItems.clear()
   }
 
-  async #approved(call: ApiToolCall, signal: AbortSignal): Promise<boolean> {
-    const review = this.#reviewTool(call)
+  #review(call: ApiToolCall): { review: ToolReview | undefined } | undefined {
+    try {
+      return { review: this.#reviewTool(call) }
+    } catch {
+      return undefined
+    }
+  }
+
+  async #approved(
+    call: ApiToolCall,
+    review: ToolReview | undefined,
+    signal: AbortSignal,
+  ): Promise<boolean> {
     // Include every reviewed field and exact structured input. A command can
     // run different code in another directory even when its display is equal.
     const approvalKey = review
