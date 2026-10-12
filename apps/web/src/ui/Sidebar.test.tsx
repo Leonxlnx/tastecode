@@ -615,6 +615,11 @@ describe('Sidebar chat actions', () => {
     expect(chat.querySelector('.sess__provider svg')).toBeTruthy()
     expect(within(chat).queryByText('Codex')).toBeNull()
     expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
+    // One pill marks the active chat, and only the active row draws it.
+    expect(document.querySelectorAll('.sessrow__indicator')).toHaveLength(1)
+    expect(
+      chat.closest('.sessrow')?.firstElementChild?.classList.contains('sessrow__indicator'),
+    ).toBe(true)
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
     const archive = screen.getByRole('button', { name: 'Delete Polish the sidebar' })
@@ -626,6 +631,7 @@ describe('Sidebar chat actions', () => {
     expect(input.classList.contains('rename--chat')).toBe(true)
     expect(input.getAttribute('aria-label')).toBe('Rename Polish the sidebar')
     expect(input.closest('.sessrow')?.classList.contains('is-active')).toBe(true)
+    expect(input.closest('.sessrow')?.querySelector('.sessrow__indicator')).not.toBeNull()
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
     fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
     expect(onRenameSession).not.toHaveBeenCalled()

@@ -72,6 +72,7 @@ import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
 import { ProviderIcon } from './ProviderIcon.js'
+import { activeIndicatorRef } from './active-indicator.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import '../styles/account-card.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
@@ -1733,6 +1734,7 @@ function SessionRow(props: {
         aria-posinset={props.virtualPosition}
         aria-setsize={props.virtualSetSize}
       >
+        {props.active ? <ActiveIndicator /> : null}
         <InlineRename
           value={props.session.title}
           className="rename--chat rename--session"
@@ -1763,6 +1765,7 @@ function SessionRow(props: {
       aria-posinset={props.virtualPosition}
       aria-setsize={props.virtualSetSize}
     >
+      {props.active ? <ActiveIndicator /> : null}
       <button
         ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
@@ -1901,6 +1904,12 @@ function deleteChatsCopy(project: Project): ConfirmCopy {
     action: chats === 0 ? 'Delete chats' : `Delete ${chatCount(chats)}`,
     destructive: true,
   }
+}
+
+/** The one active-chat pill. Only the active row renders it, and it slides in
+ *  from wherever the previous active row's pill stood. */
+function ActiveIndicator() {
+  return <span className="sessrow__indicator" ref={activeIndicatorRef} aria-hidden />
 }
 
 /** A live state takes the time's place: while a chat works or waits, that is

@@ -218,4 +218,12 @@ describe('sidebar theme CSS', () => {
     )
   })
 
+  it('marks the active chat with one pill that moves by transform alone', () => {
+    expect(appCss).toMatch(
+      /\.sessrow__indicator \{[^}]*position: absolute;[^}]*left: var\(--sess-indicator-x\);[^}]*width: 3px;[^}]*height: 14px;[^}]*border-radius: var\(--r-pill\);[^}]*pointer-events: none;/s,
+    )
+    // The slide is a WAAPI transform (active-indicator.ts), never a layout transition.
+    expect(appCss).not.toMatch(/\.sessrow__indicator \{[^}]*transition/s)
+    expect(appCss).toMatch(/\.proj__drawer > \.proj__sessions \{[^}]*--sess-indicator-x: 12px;/s)
+  })
 })

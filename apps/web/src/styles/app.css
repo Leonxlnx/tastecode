@@ -460,6 +460,21 @@
   box-shadow: var(--chrome-shadow);
 }
 
+/* One pill marks the active chat: on a project's guide, or in the outer
+   gutter for pinned chats. It slides between rows by transform alone
+   (active-indicator.ts); the row's own fill only cross-fades. */
+.sessrow__indicator {
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: var(--sess-indicator-x);
+  width: 3px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+  pointer-events: none;
+}
+
 .sessrow.is-reorderable .sess {
   cursor: grab;
 }
@@ -870,6 +885,7 @@
 .proj__drawer > .proj__sessions {
   /* A project's chats indent past the guide under its folder mark. */
   --sess-indent: 22px;
+  --sess-indicator-x: 12px;
   min-height: 0;
 }
 
@@ -893,6 +909,7 @@
 .proj__sessions {
   /* Pinned chats have no parent, so they keep the outer gutter. */
   --sess-indent: 7px;
+  --sess-indicator-x: 1px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
