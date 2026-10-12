@@ -4684,6 +4684,9 @@ describe('provider-neutral design briefing', () => {
       for (const id of ['a-hero', 'a-about', 'a-social'])
         expect(session.sent[1]).toContain(`"id": "${id}"`)
       for (const id of ['b-faq', 'a-footer']) expect(session.sent[1]).not.toContain(`"id": "${id}"`)
+      const anchorLanguage =
+        'The reference with role "anchor" (a-hero) defines the page\'s one design language: typefaces and type scale, palette, corner radii, spacing scale, buttons and controls, and surface treatment. Every other reference contributes its composition only'
+      expect(session.sent[1]).toContain(anchorLanguage)
 
       session.emit(
         message(
@@ -4712,10 +4715,58 @@ describe('provider-neutral design briefing', () => {
       expect(session.sent[2]).toContain('Page Blueprint phase')
       expect(session.sentAttachments[2]).toEqual(Object.values(images))
       for (const id of ['b-faq', 'a-footer']) expect(session.sent[2]).toContain(`"id": "${id}"`)
+      expect(session.sent[2]).toContain(anchorLanguage)
     } finally {
       if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
       else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
       await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
+  it('keeps the full Brand input and wording for a deck saved before anchor sampling', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-legacy-deck-'))
+    writePreviewArtifacts(workspace)
+    const deck = ['hero', 'feature', 'about'].map((family) => {
+      const file = path.join(workspace, `${family}.png`)
+      writeFileSync(file, family)
+      return { id: `legacy-${family}`, family, cue: `Legacy ${family}`, imagePath: file }
+    })
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({
+      id: 'legacy-deck',
+      projectPath: workspace,
+      provider: 'codex',
+      title: 'Legacy deck',
+    })
+    store.setDesignRun('legacy-deck', {
+      ...approvalSnapshot(workspace),
+      referenceAttachments: [],
+      referenceDeck: deck,
+      referenceDeckSnapshot: snapshotDesignFiles(deck.map(({ imagePath }) => imagePath)),
+      originalRequest: 'Build a site.',
+      options: {},
+      phase: 'brand',
+      askedQuestions: false,
+      finalAsked: true,
+      explicitAnswers: [],
+    })
+    const { orchestrator, sessions } = harness(undefined, store)
+    try {
+      const queued = await orchestrator.submitTurn('legacy-deck', 'Continue afterward.')
+      if (queued.queued) orchestrator.deleteQueuedTurn('legacy-deck', queued.queuedTurn.id)
+      await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(1))
+      expect(sessions[0]?.sent[0]).toContain('Brand phase')
+      expect(sessions[0]?.sent[0]).toContain(
+        'preserve their reference compositions, and unify project branding across them. Build real accessible',
+      )
+      expect(sessions[0]?.sent[0]).not.toContain('role "anchor"')
+      for (const { id } of deck) expect(sessions[0]?.sent[0]).toContain(`"id": "${id}"`)
+      expect(sessions[0]?.sentAttachments[0]).toEqual(deck.map(({ imagePath }) => imagePath))
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
       rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
