@@ -921,6 +921,25 @@ describe('idle thread runtime retention', () => {
     }
   })
 
+  it('keeps a saved Design run when its project is removed', async () => {
+    const store = new Store(':memory:')
+    const { orchestrator } = harness(undefined, store)
+    const project = process.cwd()
+    try {
+      store.addProject(project)
+      const thread = await orchestrator.startThread('codex', project)
+      const saved = { originalRequest: 'Build a site.', phase: 'build', suspended: true }
+      store.setDesignRun(thread.id, saved)
+
+      // What projects.remove does.
+      await Promise.all(store.threads(project).map((t) => orchestrator.stopThread(t.id)))
+
+      expect(store.designRun(thread.id)).toEqual(saved)
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
   it('stops a Side chat with its parent without archiving the parent', async () => {
     const { orchestrator, sessions, store } = harness()
     try {
@@ -3985,6 +4004,21 @@ describe('provider-neutral design briefing', () => {
       resolveCapture?.(undefined)
       await result.orchestrator.disposeAll()
       rmSync(result.workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('suspends a running Design run when its project is removed', async () => {
+    const { orchestrator, store, workspace } = await previewRecoveryHarness(undefined)
+    try {
+      await orchestrator.stopThread('preview-recovery')
+      expect(store.designRun('preview-recovery')).toMatchObject({
+        phase: 'preview',
+        suspended: true,
+      })
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
 

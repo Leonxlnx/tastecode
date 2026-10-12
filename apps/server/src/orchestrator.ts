@@ -3163,8 +3163,11 @@ export class Orchestrator {
     // a disconnect does, or it stays hidden until a restart runs it.
     const draining = this.#drainingQueues.get(threadId)
     if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
+    // The same goes for a Design run: suspend a live one, as a disconnect
+    // does, and keep a saved one so `continue` resumes it after re-adding.
+    if (this.#designFlows.has(threadId)) this.#suspendDesignFlow(threadId)
     const sideThreadId = this.#sideThreads.get(threadId)
-    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId, 'close', true)
     this.#recordedDeltas.flush(threadId)
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
@@ -3222,7 +3225,11 @@ export class Orchestrator {
     return this.#store.thread(threadId)?.ephemeral === true
   }
 
-  #disposeThreadRuntime(threadId: string, reason: 'close' | 'disconnect' = 'close'): Promise<void> {
+  #disposeThreadRuntime(
+    threadId: string,
+    reason: 'close' | 'disconnect' = 'close',
+    keepDesignRun = false,
+  ): Promise<void> {
     this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
     const terminalsClosed =
       reason === 'close'
@@ -3262,7 +3269,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#emptyQueuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    if (reason === 'close') this.#clearDesignFlow(threadId)
+    if (reason === 'close' && !keepDesignRun) this.#clearDesignFlow(threadId)
     return Promise.all([terminalsClosed, previewStopped, providerStopped]).then(() => undefined)
   }
 
