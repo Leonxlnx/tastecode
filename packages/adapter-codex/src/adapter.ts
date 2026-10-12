@@ -373,9 +373,9 @@ const PLAN_LABELS = [
 ] as const
 
 /**
- * Models Codex still runs but marks hidden in `model/list`. Only ids that are
- * still in Codex's own catalog belong here; a row Codex no longer ships would
- * offer a model that every turn rejects.
+ * Models still in Codex's own catalog that `model/list` marks hidden. An id
+ * Codex has dropped from its catalog does not belong here, or the picker would
+ * keep offering a model Codex no longer ships.
  */
 const CODEX_COMPATIBILITY_MODELS: Model[] = [
   codexCompatibilityModel('gpt-5.5', 'GPT-5.5', 'Legacy coding model.'),
