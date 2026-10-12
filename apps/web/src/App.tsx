@@ -207,8 +207,8 @@ const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
 const PROVIDER_IDS = [
-  'codex',
   'claude-code',
+  'codex',
   'grok',
   'cursor',
   'opencode',

@@ -665,8 +665,8 @@ type ProviderMap<T> = Partial<Record<ProviderId, T>>
 
 // Nightly exposes every installed CLI; ACP agents and API connections have their own rows.
 const PROVIDER_ROSTER: readonly ProviderId[] = [
-  'codex',
   'claude-code',
+  'codex',
   'grok',
   'cursor',
   'opencode',

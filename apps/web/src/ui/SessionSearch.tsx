@@ -27,8 +27,8 @@ const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 const PROVIDERS: ProviderId[] = [
-  'codex',
   'claude-code',
+  'codex',
   'grok',
   'cursor',
   'opencode',

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { SessionSearchResult } from '@harness/contracts'
+import type { ProviderId, SessionSearchResult } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { TestTransport } from '../test-transport.js'
 import { SessionSearch } from './SessionSearch.js'
@@ -73,6 +73,41 @@ describe('cross-session search', () => {
 
     fireEvent.keyDown(agent, { key: 'Tab' })
     expect(document.activeElement).toBe(search)
+  })
+
+  it('lists the agent filter in provider order with Claude Code first', () => {
+    const chat = (id: string, provider: ProviderId) => ({
+      id,
+      title: `Chat ${id}`,
+      provider,
+      createdAt: 1,
+    })
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: [
+              chat('1', 'api'),
+              chat('2', 'cursor'),
+              chat('3', 'codex'),
+              chat('4', 'claude-code'),
+            ],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
+    expect(
+      screen
+        .getAllByRole('option', { name: /^(All agents|Claude Code|Codex|Cursor|API connection)$/ })
+        .map((option) => option.textContent),
+    ).toEqual(['All agents', 'Claude Code', 'Codex', 'Cursor', 'API connection'])
   })
 
   it('highlights title matches whose folded form changes length', () => {
@@ -184,9 +219,9 @@ describe('cross-session search', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
     expect(
       screen
-        .getAllByRole('option', { name: /^(All agents|Claude Code|Codex|Grok)$/ })
+        .getAllByRole('option', { name: /^(All agents|Codex|Grok|ACP)$/ })
         .map((option) => option.textContent),
-    ).toEqual(['All agents', 'Claude Code', 'Codex', 'Grok'])
+    ).toEqual(['All agents', 'Codex', 'Grok', 'ACP'])
     expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     const search = screen.getByLabelText('Search every chat')
