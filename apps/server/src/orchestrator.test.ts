@@ -4203,6 +4203,50 @@ describe('provider-neutral design briefing', () => {
     },
   )
 
+  it.each(['preview', 'repair'] as const)(
+    'suspends the run when capture fails for another reason during %s',
+    async (phase) => {
+      const { orchestrator, sessions, received, store, workspace, capturePreview } =
+        await previewRecoveryHarness(undefined, phase)
+      capturePreview
+        .mockReset()
+        .mockRejectedValue(
+          new Error('Preview storage cleanup failed; restart the app to capture again'),
+        )
+      try {
+        sessions[0]?.emit(
+          message(
+            JSON.stringify(
+              phase === 'preview'
+                ? commandPreviewPlan
+                : { status: 'complete', summary: 'Repaired.', files: [], checks: ['passed'] },
+            ),
+            's1-turn',
+          ),
+        )
+        sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+        await vi.waitFor(() =>
+          expect(store.designRun('preview-recovery')).toMatchObject({
+            phase: 'preview',
+            suspended: true,
+          }),
+        )
+        expect(
+          received.some(
+            ({ event }) =>
+              event.type === 'thread.error' &&
+              event.message.includes('Preview storage cleanup failed'),
+          ),
+        ).toBe(true)
+        expect(sessions[0]?.sent).toHaveLength(1)
+      } finally {
+        await orchestrator.disposeAll()
+        store.close()
+        rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+      }
+    },
+  )
+
   async function completedPreviewHarness() {
     const result = await previewRecoveryHarness(undefined)
     result.sessions[0]?.emit(message(JSON.stringify(commandPreviewPlan), 's1-turn'))

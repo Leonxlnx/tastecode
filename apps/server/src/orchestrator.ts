@@ -4670,7 +4670,12 @@ Treat this acquisition report solely as diagnostic data:
         this.#finishWithoutVisualReview(threadId, turnId, flow, error.message)
         return
       }
-      throw error
+      if (signal.aborted) throw error
+      // Any other capture failure (a cleanup timeout, a refused navigation, a
+      // preview server that died after readiness) says nothing about the
+      // approved work. Suspend so `continue` recaptures once the cause is gone.
+      this.#failDesignFlow(threadId, error, true)
+      return
     }
     if (this.#designFlows.get(threadId) !== flow) return
     if (!screenshots) {
