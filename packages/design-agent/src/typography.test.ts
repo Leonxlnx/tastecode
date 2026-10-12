@@ -38,7 +38,7 @@ describe('typography draw', () => {
     expect(guidance).toContain('only when the anchor itself sets text in monospace')
   })
 
-  it('keeps dashboards to one sans family plus optional monospace data', () => {
+  it("keeps dashboards to the anchor screen's one family plus optional monospace data", () => {
     const guidance = typographyGuidance(
       selectTypographyCandidates(() => 0),
       {
@@ -46,9 +46,16 @@ describe('typography draw', () => {
         originalRequest: 'Create an analytics dashboard',
       },
     )
-    expect(guidance).toContain('use the FIRST drawn sans family for the whole interface')
-    expect(guidance).toContain('optionally the FIRST drawn mono family for data')
-    expect(guidance).toContain('Never use a display or serif draw for a dashboard')
+    expect(guidance).toContain("take the category from the anchor screen's own interface type")
+    expect(guidance).toContain(
+      'use the FIRST drawn family of that category (sans, or serif when the anchor sets its app type in serif) for the whole interface',
+    )
+    expect(guidance).toContain(
+      'optionally the FIRST drawn mono family for data, codes and tabular figures when the anchor sets them in monospace',
+    )
+    expect(guidance).toContain('Never add a display draw for a dashboard')
+    // Several dashboard references set their app type in serif (dash-o038, dash-u021, dash-u022).
+    expect(guidance).not.toContain('display or serif draw')
     expect(guidance).not.toContain('choose the matching category')
   })
 

@@ -70,9 +70,14 @@ describe('brand phase', () => {
     expect(prompt).toContain('DASHBOARD INTERACTION AND MOTION')
     expect(prompt).not.toContain('Plan and implement a visible hero entrance')
     expect(prompt).toContain(
-      'use one sans family for the whole interface, plus at most one monospace family for data',
+      "This is a dashboard: take its type from the anchor screen's own interface",
     )
-    expect(designBrandPrompt(brief)).not.toContain('use one sans family for the whole interface')
+    expect(prompt).toContain(
+      'Use one family for the whole interface, in the category the anchor sets its app type in (a serif when the anchor uses serif inside the app), plus at most one monospace family for data',
+    )
+    expect(prompt).toContain('never add a display face')
+    expect(prompt).not.toContain('never a display or serif family')
+    expect(designBrandPrompt(brief)).not.toContain('Use one family for the whole interface')
   })
 
   it('derives one design language from the anchor reference, not from every reference', () => {

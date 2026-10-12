@@ -83,8 +83,10 @@ How the phases apply the decision:
   each complete, valid group (type scale, radius, spacing, buttons, surfaces) is kept, a
   partial or invalid group or object is dropped without an error, and Build derives the
   missing scales from `interfaceDirection` and the anchor. Monospace and mixed-type labels
-  appear only when the anchor uses them. Dashboards use one sans family plus an optional
-  monospace family for data, never a display or serif draw.
+  appear only when the anchor uses them. Dashboards use one family plus an optional
+  monospace family for data, both taken from the anchor screen's own interface type (a serif
+  when the anchor sets its app type in serif, as several dashboard references do); they never
+  add a display face.
 - **Page and Build:** keep each section's macro composition from its own reference: grid,
   column structure, media count and crop, alignment, overlap, section proportions and
   responsive order. Everything else comes from the brand and is identical across sections.

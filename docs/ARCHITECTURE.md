@@ -599,7 +599,8 @@ still require evidence. Website hero entrances and scroll reveals keep their exi
 Since 2026-10-12, every phase keeps one design language per page: references set each
 section's composition, and one anchor reference sets the type, palette, radius, spacing and
 component language. See [One design language per page](./DESIGN-REFERENCES.md#one-design-language-per-page).
-Dashboards use one sans family plus optional monospace data. They are reviewed for shell
+Dashboards use one family plus optional monospace data, taken from the anchor screen's own
+type, and never add a display face. They are reviewed for shell
 consistency, data density, table and chart readability, visible control states and focus.
 A site, one-pager or Webseite about an app classifies as a website.
 
