@@ -1,14 +1,21 @@
 import path from 'node:path'
 import type { BrandSystem } from './brand.js'
+import type { VisualReview } from './review-phase.js'
 import { designSourceFiles } from './source-quality.js'
 import { readWorkspaceFile } from './workspace-files.js'
 
 const MAX_SOURCE_SCAN_BYTES = 32_000_000
 const MAX_LITERAL_LENGTH = 2_000
 const MAX_BLOCK_LENGTH = 20_000
+const MAX_LISTED = 6
 
 /** More distinct corner radii than this reads as several radius families on one page. */
 export const DESIGN_RADIUS_VALUE_LIMIT = 5
+
+/** Review finding IDs owned by the source audit; a model-written finding with one is replaced. */
+export const DESIGN_CONSISTENCY_FINDING_IDS = ['font_family_drift', 'radius_scale_drift'] as const
+
+type ReviewFinding = VisualReview['findings'][number]
 
 /**
  * What the run introduced against one design language: font families outside the approved brand
@@ -81,6 +88,83 @@ export function designConsistencyAudit(
       ? radii.map(({ value }) => value).filter((value) => !radiusTokens.includes(value))
       : [],
   }
+}
+
+/** Concise, actionable automated Review findings for the drift an audit found. */
+export function designConsistencyFindings(audit: DesignConsistencyAudit): ReviewFinding[] {
+  const findings: ReviewFinding[] = []
+  if (audit.fonts.length) {
+    const approved = audit.approvedFonts.join(', ')
+    const families = audit.fonts.map(({ family }) => family)
+    findings.push({
+      id: 'font_family_drift',
+      severity: 'major',
+      area: 'Typography across the page',
+      evidenceType: 'automated',
+      confidence: 'high',
+      evidence: `Generated source uses font families outside the approved brand fonts ${approved}: ${listed(
+        audit.fonts.map(({ family, files }) => `${family} (${listed(files, 3)})`),
+      )}.`,
+      repair: `Replace ${listed(families)} with the approved brand fonts ${approved}, and remove their loading (Google Fonts links or @import, @font-face, next/font or @fontsource imports), so every section uses the one brand type system.`,
+    })
+  }
+  const files = [...new Set(audit.radii.flatMap(({ files }) => files))].sort()
+  if (audit.radiusTokens && audit.radiiOutsideTokens.length) {
+    const tokens = audit.radiusTokens.join(', ')
+    const outside = new Set(audit.radiiOutsideTokens)
+    findings.push({
+      id: 'radius_scale_drift',
+      severity: 'minor',
+      area: 'Corner radii across the page',
+      evidenceType: 'automated',
+      confidence: 'medium',
+      evidence: `Generated source uses corner radii outside the brand radius tokens ${tokens}: ${listed(
+        audit.radii
+          .filter(({ value }) => outside.has(value))
+          .map(({ value, files }) => `${value} (${listed(files, 3)})`),
+      )}.`,
+      repair: `Replace ${listed(audit.radiiOutsideTokens)} with the nearest brand radius token (${tokens}) from the shared tokens block, so every section uses one radius family.`,
+    })
+  } else if (!audit.radiusTokens && audit.radii.length > DESIGN_RADIUS_VALUE_LIMIT) {
+    findings.push({
+      id: 'radius_scale_drift',
+      severity: 'minor',
+      area: 'Corner radii across the page',
+      evidenceType: 'automated',
+      confidence: 'medium',
+      evidence: `Generated source uses ${audit.radii.length} distinct corner radii (${listed(
+        audit.radii.map(({ value }) => value),
+        12,
+      )}) in ${listed(files, 4)}; one page keeps one radius family of at most ${DESIGN_RADIUS_VALUE_LIMIT} values plus a pill.`,
+      repair: `Consolidate corner radii onto one shared scale of at most ${DESIGN_RADIUS_VALUE_LIMIT} values, declared once as tokens and reused by every section, instead of per-section literals.`,
+    })
+  }
+  return findings
+}
+
+/**
+ * Add the audit's findings to a parsed Review. Like the DOM audit they force a repair verdict, so
+ * the run's existing repair limit bounds them; they never fail or restart the run.
+ */
+export function enforceDesignConsistencyFindings(
+  review: VisualReview,
+  audit: DesignConsistencyAudit,
+): VisualReview {
+  const automated = designConsistencyFindings(audit)
+  if (!automated.length) return review
+  const owned = new Set<string>(DESIGN_CONSISTENCY_FINDING_IDS)
+  return {
+    ...review,
+    verdict: 'repair',
+    summary: `${review.summary} TasteCode source audit found ${automated.length} design-language finding${automated.length === 1 ? '' : 's'}.`,
+    findings: [...review.findings.filter(({ id }) => !owned.has(id)), ...automated],
+  }
+}
+
+function listed(values: readonly string[], limit = MAX_LISTED): string {
+  return values.length > limit
+    ? `${values.slice(0, limit).join(', ')} and ${values.length - limit} more`
+    : values.join(', ')
 }
 
 /** Small to large; expressions such as clamp() sort after plain lengths. */

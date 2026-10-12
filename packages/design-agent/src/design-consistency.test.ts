@@ -5,10 +5,15 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { parseBrandSystem, type BrandSystem } from './brand.js'
 import {
   cornerRadii,
+  DESIGN_RADIUS_VALUE_LIMIT,
   designConsistencyAudit,
   designConsistencyBaseline,
+  designConsistencyFindings,
+  enforceDesignConsistencyFindings,
   fontFamilies,
+  type DesignConsistencyAudit,
 } from './design-consistency.js'
+import { enforceDomAuditFindings, type VisualReview } from './review-phase.js'
 
 const roots: string[] = []
 
@@ -262,5 +267,162 @@ describe('designConsistencyAudit radii', () => {
       expect(audited.radiusTokens).toBeUndefined()
       expect(audited.radiiOutsideTokens).toEqual([])
     }
+  })
+})
+
+describe('design consistency review findings', () => {
+  const clean: DesignConsistencyAudit = {
+    approvedFonts: ['Inter'],
+    fonts: [],
+    radii: [],
+    radiiOutsideTokens: [],
+  }
+  const radii = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      value: `${(index + 1) * 2}px`,
+      files: [`src/section-${index % 2}.css`],
+    }))
+  const passing: VisualReview = {
+    version: 1,
+    verdict: 'pass',
+    summary: 'Matches the references.',
+    findings: [],
+  }
+
+  it('names the off-brand families, their files and the approved fonts', () => {
+    const [finding, ...rest] = designConsistencyFindings({
+      ...clean,
+      approvedFonts: ['Inter', 'Fraunces'],
+      fonts: [
+        { family: 'Playfair Display', files: ['index.html', 'src/hero.css'] },
+        { family: 'Space Mono', files: ['src/stats.tsx'] },
+      ],
+    })
+    expect(rest).toEqual([])
+    expect(finding).toEqual({
+      id: 'font_family_drift',
+      severity: 'major',
+      area: 'Typography across the page',
+      evidenceType: 'automated',
+      confidence: 'high',
+      evidence:
+        'Generated source uses font families outside the approved brand fonts Inter, Fraunces: Playfair Display (index.html, src/hero.css), Space Mono (src/stats.tsx).',
+      repair: expect.stringMatching(
+        /^Replace Playfair Display, Space Mono with the approved brand fonts Inter, Fraunces, and remove their loading/,
+      ),
+    })
+  })
+
+  it(`flags more than ${DESIGN_RADIUS_VALUE_LIMIT} distinct radii only without brand tokens`, () => {
+    expect(
+      designConsistencyFindings({ ...clean, radii: radii(DESIGN_RADIUS_VALUE_LIMIT) }),
+    ).toEqual([])
+    const [finding] = designConsistencyFindings({
+      ...clean,
+      radii: radii(DESIGN_RADIUS_VALUE_LIMIT + 1),
+    })
+    expect(finding).toMatchObject({
+      id: 'radius_scale_drift',
+      severity: 'minor',
+      evidenceType: 'automated',
+      evidence:
+        'Generated source uses 6 distinct corner radii (2px, 4px, 6px, 8px, 10px, 12px) in src/section-0.css, src/section-1.css; one page keeps one radius family of at most 5 values plus a pill.',
+    })
+    expect(
+      designConsistencyFindings({
+        ...clean,
+        radii: radii(8),
+        radiusTokens: ['2px', '4px', '6px', '8px', '10px', '12px', '14px', '16px'],
+      }),
+    ).toEqual([])
+    expect(
+      designConsistencyFindings({
+        ...clean,
+        radii: radii(2),
+        radiusTokens: ['2px'],
+        radiiOutsideTokens: ['4px'],
+      }),
+    ).toMatchObject([
+      {
+        id: 'radius_scale_drift',
+        evidence:
+          'Generated source uses corner radii outside the brand radius tokens 2px: 4px (src/section-1.css).',
+        repair: expect.stringContaining('Replace 4px with the nearest brand radius token (2px)'),
+      },
+    ])
+  })
+
+  it('bounds long lists in finding text', () => {
+    const [finding] = designConsistencyFindings({
+      ...clean,
+      fonts: Array.from({ length: 9 }, (_, index) => ({
+        family: `Family ${index}`,
+        files: ['a.css', 'b.css', 'c.css', 'd.css', 'e.css'],
+      })),
+    })
+    expect(finding?.evidence).toContain('Family 0 (a.css, b.css, c.css and 2 more)')
+    expect(finding?.evidence).toContain('Family 5 (a.css, b.css, c.css and 2 more) and 3 more.')
+    expect(finding?.evidence).not.toContain('Family 6')
+  })
+
+  it('turns a passing review into a bounded repair and replaces stale audit findings', () => {
+    expect(enforceDesignConsistencyFindings(passing, clean)).toBe(passing)
+    const audit = { ...clean, fonts: [{ family: 'Lobster', files: ['src/a.css'] }] }
+    const enforced = enforceDesignConsistencyFindings(passing, audit)
+    expect(enforced).toMatchObject({
+      verdict: 'repair',
+      summary: 'Matches the references. TasteCode source audit found 1 design-language finding.',
+      findings: [{ id: 'font_family_drift', evidence: expect.stringContaining('Lobster') }],
+    })
+    const stale = {
+      id: 'font_family_drift',
+      severity: 'minor' as const,
+      area: 'Fonts',
+      evidenceType: 'visual_inspection' as const,
+      confidence: 'low' as const,
+      evidence: 'Model guess',
+      repair: 'Guess',
+    }
+    const visual = { ...stale, id: 'hero_clip', evidence: 'Clipped hero' }
+    expect(
+      enforceDesignConsistencyFindings(
+        { ...passing, verdict: 'repair', findings: [visual, stale] },
+        audit,
+      ).findings.map(({ id, evidence }) => [id, evidence.slice(0, 20)]),
+    ).toEqual([
+      ['hero_clip', 'Clipped hero'],
+      ['font_family_drift', 'Generated source use'],
+    ])
+  })
+
+  it('lets the DOM audit drop model findings that use the source audit IDs', () => {
+    const screenshots = [
+      {
+        path: 'desktop.png',
+        width: 1440,
+        height: 1000,
+        domAudit: { h1Count: 2, interactiveTargetViolations: [] },
+      },
+      { path: 'mobile.png', width: 390, height: 844 },
+    ]
+    const review = enforceDomAuditFindings(
+      {
+        ...passing,
+        verdict: 'repair',
+        findings: [
+          {
+            id: 'radius_scale_drift',
+            severity: 'minor',
+            area: 'Cards',
+            evidenceType: 'visual_inspection',
+            confidence: 'low',
+            evidence: 'Model guess',
+            repair: 'Guess',
+          },
+        ],
+      },
+      screenshots,
+    )
+    expect(review.findings.map(({ id }) => id)).toEqual(['document_h1_count'])
   })
 })
