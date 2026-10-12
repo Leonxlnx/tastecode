@@ -1,5 +1,14 @@
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
-import { array, fontWeights, list, member, record, string, strings } from './parse.js'
+import {
+  array,
+  fontWeights,
+  list,
+  member,
+  optionalRecord,
+  record,
+  string,
+  strings,
+} from './parse.js'
 
 export const DESIGN_TYPE_SCALE_STEPS = [
   'display',
@@ -12,16 +21,20 @@ export const DESIGN_TYPE_SCALE_STEPS = [
 ] as const
 export type DesignTypeScaleStep = (typeof DESIGN_TYPE_SCALE_STEPS)[number]
 
-/** Page-wide values every section shares, so one page keeps one design language. */
+/**
+ * Page-wide values every section shares, so one page keeps one design language. Brand asks
+ * for every group, but parsing keeps only the complete, valid ones; Build derives a missing
+ * group from interfaceDirection and the anchor reference.
+ */
 export interface BrandDesignTokens {
   /** CSS lengths or clamp()/min()/max()/calc() expressions. */
-  typeScale: Record<DesignTypeScaleStep, string>
+  typeScale?: Record<DesignTypeScaleStep, string>
   /** One to four non-pill radii from small to large, plus the pill radius. */
-  radius: { scale: string[]; pill: string }
-  spacing: { section: string; gutter: string; stack: string }
-  buttons: { primary: string; secondary: string }
+  radius?: { scale: string[]; pill: string }
+  spacing?: { section: string; gutter: string; stack: string }
+  buttons?: { primary: string; secondary: string }
   /** Card and section surface policy, including the light/dark sequence. */
-  surfaces: string
+  surfaces?: string
 }
 
 export interface BrandSystem {
@@ -103,10 +116,7 @@ export function parseBrandSystem(value: unknown): BrandSystem {
     }
   })
   if (typefaces.length > 2) throw new Error('brand system must use at most two typeface families')
-  const designTokens =
-    brand.designTokens === undefined || brand.designTokens === null
-      ? undefined
-      : parseDesignTokens(brand.designTokens)
+  const designTokens = parseDesignTokens(brand.designTokens)
 
   return {
     version: 1,
@@ -235,38 +245,69 @@ const CSS_SIZE =
 const PILL_RADIUS = /^(?:9{3,}|\d{4,})(?:\.\d+)?(?:px|rem|em)?$|^50%$/iu
 
 /**
- * Lenient about format (numbers become px, radius may be a plain list) because the
- * model writes these values, strict about shape so later phases can rely on every
- * field. Values are restricted to CSS sizes because Build turns them into
- * custom properties.
+ * Never fails brand parsing. A brand error goes through the correction loop, and a
+ * repeated one stops the run, which costs far more than a missing token: Build derives
+ * any missing group from interfaceDirection and the anchor reference. So each group
+ * (typeScale, radius, spacing, buttons, surfaces) is kept only when it is complete and
+ * valid, and is otherwise dropped silently, as is the whole object when nothing usable
+ * remains. Within a kept group the format stays lenient (numbers become px, radius may be
+ * a plain list) because the model writes these values. Values are restricted to CSS sizes
+ * because Build turns them into custom properties.
  */
-function parseDesignTokens(value: unknown): BrandDesignTokens {
-  const tokens = record(value, 'designTokens')
-  const typeScale = record(tokens.typeScale, 'designTokens.typeScale')
-  const spacing = record(tokens.spacing, 'designTokens.spacing')
-  const buttons = record(tokens.buttons, 'designTokens.buttons')
-  return {
-    typeScale: Object.fromEntries(
-      DESIGN_TYPE_SCALE_STEPS.map((step) => [
-        step,
-        cssSize(typeScale[step], `designTokens.typeScale.${step}`),
-      ]),
-    ) as Record<DesignTypeScaleStep, string>,
-    radius: parseRadius(tokens.radius),
-    spacing: {
-      section: cssSize(spacing.section, 'designTokens.spacing.section'),
-      gutter: cssSize(spacing.gutter, 'designTokens.spacing.gutter'),
-      stack: cssSize(spacing.stack, 'designTokens.spacing.stack'),
-    },
-    buttons: {
-      primary: string(buttons.primary, 'designTokens.buttons.primary'),
-      secondary: string(buttons.secondary, 'designTokens.buttons.secondary'),
-    },
-    surfaces: string(tokens.surfaces, 'designTokens.surfaces'),
+function parseDesignTokens(value: unknown): BrandDesignTokens | undefined {
+  const tokens = optionalRecord(value)
+  if (!tokens) return undefined
+  const typeScale = validGroup(() => parseTypeScale(tokens.typeScale))
+  const radius = validGroup(() => parseRadius(tokens.radius))
+  const spacing = validGroup(() => parseSpacing(tokens.spacing))
+  const buttons = validGroup(() => parseButtons(tokens.buttons))
+  const surfaces = validGroup(() => string(tokens.surfaces, 'designTokens.surfaces'))
+  const kept: BrandDesignTokens = {
+    ...(typeScale ? { typeScale } : {}),
+    ...(radius ? { radius } : {}),
+    ...(spacing ? { spacing } : {}),
+    ...(buttons ? { buttons } : {}),
+    ...(surfaces ? { surfaces } : {}),
+  }
+  return Object.keys(kept).length > 0 ? kept : undefined
+}
+
+function validGroup<T>(parse: () => T): T | undefined {
+  try {
+    return parse()
+  } catch {
+    return undefined
   }
 }
 
-function parseRadius(value: unknown): BrandDesignTokens['radius'] {
+function parseTypeScale(value: unknown): Required<BrandDesignTokens>['typeScale'] {
+  const typeScale = record(value, 'designTokens.typeScale')
+  return Object.fromEntries(
+    DESIGN_TYPE_SCALE_STEPS.map((step) => [
+      step,
+      cssSize(typeScale[step], `designTokens.typeScale.${step}`),
+    ]),
+  ) as Record<DesignTypeScaleStep, string>
+}
+
+function parseSpacing(value: unknown): Required<BrandDesignTokens>['spacing'] {
+  const spacing = record(value, 'designTokens.spacing')
+  return {
+    section: cssSize(spacing.section, 'designTokens.spacing.section'),
+    gutter: cssSize(spacing.gutter, 'designTokens.spacing.gutter'),
+    stack: cssSize(spacing.stack, 'designTokens.spacing.stack'),
+  }
+}
+
+function parseButtons(value: unknown): Required<BrandDesignTokens>['buttons'] {
+  const buttons = record(value, 'designTokens.buttons')
+  return {
+    primary: string(buttons.primary, 'designTokens.buttons.primary'),
+    secondary: string(buttons.secondary, 'designTokens.buttons.secondary'),
+  }
+}
+
+function parseRadius(value: unknown): Required<BrandDesignTokens>['radius'] {
   const field = 'designTokens.radius'
   let values: unknown[]
   let pill: string | undefined

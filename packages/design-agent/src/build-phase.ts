@@ -40,6 +40,7 @@ export function designBuildPrompt(
   const exactFiles = exactBuildFiles(brief)
   const dashboard = isDashboardBrief(brief) || page.architecture?.mode === 'operate_monitor'
   const gradients = gradientSetForBrand(brand)
+  const tokenScales = tokenScaleGuidance(brand.designTokens)
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({
     id: `user-reference-${index + 1}`,
     file: path.basename(filePath),
@@ -59,10 +60,10 @@ Implement each section's recorded motion decision as deliberately as its layout.
 ${ONE_DESIGN_LANGUAGE}
 
 DESIGN TOKENS — one tokens block for the whole page:
-- Declare one block of CSS custom properties before any section styles, in the project's global stylesheet or its existing theme file. It contains every variable in <design-token-variables> with its value: the brand palette, the approved font families${brand.designTokens ? ', and the designTokens type scale, radius family and spacing scale' : ''}. Put root on :root; put dark, when present, on the dark theme selector the page uses. ${brand.designTokens ? '' : 'This brand predates structured tokens: derive one type scale (--text-display, --text-h1, --text-h2, --text-h3, --text-body, --text-small, --text-label), one radius family (--radius-1 to --radius-3 plus --radius-pill) and one spacing scale (--space-section, --space-gutter, --space-stack) from interfaceDirection and the anchor reference, and add them to the same block. '}When the project uses Tailwind or another theme config, map that config to these variables instead of duplicating values.
+- Declare one block of CSS custom properties before any section styles, in the project's global stylesheet or its existing theme file. It contains every variable in <design-token-variables> with its value: the brand palette, the approved font families${tokenScales.declared}. Put root on :root; put dark, when present, on the dark theme selector the page uses. ${tokenScales.derive}When the project uses Tailwind or another theme config, map that config to these variables instead of duplicating values.
 - Every section reads colors, font families, font sizes, radii and section spacing only through these variables. No section declares its own font family, off-scale font size, radius, spacing step or palette color literal, even when its reference used one.
 - The only permitted font families are ${quotedList(brand.typefaces.map(({ family }) => family))}. Do not add any other font-family, @font-face, Google Fonts or Fontsource import, or framework font loader family. The only exceptions are generic fallbacks (system-ui, sans-serif, serif, monospace) and an icon font required by the project's icon set.
-- Implement exactly one primary and one secondary button style${brand.designTokens ? ' from designTokens.buttons' : ''} and one label style, and reuse them in every section. Cards share one padding, radius, border and surface treatment; vary their size and composition, never their styling.
+- Implement exactly one primary and one secondary button style${brand.designTokens?.buttons ? ' from designTokens.buttons' : ''} and one label style, and reuse them in every section. Cards share one padding, radius, border and surface treatment; vary their size and composition, never their styling.
 
 Enforce this visual quality floor:
 - Derive heading placement, line count and text block width from the selected reference at each viewport, and set its size with the brand type-scale step that matches its relative prominence (display for a monumental headline). Do not flatten an intentionally large or multi-line reference headline into generic small type, and do not add an off-scale size for one section.
@@ -275,6 +276,51 @@ function exactBuildFiles(brief: DesignBrief): string[] | undefined {
 
 function workspaceFiles(workspacePath: string): string[] {
   return workspaceEntries(workspacePath).map(({ relative }) => relative)
+}
+
+const TOKEN_SCALES = [
+  {
+    key: 'typeScale',
+    name: 'type scale',
+    derive:
+      'one type scale (--text-display, --text-h1, --text-h2, --text-h3, --text-body, --text-small, --text-label)',
+  },
+  {
+    key: 'radius',
+    name: 'radius family',
+    derive: 'one radius family (--radius-1 to --radius-3 plus --radius-pill)',
+  },
+  {
+    key: 'spacing',
+    name: 'spacing scale',
+    derive: 'one spacing scale (--space-section, --space-gutter, --space-stack)',
+  },
+] as const
+
+/**
+ * Brand parsing keeps only complete token groups, so a brand may carry some scales and not
+ * others; Build declares the recorded ones and derives the rest into the same block.
+ */
+function tokenScaleGuidance(tokens: BrandSystem['designTokens']) {
+  const present = TOKEN_SCALES.filter(({ key }) => tokens?.[key])
+  const missing = TOKEN_SCALES.filter(({ key }) => !tokens?.[key])
+  const declared = present.length
+    ? `, and the designTokens ${andList(present.map(({ name }) => name))}`
+    : ''
+  if (missing.length === 0) return { declared, derive: '' }
+  const reason = tokens
+    ? `This brand's designTokens have no usable ${andList(missing.map(({ name }) => name))}`
+    : 'This brand predates structured tokens'
+  return {
+    declared,
+    derive: `${reason}: derive ${andList(missing.map(({ derive }) => derive))} from interfaceDirection and the anchor reference, and add ${missing.length > 1 ? 'them' : 'it'} to the same block. `,
+  }
+}
+
+function andList(values: string[]): string {
+  return values.length < 2
+    ? (values[0] ?? '')
+    : `${values.slice(0, -1).join(', ')} and ${values.at(-1)}`
 }
 
 function quotedList(values: string[]): string {

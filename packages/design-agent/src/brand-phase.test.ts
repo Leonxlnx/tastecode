@@ -126,6 +126,19 @@ describe('brand phase', () => {
         }),
       ).designTokens,
     ).toEqual(designTokens)
+    // A partial or malformed tokens object must never send Brand into its correction loop.
+    expect(
+      parseBrandPhaseOutput(
+        JSON.stringify({
+          ...brand,
+          designTokens: { typeScale: { display: '6rem' }, radius: designTokens.radius },
+        }),
+      ).designTokens,
+    ).toEqual({ radius: designTokens.radius })
+    expect(
+      'designTokens' in
+        parseBrandPhaseOutput(JSON.stringify({ ...brand, designTokens: 'see interfaceDirection' })),
+    ).toBe(false)
   })
 
   it('keeps untrusted brief content inside a data boundary', () => {

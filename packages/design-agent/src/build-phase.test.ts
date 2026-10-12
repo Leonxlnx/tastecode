@@ -167,8 +167,25 @@ describe('build phase', () => {
       '--space-section': 'clamp(4rem, 10vw, 9rem)',
     })
 
+    const partial = designBuildPrompt(
+      artifacts[0],
+      { ...brand, designTokens: { radius: designTokens.radius } },
+      artifacts[2],
+      artifacts[3],
+    )
+    expect(partial).toContain('the approved font families, and the designTokens radius family.')
+    expect(partial).toContain(
+      "This brand's designTokens have no usable type scale and spacing scale: derive one type scale (--text-display",
+    )
+    expect(partial).toContain('one spacing scale (--space-section, --space-gutter, --space-stack)')
+    expect(partial).not.toContain('from designTokens.buttons')
+    expect(partial).not.toContain('This brand predates structured tokens')
+
     const legacy = designBuildPrompt(...artifacts)
     expect(legacy).toContain('This brand predates structured tokens')
+    expect(legacy).toContain(
+      'derive one type scale (--text-display, --text-h1, --text-h2, --text-h3, --text-body, --text-small, --text-label), one radius family (--radius-1 to --radius-3 plus --radius-pill) and one spacing scale (--space-section, --space-gutter, --space-stack) from interfaceDirection and the anchor reference, and add them to the same block.',
+    )
     expect(legacy).toContain('The only permitted font families are "Geist".')
     expect(legacy).not.toContain('Reproduce reference spacing, rules, borders, radii and surfaces')
     expect(legacy).not.toContain('Preserve reference labels, type contrast and case')

@@ -29,16 +29,21 @@ export function designTokenVariables(brand: BrandSystem): DesignTokenVariables {
       `"${family.replace(/["\\]/gu, '')}", ${genericFamily(family)}`
   })
 
-  const tokens = brand.designTokens
-  if (tokens) {
-    for (const [step, size] of Object.entries(tokens.typeScale)) root[`--text-${step}`] = size
-    tokens.radius.scale.forEach((size, index) => {
+  // Brand parsing keeps only complete token groups; Build derives the missing ones.
+  const { typeScale, radius, spacing } = brand.designTokens ?? {}
+  if (typeScale) {
+    for (const [step, size] of Object.entries(typeScale)) root[`--text-${step}`] = size
+  }
+  if (radius) {
+    radius.scale.forEach((size, index) => {
       root[`--radius-${index + 1}`] = size
     })
-    root['--radius-pill'] = tokens.radius.pill
-    root['--space-section'] = tokens.spacing.section
-    root['--space-gutter'] = tokens.spacing.gutter
-    root['--space-stack'] = tokens.spacing.stack
+    root['--radius-pill'] = radius.pill
+  }
+  if (spacing) {
+    root['--space-section'] = spacing.section
+    root['--space-gutter'] = spacing.gutter
+    root['--space-stack'] = spacing.stack
   }
 
   return themes.light && themes.dark ? { root, dark: paletteCssVariables(themes.dark) } : { root }

@@ -152,7 +152,7 @@ describe('brand system handoff', () => {
     ).toEqual({ scale: ['2px', '8px'], pill: '999px' })
   })
 
-  it('rejects design tokens that later phases could not apply as one shared scale', () => {
+  describe('never fails brand parsing because of design tokens', () => {
     const designTokens = {
       typeScale: {
         display: '6rem',
@@ -168,30 +168,65 @@ describe('brand system handoff', () => {
       buttons: { primary: 'Solid accent.', secondary: 'Outline.' },
       surfaces: 'Light canvas throughout.',
     }
-    expect(() =>
-      parseBrandSystem({
-        ...brand,
-        designTokens: {
+    const { typeScale, radius, spacing, buttons, surfaces } = designTokens
+    const tokensOf = (value: unknown) => parseBrandSystem({ ...brand, designTokens: value })
+
+    it('drops a type scale with a value that is not a CSS size and keeps the other groups', () => {
+      expect(
+        tokensOf({
           ...designTokens,
-          typeScale: { ...designTokens.typeScale, h2: '3rem; } body { display: none' },
-        },
-      }),
-    ).toThrow('designTokens.typeScale.h2 must be a CSS length')
-    expect(() =>
-      parseBrandSystem({
-        ...brand,
-        designTokens: { ...designTokens, typeScale: { ...designTokens.typeScale, h3: undefined } },
-      }),
-    ).toThrow('designTokens.typeScale.h3')
-    expect(() =>
-      parseBrandSystem({
-        ...brand,
-        designTokens: { ...designTokens, radius: ['2px', '4px', '8px', '16px', '32px'] },
-      }),
-    ).toThrow('one to four radii')
-    expect(() =>
-      parseBrandSystem({ ...brand, designTokens: { ...designTokens, buttons: { primary: 'x' } } }),
-    ).toThrow('designTokens.buttons.secondary')
+          typeScale: { ...typeScale, h2: '3rem; } body { display: none' },
+        }).designTokens,
+      ).toEqual({ radius, spacing, buttons, surfaces })
+    })
+
+    it('drops each partial or invalid group on its own', () => {
+      expect(
+        tokensOf({ ...designTokens, typeScale: { ...typeScale, h3: undefined } }).designTokens,
+      ).toEqual({ radius, spacing, buttons, surfaces })
+      expect(
+        tokensOf({ ...designTokens, radius: ['2px', '4px', '8px', '16px', '32px'] }).designTokens,
+      ).toEqual({ typeScale, spacing, buttons, surfaces })
+      expect(
+        tokensOf({ ...designTokens, spacing: { section: '8rem', gutter: 'wide' } }).designTokens,
+      ).toEqual({ typeScale, radius, buttons, surfaces })
+      expect(tokensOf({ ...designTokens, buttons: { primary: 'x' } }).designTokens).toEqual({
+        typeScale,
+        radius,
+        spacing,
+        surfaces,
+      })
+      expect(tokensOf({ ...designTokens, surfaces: '' }).designTokens).toEqual({
+        typeScale,
+        radius,
+        spacing,
+        buttons,
+      })
+    })
+
+    it('keeps the valid groups of a partial tokens object', () => {
+      const partial = tokensOf({ typeScale, buttons: 'Solid pill buttons.' })
+      expect(partial.designTokens).toEqual({ typeScale })
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-brand-partial-tokens-'))
+      try {
+        expect(writeBrandSystem(workspace, partial)).toEqual(partial)
+        expect(readBrandSystem(workspace)).toEqual(partial)
+      } finally {
+        rmSync(workspace, { recursive: true, force: true })
+      }
+    })
+
+    it('drops a tokens object that is malformed or has no usable group', () => {
+      for (const malformed of [
+        'clamp(1rem, 2vw, 3rem)',
+        42,
+        [typeScale],
+        {},
+        { typeScale: 'large', radius: [], spacing: null, buttons: ['x'], surfaces: 7 },
+      ]) {
+        expect('designTokens' in tokensOf(malformed)).toBe(false)
+      }
+    })
   })
 
   it('allows a new brand to have no existing asset decisions', () => {

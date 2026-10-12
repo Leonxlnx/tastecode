@@ -39,6 +39,20 @@ describe('design token variables', () => {
     expect(variables.root['--color-canvas']).toBe(palette.value.themes.dark!.roles.canvas)
   })
 
+  it('declares only the token groups a partial brand recorded', () => {
+    const brand = {
+      ...brandWith([{ name: 'Ink', value: '#111111', usage: 'Text' }]),
+      designTokens: { radius: { scale: ['2px', '8px'], pill: '999px' }, surfaces: 'Flat paper.' },
+    }
+    expect(designTokenVariables(brand).root).toEqual({
+      '--color-ink': '#111111',
+      '--font-primary': '"Geist Mono", monospace',
+      '--radius-1': '2px',
+      '--radius-2': '8px',
+      '--radius-pill': '999px',
+    })
+  })
+
   it('keeps legacy free-form colors addressable by name', () => {
     expect(
       designTokenVariables(

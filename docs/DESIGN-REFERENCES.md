@@ -79,7 +79,10 @@ How the phases apply the decision:
 - **Brand:** derives typography (category and draw), type scale, palette seeds, radius family,
   spacing rhythm, button, card and label styles, and the light/dark surface sequence from the
   anchor only. It records them in the optional `designTokens` object of `brand.json`; brand
-  systems approved before this change still load without it. Monospace and mixed-type labels
+  systems approved before this change still load without it. Tokens never fail brand parsing:
+  each complete, valid group (type scale, radius, spacing, buttons, surfaces) is kept, a
+  partial or invalid group or object is dropped without an error, and Build derives the
+  missing scales from `interfaceDirection` and the anchor. Monospace and mixed-type labels
   appear only when the anchor uses them. Dashboards use one sans family plus an optional
   monospace family for data, never a display or serif draw.
 - **Page and Build:** keep each section's macro composition from its own reference: grid,
