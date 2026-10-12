@@ -1790,6 +1790,23 @@ export function App() {
         }
         return result
       }
+      // A profile without saved visibility gets its curated defaults below,
+      // once every direct source has answered. Until then, hide each source's
+      // older models as soon as that source answers, so a picker opened during
+      // discovery never lists a model it is about to drop. Nothing is saved
+      // here: the first full catalog still decides and persists the profile.
+      const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
+        if (cancelled || modelVisibilityInitialized.current) return
+        const current = hiddenModelsRef.current
+        const additions = models.filter(
+          (choice) => !modelVisibleByDefault(choice.model) && !current.has(choice.key),
+        )
+        if (additions.length === 0) return
+        const next = new Set(current)
+        for (const choice of additions) next.add(choice.key)
+        hiddenModelsRef.current = next
+        setHiddenModels(next)
+      }
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed)
@@ -1799,6 +1816,7 @@ export function App() {
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
+              hideDefaultHiddenModels(preserved)
               return settleSource(source, {
                 provider: entry.id,
                 discovered: false,
@@ -1816,13 +1834,13 @@ export function App() {
                 result.models,
                 false,
               )
-              return models.length > 0
-                ? settleSource(sourceKey({ provider: entry.id }), {
-                    provider: entry.id,
-                    discovered: true,
-                    models,
-                  })
-                : preserveCatalog()
+              if (models.length === 0) return preserveCatalog()
+              hideDefaultHiddenModels(models)
+              return settleSource(sourceKey({ provider: entry.id }), {
+                provider: entry.id,
+                discovered: true,
+                models,
+              })
             } catch (cause) {
               discoveryErrors[sourceKey({ provider: entry.id })] = {
                 id: `models:${entry.id}:${catalogRequest}`,

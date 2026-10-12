@@ -1531,6 +1531,68 @@ describe('web client', () => {
     )
   })
 
+  it('hides curated older models per source while the rest of discovery is pending', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          images: false,
+        },
+      },
+    ]
+    const listed = (id: string, isDefault = false) => ({
+      id,
+      displayName: id,
+      isDefault,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseClaude!: (value: unknown) => void
+    const claudeModels = new Promise((resolve) => {
+      releaseClaude = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return methods['models.list'].params.parse(params).provider === 'claude-code'
+        ? claudeModels
+        : Promise.resolve({ models: [listed('gpt-6.1-sol', true), listed('gpt-5.5')] })
+    })
+    const offeredKeys = () => composerProps().models.map((choice) => choice.key)
+
+    render(<App />)
+
+    // Codex has answered and Claude Code has not: the picker must already
+    // leave out the older Codex model instead of listing it until every
+    // provider is done, and nothing is saved before the first full catalog.
+    await waitFor(() => expect(offeredKeys()).toContain('codex:gpt-6.1-sol'))
+    expect(offeredKeys()).not.toContain('codex:gpt-5.5')
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+
+    await act(async () => {
+      releaseClaude({ models: [listed('opus', true), listed('claude-opus-4-8')] })
+      await claudeModels
+    })
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe(
+        '["codex:gpt-5.5","claude-code:claude-opus-4-8"]',
+      ),
+    )
+    expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+  })
+
   it.each(['failed', 'empty'] as const)(
     'waits for every installed beta catalog when one is %s',
     async (claudeCatalog) => {
