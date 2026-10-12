@@ -1781,7 +1781,7 @@ export class Orchestrator {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
     if (approvalChange) await approvalChange.catch(() => undefined)
-    await this.#ensureThread(threadId)
+    await this.#ensureThread(threadId, options)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
     if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
@@ -3455,13 +3455,14 @@ export class Orchestrator {
     return entry
   }
 
-  async #ensureThread(threadId: string): Promise<void> {
+  /** `turnOptions` are the model options of the turn that needs the runtime, if any. */
+  async #ensureThread(threadId: string, turnOptions: TurnOptions = {}): Promise<void> {
     if (this.#stoppingSessions.has(threadId)) await this.#stopThreadProvider(threadId)
     if (this.#threads.has(threadId)) return
     const existing = this.#resumingThreads.get(threadId)
     if (existing) return existing
 
-    const pending = this.#resumeThread(threadId).finally(() => {
+    const pending = this.#resumeThread(threadId, turnOptions).finally(() => {
       if (this.#resumingThreads.get(threadId) === pending) this.#resumingThreads.delete(threadId)
       this.#pruneIdleThreadRuntimes()
     })
@@ -3469,7 +3470,7 @@ export class Orchestrator {
     return pending
   }
 
-  async #resumeThread(threadId: string): Promise<void> {
+  async #resumeThread(threadId: string, turnOptions: TurnOptions): Promise<void> {
     const generation = this.#runtimeGenerations.get(threadId) ?? 0
     const disposeGeneration = this.#disposeGeneration
     const panicGeneration = this.#panicGeneration
@@ -3494,6 +3495,11 @@ export class Orchestrator {
     const approval = this.#threadApprovals.get(threadId) ?? this.#store.threadApproval(threadId)
     const result = await runtime
       .resume(threadId, workspacePath, {
+        // Opening without the turn's model options would make an engine that
+        // applies them at launch (Claude effort) restart right after resuming.
+        ...(turnOptions.model ? { model: turnOptions.model } : {}),
+        ...(turnOptions.effort ? { effort: turnOptions.effort } : {}),
+        ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
         ...(stored.agent ? { agent: stored.agent } : {}),
         ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
         ...(approval ? { approval } : {}),
