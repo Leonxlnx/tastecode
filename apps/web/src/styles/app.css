@@ -408,7 +408,7 @@
   position: relative;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 6px;
+  padding: 4px 10px 8px 8px;
 }
 
 /* No rule between the list and the profile: chats that continue below the
@@ -476,86 +476,121 @@
   border-color: var(--text-3);
 }
 
-.account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+/* The profile row: a 40px soft pill holding the picture, the name over a
+   quiet detail line, and an up/down selector. The surface is painted on the
+   inner span rather than the button, because buttons never animate (see
+   button-feedback.css) and this one should ease in like the chat rows. */
+.rail__foot .menutrigger {
+  /* The open state is painted below as well, so the shared pressed fill
+     must not stack a second, square-cornered surface on top. */
+  --control-pressed: transparent;
   width: 100%;
-  max-width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-xl);
+  color: var(--rail-text);
+}
+
+.rail__foot .menutrigger:hover:not(:disabled) {
+  background: none;
+}
+
+.account {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  width: 100%;
   min-width: 0;
+  min-height: 40px;
+  padding: 5px 8px;
+  border-radius: var(--r-xl);
+  text-align: left;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.rail__foot .menutrigger:hover .account {
+  background: var(--control-hover);
+}
+
+.rail__foot .menutrigger[aria-expanded='true'] .account {
+  background: var(--menu-hover);
 }
 
 .account__avatar {
+  position: relative;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
+  width: 24px;
+  height: 24px;
   background: var(--surface-3);
-  border: 1px solid var(--chrome-border);
   border-radius: var(--r-circle);
   color: var(--text-2);
-  font-size: 9px;
-  font-weight: 600;
   overflow: hidden;
 }
 
+/* A hairline inside the circle instead of a border around it: it defines a
+   light photo against the rail without adding a hard outer edge. */
+.account__avatar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+  pointer-events: none;
+}
+
 .account__avatar img,
-.account__avatar svg {
+.account__avatar > svg {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.account__name {
+.account__text {
+  display: grid;
   min-width: 0;
-  font-size: var(--rail-font-size);
-  font-weight: 460;
+}
+
+.account__text > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account__usage {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+.account__name {
+  font-size: var(--rail-font-size);
+  font-weight: 500;
+  line-height: 16px;
 }
 
-.account__usage + .account__chevron {
-  margin-left: 0;
+/* Dark --text-3 is 3.7:1 on the rail, too faint for words; this sits one
+   step above it there and is --text-3 itself in light. */
+.account__usage {
+  color: color-mix(in srgb, var(--text-2) 55%, var(--text-3));
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+@starting-style {
+  .account__usage {
+    opacity: 0;
+  }
+}
+
+:root[data-theme='light'] .account__usage:not(.is-low) {
+  color: var(--text-3);
+}
+
+.account__usage.is-low {
+  color: var(--attention);
 }
 
 .account__chevron {
-  flex: none;
-  margin-left: auto;
   color: var(--text-3);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger[aria-expanded='true'] .account__chevron {
-  transform: rotate(180deg);
-}
-
-/* The full-width hit area stays easy to target while the visible content
-   leaves room for the disclosure state at the right. */
-.rail__foot .menutrigger {
-  width: 100%;
-  min-height: 28px;
-  padding: 3px 6px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--rail-text);
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger:hover:not(:disabled),
-.rail__foot .menutrigger[aria-expanded='true'] {
-  background: var(--control-hover);
-  color: var(--rail-text);
 }
 
 /* Inline rename, sized to sit exactly where the label was. */

@@ -458,13 +458,13 @@ describe('Sidebar chat actions', () => {
     )
 
     const rendered = render(view)
-    for (const [usedPercent, expected] of [
-      [11, undefined],
-      [79, undefined],
-      [79.9, undefined],
-      [80, '20%'],
-      [89, '11%'],
-      [100, '0%'],
+    for (const [usedPercent, expected, low] of [
+      [11, '89% left · Codex', false],
+      [79, '21% left · Codex', false],
+      [79.9, '20% left · Codex', false],
+      [80, '20% left · Codex', true],
+      [89, '11% left · Codex', true],
+      [100, '0% left · Codex', true],
     ] as const) {
       rendered.rerender({
         ...view,
@@ -485,7 +485,9 @@ describe('Sidebar chat actions', () => {
           ],
         },
       })
-      expect(document.querySelector('.account__usage')?.textContent).toBe(expected)
+      const detail = document.querySelector('.account__usage')
+      expect(detail?.textContent).toBe(expected)
+      expect(detail?.classList.contains('is-low')).toBe(low)
     }
     rendered.rerender(view)
 
@@ -495,9 +497,9 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
-    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
+    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15% left · Codex')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
-      '15% left · codex · 7 days',
+      '15% left · Codex · 7 days',
     )
     expect(accountTrigger.querySelector('.account__chevron')).not.toBeNull()
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
@@ -552,6 +554,39 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
+  })
+
+  it('keeps the profile row to the name until usage is known', () => {
+    render(
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={{ signedIn: true, plan: 'Pro' }}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Account' })
+    expect(trigger.querySelector('.account__name')?.textContent).toBe('Local profile')
+    // The composer provider's plan is not the profile's, so it is not shown here.
+    expect(trigger.querySelector('.account__text')?.textContent).toBe('Local profile')
   })
 
   it('shows direct Tabler rename and archive actions for each chat', () => {

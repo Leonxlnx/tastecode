@@ -26,7 +26,6 @@ import type {
 } from '@harness/contracts'
 import {
   IconTrash as Trash,
-  IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
@@ -39,6 +38,7 @@ import {
   IconPinnedOff as PinOff,
   IconPlus as Plus,
   IconSearch as Search,
+  IconSelector as Selector,
   IconSettings as Settings,
   IconEdit as SquarePen,
   IconUser as UserRound,
@@ -57,7 +57,7 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { providerPresentation } from '../provider-presentation.js'
+import { providerDisplayName, providerPresentation } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { sidebarRail } from '../sidebar-order.js'
 import {
@@ -259,13 +259,25 @@ function SidebarComponent(props: {
       return limits.map((limit) => ({ ...limit, provider: state.provider }))
     })
     .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
-    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
+    .reduce<{ usedPercent: number; label: string; provider: ProviderId } | undefined>(
       (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
       undefined,
     )
   const usageRemaining = usageLimit
     ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
     : undefined
+  /* The quiet second line under the name: what is left of the tightest plan
+     limit across every provider. Not the signed-in plan: that belongs to
+     whichever provider the composer has selected, so it would change under
+     the name whenever the model did. */
+  const usageDetail =
+    usageLimit && usageRemaining !== undefined
+      ? {
+          text: `${Math.round(usageRemaining)}% left · ${providerDisplayName(usageLimit.provider)}`,
+          window: usageLimit.label,
+          low: usageRemaining <= 20,
+        }
+      : undefined
   useEffect(() => {
     void loadAccountLimits()
   }, [])
@@ -901,17 +913,18 @@ function SidebarComponent(props: {
                     <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
                   )}
                 </span>
-                <span className="account__name">{profileDisplayName}</span>
-                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
-                  <span
-                    className="account__usage"
-                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
-                  >
-                    {Math.round(usageRemaining)}%
-                  </span>
-                ) : null}
-                <ChevronUp className="account__chevron" size={13} aria-hidden />
+                <span className="account__text">
+                  <span className="account__name">{profileDisplayName}</span>
+                  {usageDetail ? (
+                    <span
+                      className={`account__usage${usageDetail.low ? ' is-low' : ''}`}
+                      title={`${usageDetail.text} · ${usageDetail.window}`}
+                    >
+                      {usageDetail.text}
+                    </span>
+                  ) : null}
+                </span>
+                <Selector className="account__chevron" size={14} aria-hidden />
               </span>
             )}
           >
