@@ -4,13 +4,20 @@ export function configureRendererLifecycle(
   contents: Pick<WebContents, 'on' | 'reload' | 'isDestroyed'>,
   options: {
     cancelCaptures: () => void
+    /** The page was replaced, so state tied to the old page's listeners is stale. */
+    onPageReplaced: () => void
     isQuitting: () => boolean
     onRepeatedCrash: () => void
   },
 ): void {
   let recovered = false
-  contents.on('did-start-navigation', (details) => {
-    if (details.isMainFrame && !details.isSameDocument) options.cancelCaptures()
+  // Not did-start-navigation: Electron emits it before will-navigate gets to
+  // block a same-window link, and a blocked navigation leaves the old page
+  // loaded. did-navigate fires only for a committed main-frame document,
+  // reloads included.
+  contents.on('did-navigate', () => {
+    options.cancelCaptures()
+    options.onPageReplaced()
   })
   contents.on('destroyed', options.cancelCaptures)
   contents.on('render-process-gone', () => {

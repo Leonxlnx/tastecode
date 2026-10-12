@@ -1237,6 +1237,17 @@ export function App() {
     },
     [publishComposerDraft],
   )
+  // Editing a queued prompt removes it before the composer takes it back. If
+  // the user switched chats meanwhile, the prompt returns to its own chat.
+  const keepQueuedEdit = useCallback(
+    (removed: Promise<RecoverableDraft | undefined>) => {
+      const owner = threadController.draftOwner
+      void removed.then((prompt) => {
+        if (prompt) restoreRejectedDraft(owner, prompt)
+      })
+    },
+    [restoreRejectedDraft],
+  )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   // What the sidebar shows. Navigation picks from this list so it never
@@ -3734,6 +3745,9 @@ export function App() {
       } else {
         setThread(emptyThread)
       }
+      // A chat that is still starting only has a local id the server does not
+      // know, so asking for its history fails. The start adopts the real id.
+      if (id.startsWith('pending:')) return
 
       setLoadingThreadId(id)
       try {
@@ -4541,6 +4555,12 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
+  // The bottom panel unmounts while no project is active and forgets which
+  // toggle it last handled. Without this reset it would treat the old count as
+  // a new toggle on remount and open a terminal nobody asked for.
+  useEffect(() => {
+    if (!activePath) setBottomTerminalToggleRequest(0)
+  }, [activePath])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
@@ -4602,6 +4622,9 @@ export function App() {
     const model = selectedModelChoice?.model
     const fast = getFastServiceTier(model)
     if (!fast) return
+    // Save it to the open chat like the picker does, or the chat's saved tier
+    // comes back the next time it is opened.
+    pendingThreadModelSave.current = activeIdRef.current
     setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
   }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
@@ -5262,6 +5285,7 @@ export function App() {
                       onDraftChange={updateComposerDraftText}
                       onAttachmentsChange={updateComposerDraftAttachments}
                       onPendingAttachment={keepPendingAttachment}
+                      onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}

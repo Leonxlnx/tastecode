@@ -43,6 +43,11 @@ function shutdownMessage(value: unknown): void {
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, shutdown)
 process.on('message', shutdownMessage)
+// A legacy desktop child keeps running when the main process dies without
+// asking it to stop (crash, kill), and it would hold the port and the data
+// lease against the next launch. Losing the parent's IPC channel means no one
+// owns this server any more. Without an IPC channel this never fires.
+process.on('disconnect', shutdown)
 
 // Electron utility processes expose their private parent channel separately
 // from Node's child_process IPC channel.

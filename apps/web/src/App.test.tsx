@@ -3537,6 +3537,42 @@ describe('new chats', () => {
     expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
   })
 
+  it('does not load server history when a chat that is still starting is selected', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId!
+    await act(async () => {
+      await sidebarProps().onSelectSession(pendingId)
+    })
+
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'thread.history',
+      expect.objectContaining({ threadId: pendingId }),
+    )
+    expect(header().sessionId).toBe(pendingId)
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
+  })
+
   it('pins a chat that was pinned while it was still starting', async () => {
     serverProjects = [
       { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
@@ -6957,6 +6993,44 @@ describe('new chats', () => {
     )
   })
 
+  it('saves a fast mode toggle from the menu to the open chat setup', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
+    localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              cachedCodexChoice().model,
+              {
+                ...cachedCodexChoice().model,
+                id: 'gpt-5.6-mini',
+                displayName: 'GPT-5.6 Mini',
+                isDefault: false,
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '' }],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+    const savedTier = () =>
+      JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!).serviceTier
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    // The model picker is lazy-loaded.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await screen.findByRole('button', { name: 'Disable fast mode' })
+
+    act(() => nativeMenu.listener?.('toggleFastMode'))
+    await screen.findByRole('button', { name: 'Enable fast mode' })
+
+    await waitFor(() => expect(savedTier()).not.toBe('priority'))
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
@@ -8105,6 +8179,46 @@ describe('global shortcuts', () => {
     expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
+  it('keeps the bottom panel closed when it remounts after the active project is removed', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    const remounted = await screen.findByTestId('bottom-terminal')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(remounted.classList.contains('is-open')).toBe(false)
+    expect(screen.queryByTestId('terminal-pane')).toBeNull()
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
@@ -8749,6 +8863,74 @@ describe('live sessions', () => {
       threadId: 'thread-1',
       queuedTurnId: submissionId,
     })
+  })
+
+  it('returns an edited queued prompt to its chat when the user switches chats mid-delete', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let resolveSend: ((result: unknown) => void) | undefined
+    const sendResult = new Promise((resolve) => {
+      resolveSend = resolve
+    })
+    let resolveDelete: ((result: unknown) => void) | undefined
+    const deleteResult = new Promise((resolve) => {
+      resolveDelete = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn') return sendResult
+      if (method === 'thread.deleteQueuedTurn') return deleteResult
+      return request(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = call
+        ? methods['thread.sendTurn'].params.parse(call[1]).clientSubmissionId!
+        : ''
+      expect(submissionId).toMatch(/^local:/)
+    })
+    await act(async () =>
+      resolveSend?.({
+        queued: true,
+        queuedTurn: { id: submissionId, text: 'Queue this next', attachments: [], createdAt: 1 },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queue this next' }))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-2')
+    })
+    await act(async () => resolveDelete?.({}))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-1')
+    })
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Queue this next',
+      ),
+    )
   })
 
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
