@@ -707,6 +707,12 @@ describe('reviewed reference library', () => {
     ['', 'Design a homepage for our analytics app'],
     ['', 'Build a webpage about our fitness app'],
     ['', 'Build a page for our analytics app'],
+    ['pricing_page', 'Design a pricing page for our SaaS app'],
+    ['', 'Design a pricing page for our SaaS app'],
+    ['Waitlist page', 'Create a waitlist page for my AI app'],
+    ['', 'Create a waitlist page for my AI app'],
+    ['About page', 'Make an about page for our analytics app'],
+    ['', 'Make an about page for our analytics app'],
   ])('classifies %j "%s" as a website', (pageType, originalRequest) => {
     expect(isDashboardBrief({ pageType, originalRequest })).toBe(false)
   })
@@ -716,6 +722,8 @@ describe('reviewed reference library', () => {
     'Admin panel for orders',
     'Build an internal analytics tool',
     'Build a settings page for the admin app',
+    'Build an analytics app about page views',
+    'Build an analytics app tracking our pricing page conversions',
   ])('classifies "%s" as a dashboard', (originalRequest) => {
     expect(isDashboardBrief({ pageType: '', originalRequest })).toBe(true)
   })
