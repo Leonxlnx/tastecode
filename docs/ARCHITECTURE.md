@@ -637,17 +637,23 @@ site-agnostic website sampling from
 independently and put about eleven source sites into one 14-reference deck.
 
 The first drawn section, normally the hero, is still chosen uniformly by group and becomes the
-anchor; its source host defines the page's language. Later sections come from the anchor site
-first, then from its compatible families, then from the three most similar sites in the optional
-per-site `style-profiles.json`, and only then from the uniform pool. Profile outliers never anchor
+anchor; its source host defines the page's language. Each later section takes the requested
+family from the anchor site, then from the three most similar close sites in the optional per-site
+`style-profiles.json` (style score at least 10 of 14). Only a sparse family, one with fewer than
+ten composition groups, may then borrow a compatible family from those sites; otherwise the
+section comes from the uniform pool the family always used. The requested family always beats
+borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
+section to most pages. Profile outliers never anchor
 a page or count as their site's language. A missing or malformed profile file degrades to
 same-site and uniform sampling rather than failing a run. Saved deck entries record `site` and
 `role`; the anchor also carries a one-line `style` summary. Older decks parse unchanged. Details
 are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
 
 _Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
-the anchor site only (most sites lack some families, which would shrink the deck), and a uniform
-draw per family (the source of the mixed-language pages).
+the anchor site only (most sites lack some families, which would shrink the deck), a uniform
+draw per family (the source of the mixed-language pages), the anchor site's compatible family
+before a close site's own family (it put other section types into a third of FAQ slots), and
+similar sites without a minimum score (one site's only stats section reached a third of pages).
 
 ---
 

@@ -718,7 +718,7 @@ The blueprint records visitor questions, decision stages, information dependenci
 selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
 purposeful motion decision per section. New runs draw a random anchor composition from the
 configured catalog and labeled complete generated candidates, then fill later sections from the
-anchor's source site and the most similar profiled sites so one page keeps one design language
+anchor's source site and close profiled sites so one page keeps one design language
 (see [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md)), with pending inspection recorded honestly. They require
 a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
 Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
