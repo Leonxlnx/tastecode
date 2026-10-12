@@ -4579,6 +4579,147 @@ describe('provider-neutral design briefing', () => {
     }
   })
 
+  it('shows Brand the anchor and two same-site references while Page keeps the deck', async () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-brand-anchor-'))
+    const priorLibrary = process.env.TASTECODE_REFERENCE_LIBRARY
+    process.env.TASTECODE_REFERENCE_LIBRARY = workspace
+    const source = path.resolve(
+      '../../packages/design-agent/references/directions/hero/direction-001.webp',
+    )
+    const image = (name: string) => {
+      const file = path.join(workspace, `${name}.webp`)
+      copyFileSync(source, file)
+      return realpathSync(file)
+    }
+    const entry = (id: string, family: string, site: string) => ({
+      id,
+      family,
+      group: id,
+      imagePath: `${id}.webp`,
+      source: `https://${site}/`,
+      tags: ['calm'],
+      cue: `Test ${family} composition`,
+      reviewStatus: 'reviewed',
+      reviewNotes: 'Synthetic catalog fixture',
+    })
+    // One hero makes a.example the anchor; b.example only supplies the FAQ fallback.
+    const images = {
+      hero: image('a-hero'),
+      heroMobile: image('a-hero-mobile'),
+      about: image('a-about'),
+      social: image('a-social'),
+      faq: image('b-faq'),
+      footer: image('a-footer'),
+    }
+    writeFileSync(
+      path.join(workspace, 'catalog.json'),
+      JSON.stringify({
+        version: 1,
+        references: [
+          {
+            ...entry('a-hero', 'hero', 'a.example'),
+            mobileImagePath: 'a-hero-mobile.webp',
+            pairEvidence: 'Test fixture for paired attachment transport',
+          },
+          entry('a-about', 'about', 'a.example'),
+          entry('a-social', 'social_proof', 'a.example'),
+          entry('b-faq', 'faq', 'b.example'),
+          entry('a-footer', 'footer', 'a.example'),
+        ],
+      }),
+    )
+    const { orchestrator, sessions, store } = harness()
+    try {
+      const thread = await orchestrator.startThread('codex', workspace)
+      await orchestrator.sendTurn(thread.id, 'Create a website.', [DESIGN_BRIEF_ATTACHMENT])
+      const session = sessions[0]!
+      session.emit(turnStarted(thread.id, 's1-turn'))
+      session.emit(
+        message(
+          JSON.stringify({
+            status: 'complete',
+            message: 'Brief complete.',
+            questions: [],
+            brief: {
+              originalRequest: 'Create a website.',
+              subject: 'Independent studio',
+              pageType: 'Marketing site',
+              scope: 'Single responsive page',
+              primaryGoal: 'Generate enquiries',
+              audience: 'Prospective clients',
+              offer: 'Design services',
+              primaryAction: 'Start a project',
+              requiredContent: [],
+              constraints: [],
+              brandInputs: [],
+              creativeControl: 'Agent-led',
+              explicitAnswers: [],
+              assumptions: [],
+              unresolved: [],
+            },
+          }),
+          's1-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(2))
+      const run = store.designRun(thread.id) as {
+        referenceDeck: Array<{ id: string; role: string }>
+        typographyCandidates: { sans: string[] }
+      }
+      expect(run.referenceDeck.map(({ id, role }) => [id, role])).toEqual([
+        ['a-hero', 'anchor'],
+        ['a-about', 'same-site'],
+        ['a-social', 'same-site'],
+        ['b-faq', 'fallback'],
+        ['a-footer', 'same-site'],
+      ])
+      expect(session.sent[1]).toContain('Brand phase')
+      expect(session.sentAttachments[1]).toEqual([
+        images.hero,
+        images.heroMobile,
+        images.about,
+        images.social,
+      ])
+      for (const id of ['a-hero', 'a-about', 'a-social'])
+        expect(session.sent[1]).toContain(`"id": "${id}"`)
+      for (const id of ['b-faq', 'a-footer']) expect(session.sent[1]).not.toContain(`"id": "${id}"`)
+
+      session.emit(
+        message(
+          JSON.stringify({
+            version: 1,
+            creativeDirection: { summary: 'Calm', keywords: ['calm'], avoid: [] },
+            colorPalette: [{ name: 'Ink', value: '#171717', usage: 'Primary text' }],
+            typefaces: [
+              {
+                family: run.typographyCandidates.sans[0],
+                source: 'Google Fonts',
+                roles: ['body'],
+                weights: [400, 600],
+              },
+            ],
+            interfaceDirection: 'Quiet grid.',
+            imageDirection: { summary: 'None', subjects: [], treatment: 'None', avoid: [] },
+            motionDirection: { summary: 'Minimal', principles: [], avoid: [] },
+            voice: { summary: 'Direct', avoid: [] },
+          }),
+          's1-turn',
+        ),
+      )
+      session.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      await vi.waitFor(() => expect(session.sent).toHaveLength(3))
+      expect(session.sent[2]).toContain('Page Blueprint phase')
+      expect(session.sentAttachments[2]).toEqual(Object.values(images))
+      for (const id of ['b-faq', 'a-footer']) expect(session.sent[2]).toContain(`"id": "${id}"`)
+    } finally {
+      if (priorLibrary === undefined) delete process.env.TASTECODE_REFERENCE_LIBRARY
+      else process.env.TASTECODE_REFERENCE_LIBRARY = priorLibrary
+      await orchestrator.disposeAll()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
+    }
+  })
+
   it('clears a failed provider run so later prompts are not trapped behind it', async () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-error-'))
     const { orchestrator, sessions, received, store } = harness()
