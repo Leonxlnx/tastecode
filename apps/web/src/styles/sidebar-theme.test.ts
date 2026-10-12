@@ -44,21 +44,27 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('separates smaller top actions with a clear rhythm', () => {
-    expect(appCss).toMatch(/\.rail__actions \{[^}]*padding: 8px 10px 9px;[^}]*gap: 3px;/s)
+  it("gives the top actions the rail's 28px rhythm and column", () => {
+    expect(appCss).toMatch(/\.rail__actions \{[^}]*padding: 8px 10px 6px 8px;[^}]*gap: 2px;/s)
     expect(appCss).toMatch(
-      /\.rail__actions \.navitem \{[^}]*height: 26px;[^}]*min-height: 26px;[^}]*padding: 0 7px;/s,
+      /\.rail__actions \.navitem \{[^}]*height: 28px;[^}]*min-height: 28px;[^}]*padding: 0 7px;/s,
     )
-    expect(appCss).toMatch(/\.rail__search \{[^}]*width: 26px;[^}]*height: 26px;/s)
+    expect(appCss).toMatch(/\.rail__search \{[^}]*width: 28px;[^}]*height: 28px;/s)
   })
 
-  it('uses medium-weight chat titles and softens only their dark-theme color', () => {
-    expect(appCss).toMatch(/\.sess__title \{[^}]*font-size: 12\.5px;[^}]*font-weight: 500;/s)
+  it('keeps chat titles lighter than their project until hovered, open or unread', () => {
+    const titleRule =
+      appCss.match(/^\.sess__title \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
+    expect(titleRule).toContain('color: var(--text-2);')
+    expect(titleRule).not.toContain('font-size')
+    expect(titleRule).not.toContain('font-weight')
     expect(appCss).toMatch(
-      /:root\[data-theme='dark'\] \.sess__title \{[^}]*color: color-mix\(in srgb, var\(--rail-text\) 78%, transparent\);/s,
+      /\.sessrow:is\(:hover, \.is-active\) \.sess__title \{[^}]*color: var\(--rail-text\);/s,
     )
-    expect(appCss).not.toMatch(/:root\[data-theme='dark'\] \.sess__title \{[^}]*font-weight:/s)
-    expect(appCss).not.toMatch(/:root\[data-theme='(?:light|codex)'\] \.sess__title/)
+    expect(appCss).toMatch(
+      /\.sess__unread-dot \+ \.sess__title \{[^}]*color: var\(--rail-text\);[^}]*font-weight: 500;/s,
+    )
+    expect(appCss).not.toMatch(/:root\[data-theme='[a-z]+'\] \.sess__title/)
   })
 
   it('keeps the collapsed flyout opaque and cheap to animate', () => {
@@ -73,33 +79,29 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('reserves touch-row actions without obscuring compact source identity', () => {
+  it('reserves touch-row actions beside the title', () => {
     expect(appCss).toMatch(
       /@media \(max-width: 700px\) \{[\s\S]*?\.sessrow \.sess \{[^}]*padding-right: 56px/s,
     )
-    expect(appCss).toMatch(
-      /@media \(max-width: 700px\) \{[\s\S]*?\.sess__source \{[^}]*max-width: 68px/s,
-    )
   })
 
-  it('hides provider text when chat row actions are visible', () => {
+  it("shows a chat's provider as a 14px mark rather than its name", () => {
     expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.sessrow:hover \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\) \{[^}]*opacity: 0;/s,
+      /\.sess__source \{[^}]*width: 14px;[^}]*height: 14px;[^}]*color: var\(--text-3\);/s,
     )
-    expect(appCss).toMatch(
-      /\.sessrow:focus-within \.sess__source :is\(\.source-identity__label, \.source-identity__qualifier\) \{[^}]*opacity: 0;/s,
-    )
+    expect(appCss).not.toContain('source-identity__label')
   })
 
   it('aligns project and chat labels on one text grid without a nesting rail', () => {
     expect(appCss).not.toContain('.proj__chevron')
-    expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 2px 7px;/s)
-    expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 28px;/s)
+    expect(appCss).toMatch(/\.proj__toggle \{[^}]*gap: 8px;[^}]*padding: 0 8px;/s)
+    expect(appCss).toMatch(/\.proj__sessions-toggle \{[^}]*padding: 0 30px;/s)
     expect(appCss).toMatch(
-      /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 9px;[^}]*padding: 0;/s,
+      /\.proj__sessions \{[^}]*display: grid;[^}]*grid-template-columns: minmax\(0, 1fr\);[^}]*row-gap: 2px;[^}]*margin: 2px 0 8px;[^}]*padding: 0;/s,
     )
-    expect(appCss).toMatch(/\.sess \{[^}]*padding: 0 12px 0 28px;/s)
-    expect(appCss).toMatch(/\.sessrow\.is-pinned \.sess \{[^}]*padding-left: 7px;/s)
+    expect(appCss).toMatch(/\.sess \{[^}]*padding: 0 8px 0 30px;/s)
+    // Pinned rows keep the same indent; the pin sits in the gutter instead.
+    expect(appCss).not.toContain('.sessrow.is-pinned .sess')
     expect(appCss).not.toMatch(/\.proj__sessions \{[^}]*border-left/s)
   })
 
@@ -116,19 +118,20 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps the account popup compact and pins its actions below scrolling limits', () => {
-    expect(appCss).toMatch(/\.menu--settings \{[^}]*width: min\(224px, calc\(100vw - 16px\)\);/s)
-    expect(appCss).toMatch(
-      /\.menu--settings \{[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*display: flex;[^}]*flex-direction: column;[^}]*overflow: hidden;/s,
+  it('fits the account popup to the profile row and pins its actions below scrolling limits', () => {
+    expect(accountLimitsCss).toMatch(
+      /\.menu\.menu--settings \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*width: min\(var\(--menu-trigger-w, 224px\), calc\(100vw - 16px\)\);[^}]*max-height: min\(500px, calc\(100vh - 24px\)\);[^}]*padding: 4px;[^}]*border-radius: var\(--r-lg\);[^}]*overflow: hidden;/s,
     )
-    expect(appCss).toMatch(/\.menu--compact \{[^}]*gap: 0;[^}]*padding: 3px;/s)
+    expect(accountLimitsCss).toMatch(
+      /\.menu\.menu--settings :is\(\.menu__item, \.account-menu__usage-head\) \{[^}]*min-height: 30px;[^}]*padding: 5px 8px;/s,
+    )
     expect(accountLimitsCss).toMatch(
       /\.account-menu__usage-details \{[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;[^}]*scrollbar-gutter: stable;/s,
     )
-    expect(appCss).toMatch(
-      /\.account-menu__actions \{[^}]*flex: none;[^}]*gap: 0;[^}]*padding-top: 0;/s,
+    expect(accountLimitsCss).toMatch(
+      /\.account-menu__actions \{[^}]*display: grid;[^}]*flex: none;/s,
     )
-    expect(appCss).toMatch(/\.menu--settings \.menu__item \{[^}]*padding: 4px 6px;/s)
+    expect(appCss).not.toContain('.menu--settings')
   })
 
   it('uses the same quiet type as the other account menu rows', () => {
@@ -137,18 +140,21 @@ describe('sidebar theme CSS', () => {
     )
   })
 
-  it('keeps the account trigger compact and shows its disclosure state on the right', () => {
-    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 6px;/s)
-    expect(appCss).toMatch(/\.rail__foot \.menutrigger \{[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account \{[^}]*gap: 8px;[^}]*width: 100%;/s)
-    expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 18px;[^}]*height: 18px;/s)
+  it('lays the account trigger out as a soft 40px row with a fixed selector', () => {
+    expect(appCss).toMatch(/\.rail__foot \{[^}]*padding: 4px 10px 8px 8px;/s)
     expect(appCss).toMatch(
-      /\.account__chevron \{[^}]*margin-left: auto;[^}]*transition: transform var\(--dur-fast\) var\(--ease-out\);/s,
+      /\.rail__foot \.menutrigger \{[^}]*width: 100%;[^}]*border-radius: var\(--r-xl\);/s,
     )
     expect(appCss).toMatch(
-      /\.rail__foot \.menutrigger\[aria-expanded='true'\] \.account__chevron \{[^}]*transform: rotate\(180deg\);/s,
+      /\.account \{[^}]*grid-template-columns: 24px minmax\(0, 1fr\) auto;[^}]*min-height: 40px;[^}]*border-radius: var\(--r-xl\);/s,
     )
-    expect(sidebarSource).toContain('IconChevronUp as ChevronUp')
+    expect(appCss).toMatch(/\.account__avatar \{[^}]*width: 24px;[^}]*height: 24px;/s)
+    expect(appCss).toMatch(
+      /\.rail__foot \.menutrigger:focus-visible \{[^}]*outline: 2px solid color-mix\(in srgb, var\(--text\) 40%, transparent\);/s,
+    )
+    expect(appCss).not.toMatch(/\.account__chevron \{[^}]*transform/s)
+    expect(appCss).not.toContain('rotate(180deg)')
+    expect(sidebarSource).toContain('IconSelector as Selector')
   })
 
   it('uses the light foreground color for unread chat dots', () => {
@@ -159,37 +165,36 @@ describe('sidebar theme CSS', () => {
 
   it('gives project rows a consistent readable rhythm', () => {
     const sessRule = appCss.match(/^\.sess \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body'] ?? ''
-    expect(appCss).toMatch(/\.rail__body \{[^}]*padding: 8px 4px 18px 10px;/s)
-    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 7px;/s)
+    expect(appCss).toMatch(/\.rail__body \{[^}]*padding: 4px 0 16px 8px;/s)
+    expect(appCss).toMatch(/\.proj \{[^}]*margin-bottom: 2px;/s)
     expect(appCss).toMatch(
       /\.proj__drawer\[data-open='false'\] > \.proj__sessions \{[^}]*margin-block: 0;/s,
     )
     expect(appCss).toMatch(
-      /\.proj__head \{[^}]*height: 26px;[^}]*min-height: 26px;[^}]*padding-right: 6px;/s,
+      /\.proj__head \{[^}]*height: 28px;[^}]*min-height: 28px;[^}]*padding-right: 6px;/s,
     )
     expect(appCss).toMatch(
-      /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 26px;[^}]*min-height: 26px;/s,
+      /\.proj__toggle \{[^}]*font-size: var\(--rail-font-size\);[^}]*font-weight: var\(--rail-font-weight\);[^}]*height: 28px;[^}]*min-height: 28px;/s,
     )
-    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 25px;[^}]*border-radius: var\(--r-md\);/ms)
-    expect(sessRule).toContain('height: 25px;')
-    expect(sessRule).toContain('padding: 0 12px 0 28px;')
+    expect(appCss).toMatch(/^\s*\.sessrow \{[^}]*height: 28px;[^}]*border-radius: var\(--r-md\);/ms)
+    expect(sessRule).toContain('height: 28px;')
+    expect(sessRule).toContain('padding: 0 8px 0 30px;')
     expect(sessRule).toContain('font-size: var(--rail-font-size);')
     expect(sessRule).toContain('font-weight: var(--rail-font-weight);')
     expect(sessRule).toContain('border-radius: var(--r-md);')
-    expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 27')
+    expect(sidebarSource).toContain('const VIRTUAL_SESSION_ROW_HEIGHT = 30')
     expect(appCss).toMatch(
-      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 26px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
+      /\.proj\[data-drop-position\]::before \{[^}]*right: 6px;[^}]*left: 30px;[^}]*height: 2px;[^}]*background: var\(--light\);/s,
     )
     expect(appCss).toMatch(/\.proj\[data-drop-position='before'\]::before \{[^}]*top: -1px;/s)
     expect(appCss).toMatch(/\.proj\[data-drop-position='after'\]::before \{[^}]*bottom: -1px;/s)
   })
 
-  it('uses the reference pill shape without changing the virtual row geometry', () => {
+  it("uses the settings nav's two soft surfaces without changing the virtual row geometry", () => {
     expect(appCss).not.toMatch(
       /\.proj__sessions:not\(\.proj__sessions--virtual\) > \.sessrow\.is-active \{[^}]*height:/s,
     )
-    expect(appCss).toMatch(
-      /\.sessrow\.is-active \{[^}]*--sess-bg: color-mix\(in srgb, var\(--surface-2\) 75%, var\(--bg-rail-tint\)\);[^}]*box-shadow: none;/s,
-    )
+    expect(appCss).toMatch(/\.sessrow:hover \{[^}]*--sess-bg: var\(--control-hover\);/s)
+    expect(appCss).toMatch(/\.sessrow\.is-active \{[^}]*--sess-bg: var\(--menu-hover\);/s)
   })
 })

@@ -63,8 +63,8 @@ describe('radius system', () => {
     expect(tokensCss).toContain('--r-popup-item: var(--r-md);')
     expect(tokensCss).toContain('--r-popup: var(--r-lg);')
 
-    expect(appCss).toMatch(/\.rail__search \{[^}]*height: 26px;[^}]*border-radius: var\(--r-md\)/s)
-    expect(appCss).toMatch(/\.navitem \{[^}]*border-radius: var\(--r-md\);[^}]*min-height: 26px;/s)
+    expect(appCss).toMatch(/\.rail__search \{[^}]*height: 28px;[^}]*border-radius: var\(--r-md\)/s)
+    expect(appCss).toMatch(/\.navitem \{[^}]*border-radius: var\(--r-md\);[^}]*min-height: 28px;/s)
     expect(sessionSearchCss).toMatch(
       /\.session-search__filters \.app-select__trigger \{[^}]*border-radius: var\(--r-md\)/s,
     )

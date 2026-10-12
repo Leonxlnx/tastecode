@@ -5,7 +5,7 @@ const css = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8
 
 describe('account limits layout', () => {
   it('keeps the limits section compact and readable', () => {
-    const usage = css.match(/\.account-menu__usage \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
+    const usage = css.match(/^\.account-menu__usage \{(?<body>[\s\S]*?)\n\}/m)?.groups?.['body']
     const reveal = css.match(/\.account-menu__usage-reveal \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
       'body'
     ]
