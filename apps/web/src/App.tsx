@@ -2168,8 +2168,8 @@ export function App() {
         )
         modelVisibilityInitialized.current = true
         hiddenChanged = true
-      } else if (directCatalogReady) {
-        const additions = unlistedHiddenModels(directCatalog, listedModelsRef.current).filter(
+      } else if (catalogReady) {
+        const additions = unlistedHiddenModels(catalog, listedModelsRef.current).filter(
           (choice) => !hidden.has(choice.key),
         )
         if (additions.length > 0) {
@@ -2177,10 +2177,10 @@ export function App() {
           hiddenChanged = true
         }
       }
-      if (directCatalogReady && modelVisibilityInitialized.current) {
+      if (catalogReady && modelVisibilityInitialized.current) {
         const listed = listedModelsRef.current
-        if (!listed || directCatalog.some((choice) => !listed.has(choice.key))) {
-          const next = new Set([...(listed ?? []), ...directCatalog.map((choice) => choice.key)])
+        if (!listed || catalog.some((choice) => !listed.has(choice.key))) {
+          const next = new Set([...(listed ?? []), ...catalog.map((choice) => choice.key)])
           listedModelsRef.current = next
           writeSetting(LISTED_MODELS_KEY, JSON.stringify([...next]))
         }
