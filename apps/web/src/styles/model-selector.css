@@ -47,8 +47,6 @@
   font-size: var(--t-md);
 }
 
-/* One dot per level the model offers, filled through the current one: the
-   effort pill in miniature. */
 .model-selector__trigger-level {
   display: inline-flex;
   flex: none;
