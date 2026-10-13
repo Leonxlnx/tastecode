@@ -198,8 +198,8 @@
 /* A press moves focus here by script, which Chromium reports as focus-visible
    because the search field had it; the ring is only for keyboard focus. */
 .model-selector__slider:focus-visible:not([data-focus-source='pointer']) {
-  outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .model-selector__slider.is-disabled {
