@@ -1,0 +1,91 @@
+{
+  "capturedFrom": "claude 2.1.296 via @anthropic-ai/claude-agent-sdk 0.3.232, no prompt sent",
+  "supportedModels": [
+    {
+      "value": "default",
+      "resolvedModel": "claude-opus-5-5",
+      "displayName": "Default (recommended)",
+      "description": "Opus 5.5 · Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true
+    },
+    {
+      "value": "opus",
+      "resolvedModel": "claude-opus-5-5",
+      "displayName": "Opus",
+      "description": "Opus 5.5 · Best for everyday, complex tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+      "supportsAdaptiveThinking": true,
+      "supportsFastMode": true,
+      "supportsAutoMode": true
+    },
+    {
+      "value": "claude-fable-5-1[1m]",
+      "resolvedModel": "claude-fable-5-1",
+      "displayName": "Fable",
+      "description": "Fable 5.1 · Most capable for your hardest and longest-running tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true
+    },
+    {
+      "value": "sonnet",
+      "resolvedModel": "claude-sonnet-5-5",
+      "displayName": "Sonnet",
+      "description": "Sonnet 5.5 · Efficient for routine tasks",
+      "supportsEffort": true,
+      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true
+    },
+    {
+      "value": "haiku",
+      "resolvedModel": "claude-haiku-5-5",
+      "displayName": "Haiku",
+      "description": "Haiku 5.5 · Fastest for quick answers",
+      "supportsEffort": true,
+      "supportedEffortLevels": ["low", "medium", "high", "xhigh", "max"],
+      "supportsAdaptiveThinking": true,
+      "supportsAutoMode": true
+    }
+  ],
+  "getSettingsApplied": {
+    "discovery": {
+      "model": "claude-opus-5-5",
+      "effort": "medium",
+      "advisor": null,
+      "ultracode": false,
+      "ultracodeRequested": false,
+      "ultracodeAvailable": true
+    },
+    "opusUltracode": {
+      "model": "claude-opus-5-5",
+      "effort": "xhigh",
+      "advisor": null,
+      "ultracode": true,
+      "ultracodeRequested": true,
+      "ultracodeAvailable": true
+    },
+    "haikuUltracode": {
+      "model": "claude-haiku-5-5",
+      "effort": "xhigh",
+      "advisor": null,
+      "ultracode": true,
+      "ultracodeRequested": true,
+      "ultracodeAvailable": true
+    },
+    "opus46Ultracode": {
+      "model": "claude-opus-4-6",
+      "effort": "max",
+      "advisor": null,
+      "ultracode": false,
+      "ultracodeRequested": true,
+      "ultracodeAvailable": false
+    }
+  }
+}
