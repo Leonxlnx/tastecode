@@ -48,7 +48,21 @@ describe('viewed image paths', () => {
     await expect(viewedImagePath(picked, pasted, new PickedImagePaths())).resolves.toBeUndefined()
   })
 
-  it('does not widen picked-file grants to directories, siblings or retargeted symlinks', async () => {
+  it('does not widen picked-file grants to directories or siblings', async () => {
+    const { root, pasted } = await fixture()
+    const picked = path.join(root, 'picked.png')
+    const privateFile = path.join(root, 'private.png')
+    await writeFile(picked, 'picked')
+    await writeFile(privateFile, 'private')
+    const grants = new PickedImagePaths()
+    await grants.authorize(picked)
+    await grants.authorize(root)
+    await expect(viewedImagePath(picked, pasted, grants)).resolves.toBe(await realpath(picked))
+    await expect(viewedImagePath(root, pasted, grants)).resolves.toBeUndefined()
+    await expect(viewedImagePath(privateFile, pasted, grants)).resolves.toBeUndefined()
+  })
+
+  it.skipIf(!canSymlink)('does not widen picked-file grants to retargeted symlinks', async () => {
     const { root, pasted } = await fixture()
     const picked = path.join(root, 'picked.png')
     const privateFile = path.join(root, 'private.png')
@@ -58,9 +72,7 @@ describe('viewed image paths', () => {
     await symlink(picked, link)
     const grants = new PickedImagePaths()
     await grants.authorize(link)
-    await grants.authorize(root)
     await expect(viewedImagePath(link, pasted, grants)).resolves.toBe(await realpath(picked))
-    await expect(viewedImagePath(root, pasted, grants)).resolves.toBeUndefined()
     await expect(viewedImagePath(privateFile, pasted, grants)).resolves.toBeUndefined()
     await rm(link)
     await symlink(privateFile, link)

@@ -216,9 +216,14 @@ describe('workspace files', () => {
     const outside = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-search-outside-'))
     temporary.push(outside)
     await writeFile(path.join(outside, 'target.txt'), 'outside')
-    await symlink(outside, path.join(root, 'target-directory'))
-    await symlink(path.join(outside, 'target.txt'), path.join(root, 'target.txt'))
-    await symlink(root, path.join(root, 'src', 'target-cycle'))
+    // Junctions stand in for the directory links where symlink creation is
+    // denied, so only the linked file loses coverage there.
+    const directoryLink = canSymlink ? 'dir' : 'junction'
+    await symlink(outside, path.join(root, 'target-directory'), directoryLink)
+    if (canSymlink) {
+      await symlink(path.join(outside, 'target.txt'), path.join(root, 'target.txt'))
+    }
+    await symlink(root, path.join(root, 'src', 'target-cycle'), directoryLink)
     await expect(searchWorkspaceFiles(root, 'target')).resolves.toEqual({
       entries: [],
       truncated: false,
