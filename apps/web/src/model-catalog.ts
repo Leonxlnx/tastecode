@@ -123,6 +123,7 @@ const REASONING_EFFORT_RANKS = new Map([
   ['max', 7],
   ['maximum', 7],
   ['ultra', 8],
+  ['ultracode', 8],
 ])
 
 function reasoningEffortRank(value: string): number | undefined {
