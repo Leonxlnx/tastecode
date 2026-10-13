@@ -92,11 +92,17 @@ interface ThreadCallbacks {
   decideApproval: ThreadProps['onDecide'] | undefined
   answerUserInput: ThreadProps['onAnswerUserInput'] | undefined
   undoChanges: ThreadProps['onUndoChanges'] | undefined
+  threadId: ThreadProps['threadId']
+  searchJump: ThreadProps['searchJump']
+  searchJumpDone: ThreadProps['onSearchJumpDone']
 }
 const threadCallbacks = vi.hoisted<ThreadCallbacks>(() => ({
   decideApproval: undefined,
   answerUserInput: undefined,
   undoChanges: undefined,
+  threadId: undefined,
+  searchJump: undefined,
+  searchJumpDone: undefined,
 }))
 const pickFolder = vi.hoisted(() => vi.fn<() => Promise<string | undefined>>())
 const droppedProjectFolderPaths = vi.hoisted(() =>
@@ -177,6 +183,9 @@ vi.mock('./ui/Thread.js', async () => {
             threadCallbacks.decideApproval = props.onDecide
             threadCallbacks.answerUserInput = props.onAnswerUserInput
             threadCallbacks.undoChanges = props.onUndoChanges
+            threadCallbacks.threadId = props.threadId
+            threadCallbacks.searchJump = props.searchJump
+            threadCallbacks.searchJumpDone = props.onSearchJumpDone
           }}
         >
           {items.map((base, index) => (
@@ -391,6 +400,9 @@ beforeEach(() => {
   transport.urls.length = 0
   threadCallbacks.decideApproval = undefined
   threadCallbacks.answerUserInput = undefined
+  threadCallbacks.threadId = undefined
+  threadCallbacks.searchJump = undefined
+  threadCallbacks.searchJumpDone = undefined
   window.location.hash = ''
   document.documentElement.removeAttribute('data-theme')
   document.documentElement.classList.remove('dark')
@@ -1529,6 +1541,68 @@ describe('web client', () => {
     await waitFor(() =>
       expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.5"]'),
     )
+  })
+
+  it('hides curated older models per source while the rest of discovery is pending', async () => {
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities: {
+          steer: false,
+          fork: false,
+          interrupt: true,
+          reasoningItems: true,
+          approvals: false,
+          images: false,
+        },
+      },
+    ]
+    const listed = (id: string, isDefault = false) => ({
+      id,
+      displayName: id,
+      isDefault,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseClaude!: (value: unknown) => void
+    const claudeModels = new Promise((resolve) => {
+      releaseClaude = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return methods['models.list'].params.parse(params).provider === 'claude-code'
+        ? claudeModels
+        : Promise.resolve({ models: [listed('gpt-6.1-sol', true), listed('gpt-5.5')] })
+    })
+    const offeredKeys = () => composerProps().models.map((choice) => choice.key)
+
+    render(<App />)
+
+    // Codex has answered and Claude Code has not: the picker must already
+    // leave out the older Codex model instead of listing it until every
+    // provider is done, and nothing is saved before the first full catalog.
+    await waitFor(() => expect(offeredKeys()).toContain('codex:gpt-6.1-sol'))
+    expect(offeredKeys()).not.toContain('codex:gpt-5.5')
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+
+    await act(async () => {
+      releaseClaude({ models: [listed('opus', true), listed('claude-opus-4-8')] })
+      await claudeModels
+    })
+
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe(
+        '["codex:gpt-5.5","claude-code:claude-opus-4-8"]',
+      ),
+    )
+    expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
   })
 
   it.each(['failed', 'empty'] as const)(
@@ -3473,6 +3547,42 @@ describe('new chats', () => {
     await act(async () => releaseStart?.())
     await waitFor(() => expect(header().sessionId).toBe('thread-1'))
     expect(sidebarProps().projects[0]?.sessions.map(({ id }) => id)).toEqual(['thread-1'])
+  })
+
+  it('does not load server history when a chat that is still starting is selected', async () => {
+    serverProjects = [
+      { path: '/work/project', name: 'project', pinned: false, createdAt: 0, sessions: [] },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let releaseStart: (() => void) | undefined
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve
+    })
+    transport.request.mockImplementation(async (method: string, params: unknown) => {
+      if (method === 'thread.start') await startGate
+      return request(method, params)
+    })
+    const header = () =>
+      shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
+        typeof import('./ui/StageHeader.js').StageHeader
+      >
+
+    render(<App />)
+    await screen.findByPlaceholderText('Do anything')
+    submitTurn('Investigate flaky checkout cleanup')
+    await waitFor(() => expect(header().sessionId).toMatch(/^pending:/))
+    const pendingId = header().sessionId!
+    await act(async () => {
+      await sidebarProps().onSelectSession(pendingId)
+    })
+
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'thread.history',
+      expect.objectContaining({ threadId: pendingId }),
+    )
+    expect(header().sessionId).toBe(pendingId)
+    await act(async () => releaseStart?.())
+    await waitFor(() => expect(header().sessionId).toBe('thread-1'))
   })
 
   it('pins a chat that was pinned while it was still starting', async () => {
@@ -6895,6 +7005,44 @@ describe('new chats', () => {
     )
   })
 
+  it('saves a fast mode toggle from the menu to the open chat setup', async () => {
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', '[]')
+    const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
+    localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              cachedCodexChoice().model,
+              {
+                ...cachedCodexChoice().model,
+                id: 'gpt-5.6-mini',
+                displayName: 'GPT-5.6 Mini',
+                isDefault: false,
+                serviceTiers: [{ id: 'priority', name: 'Fast', description: '' }],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+    const savedTier = () =>
+      JSON.parse(localStorage.getItem('harness.modelByThread:untouched-thread')!).serviceTier
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    // The model picker is lazy-loaded.
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Model and reasoning' }, { timeout: 10_000 }),
+    )
+    await screen.findByRole('button', { name: 'Disable fast mode' })
+
+    act(() => nativeMenu.listener?.('toggleFastMode'))
+    await screen.findByRole('button', { name: 'Enable fast mode' })
+
+    await waitFor(() => expect(savedTier()).not.toBe('priority'))
+  })
+
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
     localStorage.setItem('harness.modelVisibilityVersion', '4')
     localStorage.setItem('harness.hiddenModels', '[]')
@@ -8043,6 +8191,46 @@ describe('global shortcuts', () => {
     expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
+  it('keeps the bottom panel closed when it remounts after the active project is removed', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    serverProjects.push({
+      path: '/work/other',
+      name: 'Other',
+      pinned: false,
+      createdAt: 1,
+      sessions: [],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'projects.remove') {
+        serverProjects = serverProjects.filter((project) => project.path !== '/work/project')
+        return Promise.resolve({})
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+
+    act(() => sidebarProps().onRemoveProject('/work/project'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/other'))
+    const remounted = await screen.findByTestId('bottom-terminal')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(remounted.classList.contains('is-open')).toBe(false)
+    expect(screen.queryByTestId('terminal-pane')).toBeNull()
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
@@ -8689,6 +8877,74 @@ describe('live sessions', () => {
     })
   })
 
+  it('returns an edited queued prompt to its chat when the user switches chats mid-delete', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-1', title: 'Existing work', running: false },
+          { id: 'thread-2', title: 'Other work', running: false },
+        ],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    let resolveSend: ((result: unknown) => void) | undefined
+    const sendResult = new Promise((resolve) => {
+      resolveSend = resolve
+    })
+    let resolveDelete: ((result: unknown) => void) | undefined
+    const deleteResult = new Promise((resolve) => {
+      resolveDelete = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'thread.sendTurn') return sendResult
+      if (method === 'thread.deleteQueuedTurn') return deleteResult
+      return request(method, params)
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Existing work,/ }))
+    emitThreadEvent('thread-1', {
+      type: 'turn.started',
+      turn: { id: 'turn-1', threadId: 'thread-1', status: 'running', createdAt: 0 },
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'Queue this next' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    let submissionId = ''
+    await waitFor(() => {
+      const call = transport.request.mock.calls.find(([method]) => method === 'thread.sendTurn')
+      submissionId = call
+        ? methods['thread.sendTurn'].params.parse(call[1]).clientSubmissionId!
+        : ''
+      expect(submissionId).toMatch(/^local:/)
+    })
+    await act(async () =>
+      resolveSend?.({
+        queued: true,
+        queuedTurn: { id: submissionId, text: 'Queue this next', attachments: [], createdAt: 1 },
+      }),
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit Queue this next' }))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-2')
+    })
+    await act(async () => resolveDelete?.({}))
+    await act(async () => {
+      await sidebarProps().onSelectSession('thread-1')
+    })
+
+    await waitFor(() =>
+      expect((screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement).value).toBe(
+        'Queue this next',
+      ),
+    )
+  })
+
   it('keeps rapid queued prompts ordered when acknowledgements arrive backwards', async () => {
     serverProjects = [
       {
@@ -9277,6 +9533,64 @@ describe('live sessions', () => {
       expect(screen.queryByRole('dialog', { name: 'Search all chats' })).toBeNull(),
     )
     expect(document.activeElement).toBe(composer)
+  })
+
+  it('runs a search jump once instead of again on every return to the chat', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'chat-a', title: 'Chat A' },
+        { id: 'chat-b', title: 'Chat B' },
+      ]),
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              {
+                projectPath: '/work/project',
+                projectName: 'project',
+                threadId: 'chat-a',
+                threadTitle: 'Chat A',
+                turnId: 'turn-old',
+                provider: 'codex',
+                createdAt: 0,
+                snippet: [{ text: 'needle', highlighted: true }],
+              },
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Chat A,/ })
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    const jump = threadCallbacks.searchJump
+    expect(jump).toMatchObject({ turnId: 'turn-old' })
+    // The thread lands on the hit and says so.
+    act(() => threadCallbacks.searchJumpDone?.(jump!.request))
+
+    fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-b'))
+    fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    // A fresh entry opens at the end rather than at the old hit.
+    expect(threadCallbacks.searchJump).toBeUndefined()
+
+    // Choosing the same hit again is a new jump.
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' }))
+    expect(threadCallbacks.searchJump!.request).not.toBe(jump!.request)
   })
 
   it('keeps app shortcuts from acting behind chat search', async () => {

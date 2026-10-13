@@ -1479,6 +1479,30 @@ describe('events', () => {
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
   })
 
+  it('marks cursors that saw events a restore removed', () => {
+    const kept = store.append('t1', message('one'))
+    store.append('t1', message('two'))
+    const removed = store.append('t1', message('three'))
+    store.saveRestoreUndo('t1', kept, 'before-two')
+    const next = store.append('t1', message('after restore'))
+
+    expect(store.historyRewrittenAfter('t1', removed)).toBe(true)
+    expect(store.historyRewrittenAfter('t1', kept)).toBe(false)
+    expect(store.historyRewrittenAfter('t1', next)).toBe(false)
+    expect(store.historyRewrittenAfter('t1', Number.MAX_SAFE_INTEGER)).toBe(false)
+  })
+
+  it('keeps cursors that saw an earlier restore marked after a later one', () => {
+    const first = store.append('t1', message('one'))
+    const stale = store.append('t1', message('two'))
+    store.saveRestoreUndo('t1', first, 'before-two')
+    const second = store.append('t1', message('three'))
+    store.append('t1', message('four'))
+    store.saveRestoreUndo('t1', second, 'before-four')
+
+    expect(store.historyRewrittenAfter('t1', stale)).toBe(true)
+  })
+
   it('keeps a cached replay for its own sequence after newer events land', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-at-'))
     const file = path.join(dir, 'replay.db')

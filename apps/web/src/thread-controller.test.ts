@@ -723,4 +723,91 @@ describe('paged history', () => {
     expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
     expect(texts(controller)).not.toContain('Answer 0')
   })
+
+  it('keeps a background thread partial when a structural event compacts it', async () => {
+    const transport = new TestTransport(() => ({
+      events: [
+        turn(2, 7),
+        {
+          seq: 8,
+          event: {
+            type: 'turn.started',
+            turn: { id: 'turn-4', threadId: 'thread', status: 'running', createdAt: 4 },
+          },
+        },
+        {
+          seq: 9,
+          event: {
+            type: 'item.started',
+            item: {
+              id: 'long',
+              turnId: 'turn-4',
+              type: 'message',
+              role: 'assistant',
+              status: 'started',
+              // Past the running-transcript budget a background thread may keep.
+              text: 'x'.repeat(300 * 1024),
+              createdAt: 4,
+            },
+          },
+        },
+      ],
+      running: true,
+      page: { olderCursor: 'cursor', snapshotSeq: 9 },
+    }))
+    const controller = new ThreadController(transport)
+    await controller.loadHistory('thread')
+    controller.activate('other')
+    const delta = (seq: number, characters: number) =>
+      controller.receive(
+        {
+          threadId: 'thread',
+          seq,
+          event: {
+            type: 'item.delta',
+            turnId: 'turn-4',
+            itemId: 'long',
+            textDelta: 'y'.repeat(characters),
+          },
+        },
+        unprotected,
+      )
+    const usage = (seq: number) =>
+      controller.receive(
+        {
+          threadId: 'thread',
+          seq,
+          event: {
+            type: 'usage.updated',
+            usage: {
+              inputTokens: 1,
+              cachedInputTokens: 0,
+              outputTokens: 1,
+              reasoningTokens: 0,
+              totalTokens: 2,
+            },
+          },
+        },
+        unprotected,
+      )
+    // The flush ahead of the second usage event crosses the compaction check.
+    delta(10, 63 * 1024)
+    usage(11)
+    delta(12, 2 * 1024)
+    usage(13)
+    expect(controller.snapshot('thread')!.items).toEqual([])
+    expect(controller.snapshot('thread')!.olderCursor).toBeUndefined()
+    // The rows before the compaction are gone, so no suffix read can restore them.
+    expect(controller.cursor('thread')).toBeUndefined()
+
+    // Reopening the thread the way a selection does fetches the newest page again.
+    controller.activate('thread')
+    await controller.loadHistory('thread', controller.cursor('thread'))
+    expect(transport.requests.at(-1)!.params).toEqual({
+      threadId: 'thread',
+      page: { turnLimit: NEWEST_HISTORY_TURNS },
+    })
+    expect(texts(controller)[0]).toBe('Answer 2')
+    expect(controller.snapshot('thread')!.olderCursor).toBe('cursor')
+  })
 })
