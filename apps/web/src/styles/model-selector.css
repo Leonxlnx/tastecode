@@ -99,7 +99,7 @@
      scrolls internally, so the panel may size to its content. */
   max-height: calc(100vh - 16px);
   padding: 0;
-  overflow: hidden;
+  overflow: clip;
   background: var(--model-picker-bg);
   border-radius: var(--r-popup);
   box-shadow: var(--shadow-flyout);
