@@ -8723,6 +8723,38 @@ describe('global shortcuts', () => {
     expect(screen.queryByTestId('terminal-pane')).toBeNull()
   }, 20_000)
 
+  it('keeps the bottom panel closed when it remounts after the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+
+    // The pull requests view replaces the stage, bottom panel included.
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    expect(screen.queryByTestId('bottom-terminal')).toBeNull()
+
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    const remounted = await screen.findByTestId('bottom-terminal')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(remounted.classList.contains('is-open')).toBe(false)
+    expect(screen.queryByTestId('terminal-pane')).toBeNull()
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })

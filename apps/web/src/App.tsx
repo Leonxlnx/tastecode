@@ -4634,12 +4634,14 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
-  // The bottom panel unmounts while no project is active and forgets which
-  // toggle it last handled. Without this reset it would treat the old count as
-  // a new toggle on remount and open a terminal nobody asked for.
+  // The bottom panel unmounts while no project is active or the pull requests
+  // view replaces the stage, and forgets which toggle it last handled. Without
+  // this reset it would treat the old count as a new toggle on remount and
+  // open a terminal nobody asked for.
+  const bottomPanelHost = Boolean(activePath) && surface !== 'pull-requests'
   useEffect(() => {
-    if (!activePath) setBottomTerminalToggleRequest(0)
-  }, [activePath])
+    if (!bottomPanelHost) setBottomTerminalToggleRequest(0)
+  }, [bottomPanelHost])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
