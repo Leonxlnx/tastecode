@@ -11,6 +11,7 @@ import {
   modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
+  unlistedHiddenModels,
 } from './model-catalog.js'
 
 const model: Model = {
@@ -167,6 +168,19 @@ describe('model catalog', () => {
     ['provider-model-added-tomorrow', true],
   ])('defaults %s visibility to %s', (id, visible) => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
+  })
+
+  it('starts only never-listed older models hidden, and none without a record', () => {
+    const choices = choicesFor(
+      { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+      ['opus', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-6'].map((id) => ({ ...model, id })),
+    )
+    const listed = new Set(['claude-code:opus', 'claude-code:claude-opus-4-8'])
+
+    expect(unlistedHiddenModels(choices, listed).map((choice) => choice.key)).toEqual([
+      'claude-code:claude-opus-5',
+    ])
+    expect(unlistedHiddenModels(choices, null)).toEqual([])
   })
 
   describe('model visibility migration', () => {
