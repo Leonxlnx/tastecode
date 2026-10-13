@@ -715,6 +715,68 @@ function claudeCodeServerProvider(): TestServerProvider {
   }
 }
 
+function grokServerProvider(): TestServerProvider {
+  return { ...claudeCodeServerProvider(), id: 'grok', displayName: 'Grok' }
+}
+
+/** The older build's list once Claude Code is back on its current lineup. */
+const MIGRATED_OLDER_BUILD_HIDDEN_MODELS = [
+  'codex:gpt-5.5',
+  'codex:gpt-5.4',
+  'claude-code:opus%5B1m%5D',
+  ...claudeCodeLineup()
+    .slice(4)
+    .map((model) => `claude-code:${model.id}`),
+]
+
+/** Codex and Claude Code list their catalogs; Grok's discovery always fails. */
+function mockDiscoveryWithFailingGrok(claudeModels?: Promise<{ models: Model[] }>) {
+  const request = transport.request.getMockImplementation()
+  if (!request) throw new Error('missing request mock')
+  transport.request.mockImplementation((method: string, params: unknown) => {
+    if (method !== 'models.list') return request(method, params)
+    const { provider } = methods['models.list'].params.parse(params)
+    if (provider === 'grok') return Promise.reject(new Error('Grok model discovery failed'))
+    if (provider === 'claude-code') {
+      return claudeModels ?? Promise.resolve({ models: claudeCodeLineup() })
+    }
+    return Promise.resolve({
+      models: [
+        cachedCodexChoice().model,
+        { ...cachedCodexChoice().model, id: 'gpt-5.5', displayName: 'GPT-5.5' },
+      ],
+    })
+  })
+}
+
+/** Wait until the `launch`-th discovery has asked Grok and finished. */
+async function settleDiscoveryWithFailingGrok(launch: number) {
+  await waitFor(() =>
+    expect(
+      transport.request.mock.calls.filter(
+        ([method, params]) =>
+          method === 'models.list' &&
+          methods['models.list'].params.parse(params).provider === 'grok',
+      ),
+    ).toHaveLength(launch),
+  )
+  await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+}
+
+function offeredModelNames(provider: string): string[] {
+  return composerProps()
+    .models.filter((choice) => choice.provider === provider)
+    .map((choice) => choice.model.displayName)
+}
+
+function savedHiddenModels(): string[] {
+  return (JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]).sort()
+}
+
+function migratedVisibilitySources(): unknown {
+  return JSON.parse(localStorage.getItem('harness.modelVisibilitySources') ?? 'null')
+}
+
 function dispatchTransitionEnd(element: Element, propertyName: string) {
   const event = new Event('transitionend', { bubbles: true })
   Object.defineProperty(event, 'propertyName', { configurable: true, value: propertyName })
@@ -1919,8 +1981,144 @@ describe('web client', () => {
         .models.filter((choice) => choice.provider === 'claude-code')
         .map((choice) => choice.model.displayName),
     ).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
-    // Only the first full catalog records the migration.
+    // Both cached sources are migrated; the profile as a whole reaches the
+    // current version only once every source has been listed.
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
+    expect(migratedVisibilitySources()).toEqual({ 'claude-code': '7', codex: '7' })
+    expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
+  })
+
+  it.each([
+    ['from the cached catalog', true],
+    ['once Claude Code is listed', false],
+  ])(
+    'keeps Opus 5 turned on across reloads while Grok cannot be listed, migrated %s',
+    async (_label, cached) => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+      localStorage.setItem('harness.modelVisibilityVersion', '4')
+      localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
+      if (cached) {
+        localStorage.setItem(
+          'harness.modelCatalog.v1',
+          serializeModelCatalogCache([
+            ...choicesFor(
+              { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+              claudeCodeLineup(),
+            ),
+            cachedCodexChoice(),
+          ]),
+        )
+      }
+      mockDiscoveryWithFailingGrok()
+      const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
+
+      const first = render(<App />)
+      await settleDiscoveryWithFailingGrok(1)
+
+      expect(offeredModelNames('claude-code')).toEqual(currentLineup)
+      expect(migratedVisibilitySources()).toEqual({ 'claude-code': '7', codex: '7' })
+      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
+      openSettings()
+      await act(() => vi.dynamicImportSettled())
+      fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+      fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
+      await waitFor(() => expect(savedHiddenModels()).not.toContain('claude-code:claude-opus-5'))
+      first.unmount()
+
+      for (const launch of [2, 3]) {
+        const view = render(<App />)
+        await settleDiscoveryWithFailingGrok(launch)
+
+        expect(offeredModelNames('claude-code')).toEqual([...currentLineup, 'Opus 5'])
+        expect(savedHiddenModels()).toEqual(
+          MIGRATED_OLDER_BUILD_HIDDEN_MODELS.filter(
+            (key) => key !== 'claude-code:claude-opus-5',
+          ).sort(),
+        )
+        view.unmount()
+      }
+    },
+  )
+
+  it.each(['4', '5', '6', '7'])(
+    'brings a profile saved at version %s to the current Claude lineup while Grok fails',
+    async (version) => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+      localStorage.setItem('harness.modelVisibilityVersion', version)
+      localStorage.setItem(
+        'harness.hiddenModels',
+        JSON.stringify(
+          version === MODEL_VISIBILITY_VERSION
+            ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS
+            : OLDER_BUILD_HIDDEN_MODELS,
+        ),
+      )
+      localStorage.setItem(
+        'harness.modelCatalog.v1',
+        serializeModelCatalogCache([
+          ...choicesFor(
+            { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+            claudeCodeLineup(),
+          ),
+          cachedCodexChoice(),
+        ]),
+      )
+      mockDiscoveryWithFailingGrok()
+
+      for (const launch of [1, 2]) {
+        const view = render(<App />)
+        await settleDiscoveryWithFailingGrok(launch)
+
+        expect(offeredModelNames('claude-code')).toEqual([
+          'Fable 5.1',
+          'Opus 5.5',
+          'Sonnet 5.5',
+          'Haiku 5.5',
+        ])
+        expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
+        expect(migratedVisibilitySources()).toEqual(
+          version === MODEL_VISIBILITY_VERSION ? null : { 'claude-code': '7', codex: '7' },
+        )
+        view.unmount()
+      }
+    },
+  )
+
+  it('waits for Claude Code to be listed when only the restored selection stands for it', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'claude-code:sonnet')
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
+    let releaseClaude!: (value: { models: Model[] }) => void
+    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseClaude = resolve
+    })
+    mockDiscoveryWithFailingGrok(claudeModels)
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
+    )
+    // The restored selection paints migrated, but one row says nothing about
+    // the rest of Claude Code's catalog.
+    expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:sonnet')
+    expect(migratedVisibilitySources()).toBeNull()
+
+    await act(async () => {
+      releaseClaude({ models: claudeCodeLineup() })
+      await claudeModels
+    })
+    await settleDiscoveryWithFailingGrok(1)
+
+    expect(offeredModelNames('claude-code')).toEqual([
+      'Fable 5.1',
+      'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+    ])
+    expect(migratedVisibilitySources()).toEqual({ codex: '7', 'claude-code': '7' })
   })
 
   it.each([
