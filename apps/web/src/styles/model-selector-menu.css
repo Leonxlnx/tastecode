@@ -461,8 +461,6 @@
 }
 
 .model-selector__models--flat .model-selector__group-title {
-  display: flex;
-  align-items: center;
   gap: 6px;
   padding: 6px 8px 3px;
 }
@@ -486,7 +484,11 @@
   background: var(--model-picker-title-bg);
 }
 
+/* Flex, so the provider identity shrinks and its label ellipsizes; as an
+   inline box it was cut off mid-letter in the rail heading. */
 .model-selector__group-title {
+  display: flex;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
   margin: 0;
@@ -494,7 +496,6 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 450;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
