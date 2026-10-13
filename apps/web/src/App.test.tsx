@@ -1848,6 +1848,41 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
   })
 
+  it("keeps a new profile's first choice made while its first discovery is pending", async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    openSettings()
+    await act(() => vi.dynamicImportSettled())
+    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]'),
+    )
+    releaseModels({
+      models: [cachedCodexChoice().model, { ...cachedCodexChoice().model, id: 'gpt-5.5' }],
+    })
+
+    // Every source answered: the profile is current, with the choice kept and
+    // the newly listed GPT-5.5 on its default.
+    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    expect(savedHiddenModels()).toEqual(['codex:gpt-5.5', 'codex:gpt-6.1-sol'])
+  })
+
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-6.1-sol"]'
     localStorage.setItem('harness.modelVisibilityVersion', '4')
