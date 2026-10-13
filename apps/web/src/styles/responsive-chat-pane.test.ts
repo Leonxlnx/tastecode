@@ -14,8 +14,18 @@ describe('responsive chat pane CSS', () => {
     expect(css).toMatch(/\.composer \{[^}]*min-width: 0;/s)
     expect(css).toMatch(/\.composer__box \{[^}]*width: 100%;[^}]*min-width: 0;/s)
     expect(css).toMatch(
-      /@container chat-stage \(max-width: 620px\) \{[\s\S]*?\.tools \.composer__permission,[\s\S]*?width: 34px;[\s\S]*?\.composer__permission \.tool > span,[\s\S]*?display: none;/s,
+      /@container chat-stage \(max-width: 620px\) \{[\s\S]*?\.tools \.composer__permission,[\s\S]*?width: 34px;[\s\S]*?\.composer__permission \.tool > span:not\(\.icon-morph\),[\s\S]*?display: none;/s,
     )
+  })
+
+  it('keeps the permission icon when a narrow composer drops the label', () => {
+    // The icon is the IconMorph span next to the label span, so a bare
+    // `.tool > span` rule leaves an empty chip.
+    const iconOnlyRules = [...css.matchAll(/([^{}]*\.composer__permission \.tool > span[^{]*)\{/g)]
+    expect(iconOnlyRules).toHaveLength(2)
+    for (const [, selector] of iconOnlyRules) {
+      expect(selector).toContain('.composer__permission .tool > span:not(.icon-morph),')
+    }
     expect(css).toMatch(
       /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.composer \{[^}]*padding-inline: 10px;/s,
     )
