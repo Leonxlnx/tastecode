@@ -46,25 +46,44 @@ const DEFAULT_HIDDEN_MODELS = new Set([
   'gpt-5.4-mini',
   'gpt-5.3-codex-spark',
   'gpt-5.2',
-  'claude-opus-5',
-  'claude-sonnet-5',
-  'claude-fable-5',
-  'claude-haiku-4-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-opus-4-6',
-  'claude-opus-4-5',
-  'claude-sonnet-4-6',
   'grok-4.7-build-fast',
 ])
 
+/**
+ * The newest generation of each Claude family. Any older generation starts
+ * hidden, whether it is listed as `claude-opus-5` or as a dated snapshot such
+ * as `claude-haiku-4-5-20251001`. Claude Code's bare aliases (`fable`, `opus`,
+ * `sonnet`, `haiku`) always resolve to the newest generation, so they carry no
+ * version here and start visible.
+ */
+const CURRENT_CLAUDE_GENERATIONS = new Map<string, readonly [major: number, minor: number]>([
+  ['fable', [5, 1]],
+  ['opus', [5, 5]],
+  ['sonnet', [5, 5]],
+  ['haiku', [5, 5]],
+])
+const CLAUDE_GENERATION_ID = /^claude-([a-z]+)-(\d+)(?:-(\d+))?$/
+const LONG_CONTEXT_SUFFIX = /\[1m\]$/
+const SNAPSHOT_DATE_SUFFIX = /-\d{8}$/
+
+/** The id defaults and migrations match: lowercase, without context or snapshot-date suffix. */
 function visibilityId(model: Model): string {
-  return model.id.toLowerCase().replace(/\[1m\]$/, '')
+  return model.id.toLowerCase().replace(LONG_CONTEXT_SUFFIX, '').replace(SNAPSHOT_DATE_SUFFIX, '')
+}
+
+function olderClaudeGeneration(id: string): boolean {
+  const match = CLAUDE_GENERATION_ID.exec(id)
+  const current = match ? CURRENT_CLAUDE_GENERATIONS.get(match[1]!) : undefined
+  if (!match || !current) return false
+  const major = Number(match[2])
+  const minor = Number(match[3] ?? 0)
+  return major < current[0] || (major === current[0] && minor < current[1])
 }
 
 /** Hide known older models while letting newly discovered models start enabled. */
 export function modelVisibleByDefault(model: Model): boolean {
-  return !DEFAULT_HIDDEN_MODELS.has(visibilityId(model))
+  const id = visibilityId(model)
+  return !DEFAULT_HIDDEN_MODELS.has(id) && !olderClaudeGeneration(id)
 }
 
 /**
