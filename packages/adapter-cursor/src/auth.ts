@@ -1,10 +1,18 @@
 import type { Account } from '@harness/contracts'
 import { killTree, runCli, spawnCli } from '@harness/proc'
 
-export async function cursorAccount(): Promise<Account> {
-  const result = await runCli('cursor-agent', ['status'])
-  if (result.code !== 0) return { signedIn: false }
-  return { signedIn: isCursorSignedIn(result.stdout) }
+export async function cursorAccount(run: typeof runCli = runCli): Promise<Account> {
+  const status = await run('cursor-agent', ['status'])
+  if (status.code !== 0 || !isCursorSignedIn(status.stdout)) return { signedIn: false }
+  // `status` calls any stored token pair logged in, even one that expired
+  // weeks ago. It only adds that it could not fetch the user, which an
+  // offline machine reports as well. `models` checks the expiry locally
+  // before it goes online, so in that one ambiguous case it decides: an
+  // expired sign-in becomes signed out and the app offers Sign in again,
+  // while an offline machine with a valid sign-in stays signed in.
+  if (!/unable to fetch user details/i.test(status.stdout)) return { signedIn: true }
+  const probe = await run('cursor-agent', ['models']).catch(() => undefined)
+  return { signedIn: !(probe && cursorNeedsSignIn(probe)) }
 }
 
 export function isCursorSignedIn(output: string): boolean {
