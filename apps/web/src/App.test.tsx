@@ -1513,6 +1513,48 @@ describe('web client', () => {
     },
   )
 
+  it('keeps a chat queued for deletion out of chat search', async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const contentHit = (threadId: string, threadTitle: string) => ({
+      projectPath: '/work/project',
+      projectName: 'project',
+      threadId,
+      threadTitle,
+      turnId: `turn-in-${threadId}`,
+      provider: 'codex',
+      createdAt: 0,
+      snippet: [{ text: 'Doomed', highlighted: true }],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              contentHit('doomed-thread', 'Doomed chat'),
+              contentHit('untouched-thread', 'New session'),
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'Doomed' },
+    })
+    // The kept chat's hit shows that the server's results have arrived.
+    expect(await screen.findByRole('option', { name: /^New session, project,/ })).toBeTruthy()
+    expect(screen.queryAllByRole('option', { name: /^Doomed chat,/ })).toHaveLength(0)
+
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'doomed-thread',
+    })
+  })
+
   it('does not open a chat queued for deletion after settling the active chat', async () => {
     serverProjects[0]!.sessions.push(
       { id: 'kept-thread', title: 'Kept chat', createdAt: 3 },

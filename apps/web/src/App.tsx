@@ -5600,7 +5600,8 @@ export function App() {
       <SessionSearchHost
         ref={sessionSearch}
         transport={transport}
-        projects={projects}
+        projects={archiveProjects}
+        hiddenThreadIds={archivingIds}
         onSelect={selectSessionSearchResult}
       />
 
