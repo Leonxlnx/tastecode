@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import {
   methods,
   type DomainEvent,
+  type Model,
   type ParamsOf,
   type QueuedTurn,
   type ResultOf,
@@ -643,6 +644,73 @@ function cachedCodexChoice(): ModelChoice {
       reasoningEfforts: ['low', 'high'],
       defaultReasoningEffort: 'low',
       serviceTiers: [],
+    },
+  }
+}
+
+/**
+ * Claude Code's catalog as an installed build cached it on 2026-10-13: the
+ * current lineup under its aliases, then every older generation under its own
+ * id, Haiku 4.5 only as a dated snapshot.
+ */
+function claudeCodeLineup(): Model[] {
+  const lineup: [id: string, displayName: string][] = [
+    ['fable', 'Fable 5.1'],
+    ['opus', 'Opus 5.5'],
+    ['sonnet', 'Sonnet 5.5'],
+    ['haiku', 'Haiku 5.5'],
+    ['claude-fable-5', 'Fable 5'],
+    ['claude-opus-5', 'Opus 5'],
+    ['claude-sonnet-5', 'Sonnet 5'],
+    ['claude-opus-4-8', 'Opus 4.8'],
+    ['claude-opus-4-7', 'Opus 4.7'],
+    ['claude-opus-4-6', 'Opus 4.6'],
+    ['claude-opus-4-5', 'Opus 4.5'],
+    ['claude-sonnet-4-6', 'Sonnet 4.6'],
+    ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+  ]
+  return lineup.map(([id, displayName]) => ({
+    id,
+    displayName,
+    isDefault: id === 'opus',
+    reasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'high',
+    serviceTiers: [],
+  }))
+}
+
+/**
+ * The hidden list that build saved at visibility version 4: the `sonnet` and
+ * `haiku` aliases hidden by an older default, while Opus 5, Sonnet 5 and the
+ * dated Haiku 4.5 were never hidden.
+ */
+const OLDER_BUILD_HIDDEN_MODELS = [
+  'codex:gpt-5.5',
+  'codex:gpt-5.4',
+  'claude-code:claude-fable-5',
+  'claude-code:sonnet',
+  'claude-code:haiku',
+  'claude-code:claude-opus-4-8',
+  'claude-code:claude-opus-4-7',
+  'claude-code:claude-opus-4-6',
+  'claude-code:claude-opus-4-5',
+  'claude-code:claude-sonnet-4-6',
+  'claude-code:opus%5B1m%5D',
+]
+
+function claudeCodeServerProvider(): TestServerProvider {
+  return {
+    id: 'claude-code',
+    displayName: 'Claude Code',
+    installed: true,
+    auth: 'authenticated',
+    capabilities: {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: false,
+      images: false,
     },
   }
 }
@@ -1602,7 +1670,7 @@ describe('web client', () => {
       ),
     )
     expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
   })
 
   it.each(['failed', 'empty'] as const)(
@@ -1776,39 +1844,13 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
   })
 
-  it('reveals Haiku 5.5 for a version 4 profile and keeps its other choices', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'authenticated',
-        capabilities: {
-          steer: false,
-          fork: false,
-          interrupt: true,
-          reasoningItems: true,
-          approvals: false,
-          images: false,
-        },
-      },
-    ]
+  it('returns Claude Code to the current lineup for a profile an older build saved', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
     localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem(
-      'harness.hiddenModels',
-      '["codex:gpt-5.5","claude-code:opus","claude-code:haiku"]',
-    )
-    const listed = (id: string) => ({
-      id,
-      displayName: id,
-      isDefault: false,
-      reasoningEfforts: [],
-      serviceTiers: [],
-    })
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -1816,19 +1858,35 @@ describe('web client', () => {
       return Promise.resolve({
         models:
           methods['models.list'].params.parse(params).provider === 'claude-code'
-            ? ['opus', 'haiku', 'claude-opus-4-8'].map(listed)
-            : [cachedCodexChoice().model, listed('gpt-5.5')],
+            ? claudeCodeLineup()
+            : [cachedCodexChoice().model, { ...cachedCodexChoice().model, id: 'gpt-5.5' }],
       })
     })
+    const offered = (provider: string) =>
+      composerProps()
+        .models.filter((choice) => choice.provider === provider)
+        .map((choice) => choice.model.displayName)
 
     render(<App />)
 
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe(
-        '["codex:gpt-5.5","claude-code:opus"]',
-      ),
+    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    expect(offered('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+    // Codex keeps its saved choices: GPT-5.5 stays hidden, Sol stays shown.
+    expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
+    const hidden = JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]
+    expect(hidden.filter((key) => key.startsWith('codex:'))).toEqual([
+      'codex:gpt-5.5',
+      'codex:gpt-5.4',
+    ])
+    expect(hidden.filter((key) => key.startsWith('claude-code:')).sort()).toEqual(
+      [
+        ...claudeCodeLineup()
+          .slice(4)
+          .map((model) => `claude-code:${model.id}`),
+        // A key the catalog no longer lists stays as saved.
+        'claude-code:opus%5B1m%5D',
+      ].sort(),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
   })
 
   it.each([
