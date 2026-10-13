@@ -10117,6 +10117,54 @@ describe('live sessions', () => {
     expect(threadCallbacks.searchJump!.request).not.toBe(jump!.request)
   })
 
+  it('drops a search jump when the user leaves the chat before it lands', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'chat-a', title: 'Chat A' },
+        { id: 'chat-b', title: 'Chat B' },
+      ]),
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              {
+                projectPath: '/work/project',
+                projectName: 'project',
+                threadId: 'chat-a',
+                threadTitle: 'Chat A',
+                turnId: 'turn-old',
+                provider: 'codex',
+                createdAt: 0,
+                snippet: [{ text: 'needle', highlighted: true }],
+              },
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Chat A,/ })
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' })
+
+    // The thread is still reading older turns when the user moves on.
+    fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-b'))
+    fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+
+    // Coming back later is a fresh entry, not the abandoned jump.
+    expect(threadCallbacks.searchJump).toBeUndefined()
+  })
+
   it('keeps app shortcuts from acting behind chat search', async () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')

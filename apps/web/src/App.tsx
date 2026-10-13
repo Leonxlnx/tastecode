@@ -4551,6 +4551,11 @@ export function App() {
       setSearchJump((current) => (current?.request === request ? undefined : current)),
     [],
   )
+  // Leaving a chat before its jump lands abandons the jump. Kept, it would run
+  // on the next entry to that chat, which must open at the end instead.
+  useEffect(() => {
+    setSearchJump((current) => (current && current.threadId !== activeId ? undefined : current))
+  }, [activeId])
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
