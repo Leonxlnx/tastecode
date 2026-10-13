@@ -51,7 +51,10 @@
   --text: #ededed;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #a3a3a3;
-  --text-3: #6f6f6f;
+  /* Muted copy (section labels, meta, timestamps) still has to be read: this
+     grey clears 4.5:1 on every dark surface up to --surface-2 and stays a
+     clear step below --text-2. */
+  --text-3: #8a8a8a;
   --queue-text: #ededed;
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
@@ -96,12 +99,14 @@
   --shadow-flyout: 0 8px 24px -14px rgb(0 0 0 / 46%);
   --shadow-modal: 0 20px 56px -24px rgb(0 0 0 / 52%);
   --shadow-rail: 12px 0 30px -18px rgb(0 0 0 / 40%);
+  /* Something resting a step above the rail: the account card, the active chat. */
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 28%);
   --chrome-raised: var(--control-hover);
   --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: #101010;
   /* Chevron for restyled native selects. A data URI cannot read currentColor,
      so each theme carries its own text-3-coloured copy. */
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6f6f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #303030;
   --chrome-highlight: transparent;
   --chrome-shadow: none;
@@ -197,8 +202,21 @@
      where there is no overlay. */
   --titlebar-h: env(titlebar-area-height, 34px);
 
+  /* One keyboard focus ring for every control. It is the text colour at 60%,
+     so it reads at 3:1 or better on every surface in both themes without the
+     browser's heavy black default. Standalone controls draw it 2px outside;
+     rows that run edge to edge in a scroller draw it inside, where nothing
+     clips it. */
+  --focus-ring-color: color-mix(in srgb, var(--text) 60%, transparent);
+  --focus-ring: 2px solid var(--focus-ring-color);
+  --focus-ring-offset: 2px;
+  --focus-ring-inset: -2px;
+
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  /* Hover colour changes: long enough to read as a fade, short enough that a
+     control never feels late. */
+  --dur-hover: 120ms;
   --dur-press: 140ms;
   --dur-fast: 180ms;
   --dur-slow: 260ms;
@@ -307,7 +325,10 @@
   --line: #ebebed;
   --line-strong: #dedee2;
   --queue-line: #eeeeef;
-  --skeleton: var(--surface-3);
+  /* A bare --surface-3 bar is 1.18:1 on white, so loading controls read as
+     missing. A step of text keeps it quiet but visible, and follows the
+     backdrop tint the way --surface-3 does. */
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--surface-3));
   --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
   --text: #27272a;
@@ -359,6 +380,7 @@
   --shadow-flyout: 0 1px 2px rgb(24 24 27 / 5%), 0 10px 28px -18px rgb(24 24 27 / 18%);
   --shadow-modal: 0 2px 6px rgb(24 24 27 / 7%), 0 24px 56px -30px rgb(24 24 27 / 24%);
   --shadow-rail: 12px 0 28px -20px rgb(24 24 27 / 16%);
+  --shadow-raised: 0 1px 2px rgb(24 24 27 / 6%), 0 2px 8px -4px rgb(24 24 27 / 8%);
   --chrome-raised: var(--control-hover);
   --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: var(--bg);

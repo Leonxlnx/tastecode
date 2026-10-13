@@ -34,6 +34,31 @@ describe('model selector theme CSS', () => {
     expect(modelSelectorCss).not.toContain('model-provider-pop')
   })
 
+  it('lifts the picker off the page like every other popover', () => {
+    expect(modelSelectorCss).toMatch(
+      /\.model-selector__menu \{[^}]*box-shadow: var\(--shadow-flyout\);/s,
+    )
+  })
+
+  it('fades the list bottom only while more rows wait below', () => {
+    expect(modelSelectorCss).toMatch(
+      /\.model-selector__models \{[^}]*mask-image: linear-gradient\(\s*to bottom,\s*#000 calc\(100% - var\(--model-list-fade\)\),\s*transparent\s*\);[^}]*animation: model-list-fade linear both;[^}]*animation-timeline: scroll\(self\);/s,
+    )
+    // A list that fits has no scroll range, so the fade falls back to none.
+    expect(modelSelectorCss).toMatch(
+      /@property --model-list-fade \{[^}]*syntax: '<length>';[^}]*initial-value: 0px;/s,
+    )
+    expect(modelSelectorCss).toMatch(
+      /\.model-selector__models \{[^}]*scroll-padding-block: 36px var\(--model-list-fade-size\);/s,
+    )
+  })
+
+  it('shades rows that slide under the sticky header once the list scrolls', () => {
+    expect(modelSelectorCss).toMatch(
+      /:is\(\.model-selector__flat-head, \.model-selector__group-head\)::after \{[^}]*opacity: 0;[^}]*animation-timeline: scroll\(\);[^}]*animation-range: 0 16px;/s,
+    )
+  })
+
   it('aligns the picker right edge with its trigger', () => {
     const menu = modelSelectorCss.match(/\.model-selector__menu \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
       'body'

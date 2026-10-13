@@ -154,7 +154,7 @@ describe('radius system', () => {
       /\.menu--compact \.menu__item \{[^}]*padding: 4px 7px;[^}]*border-radius: var\(--r-md\);/s,
     )
     expect(appCss).toMatch(
-      /\.menu__item:not\(:disabled\):focus-visible \{[^}]*border-color: var\(--text-2\);/s,
+      /\.menu__item:not\(:disabled\):focus-visible \{[^}]*outline: var\(--focus-ring\);[^}]*outline-offset: var\(--focus-ring-inset\);/s,
     )
     expect(appCss).toMatch(
       /\.menu--project-picker \.menu__label > span \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/s,

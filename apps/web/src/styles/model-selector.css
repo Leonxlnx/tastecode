@@ -102,7 +102,7 @@
   overflow: hidden;
   background: var(--model-picker-bg);
   border-radius: var(--r-popup);
-  box-shadow: none;
+  box-shadow: var(--shadow-flyout);
 }
 
 .model-selector__loading {

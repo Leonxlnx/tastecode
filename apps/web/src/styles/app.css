@@ -1,4 +1,5 @@
 @import './button-feedback.css';
+@import './focus-ring.css';
 @import './popup-motion.css';
 
 /* Layout and components. Values come from tokens.css only. */
@@ -123,6 +124,11 @@
   --rail-font-size: 13px;
   --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
+  /* One raised surface for the rail: the account card and the active chat. */
+  --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
+  --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
+  /* The hairline that hangs a project's chats off its folder mark. */
+  --rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -141,6 +147,8 @@
 
 :root[data-theme='light'] .rail {
   --rail-text: var(--text);
+  --rail-raised: var(--bg-prompt);
+  --rail-raised-ring: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .rail__folder-drop {
@@ -387,8 +395,7 @@
 .rail__foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 6px 8px;
-  border-top: 1px solid var(--line-strong);
+  padding: 4px 8px 8px;
 }
 
 .account-menu__actions {
@@ -415,88 +422,6 @@
   border-color: var(--text-3);
 }
 
-.account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.account__avatar {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  background: var(--surface-3);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-circle);
-  color: var(--text-2);
-  font-size: 9px;
-  font-weight: 600;
-  overflow: hidden;
-}
-
-.account__avatar img,
-.account__avatar svg {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.account__name {
-  min-width: 0;
-  font-size: var(--rail-font-size);
-  font-weight: 460;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account__usage {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.account__usage + .account__chevron {
-  margin-left: 0;
-}
-
-.account__chevron {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger[aria-expanded='true'] .account__chevron {
-  transform: rotate(180deg);
-}
-
-/* The full-width hit area stays easy to target while the visible content
-   leaves room for the disclosure state at the right. */
-.rail__foot .menutrigger {
-  width: 100%;
-  min-height: 28px;
-  padding: 3px 6px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--rail-text);
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger:hover:not(:disabled),
-.rail__foot .menutrigger[aria-expanded='true'] {
-  background: var(--control-hover);
-  color: var(--rail-text);
-}
-
 /* Inline rename, sized to sit exactly where the label was. */
 .rename {
   width: 100%;
@@ -518,7 +443,7 @@
   min-width: 0;
   max-width: 100%;
   width: 100%;
-  height: 25px;
+  height: 28px;
   background: var(--sess-bg);
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
@@ -536,6 +461,21 @@
 :root[data-theme='light'] .sessrow.is-active {
   --sess-bg: var(--chrome-raised);
   box-shadow: var(--chrome-shadow);
+}
+
+/* One pill marks the active chat: on a project's guide, or in the outer
+   gutter for pinned chats. It slides between rows by transform alone
+   (active-indicator.ts); the row's own fill only cross-fades. */
+.sessrow__indicator {
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: var(--sess-indicator-x);
+  width: 3px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+  pointer-events: none;
 }
 
 .sessrow.is-reorderable .sess {
@@ -557,7 +497,8 @@
   content: '';
   position: absolute;
   z-index: 2;
-  left: 26px;
+  /* Starts where the title does. */
+  left: calc(var(--sess-indent) + 19px);
   right: 6px;
   height: 2px;
   border-radius: var(--r-pill);
@@ -578,7 +519,7 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+.sessrow:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -589,8 +530,12 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+  .sessrow:hover .sess__meta {
     opacity: 0;
+  }
+
+  .sessrow:hover .sess__provider {
+    color: var(--text-2);
   }
 
   .sess:hover {
@@ -824,7 +769,7 @@
 
 .proj {
   position: relative;
-  margin-bottom: 7px;
+  margin-bottom: 4px;
 }
 
 .proj[draggable='true'] > .proj__head {
@@ -859,9 +804,9 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 26px;
-  min-height: 26px;
-  padding-right: 6px;
+  height: 28px;
+  min-height: 28px;
+  padding-right: 4px;
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -871,9 +816,8 @@
 }
 
 .proj__head > .icon-btn {
-  width: 22px;
-  height: 22px;
-  margin-right: 3px;
+  width: 28px;
+  height: 28px;
 }
 
 .proj__toggle {
@@ -891,8 +835,8 @@
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
-  height: 26px;
-  min-height: 26px;
+  height: 28px;
+  min-height: 28px;
   padding: 2px 7px;
   text-align: left;
 }
@@ -911,6 +855,8 @@
 
 .proj__name {
   flex: 1;
+  /* Parents carry the weight; their chats read lighter beneath them. */
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -940,15 +886,38 @@
 }
 
 .proj__drawer > .proj__sessions {
+  /* A project's chats indent past the guide under its folder mark. */
+  --sess-indent: 22px;
+  --sess-indicator-x: 12px;
   min-height: 0;
 }
 
+/* The guide drops from just under the folder mark (13px + half a pixel is
+   the mark's centre) to the middle of the last row. It hangs on the project
+   rather than the list so the drawer's clip cannot cut its top, and it grows
+   and shrinks with the drawer for free: once the drawer is shorter than the
+   offsets, the box has no height and nothing paints. */
+.proj::after {
+  content: '';
+  position: absolute;
+  top: 24px;
+  bottom: 22px;
+  left: 13px;
+  width: 1px;
+  border-radius: var(--r-pill);
+  background: var(--rail-guide);
+  pointer-events: none;
+}
+
 .proj__sessions {
+  /* Pinned chats have no parent, so they keep the outer gutter. */
+  --sess-indent: 7px;
+  --sess-indicator-x: 1px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
   list-style: none;
-  margin: 2px 0 9px;
+  margin: 2px 0 8px;
   padding: 0;
   /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
@@ -981,8 +950,8 @@
 .proj__sessions-toggle {
   width: 100%;
   max-width: 100%;
-  height: 25px;
-  padding: 0 28px;
+  height: 28px;
+  padding: 0 8px 0 calc(var(--sess-indent) + 21px);
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -1007,10 +976,10 @@
 .sess {
   flex: 1;
   width: 100%;
-  height: 25px;
+  height: 28px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -1023,7 +992,7 @@
   /* No standing reservation for the hover actions: they overlay the right
      edge with their own fade, so the title keeps the full row width and the
      rail stays honest at any size. */
-  padding: 0 12px 0 28px;
+  padding: 0 8px 0 var(--sess-indent);
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -1041,8 +1010,9 @@
 }
 
 .sessrow > .rename--session {
-  height: 25px;
-  padding: 0 12px 0 28px;
+  height: 28px;
+  /* The field's text starts where the title did: indent + mark + gap. */
+  padding: 0 12px 0 calc(var(--sess-indent) + 21px);
   color: color-mix(in srgb, var(--text-2) 82%, transparent);
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
@@ -1055,6 +1025,10 @@
   margin: 0 0 10px;
 }
 
+.proj__sessions > .rail__hint {
+  padding-left: calc(var(--sess-indent) + 21px);
+}
+
 .sess__title {
   flex: 1;
   /* min-width lets the title shrink and ellipsize first, so the status dot
@@ -1063,43 +1037,65 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
 }
 
 :root[data-theme='dark'] .sess__title {
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
 }
 
-/* The dot sits in the row's left gutter, centred under the project folder
-   mark (7px inset + half of its 13px), so marking a chat unread never pushes
-   its title off the shared text line. */
+.sessrow:is(.is-active, .is-unread) .sess__title {
+  color: var(--rail-text);
+}
+
+.sessrow.is-unread .sess__title {
+  font-weight: 560;
+}
+
+.sess__provider {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.sessrow.is-active .sess__provider {
+  color: var(--text-2);
+}
+
+.sess__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__time {
+  color: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
 .sess__unread-dot {
-  position: absolute;
-  top: calc(50% - 3px);
-  left: 10.5px;
   width: 6px;
   height: 6px;
   border-radius: var(--r-circle);
   background: var(--light);
   flex: none;
-  pointer-events: none;
-}
-
-.sess__source {
-  max-width: 78px;
-  flex: none;
-  color: var(--text-3);
-  font-size: 10px;
 }
 
 .sess__actions {
   position: absolute;
-  right: 6px;
+  right: 0;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 0;
   padding-left: 12px;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
   background: linear-gradient(90deg, transparent, var(--sess-bg) 10px);
   opacity: 0;
   pointer-events: none;
@@ -1109,10 +1105,13 @@
 .sess__action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
+  /* A 28px target with a 24px face: the hover fill stays inside the row. */
+  width: 28px;
+  height: 28px;
+  padding: 2px;
   background: none;
+  /* After the shorthand, which would reset it. */
+  background-clip: content-box;
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
@@ -1124,7 +1123,7 @@
 
 .sess__action:hover,
 .sess__action:focus-visible {
-  background: var(--surface-3);
+  background-color: var(--surface-3);
   color: var(--text);
 }
 
@@ -1879,11 +1878,6 @@
   cursor: default;
 }
 
-.queue-row__media:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
-}
-
 .queue-row__media-fallback {
   position: absolute;
   inset: 0;
@@ -2024,11 +2018,6 @@
 
 .shelf-control[aria-expanded='true'] {
   color: var(--text);
-}
-
-.shelf-control:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 1px;
 }
 
 .shelf-control__content {
@@ -2227,11 +2216,6 @@
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
-}
-
-.attachment-preview__open:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
 }
 
 .attachment-preview__open:disabled {
@@ -2785,9 +2769,9 @@
 
 .menu__item:not(:disabled):focus-visible {
   background: var(--menu-hover);
-  border-color: var(--text-2);
   box-shadow: none;
-  outline: 0;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .menu__item:disabled {
@@ -2892,7 +2876,6 @@
 .app-select.is-open .app-select__trigger {
   border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
   color: var(--text);
-  outline: 0;
 }
 
 .app-select__trigger:disabled {
@@ -3658,10 +3641,6 @@
      absolute action layer at the rail's 240px minimum. */
   .sessrow .sess {
     padding-right: 56px;
-  }
-
-  .sess__source {
-    max-width: 68px;
   }
 
   .sessrow .sess__actions,
