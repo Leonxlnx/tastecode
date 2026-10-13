@@ -148,6 +148,56 @@ it('moves a tab with Alt+Arrow and preserves its selected state', () => {
   expect(reorder).not.toHaveBeenCalled()
 })
 
+function SelectingHarness() {
+  const [tabs, setTabs] = useState(['Terminal 1', 'Browser', 'Files'])
+  const [activeId, setActiveId] = useState('Terminal 1')
+  // The panel's rule: a closed active tab hands over to the last tab.
+  const active = tabs.find((tab) => tab === activeId) ?? tabs.at(-1)
+  return (
+    <WorkspaceTabs
+      tabs={tabs.map((title) => ({ id: title, title, icon: null }))}
+      activeId={active}
+      onSelect={setActiveId}
+      onClose={(id) => setTabs((current) => current.filter((tab) => tab !== id))}
+    >
+      <button>Add</button>
+    </WorkspaceTabs>
+  )
+}
+
+it.each([false, true])(
+  'hands focus from a closed tab to the tab selected next (reduced motion: %s)',
+  async (reducedMotion) => {
+    reduced = reducedMotion
+    render(<SelectingHarness />)
+    const closeButton = (name: string) => screen.getByRole('button', { name: `Close ${name}` })
+
+    act(() => closeButton('Browser').focus())
+    fireEvent.click(closeButton('Browser'))
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Terminal 1' }))
+
+    await act(async () => {
+      for (const motion of motions) motion.finish()
+    })
+    act(() => closeButton('Terminal 1').focus())
+    fireEvent.click(closeButton('Terminal 1'))
+    expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Files' }))
+    await act(async () => {
+      for (const motion of motions) motion.finish()
+    })
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['Files'])
+    expect(screen.getByRole('tab', { name: 'Files' }).getAttribute('aria-selected')).toBe('true')
+  },
+)
+
+it('leaves focus alone when a tab closes while focus is elsewhere', () => {
+  render(<SelectingHarness />)
+  const add = screen.getByRole('button', { name: 'Add' })
+  act(() => add.focus())
+  fireEvent.click(screen.getByRole('button', { name: 'Close Terminal 1' }))
+  expect(document.activeElement).toBe(add)
+})
+
 it('keeps keyboard focus on a tab moved with Alt+Arrow', () => {
   render(<Harness />)
   const terminal = screen.getByRole('tab', { name: 'Terminal 1' })
