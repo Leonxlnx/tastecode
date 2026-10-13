@@ -1,0 +1,29 @@
+/* The app-wide keyboard focus ring. Anything focusable that does not draw its
+   own gets the shared token instead of the browser's black default. The layer
+   keeps it the weakest rule: a component that styles its own focus state, or
+   hides the ring behind a border it draws itself, still wins. */
+@layer focus-ring {
+  :focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+  }
+
+  /* Rail rows run edge to edge in a scroller, so their ring sits inside the
+     row the way the hover fill does. */
+  :is(
+    .navitem,
+    .sess,
+    .proj__toggle,
+    .proj__sessions-toggle,
+    .rail__foot .menutrigger,
+    .inbox-card__main
+  ):focus-visible {
+    outline-offset: var(--focus-ring-inset);
+  }
+
+  /* An inbox card's button fills the rounded card, so its ring follows the
+     card's corners instead of drawing a square inside them. */
+  .inbox-card__main:focus-visible {
+    border-radius: inherit;
+  }
+}

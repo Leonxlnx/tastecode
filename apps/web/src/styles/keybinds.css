@@ -48,8 +48,8 @@
 .keybind-settings__restore:focus-visible,
 .keybind-settings__search-clear:focus-visible {
   border-radius: var(--r-xs);
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .keybind-settings__intro {
@@ -209,7 +209,7 @@
 /* Keyboard focus rings the shortcut, not the row: the row is no card. */
 .keybind-row:not([data-recording]) .keybind-recorder:focus-visible {
   border-radius: var(--r-xs);
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
   outline-offset: 3px;
 }
 
@@ -405,8 +405,8 @@
 }
 
 .keybind-row__action:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* A lone quiet action sits optically flush with the row's right edge. */

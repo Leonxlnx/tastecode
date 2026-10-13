@@ -12,6 +12,7 @@ import {
   modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
+  unlistedHiddenModels,
 } from './model-catalog.js'
 
 const model: Model = {
@@ -203,6 +204,19 @@ describe('model catalog', () => {
     expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
   })
 
+  it('starts only never-listed older models hidden, and none without a record', () => {
+    const choices = choicesFor(
+      { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+      ['opus', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-6'].map((id) => ({ ...model, id })),
+    )
+    const listed = new Set(['claude-code:opus', 'claude-code:claude-opus-4-8'])
+
+    expect(unlistedHiddenModels(choices, listed).map((choice) => choice.key)).toEqual([
+      'claude-code:claude-opus-5',
+    ])
+    expect(unlistedHiddenModels(choices, null)).toEqual([])
+  })
+
   describe('model visibility migration', () => {
     const claudeChoices = choicesFor(
       { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
@@ -230,6 +244,35 @@ describe('model catalog', () => {
         'claude-code:claude-fable-5',
         'claude-code:claude-opus-4-8',
         'codex:gpt-5.5',
+      ])
+    })
+
+    it('hides the older Claude rows that came back after the aliases moved to 5.5', () => {
+      // Saved while `opus` still meant Opus 5: the 5.0 catalog rows were not
+      // listed then, so the profile never hid them.
+      const lineup = choicesFor(
+        { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+        [
+          'claude-fable-5-1[1m]',
+          'opus',
+          'sonnet',
+          'haiku',
+          'claude-fable-5',
+          'claude-opus-5',
+          'claude-sonnet-5',
+          'claude-opus-4-8',
+          'claude-haiku-4-5',
+        ].map((id) => ({ ...model, id })),
+      )
+      const savedAtFive = new Set(['claude-code:sonnet', 'codex:gpt-5.5'])
+
+      expect([...migrateHiddenModels(savedAtFive, '5', lineup)]).toEqual([
+        'claude-code:sonnet',
+        'codex:gpt-5.5',
+        'claude-code:claude-fable-5',
+        'claude-code:claude-opus-5',
+        'claude-code:claude-sonnet-5',
+        'claude-code:claude-haiku-4-5',
       ])
     })
 
@@ -266,5 +309,24 @@ describe('model catalog', () => {
         nextModel: reasoningModel(['low', 'medium', 'high'], 'low'),
       }),
     ).toBe('high')
+  })
+
+  it("carries Codex's Ultra and Claude Code's Ultracode onto each other's top level", () => {
+    const codex = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    const claude = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    const resolve = (currentEffort: string, currentModel: typeof codex, nextModel: typeof codex) =>
+      resolveReasoningEffort({ currentEffort, currentModel, nextModel })
+
+    expect(resolve('ultra', codex, claude)).toBe('ultracode')
+    expect(resolve('ultracode', claude, codex)).toBe('ultra')
+    expect(resolve('max', claude, codex)).toBe('max')
+  })
+
+  it('ranks a remembered Ultracode with Ultra when the previous model is unknown', () => {
+    const codex = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium')
+    const luna = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max'], 'medium')
+
+    expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: codex })).toBe('ultra')
+    expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: luna })).toBe('max')
   })
 })

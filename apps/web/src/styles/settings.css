@@ -108,8 +108,8 @@
 
 .settings__back:focus-visible,
 .settings__nav-item:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .settings__nav-item.is-active svg {
@@ -1532,8 +1532,8 @@
 }
 
 .avatar-lab__field input:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .avatar-lab__previews {
@@ -1643,8 +1643,8 @@
 
 .avatar-lab__style:focus-visible,
 .avatar-lab__sample:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .settings__panel {
@@ -1758,7 +1758,7 @@
 }
 
 .theme-option input:focus-visible + .theme-preview {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
 }
 
 .theme-window {
@@ -1915,8 +1915,8 @@
 
 .appearance-section__reset:focus-visible {
   border-radius: var(--r-xs);
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .appearance-row {
@@ -2022,8 +2022,8 @@
 }
 
 .settings .appearance-select .app-select__trigger:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .settings .appearance-select .app-select__chevron {
@@ -2798,8 +2798,8 @@
 }
 
 .model-visibility__bulk-actions button:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .model-visibility__bulk-actions button:disabled {
@@ -3013,8 +3013,8 @@
 }
 
 .settings__email-toggle:focus-visible {
-  outline: 1px solid currentColor;
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .settings__email-clip {

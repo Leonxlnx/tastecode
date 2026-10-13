@@ -66,6 +66,6 @@
 }
 
 .model-search > button:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }

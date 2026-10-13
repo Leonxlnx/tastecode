@@ -17,6 +17,7 @@ const xterm = vi.hoisted(() => ({
     clear: ReturnType<typeof vi.fn>
     reset: ReturnType<typeof vi.fn>
     clearTextureAtlas: ReturnType<typeof vi.fn>
+    focus: ReturnType<typeof vi.fn>
     options: Record<string, unknown>
     unicode: { activeVersion: string }
   }>,
@@ -75,7 +76,7 @@ vi.mock('@xterm/xterm', () => ({
     unicode = { activeVersion: '6' }
     loadAddon() {}
     open() {}
-    focus() {}
+    focus = vi.fn()
     dispose() {}
     attachCustomKeyEventHandler() {}
     hasSelection() {
@@ -394,6 +395,48 @@ describe('TerminalPane', () => {
     view.unmount()
     await act(async () => undefined)
     expect(harness.request).toHaveBeenCalledWith('terminal.close', { terminalId: 'owner-B' })
+  })
+
+  it('leaves focus in the composer when a chat switch attaches a new shell', async () => {
+    const harness = fakeTransport((method, params) =>
+      method === 'terminal.open' ? { terminalId: params['threadId'] } : undefined,
+    )
+    const composer = document.createElement('textarea')
+    document.body.append(composer)
+    try {
+      const view = render(
+        <TerminalPane
+          terminalKey="tab"
+          transport={harness.transport}
+          threadId="chat-A"
+          mode="workspace"
+          onClose={vi.fn()}
+        />,
+      )
+      await screen.findByText('Connected')
+      expect(xterm.instances[0]!.focus).toHaveBeenCalled()
+
+      composer.focus()
+      view.rerender(
+        <TerminalPane
+          terminalKey="tab"
+          transport={harness.transport}
+          threadId="chat-B"
+          mode="workspace"
+          onClose={vi.fn()}
+        />,
+      )
+      await waitFor(() =>
+        expect(harness.request).toHaveBeenCalledWith('terminal.status', { terminalId: 'chat-B' }),
+      )
+      await screen.findByText('Connected')
+
+      expect(xterm.instances).toHaveLength(2)
+      expect(xterm.instances[1]!.focus).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(composer)
+    } finally {
+      composer.remove()
+    }
   })
 
   it('closes a late open reply for the former owner despite the new owner lease', async () => {
