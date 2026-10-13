@@ -42,7 +42,7 @@ const settle = () => new Promise<void>((resolve) => setImmediate(resolve))
 const message = { type: 'harness:shutdown' }
 
 describe('server main shutdown', () => {
-  it.each(['SIGINT', 'SIGTERM', 'node', 'utility'])(
+  it.each(['SIGINT', 'SIGTERM', 'node', 'utility', 'disconnect'])(
     'waits for recorded-delta flush and store close before exiting through %s',
     async (source) => {
       const events: string[] = []

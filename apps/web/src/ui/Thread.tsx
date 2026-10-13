@@ -140,6 +140,8 @@ export interface ThreadProps {
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
+  /** A search jump has landed on its turn; the owner drops it so the next entry opens at the end. */
+  onSearchJumpDone?: ((request: number) => void) | undefined
   revealRequest?: number | undefined
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
@@ -225,6 +227,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const searchJumpRef = useRef(props.searchJump)
   searchJumpRef.current = props.searchJump
+  const searchJumpDone = useRef(props.onSearchJumpDone)
+  searchJumpDone.current = props.onSearchJumpDone
   const closeFind = useCallback(() => {
     setFinding(false)
     const jump = searchJumpRef.current
@@ -429,6 +433,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
+    // This instance remembers the jump, but the next entry to the chat mounts a
+    // new one; without this the old hit would be jumped to again every time.
+    searchJumpDone.current?.(target.request)
   }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadComplete])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long

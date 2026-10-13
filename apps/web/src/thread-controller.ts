@@ -372,7 +372,11 @@ export class ThreadController {
       event,
     )
     this.update(id, next)
-    if (seq !== undefined && sequence !== undefined) this.setCursor(id, Math.max(sequence, seq))
+    // The flush can compact a background thread and drop its cursor on purpose;
+    // the next selection must then replay it in full, not just a suffix.
+    const flushed = this.cursor(id)
+    if (seq !== undefined && sequence !== undefined && flushed !== undefined)
+      this.setCursor(id, Math.max(flushed, seq))
     if (
       (event.type === 'item.started' || event.type === 'item.completed') &&
       event.item.role === 'user'

@@ -383,10 +383,12 @@
   scrollbar-gutter: stable;
 }
 
+/* The 8px side inset matches Menu's viewport gutter. At 6px the trigger sat
+   left of the edge a menu may use, so its popup could not line up with it. */
 .rail__foot {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  padding: 6px;
+  padding: 6px 8px;
   border-top: 1px solid var(--line-strong);
 }
 
@@ -1048,16 +1050,10 @@
   letter-spacing: var(--rail-letter-spacing);
 }
 
+/* Pinned chats keep the same 28px title indent as project chats, so every
+   chat title in the rail starts on one line under the project names. */
 .pinned-sessions {
   margin: 0 0 10px;
-}
-
-.sessrow.is-pinned .sess {
-  padding-left: 7px;
-}
-
-.sessrow.is-pinned > .rename--session {
-  padding-left: 7px;
 }
 
 .sess__title {
@@ -1076,12 +1072,19 @@
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
 }
 
+/* The dot sits in the row's left gutter, centred under the project folder
+   mark (7px inset + half of its 13px), so marking a chat unread never pushes
+   its title off the shared text line. */
 .sess__unread-dot {
+  position: absolute;
+  top: calc(50% - 3px);
+  left: 10.5px;
   width: 6px;
   height: 6px;
   border-radius: var(--r-circle);
   background: var(--light);
   flex: none;
+  pointer-events: none;
 }
 
 .sess__source {
@@ -2661,10 +2664,11 @@
 }
 
 .menu--settings {
-  /* Stay close to the account trigger without letting a wide rail turn this
-     small status surface into a large sheet. */
+  /* Flush with the account trigger: Menu aligns the left edges and publishes
+     the trigger's width. The fallback only covers the frame before the first
+     measurement, and min-width yields so the base .menu minimum cannot win. */
   min-width: 0;
-  width: min(224px, calc(100vw - 16px));
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;

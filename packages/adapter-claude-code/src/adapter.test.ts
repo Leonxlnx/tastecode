@@ -697,6 +697,42 @@ describe('Claude Agent SDK session', () => {
     }
   })
 
+  it('creates a session that never received a prompt instead of failing to resume it', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        // Captured from claude 2.1.296: an unused --session-id writes no
+        // transcript, so --resume of that id fails during startup.
+        if (input.options.resume) {
+          vi.spyOn(query, 'initializationResult').mockRejectedValue(
+            new Error(
+              `Claude Code returned an error result: No conversation found with session ID: ${input.options.resume}`,
+            ),
+          )
+        }
+        return query
+      },
+    })
+    const sessionId = crypto.randomUUID()
+    try {
+      const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+
+      expect(thread.id).toBe(`claude-${sessionId}`)
+      expect(fake.inputs.map(({ options }) => [options.resume, options.sessionId])).toEqual([
+        [sessionId, undefined],
+        [undefined, sessionId],
+      ])
+      expect(fake.queries[0]!.closed).toBe(true)
+      await adapter.sendTurn(thread.id, 'Hello')
+      expect(
+        (await fake.inputs[1]!.prompt[Symbol.asyncIterator]().next()).value?.message.content,
+      ).toEqual([{ type: 'text', text: 'Hello' }])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('does not reuse a turn identity when a new instance resumes the session', async () => {
     const first = new ClaudeCodeAdapter({ createQuery: harness().createQuery })
     const resumed = new ClaudeCodeAdapter({ createQuery: harness().createQuery })

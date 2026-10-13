@@ -303,6 +303,34 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
+  it('takes focus on pointer down so keys after a click move the effort, not the search', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    search.focus()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 44,
+      right: 380,
+      bottom: 64,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(slider, { clientX: 200, pointerId: 7 })
+    fireEvent.pointerUp(slider, { clientX: 200, pointerId: 7 })
+    expect(document.activeElement).toBe(slider)
+
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(onEffortChange).toHaveBeenLastCalledWith('xhigh')
+    expect((search as HTMLInputElement).value).toBe('')
+  })
+
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
     const { onEffortChange } = renderSelector({ effort: 'medium' })
 
