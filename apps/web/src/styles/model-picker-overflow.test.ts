@@ -12,6 +12,10 @@ function rule(css: string, selector: string): string {
   )
 }
 
+const sliderSection =
+  menuCss.match(/\/\* -{10} effort slider -{10}[\s\S]*?(?=\n\.model-selector__catalog \{)/)?.[0] ??
+  ''
+
 /*
  * A long nowrap model name (OpenCode and ACP list rows like "MiniMax Token
  * Plan (minimax.io) · MiniMax-M3.1-Flash-Preview") used to widen the picker
@@ -38,5 +42,13 @@ describe('model picker horizontal overflow', () => {
     const list = rule(menuCss, '.model-selector__models')
     expect(list).toContain('overflow-x: hidden;')
     expect(list).toContain('overflow-y: auto;')
+  })
+
+  it('clips the effort pill without a scroll range for its lit dots', () => {
+    for (const selector of ['.model-selector__slider-clip', '.model-selector__slider-fill']) {
+      expect(rule(menuCss, selector), selector).toContain('overflow: clip;')
+    }
+    expect(sliderSection).not.toBe('')
+    expect(sliderSection).not.toMatch(/overflow(-x)?: (hidden|auto|scroll);/)
   })
 })
