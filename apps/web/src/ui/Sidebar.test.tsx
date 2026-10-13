@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
 import type { AccountLimitsState } from './AccountLimits.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -247,6 +248,59 @@ describe('Sidebar chat actions', () => {
     ])
     expect(meter()).toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+  })
+
+  it('draws the card avatar as the photo, the initials, or a tinted person mark', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        profileIdentity={profileIdentity}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+
+    const rendered = render(view({ displayName: 'Alex Rivera' }))
+    const initials = avatar().querySelector<HTMLElement>('.account__initials')
+    expect(initials?.textContent).toBe('AR')
+    expect(initials?.style.getPropertyValue('--avatar-hue')).not.toBe('')
+    // The speckled seal no longer draws on the card.
+    expect(avatar().querySelector('.generated-avatar')).toBeNull()
+
+    rendered.rerender(view({ displayName: '  émile  ' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('É')
+
+    rendered.rerender(view({ displayName: '' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('')
+    expect(avatar().querySelector('.account__initials svg')).not.toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+
+    rendered.rerender(
+      view({ displayName: 'Alex Rivera', avatarDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
+    )
+    expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgo=',
+    )
+    expect(avatar().querySelector('.account__initials')).toBeNull()
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
