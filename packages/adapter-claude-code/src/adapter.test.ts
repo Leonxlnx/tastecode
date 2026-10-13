@@ -1788,6 +1788,11 @@ describe('Claude static model catalog', () => {
     for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
       expect(efforts(id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     }
+    for (const id of ['claude-opus-4-6', 'claude-sonnet-4-6']) {
+      expect(efforts(id)).toEqual(['low', 'medium', 'high', 'max'])
+    }
+    // Opus 4.5 introduced effort with three levels; max arrived with Opus 4.6.
+    expect(efforts('claude-opus-4-5')).toEqual(['low', 'medium', 'high'])
     expect(efforts('claude-haiku-4-5')).toEqual([])
     expect(CLAUDE_MODELS.find((model) => model.id === 'claude-opus-4-7')).toMatchObject({
       defaultReasoningEffort: 'xhigh',
