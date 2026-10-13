@@ -244,4 +244,12 @@ describe('model catalog', () => {
     expect(resolve('ultracode', claude, codex)).toBe('ultra')
     expect(resolve('max', claude, codex)).toBe('max')
   })
+
+  it('ranks a remembered Ultracode with Ultra when the previous model is unknown', () => {
+    const codex = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'], 'medium')
+    const luna = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max'], 'medium')
+
+    expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: codex })).toBe('ultra')
+    expect(resolveReasoningEffort({ currentEffort: 'ultracode', nextModel: luna })).toBe('max')
+  })
 })
