@@ -644,6 +644,109 @@ describe('cached usage limits', () => {
     expect(usageLimitSource).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps an unavailable answer through usage changes until its longer cache expires', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const { registry, hooks } = setup({
+      limitCacheMs: 1_000,
+      unavailableLimitCacheMs: 10_000,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource()).resolves.toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+    })
+    registry.usageChanged('claude-code')
+    registry.usageChanged('claude-code', true)
+    await vi.advanceTimersByTimeAsync(9_999)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'unavailable' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // The signal still reaches clients: their session totals changed.
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('caches an unavailable answer that a usage change interrupted', async () => {
+    const answer = deferred<{ status: 'unavailable' }>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(answer.promise)
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    const reading = claude.usageLimitSource()
+    await flush()
+    registry.usageChanged('claude-code')
+    answer.resolve({ status: 'unavailable' })
+    await expect(reading).resolves.toMatchObject({ status: 'unavailable' })
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'unavailable' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('lets an interrupted unavailable answer replace nothing newer', async () => {
+    const stale = deferred<{ status: 'unavailable' }>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 40 }] })
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const first = grok.usageLimitSource()
+    await flush()
+    registry.usageChanged('grok')
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    stale.resolve({ status: 'unavailable' })
+    await first
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards an unavailable answer on sign-in, sign-out and reset', async () => {
+    const { startLogin, callbacks } = externalLogin()
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({
+      services: { 'claude-code': { usageLimitSource, startLogin, signOut } },
+    })
+    let claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await claude.signOut()
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+
+    await claude.startLogin!()
+    callbacks[0]!({ loginId: 'external-1', success: true, error: null })
+    await flush()
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+
+    await registry.disposeAll()
+    claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('discards an unavailable answer when an account read reports a sign-in', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: false })
+      .mockResolvedValue({ signedIn: true, email: 'person@example.test' })
+    const { registry } = setup({ services: { grok: { account, usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    registry.usageChanged('grok')
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // Signed in through the provider's own CLI.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
   it('forwards the first change at once and collapses a burst into one trailing signal', async () => {
     const { registry, hooks } = setup({ limitChangeIntervalMs: 1_000 })
     registry.usageChanged('codex')

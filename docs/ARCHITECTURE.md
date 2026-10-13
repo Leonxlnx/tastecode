@@ -529,7 +529,10 @@ Settings views renew 60-second notification leases; one read cannot hold a contr
 for the whole app lifetime. Usage-limit reads are cached per provider for 60 seconds and shared
 by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale; so
 does an account read that reports a different account, which is how a sign-in or switch made in
-the provider's own CLI reaches the app.
+the provider's own CLI reaches the app. An account without plan limits keeps its "unavailable"
+answer for 30 minutes instead, through usage updates: spending usage cannot give it limits, and
+Claude scans its local transcripts for up to a minute to say so. Only an account change or a
+reset discards that answer early. Failed reads are never cached.
 Change notifications to clients are coalesced to one leading and one trailing notice per
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
@@ -652,6 +655,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
