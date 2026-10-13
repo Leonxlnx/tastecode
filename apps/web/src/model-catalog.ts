@@ -105,23 +105,44 @@ export function unlistedHiddenModels(
  * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
  * above changes for models a saved profile already lists.
  */
-export const MODEL_VISIBILITY_VERSION = '6'
+export const MODEL_VISIBILITY_VERSION = '7'
+
+type VisibilityChange = {
+  /** Models, by visibility id, whose default changed. */
+  ids?: readonly string[]
+  /** Stock sources whose every listed model goes back to its default. */
+  sources?: readonly string[]
+}
 
 /**
- * Ids whose default visibility changed, by the version that changed them. A
- * profile saved at version 4 or later only has these ids moved to their new
- * default, so its other manual choices survive the upgrade.
+ * What each version changed. A profile saved at version 4 or later only has
+ * these models moved to their default, so its other manual choices survive
+ * the upgrade.
  */
-const MODEL_VISIBILITY_CHANGES = new Map<number, readonly string[]>([
+const MODEL_VISIBILITY_CHANGES = new Map<number, VisibilityChange>([
   // Claude Code's `haiku` alias now resolves to Haiku 5.5, the current small model.
-  [5, ['haiku']],
+  [5, { ids: ['haiku'] }],
   // While `opus`, `sonnet` and `haiku` resolved to the 5.0 generation, their
   // alias rows stood in for these catalog rows. Once the aliases moved to 5.5
   // the older rows came back under their own ids and, being unknown to the
   // saved profile, started visible.
-  [6, ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']],
+  [6, { ids: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] }],
+  // Profiles saved by older builds can still hide the `sonnet` and `haiku`
+  // aliases from when they named an older generation, and show the dated
+  // Haiku 4.5 row the id list never matched. Claude Code's rows return to
+  // the current lineup once; every other source keeps its choices.
+  [7, { sources: ['claude-code'] }],
 ])
 const FIRST_INCREMENTAL_VISIBILITY_VERSION = 4
+
+function changedSince(
+  choice: ModelChoice,
+  changed: { ids: ReadonlySet<string>; sources: ReadonlySet<string> },
+): boolean {
+  if (changed.ids.has(visibilityId(choice.model))) return true
+  if (isCustomModelChoice(choice)) return false
+  return changed.sources.has(sourceKey({ provider: choice.provider, agentId: choice.agent?.id }))
+}
 
 /** Move a saved visibility profile onto the current defaults for the models in `choices`. */
 export function migrateHiddenModels(
@@ -134,15 +155,17 @@ export function migrateHiddenModels(
   const from = Number(storedVersion)
   const to = Number(MODEL_VISIBILITY_VERSION)
   // Older or unknown profiles predate incremental changes and take every default once.
-  let changed: Set<string> | undefined
+  let changed: { ids: Set<string>; sources: Set<string> } | undefined
   if (Number.isInteger(from) && from >= FIRST_INCREMENTAL_VISIBILITY_VERSION && from < to) {
-    changed = new Set()
+    changed = { ids: new Set(), sources: new Set() }
     for (let version = from + 1; version <= to; version += 1) {
-      for (const id of MODEL_VISIBILITY_CHANGES.get(version) ?? []) changed.add(id)
+      const change = MODEL_VISIBILITY_CHANGES.get(version)
+      for (const id of change?.ids ?? []) changed.ids.add(id)
+      for (const source of change?.sources ?? []) changed.sources.add(source)
     }
   }
   for (const choice of choices) {
-    if (changed && !changed.has(visibilityId(choice.model))) continue
+    if (changed && !changedSince(choice, changed)) continue
     if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
     else migrated.add(choice.key)
   }
