@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 const tokensCss = readFileSync(new URL('./tokens.css', import.meta.url), 'utf8')
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const appCss = readFileSync(new URL('./app.css', import.meta.url), 'utf8')
+const accountCardCss = readFileSync(new URL('./account-card.css', import.meta.url), 'utf8')
 const focusRingCss = readFileSync(new URL('./focus-ring.css', import.meta.url), 'utf8')
 const modelSelectorMenuCss = readFileSync(
   new URL('./model-selector-menu.css', import.meta.url),
@@ -59,6 +60,14 @@ describe('focus outline', () => {
     )
     expect(settingsCss).toMatch(
       /\.settings__nav-item:focus-visible \{[^}]*outline: var\(--focus-ring\);[^}]*outline-offset: var\(--focus-ring-inset\);/s,
+    )
+  })
+
+  it('rings the account card and its gear with the shared token', () => {
+    // The card sits in the rail foot with room around it, so its ring draws
+    // outside like any standalone control, in the same colour as every other.
+    expect(accountCardCss).toMatch(
+      /\.account-card__trigger:focus-visible,\s*\.account-card__settings:focus-visible \{\s*outline: var\(--focus-ring\);\s*outline-offset: var\(--focus-ring-offset\);/s,
     )
   })
 
