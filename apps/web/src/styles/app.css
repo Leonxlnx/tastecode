@@ -3364,7 +3364,8 @@
     width: 100%;
   }
 
-  .composer__permission .tool > span,
+  /* The permission icon is an IconMorph span, so only the label goes. */
+  .composer__permission .tool > span:not(.icon-morph),
   .composer__design > span {
     display: none;
   }
@@ -3658,7 +3659,7 @@
   /* Below this width the pill labels cannot sit next to the model picker
      and still fit one line. Keep the icons (their aria-labels stay intact)
      so the whole rail reads left to right at any phone width. */
-  .tools .composer__permission .tool > span,
+  .tools .composer__permission .tool > span:not(.icon-morph),
   .tools .composer__design > span {
     display: none;
   }
