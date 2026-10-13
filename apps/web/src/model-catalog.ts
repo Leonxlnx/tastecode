@@ -173,47 +173,44 @@ export function migrateHiddenModels(
 }
 
 /**
- * How far a saved visibility profile has come: the version every source last
- * reached together, and the sources a pending migration has already moved on
- * their own, each with the version it reached.
+ * How far a saved visibility profile has come: the version every row last
+ * reached together, and the rows a pending migration has already moved on
+ * their own, by choice key, each with the version it reached.
  */
 export type ModelVisibilityProgress = {
   version: string | null
-  sources: ReadonlyMap<string, string>
+  rows: ReadonlyMap<string, string>
 }
 
-/** The hidden list after a migration, and the sources it moved. */
+/** The hidden list after a migration, and the choice keys it moved. */
 export type ModelVisibilityMigration = { hidden: Set<string>; migrated: string[] }
 
-function sourceVisibilityVersion(progress: ModelVisibilityProgress, source: string): string | null {
-  return progress.sources.get(source) ?? progress.version
-}
-
 /**
- * Apply the pending migration to the rows of each source in `choices` that has
- * not had it yet, and name the sources it moved. A source is migrated once,
- * as soon as its rows are known: a later run must not undo what the user chose
- * since, and a source that cannot be listed must not hold back the others.
+ * Apply the pending migration to each row in `choices` that has not had it
+ * yet, and name the rows it moved. A row is migrated once, as soon as it is
+ * known, whether from the cached catalog or from its source's listing: a later
+ * run must not undo what the user chose since, and a source that cannot be
+ * listed must not hold back the others.
  */
-export function migrateHiddenModelSources(
+export function migratePendingHiddenModels(
   hidden: ReadonlySet<string>,
   progress: ModelVisibilityProgress,
   choices: readonly ModelChoice[],
-  sourceOf: (choice: ModelChoice) => string,
 ): ModelVisibilityMigration {
-  const pending = new Map<string, ModelChoice[]>()
+  const pending = new Map<string | null, ModelChoice[]>()
   for (const choice of choices) {
-    const source = sourceOf(choice)
-    if (sourceVisibilityVersion(progress, source) === MODEL_VISIBILITY_VERSION) continue
-    const rows = pending.get(source)
+    const version = progress.rows.get(choice.key) ?? progress.version
+    if (version === MODEL_VISIBILITY_VERSION) continue
+    const rows = pending.get(version)
     if (rows) rows.push(choice)
-    else pending.set(source, [choice])
+    else pending.set(version, [choice])
   }
   let migrated = new Set(hidden)
-  for (const [source, rows] of pending) {
-    migrated = migrateHiddenModels(migrated, sourceVisibilityVersion(progress, source), rows)
+  for (const [version, rows] of pending) migrated = migrateHiddenModels(migrated, version, rows)
+  return {
+    hidden: migrated,
+    migrated: [...pending.values()].flatMap((rows) => rows.map((choice) => choice.key)),
   }
-  return { hidden: migrated, migrated: [...pending.keys()] }
 }
 
 const REASONING_EFFORT_RANKS = new Map([

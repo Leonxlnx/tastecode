@@ -773,9 +773,25 @@ function savedHiddenModels(): string[] {
   return (JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]).sort()
 }
 
-function migratedVisibilitySources(): unknown {
-  return JSON.parse(localStorage.getItem('harness.modelVisibilitySources') ?? 'null')
+/** Rows a pending migration moved while Grok kept the profile behind, as `key@version`. */
+function migratedVisibilityRows(): string[] | null {
+  const stored = JSON.parse(
+    localStorage.getItem('harness.modelVisibilityRows') ?? 'null',
+  ) as Record<string, string> | null
+  return stored
+    ? Object.entries(stored)
+        .map(([key, version]) => `${key}@${version}`)
+        .sort()
+    : null
 }
+
+function currentRows(keys: readonly string[]): string[] {
+  return keys.map((key) => `${key}@${MODEL_VISIBILITY_VERSION}`).sort()
+}
+
+const CLAUDE_CODE_LINEUP_KEYS = claudeCodeLineup().map((model) => `claude-code:${model.id}`)
+/** Every row the Grok-failing discovery mock lists for Claude Code and Codex. */
+const LISTED_ROW_KEYS = [...CLAUDE_CODE_LINEUP_KEYS, 'codex:gpt-6.1-sol', 'codex:gpt-5.5']
 
 function dispatchTransitionEnd(element: Element, propertyName: string) {
   const event = new Event('transitionend', { bubbles: true })
@@ -1981,10 +1997,12 @@ describe('web client', () => {
         .models.filter((choice) => choice.provider === 'claude-code')
         .map((choice) => choice.model.displayName),
     ).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
-    // Both cached sources are migrated; the profile as a whole reaches the
-    // current version only once every source has been listed.
+    // Every cached row is migrated; the profile as a whole reaches the current
+    // version only once every source has been listed.
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
-    expect(migratedVisibilitySources()).toEqual({ 'claude-code': '7', codex: '7' })
+    expect(migratedVisibilityRows()).toEqual(
+      currentRows([...CLAUDE_CODE_LINEUP_KEYS, 'codex:gpt-6.1-sol']),
+    )
     expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
   })
 
@@ -1998,12 +2016,13 @@ describe('web client', () => {
       localStorage.setItem('harness.modelVisibilityVersion', '4')
       localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
       if (cached) {
+        // The cache predates the dated Haiku 4.5 row Claude Code lists now.
         localStorage.setItem(
           'harness.modelCatalog.v1',
           serializeModelCatalogCache([
             ...choicesFor(
               { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-              claudeCodeLineup(),
+              claudeCodeLineup().filter((model) => model.id !== 'claude-haiku-4-5-20251001'),
             ),
             cachedCodexChoice(),
           ]),
@@ -2016,7 +2035,8 @@ describe('web client', () => {
       await settleDiscoveryWithFailingGrok(1)
 
       expect(offeredModelNames('claude-code')).toEqual(currentLineup)
-      expect(migratedVisibilitySources()).toEqual({ 'claude-code': '7', codex: '7' })
+      expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
+      expect(migratedVisibilityRows()).toEqual(currentRows(LISTED_ROW_KEYS))
       expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
       openSettings()
       await act(() => vi.dynamicImportSettled())
@@ -2076,15 +2096,15 @@ describe('web client', () => {
           'Haiku 5.5',
         ])
         expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
-        expect(migratedVisibilitySources()).toEqual(
-          version === MODEL_VISIBILITY_VERSION ? null : { 'claude-code': '7', codex: '7' },
+        expect(migratedVisibilityRows()).toEqual(
+          version === MODEL_VISIBILITY_VERSION ? null : currentRows(LISTED_ROW_KEYS),
         )
         view.unmount()
       }
     },
   )
 
-  it('waits for Claude Code to be listed when only the restored selection stands for it', async () => {
+  it('migrates the rest of Claude Code once it is listed after the restored selection', async () => {
     serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
     localStorage.setItem('harness.provider', 'claude-code')
     localStorage.setItem('harness.model', 'claude-code:sonnet')
@@ -2101,10 +2121,9 @@ describe('web client', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
     )
-    // The restored selection paints migrated, but one row says nothing about
-    // the rest of Claude Code's catalog.
+    // Without a cached catalog only the restored selection paints, migrated.
     expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:sonnet')
-    expect(migratedVisibilitySources()).toBeNull()
+    expect(migratedVisibilityRows()).toEqual(currentRows(['claude-code:sonnet']))
 
     await act(async () => {
       releaseClaude({ models: claudeCodeLineup() })
@@ -2118,7 +2137,7 @@ describe('web client', () => {
       'Sonnet 5.5',
       'Haiku 5.5',
     ])
-    expect(migratedVisibilitySources()).toEqual({ codex: '7', 'claude-code': '7' })
+    expect(migratedVisibilityRows()).toEqual(currentRows(LISTED_ROW_KEYS))
   })
 
   it.each([

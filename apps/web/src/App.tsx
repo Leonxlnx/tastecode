@@ -125,7 +125,7 @@ import {
   customModelChoice,
   customModelKey,
   isCustomModelChoice,
-  migrateHiddenModelSources,
+  migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
   modelVisibleByDefault,
@@ -229,8 +229,8 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-/** Sources a pending visibility migration already moved, while others have not answered yet. */
-const MODEL_VISIBILITY_SOURCES_KEY = 'harness.modelVisibilitySources'
+/** Rows a pending visibility migration already moved, while other sources have not answered yet. */
+const MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
 /** Every direct-provider model key the profile has listed, so a later arrival gets its default. */
 const LISTED_MODELS_KEY = 'harness.listedModels'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
@@ -683,22 +683,13 @@ export function App() {
     }
     if (saved === null) return { hidden, migrated: [] }
     // Apply a pending visibility migration to the cached catalog already, so
-    // the picker never opens on models it is about to hide or reveal. A source
-    // whose rows came from the cache is done; one shown only through the
-    // restored selection still waits for discovery to list all of its rows.
-    const cachedSources = new Set(
-      (parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))?.models ?? []).map(modelSource),
-    )
-    const migration = migrateHiddenModelSources(
+    // the picker never opens on models it is about to hide or reveal. Rows a
+    // source lists later get it when discovery first shows them.
+    return migratePendingHiddenModels(
       hidden,
       readModelVisibilityProgress(),
       catalogModels.filter((choice) => !choice.agent && !isCustomModelChoice(choice)),
-      modelSource,
     )
-    return {
-      hidden: migration.hidden,
-      migrated: migration.migrated.filter((source) => cachedSources.has(source)),
-    }
   })
   const [hiddenModels, setHiddenModels] = useState(initialModelVisibility.hidden)
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
@@ -1979,14 +1970,12 @@ export function App() {
         }
       }
       if (modelVisibilityInitialized.current) {
-        // Each source that listed its models gets a pending migration once; the
-        // first paint already moved the cached rows of any source that failed.
-        // The moved list is saved together with the record of what moved.
-        const migration = migrateHiddenModelSources(
+        // Each row gets a pending migration once, even while another source
+        // fails. The moved list is saved together with the record of what moved.
+        const migration = migratePendingHiddenModels(
           hidden,
           readModelVisibilityProgress(),
-          direct.filter((entry) => entry.discovered).flatMap((entry) => entry.models),
-          modelSource,
+          directCatalog,
         )
         if (migration.migrated.length > 0) {
           hidden = migration.hidden
@@ -5983,37 +5972,37 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 function readModelVisibilityProgress(): ModelVisibilityProgress {
-  const sources = new Map<string, string>()
+  const rows = new Map<string, string>()
   try {
-    const stored: unknown = JSON.parse(readSetting(MODEL_VISIBILITY_SOURCES_KEY) ?? 'null')
+    const stored: unknown = JSON.parse(readSetting(MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
     if (isRecord(stored)) {
-      for (const [source, version] of Object.entries(stored)) {
-        if (typeof version === 'string') sources.set(source, version)
+      for (const [key, version] of Object.entries(stored)) {
+        if (typeof version === 'string') rows.set(key, version)
       }
     }
   } catch {
-    // An unreadable record only means those sources are migrated once more.
+    // An unreadable record only means those rows are migrated once more.
   }
-  return { version: readSetting(MODEL_VISIBILITY_VERSION_KEY), sources }
+  return { version: readSetting(MODEL_VISIBILITY_VERSION_KEY), rows }
 }
 
 /**
- * Record `migrated` as moved onto the current visibility defaults. Once every
- * source has been listed, the whole profile is current and the per-source
- * record is no longer needed.
+ * Record the `migrated` rows as moved onto the current visibility defaults.
+ * Once every source has been listed, the whole profile is current and the
+ * per-row record is no longer needed.
  */
 function recordModelVisibilityProgress(migrated: readonly string[], complete: boolean): void {
   if (complete) {
     if (readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
       writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
     }
-    removeSetting(MODEL_VISIBILITY_SOURCES_KEY)
+    removeSetting(MODEL_VISIBILITY_ROWS_KEY)
     return
   }
   if (migrated.length === 0) return
-  const sources = new Map(readModelVisibilityProgress().sources)
-  for (const source of migrated) sources.set(source, MODEL_VISIBILITY_VERSION)
-  writeSetting(MODEL_VISIBILITY_SOURCES_KEY, JSON.stringify(Object.fromEntries(sources)))
+  const rows = new Map(readModelVisibilityProgress().rows)
+  for (const key of migrated) rows.set(key, MODEL_VISIBILITY_VERSION)
+  writeSetting(MODEL_VISIBILITY_ROWS_KEY, JSON.stringify(Object.fromEntries(rows)))
 }
 
 /** `null` until a full catalog has been recorded; an unreadable record is rebuilt then. */
