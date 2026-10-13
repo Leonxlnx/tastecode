@@ -41,8 +41,8 @@
 
 .account-card__trigger:focus-visible,
 .account-card__settings:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .account {

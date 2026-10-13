@@ -1,4 +1,8 @@
-/* Keep hover and open states immediate, without a separate mouse-down flash. */
+/* Every button shares one short colour fade, so a row of controls never mixes
+   some that fade with others that snap. Only colour moves here: no transform,
+   size or opacity change is animated, which keeps the fade safe under reduced
+   motion. A menu trigger still paints its open state at once, with no separate
+   mouse-down flash. */
 @layer button-feedback {
   :where(
     button,
@@ -20,12 +24,24 @@
     a.settings__action,
     .pr-file-head a
   ):not(:where(.sheet__scrim, .command-palette__scrim, .rail__backdrop, [role='separator'])) {
-    transition: none !important;
+    transition:
+      color var(--dur-hover) var(--ease-out),
+      background-color var(--dur-hover) var(--ease-out),
+      border-color var(--dur-hover) var(--ease-out),
+      box-shadow var(--dur-hover) var(--ease-out) !important;
 
     &:not(:disabled):not([aria-disabled='true']) {
       &[aria-haspopup]:not([aria-haspopup='false'])[aria-expanded='true'] {
         background: var(--control-pressed) !important;
+        transition: none !important;
       }
     }
+  }
+
+  /* An icon that sets its own hover colour follows the label's fade instead
+     of snapping ahead of it. Icons with motion of their own keep it. */
+  :where(button, [role='button'], [role='tab'], [role='menuitem'], [role='option'], summary)
+    :where(svg) {
+    transition: color var(--dur-hover) var(--ease-out);
   }
 }

@@ -116,8 +116,8 @@
 
 .renderer-recovery__ask:focus-visible,
 .renderer-recovery__agent:focus-visible {
-  outline: 1.5px solid color-mix(in srgb, var(--text) 34%, transparent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .renderer-recovery__ask-icon,
@@ -253,8 +253,8 @@
 }
 
 .renderer-recovery-actions button:focus-visible {
-  outline: 1.5px solid color-mix(in srgb, var(--text) 34%, transparent);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .renderer-recovery-actions svg {

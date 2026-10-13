@@ -259,11 +259,6 @@
   color: var(--text);
 }
 
-.model-selector__provider:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: 1px;
-}
-
 .model-selector__provider svg {
   flex: none;
   width: 16px;
@@ -275,6 +270,57 @@
   min-height: 0;
   overflow-y: auto;
   padding: 4px;
+  /* Keyboard focus lands clear of the sticky header and the bottom fade. */
+  scroll-padding-block: 36px var(--model-list-fade-size);
+  /* While rows wait below the fold the list fades out at its bottom edge, so
+     a provider heading cut in half reads as "scroll for more" rather than as
+     a clipped panel. The list's own scroll position drives the fade: it
+     holds until the last stretch of the list and is gone at the end. A list
+     that fits has no scroll range, so it never fades. */
+  --model-list-fade-size: 24px;
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--model-list-fade)), transparent);
+  animation: model-list-fade linear both;
+  animation-timeline: scroll(self);
+  animation-range: calc(100% - var(--model-list-fade-size)) 100%;
+}
+
+@property --model-list-fade {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@keyframes model-list-fade {
+  from {
+    --model-list-fade: var(--model-list-fade-size);
+  }
+
+  to {
+    --model-list-fade: 0px;
+  }
+}
+
+/* Once the list has scrolled, rows slide into a soft shade under the sticky
+   header instead of being cut by its hard edge. */
+:is(.model-selector__flat-head, .model-selector__group-head)::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  right: 0;
+  left: 0;
+  height: 10px;
+  background: linear-gradient(var(--model-picker-bg), transparent);
+  opacity: 0;
+  pointer-events: none;
+  animation: model-list-shade linear both;
+  animation-timeline: scroll();
+  animation-range: 0 16px;
+}
+
+@keyframes model-list-shade {
+  to {
+    opacity: 1;
+  }
 }
 
 /* Flat layout (the default): one scrolling list, providers as inline
@@ -388,8 +434,8 @@
 
 .model-selector__model:focus-visible {
   background: var(--model-picker-hover-bg);
-  outline: 1px solid var(--text-2);
-  outline-offset: -1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .model-selector__model-name {

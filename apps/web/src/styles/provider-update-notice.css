@@ -50,8 +50,10 @@
 .update-slip__head > button {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
+  /* The larger target keeps the glyph where the 24px button had it. */
+  margin-right: -2px;
   padding: 0;
   border-radius: var(--r-md);
   color: var(--text-3);

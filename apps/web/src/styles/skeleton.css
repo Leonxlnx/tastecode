@@ -239,6 +239,10 @@
 }
 
 .tools .composer-skeleton-model {
+  /* Painted in the control colour like the permission placeholder, so its
+     bars step up from that surface instead of matching it. */
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--composer-action-bg));
+  --skeleton-shine: color-mix(in srgb, var(--text) 15%, var(--composer-action-bg));
   flex: none;
   gap: 6px;
   width: 148px;

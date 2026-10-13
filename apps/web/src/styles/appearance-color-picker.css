@@ -164,12 +164,12 @@
 .color-picker__field:focus-visible,
 .color-picker__hue:focus-visible,
 .color-picker__hex:focus-within {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .color-picker__presets button:focus-visible {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
 }
 
 .color-picker__hex input:focus-visible {
