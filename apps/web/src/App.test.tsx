@@ -2060,6 +2060,94 @@ describe('web client', () => {
     },
   )
 
+  it('keeps the first visibility choice of a new profile while Grok cannot be listed', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    mockDiscoveryWithFailingGrok()
+    const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
+
+    const first = render(<App />)
+    await settleDiscoveryWithFailingGrok(1)
+
+    // Grok keeps discovery from saving the curated defaults.
+    expect(offeredModelNames('claude-code')).toEqual(currentLineup)
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
+    openSettings()
+    await act(() => vi.dynamicImportSettled())
+    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+    fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
+    await waitFor(() => expect(localStorage.getItem('harness.hiddenModels')).not.toBeNull())
+    const chosen = savedHiddenModels()
+    expect(chosen).toEqual(
+      [
+        ...CLAUDE_CODE_LINEUP_KEYS.slice(4).filter((key) => key !== 'claude-code:claude-opus-5'),
+        'codex:gpt-5.5',
+      ].sort(),
+    )
+    first.unmount()
+
+    for (const launch of [2, 3]) {
+      const view = render(<App />)
+      await settleDiscoveryWithFailingGrok(launch)
+
+      expect(offeredModelNames('claude-code')).toEqual([...currentLineup, 'Opus 5'])
+      expect(savedHiddenModels()).toEqual(chosen)
+      view.unmount()
+    }
+  })
+
+  it('saves the defaults with the first choice made before a new profile is listed', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    // A launch before this one cached the catalog but saved no visibility.
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([
+        ...choicesFor(
+          { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+          claudeCodeLineup(),
+        ),
+        cachedCodexChoice(),
+      ]),
+    )
+    let releaseClaude!: (value: { models: Model[] }) => void
+    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseClaude = resolve
+    })
+    mockDiscoveryWithFailingGrok(claudeModels)
+
+    const first = render(<App />)
+    openSettings()
+    await act(() => vi.dynamicImportSettled())
+    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include Sonnet 5.5 in model picker' }),
+    )
+    await waitFor(() => expect(savedHiddenModels()).toContain('claude-code:sonnet'))
+    // Every older generation the cached picker already knew is saved hidden with it.
+    expect(savedHiddenModels()).toEqual(
+      expect.arrayContaining([...CLAUDE_CODE_LINEUP_KEYS.slice(4), 'claude-code:sonnet']),
+    )
+    expect(savedHiddenModels()).not.toContain('claude-code:opus')
+    await act(async () => {
+      releaseClaude({ models: claudeCodeLineup() })
+      await claudeModels
+    })
+    await settleDiscoveryWithFailingGrok(1)
+    first.unmount()
+
+    mockDiscoveryWithFailingGrok()
+    for (const launch of [2, 3]) {
+      const view = render(<App />)
+      await settleDiscoveryWithFailingGrok(launch)
+
+      expect(offeredModelNames('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
+      expect(savedHiddenModels()).toEqual(
+        [...CLAUDE_CODE_LINEUP_KEYS.slice(4), 'claude-code:sonnet', 'codex:gpt-5.5'].sort(),
+      )
+      view.unmount()
+    }
+  })
+
   it.each(['4', '5', '6', '7'])(
     'brings a profile saved at version %s to the current Claude lineup while Grok fails',
     async (version) => {
