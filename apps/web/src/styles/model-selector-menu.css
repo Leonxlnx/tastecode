@@ -1,5 +1,10 @@
+/* The panel is a grid (.menu), and a grid item's automatic minimum is its
+   min-content width: one long nowrap model name widened the whole picker past
+   the panel, so the search field, the list and the effort pill were clipped,
+   and focusing the search field scrolled everything sideways. */
 .model-selector {
   width: 100%;
+  min-width: 0;
 }
 
 .model-selector__fast {
@@ -58,6 +63,7 @@
 
 .model-selector__controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 6px 10px 10px;
   background: var(--model-picker-controls-bg);
@@ -374,6 +380,7 @@
 .model-selector__models {
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 4px;
   /* Keyboard focus lands clear of the sticky header and the bottom fade. */
