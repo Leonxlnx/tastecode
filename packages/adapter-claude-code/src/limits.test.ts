@@ -7,6 +7,7 @@ import { claudeLimitSource, mapClaudeUsage } from './limits.js'
 import type { ClaudeUsageQueryFactory } from './sdk-runtime.js'
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
@@ -118,6 +119,53 @@ describe('Claude Code subscription limits', () => {
 
     await expect(claudeLimitSource({ createQuery })).rejects.toThrow('Claude usage request failed.')
     expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('waits for a usage answer that takes as long as a real CLI with a long history', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn()
+    // Claude Code 2.1.296 answered after 17 to 60 seconds on a real machine,
+    // and for that Team account it reported no plan windows at all.
+    const usage = vi.fn(
+      () =>
+        new Promise<SDKControlGetUsageResponse>((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                rate_limits_available: true,
+                rate_limits: null,
+              } as SDKControlGetUsageResponse),
+            60_000,
+          ),
+        ),
+    )
+    const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
+      close,
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: usage,
+    }))
+
+    const read = claudeLimitSource({ createQuery })
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    await expect(read).resolves.toEqual({ status: 'unavailable' })
+    expect(close).toHaveBeenCalledOnce()
+  })
+
+  it('cuts off a stuck usage request with a stable timeout message', async () => {
+    vi.useFakeTimers()
+    const close = vi.fn()
+    const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
+      close,
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: () => new Promise(() => {}),
+    }))
+
+    const read = claudeLimitSource({ createQuery })
+    const rejected = expect(read).rejects.toThrow('Claude usage request timed out.')
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    await rejected
+    expect(close).toHaveBeenCalledOnce()
+    expect(createQuery.mock.calls[0]?.[0].options.abortController?.signal.aborted).toBe(true)
   })
 
   it('keeps provider-owned credentials and private OAuth APIs out of production sources', async () => {

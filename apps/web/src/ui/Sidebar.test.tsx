@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
 import type { AccountLimitsState } from './AccountLimits.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -192,18 +193,114 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
-    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(dialog).queryByRole('region', { name: 'Plan limits' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Edit profile' })).toBeTruthy()
   })
 
-  it('shows Usage on the first menu render while limits are still loading', () => {
+  it('opens on the plan limits while they are still loading', () => {
     renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
-    const usage = within(dialog).getByRole('button', { name: 'Usage, Checking…' })
-    expect(dialog.firstElementChild?.contains(usage)).toBe(true)
-    expect(document.activeElement).toBe(usage)
+    const limits = within(dialog).getByRole('region', { name: 'Plan limits' })
+    expect(dialog.firstElementChild).toBe(limits)
+    expect(limits.getAttribute('aria-busy')).toBe('true')
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(document.activeElement).toBe(limits)
+  })
+
+  it('labels the card meter with its provider and drops it while a provider has failed', () => {
+    const totals = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const ready = (
+      provider: AccountLimitsState['provider'],
+      usedPercent: number,
+    ): AccountLimitsState => ({
+      provider,
+      status: 'ready',
+      summary: {
+        session: totals,
+        today: totals,
+        limits: [],
+        limitSource: { provider, status: 'ready', limits: [{ label: 'Weekly', usedPercent }] },
+      },
+    })
+    const meter = () => document.querySelector<HTMLElement>('.account__usage')
+    const view = renderProjectCatalog([], undefined, [ready('codex', 0), ready('grok', 40)])
+
+    // The tightest limit wins and says whose it is.
+    expect(meter()?.title).toBe('Grok · Weekly · 60% left')
+    expect(meter()?.querySelector('.account__usage-value')?.textContent).toBe('60% left')
+    expect(meter()?.querySelector('svg.account__usage-mark')).not.toBeNull()
+
+    // A provider that failed with nothing on record might be the tighter one,
+    // so a full bar for the others would be a false all-clear.
+    view.unmount()
+    renderProjectCatalog([], undefined, [
+      ready('codex', 0),
+      { provider: 'claude-code', status: 'error', message: 'Claude usage request failed.' },
+    ])
+    expect(meter()).toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+  })
+
+  it('draws the card avatar as the photo, the initials, or a tinted person mark', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        profileIdentity={profileIdentity}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+
+    const rendered = render(view({ displayName: 'Alex Rivera' }))
+    const initials = avatar().querySelector<HTMLElement>('.account__initials')
+    expect(initials?.textContent).toBe('AR')
+    expect(initials?.style.getPropertyValue('--avatar-hue')).not.toBe('')
+    // The speckled seal no longer draws on the card.
+    expect(avatar().querySelector('.generated-avatar')).toBeNull()
+
+    rendered.rerender(view({ displayName: '  émile  ' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('É')
+
+    rendered.rerender(view({ displayName: '' }))
+    expect(avatar().querySelector('.account__initials')?.textContent).toBe('')
+    expect(avatar().querySelector('.account__initials svg')).not.toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+
+    rendered.rerender(
+      view({ displayName: 'Alex Rivera', avatarDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
+    )
+    expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgo=',
+    )
+    expect(avatar().querySelector('.account__initials')).toBeNull()
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
@@ -501,8 +598,9 @@ describe('Sidebar chat actions', () => {
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage-value')?.textContent).toBe('15% left')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
-      '15% left · codex · 7 days',
+      'Codex · 7 days · 15% left',
     )
+    expect(accountTrigger.querySelector('.account__usage .account__usage-mark')).not.toBeNull()
     expect(
       accountTrigger.querySelector<HTMLElement>('.account__meter > span')?.style.transform,
     ).toBe('scaleX(0.15)')
@@ -520,30 +618,29 @@ describe('Sidebar chat actions', () => {
     expect(accountDialog).toBeTruthy()
     expect(accountDialog.classList.contains('menu--compact')).toBe(true)
     expect(accountDialog.classList.contains('menu--settings')).toBe(true)
-    const usage = within(accountDialog).getByRole('button', { name: 'Usage, 15% left' })
-    expect(usage.getAttribute('aria-expanded')).toBe('false')
-    expect(within(accountDialog).getByText('15% left')).toBeTruthy()
-    expect(screen.queryByText('7 days')).toBeNull()
-    expect(document.activeElement).toBe(usage)
-
-    fireEvent.click(usage)
-    expect(usage.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('7 days')).toBeTruthy()
+    // The limits show straight away; there is no second "Usage … left" row
+    // repeating them under the list.
+    const limits = await within(accountDialog).findByRole('region', { name: 'Codex' })
+    expect(within(accountDialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(limits).getByText('7 days')).toBeTruthy()
+    expect(within(accountDialog).getAllByText('15% left')).toHaveLength(1)
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
-    expect(document.activeElement).toBe(usage)
+    expect(document.activeElement).toBe(
+      within(accountDialog).getByRole('region', { name: 'Plan limits' }),
+    )
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     const accountActions = screen
       .getAllByRole('button')
-      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
+      .filter((button) => ['Edit profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
     expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
     expect(
       within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Profile',
+        name: 'Edit profile',
       }),
     ).toBeTruthy()
     expect(
@@ -551,7 +648,7 @@ describe('Sidebar chat actions', () => {
         name: 'Settings',
       }),
     ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
 

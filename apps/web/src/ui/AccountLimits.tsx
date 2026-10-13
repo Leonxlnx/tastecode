@@ -1,22 +1,11 @@
 import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
-import {
-  IconAlertCircle as CircleAlert,
-  IconGauge as Gauge,
-  IconRefresh as RefreshCw,
-} from '@tabler/icons-react'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
-import { Skeleton, SkeletonStatus } from './Skeleton.js'
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
-// Label and value widths for the two placeholder rows a source usually reports.
-const LIMIT_SKELETON_ROWS: readonly (readonly [number, number])[] = [
-  [62, 52],
-  [84, 40],
-]
 type ConsumeReset = (
   provider: ProviderId,
   idempotencyKey: string,
@@ -25,83 +14,47 @@ type ConsumeReset = (
 
 export type AccountLimitsState = UsageSummaryState
 
+/**
+ * Plan limits, grouped by provider, shown as soon as the account popup opens.
+ * A provider that cannot report is one quiet line in its own group, never an
+ * alert: it is a missing number, not a problem the person has to act on.
+ */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
-  const detailsId = useId()
-  const summary = useRef<HTMLButtonElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [detailsMounted, setDetailsMounted] = useState(false)
+  const panel = useRef<HTMLElement>(null)
   const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
-  const value = compactUsageValue(visibleStates)
 
-  useLayoutEffect(() => summary.current?.focus(), [])
+  // The popup lands on the list itself rather than on its first Retry or Use.
+  useLayoutEffect(() => panel.current?.focus(), [])
 
   const retry = (provider: ProviderId) => {
-    summary.current?.focus()
+    // The Retry button unmounts while the source reloads; keep focus in the popup.
+    panel.current?.focus()
     props.onRetry(provider)
-  }
-
-  const toggleDetails = () => {
-    if (!expanded) setDetailsMounted(true)
-    setExpanded(!expanded)
   }
 
   if (visibleStates.length === 0) return null
 
   return (
     <section
-      className={`account-menu__usage${expanded ? ' is-expanded' : ''}`}
+      ref={panel}
+      className="account-menu__usage"
       aria-label="Plan limits"
       aria-busy={visibleStates.some((state) => state.status === 'loading')}
+      // A scroll container that keyboard users can reach and scroll.
+      tabIndex={0}
     >
-      <button
-        ref={summary}
-        className="account-menu__usage-head"
-        type="button"
-        aria-label={`Usage, ${value}`}
-        aria-expanded={expanded}
-        aria-controls={expanded ? detailsId : undefined}
-        onClick={toggleDetails}
-      >
-        <Gauge size={14} aria-hidden />
-        <span>Usage</span>
-        <span className="account-menu__usage-value">{value}</span>
-      </button>
-
-      {detailsMounted ? (
-        <div
-          className="account-menu__usage-reveal"
-          id={detailsId}
-          data-open={expanded}
-          aria-hidden={!expanded}
-          inert={!expanded}
-          onTransitionEnd={(event) => {
-            if (
-              event.target === event.currentTarget &&
-              event.propertyName === 'opacity' &&
-              !expanded
-            ) {
-              setDetailsMounted(false)
-            }
-          }}
-        >
-          <div className="account-menu__usage-reveal-clip">
-            <div className="account-menu__usage-details">
-              {visibleStates.map((state) => (
-                <LimitSource
-                  key={state.provider}
-                  state={state}
-                  onRetry={() => retry(state.provider)}
-                  onConsumeReset={props.onConsumeReset}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {visibleStates.map((state) => (
+        <LimitSource
+          key={state.provider}
+          state={state}
+          onRetry={() => retry(state.provider)}
+          onConsumeReset={props.onConsumeReset}
+        />
+      ))}
     </section>
   )
 }
@@ -112,73 +65,66 @@ function LimitSource(props: {
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const titleId = useId()
+  const statusId = useId()
   const source = limitSource(props.state)
-  const hasSource = source !== undefined
-  const hasUsableValues = source?.status === 'ready' && source.limits.length > 0
+  const limits = source?.status === 'ready' ? source.limits : []
   const name = providerDisplayName(props.state.provider)
+  const status = sourceStatus(props.state, source, limits.length > 0)
   return (
     <section
       className="account-menu__source"
       aria-labelledby={titleId}
       aria-busy={props.state.status === 'loading'}
     >
-      <h3 id={titleId}>
-        <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
-        {name}
-      </h3>
-      {!source || (props.state.status === 'error' && !hasUsableValues) ? null : source.status ===
-        'unavailable' ? (
-        <p className="account-menu__usage-note">Plan limits aren’t available from this source.</p>
-      ) : source.limits.length === 0 ? (
-        <p className="account-menu__usage-note">No plan limits reported.</p>
-      ) : (
-        source.limits.map((limit, index) => (
-          <LimitRow
-            key={`${limit.label}:${index}`}
-            name={name}
-            provider={props.state.provider}
-            limit={limit}
-            onConsumeReset={props.onConsumeReset}
-          />
-        ))
-      )}
-      {props.state.status === 'loading' ? (
-        hasSource ? (
-          <p className="account-menu__usage-note" role="status">
-            <RefreshCw size={13} aria-hidden />
-            Refreshing plan limits…
-            {hasUsableValues ? ' Last known values are shown.' : null}
-          </p>
-        ) : (
-          <SkeletonStatus label="Checking plan limits…" className="account-menu__limit-skeleton">
-            {LIMIT_SKELETON_ROWS.map(([label, value], index) => (
-              <div className="account-menu__limit" key={index}>
-                <div className="account-menu__limit-row">
-                  <Skeleton width={label} height={9} />
-                  <Skeleton width={value} height={9} />
-                </div>
-                <Skeleton height={3} />
-              </div>
-            ))}
-          </SkeletonStatus>
-        )
-      ) : null}
-      {props.state.status === 'error' ? (
-        <div className="account-menu__usage-error" role="alert">
-          <CircleAlert size={13} aria-hidden />
-          <span>
-            {hasUsableValues
-              ? 'Couldn’t refresh plan limits. Last known values are still shown.'
-              : 'Plan limits couldn’t be loaded.'}
-            <small>{props.state.message}</small>
+      <div className="account-menu__source-head">
+        <h3 id={titleId}>
+          <ProviderIcon mark={providerMark(props.state.provider)} size={14} />
+          <span>{name}</span>
+        </h3>
+        {status ? (
+          <span className="account-menu__source-status" id={statusId} title={status.detail}>
+            {status.label}
+            {status.detail ? <span className="visually-hidden">. {status.detail}</span> : null}
           </span>
-          <button type="button" onClick={props.onRetry}>
+        ) : null}
+        {props.state.status === 'error' ? (
+          <button
+            className="account-menu__retry"
+            type="button"
+            aria-describedby={statusId}
+            onClick={props.onRetry}
+          >
             Retry
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
+      {limits.map((limit, index) => (
+        <LimitRow
+          key={`${limit.label}:${index}`}
+          name={name}
+          provider={props.state.provider}
+          limit={limit}
+          onConsumeReset={props.onConsumeReset}
+        />
+      ))}
     </section>
   )
+}
+
+/** The one muted word beside a provider's name, with any detail kept for hover. */
+function sourceStatus(
+  state: AccountLimitsState,
+  source: ProviderLimitSource | undefined,
+  hasValues: boolean,
+): { label: string; detail?: string | undefined } | undefined {
+  if (state.status === 'error') {
+    return hasValues
+      ? { label: 'Last known', detail: `Couldn’t refresh plan limits. ${state.message}` }
+      : { label: 'Unavailable', detail: `Plan limits couldn’t be loaded. ${state.message}` }
+  }
+  if (!source) return { label: 'Checking…' }
+  if (!hasValues) return { label: 'None reported', detail: 'No plan limits reported.' }
+  return undefined
 }
 
 function LimitRow(props: {
@@ -401,23 +347,6 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
 
 function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
-}
-
-function compactUsageValue(states: AccountLimitsState[]): string {
-  const limits = states.flatMap((state) => {
-    const source = limitSource(state)
-    return source?.status === 'ready' ? source.limits : []
-  })
-  const percentages = limits
-    .filter((limit) => limit.valueLabel === undefined)
-    .map((limit) => remaining(limit))
-
-  if (percentages.length > 0) return `${Math.min(...percentages)}% left`
-  const labelledValue = limits.find((limit) => limit.valueLabel !== undefined)?.valueLabel
-  if (labelledValue) return labelledValue
-  if (states.some((state) => state.status === 'loading')) return 'Checking…'
-  if (states.some((state) => state.status === 'error')) return 'Unavailable'
-  return 'View details'
 }
 
 /** A reset within the week reads as weekday and time; further out, as a date. */
