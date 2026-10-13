@@ -669,12 +669,23 @@ export function App() {
     }
   }, [catalogAvailability, projectsStatus])
   const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
+    const saved = readSetting(HIDDEN_MODELS_KEY)
+    let hidden: Set<string>
     try {
-      const stored: unknown = JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]')
-      return new Set(isStringArray(stored) ? stored : [])
+      const stored: unknown = JSON.parse(saved ?? '[]')
+      hidden = new Set(isStringArray(stored) ? stored : [])
     } catch {
-      return new Set()
+      hidden = new Set()
     }
+    // Discovery applies and records a pending visibility migration once every
+    // provider has answered. Apply it to the cached catalog already, so the
+    // picker never opens on models the migration is about to hide or reveal.
+    const version = readSetting(MODEL_VISIBILITY_VERSION_KEY)
+    if (saved === null || version === MODEL_VISIBILITY_VERSION) return hidden
+    const cachedDirect = catalogModels.filter(
+      (choice) => !choice.agent && !isCustomModelChoice(choice),
+    )
+    return migrateHiddenModels(hidden, version, cachedDirect)
   })
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
   const [initialListedModels] = useState(readListedModels)

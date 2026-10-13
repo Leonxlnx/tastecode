@@ -15,7 +15,7 @@ import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
-import { MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
+import { choicesFor, MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
@@ -1887,6 +1887,40 @@ describe('web client', () => {
         'claude-code:opus%5B1m%5D',
       ].sort(),
     )
+  })
+
+  it('shows the current Claude lineup from the cached catalog before discovery answers', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([
+        ...choicesFor(
+          { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+          claudeCodeLineup(),
+        ),
+        cachedCodexChoice(),
+      ]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? new Promise(() => undefined) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
+    )
+    expect(
+      composerProps()
+        .models.filter((choice) => choice.provider === 'claude-code')
+        .map((choice) => choice.model.displayName),
+    ).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
+    // Only the first full catalog records the migration.
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
   })
 
   it.each([
