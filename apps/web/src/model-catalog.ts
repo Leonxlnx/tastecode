@@ -71,7 +71,7 @@ export function modelVisibleByDefault(model: Model): boolean {
  * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
  * above changes for models a saved profile already lists.
  */
-export const MODEL_VISIBILITY_VERSION = '5'
+export const MODEL_VISIBILITY_VERSION = '6'
 
 /**
  * Ids whose default visibility changed, by the version that changed them. A
@@ -81,6 +81,11 @@ export const MODEL_VISIBILITY_VERSION = '5'
 const MODEL_VISIBILITY_CHANGES = new Map<number, readonly string[]>([
   // Claude Code's `haiku` alias now resolves to Haiku 5.5, the current small model.
   [5, ['haiku']],
+  // While `opus`, `sonnet` and `haiku` resolved to the 5.0 generation, their
+  // alias rows stood in for these catalog rows. Once the aliases moved to 5.5
+  // the older rows came back under their own ids and, being unknown to the
+  // saved profile, started visible.
+  [6, ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5']],
 ])
 const FIRST_INCREMENTAL_VISIBILITY_VERSION = 4
 
