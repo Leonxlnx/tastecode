@@ -11,6 +11,29 @@ export function isCursorSignedIn(output: string): boolean {
   return !/not authenticated|not logged in/i.test(output) && /authenticated|logged in/i.test(output)
 }
 
+export const CURSOR_SIGN_IN_REQUIRED =
+  'Your Cursor sign-in has expired or is missing. Sign in to Cursor again.'
+
+/**
+ * Whether cursor-agent refused a command because it has no usable sign-in.
+ *
+ * Before any account command the CLI checks its stored sign-in locally and
+ * exits with "Authentication required" when the access token is missing or
+ * about to expire. It does not renew a browser sign-in by itself, so once
+ * that token runs out every listing and every turn fails until the user signs
+ * in again. Captured from 2026.07.23-e383d2b in
+ * fixtures/cursor-expired-sign-in-2026-10-14.json.
+ */
+export function cursorNeedsSignIn(result: {
+  code: number | null
+  stdout: string
+  stderr?: string | undefined
+}): boolean {
+  return (
+    result.code !== 0 && /authentication required/i.test(`${result.stdout}\n${result.stderr ?? ''}`)
+  )
+}
+
 export type CursorLogin = { loginId: string; cancel: () => Promise<void> }
 
 export function startCursorLogin(

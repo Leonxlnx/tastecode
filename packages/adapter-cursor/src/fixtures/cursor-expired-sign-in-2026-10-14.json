@@ -1,0 +1,14 @@
+{
+  "version": "2026.07.23-e383d2b",
+  "note": "Captured on Windows through runCli after the stored browser sign-in expired: status still reports a login, models refuses.",
+  "status": {
+    "code": 0,
+    "stdout": "✓ Login successful!\nLogged in (unable to fetch user details)\n",
+    "stderr": ""
+  },
+  "models": {
+    "code": 1,
+    "stdout": "",
+    "stderr": "Error: Authentication required. Run 'agent login', pass --api-key/--auth-token, or set CURSOR_API_KEY/CURSOR_AUTH_TOKEN.\n"
+  }
+}
