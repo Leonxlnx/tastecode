@@ -291,9 +291,11 @@ describe('ModelSelector', () => {
       'Effort: Extra High',
     )
     expect(onEffortChange).not.toHaveBeenCalled()
-    expect(slider.querySelectorAll('canvas')).toHaveLength(2)
-    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(slider.querySelectorAll('canvas')).toHaveLength(0)
+    // One dim and one lit dot per level, and a single thumb.
+    expect(slider.querySelectorAll('.model-selector__slider-dot')).toHaveLength(8)
+    expect(slider.querySelectorAll('.model-selector__slider-thumb')).toHaveLength(1)
+    expect(slider.style.getPropertyValue('--effort-p')).toBe('1')
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -344,6 +346,79 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(1, 'high')
     expect(onEffortChange).toHaveBeenNthCalledWith(2, 'xhigh')
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
+  })
+
+  it('previews a hovered level with a ring and names the default', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'high' })
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 30,
+      right: 380,
+      bottom: 50,
+      toJSON: () => ({}),
+    })
+    const preview = () => document.querySelector('.model-selector__effort-preview')?.textContent
+    // Medium is the model's default: its dot is the ring in both the dim and the lit row.
+    const defaults = slider.querySelectorAll('.model-selector__slider-dot.is-default')
+    expect(defaults).toHaveLength(2)
+
+    fireEvent.pointerMove(slider, { clientX: 185, pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(true)
+    expect(slider.style.getPropertyValue('--effort-hover-p')).toBe(String(1 / 3))
+    expect(preview()).toBe('Medium· default')
+    // Hovering is not a value change.
+    expect(slider.getAttribute('aria-valuetext')).toBe('High')
+    expect(slider.style.getPropertyValue('--effort-p')).toBe(String(2 / 3))
+
+    fireEvent.pointerMove(slider, { clientX: 270, pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(false)
+    expect(preview()).toBeUndefined()
+
+    fireEvent.pointerMove(slider, { clientX: 370, pointerId: 1, pointerType: 'mouse' })
+    expect(preview()).toBe('Extra High')
+    fireEvent.pointerLeave(slider, { pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(false)
+    expect(preview()).toBeUndefined()
+    // The ring keeps its last place while it fades.
+    expect(slider.style.getPropertyValue('--effort-hover-p')).toBe('1')
+    expect(onEffortChange).not.toHaveBeenCalled()
+  })
+
+  it('lays out one dot per level the model offers', async () => {
+    const sixLevels = {
+      ...MODELS[0]!,
+      model: {
+        ...MODELS[0]!.model,
+        reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra'],
+      },
+    }
+    const onEffortChange = vi.fn()
+    render(
+      <ModelSelector
+        models={[sixLevels]}
+        modelId={sixLevels.key}
+        effort="ultra"
+        serviceTier={undefined}
+        disabled={false}
+        onModelChange={vi.fn()}
+        onEffortChange={onEffortChange}
+        onServiceTierChange={vi.fn()}
+      />,
+    )
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    expect(slider.getAttribute('aria-valuemax')).toBe('5')
+    expect(slider.querySelectorAll('.model-selector__slider-dots.is-lit > *')).toHaveLength(6)
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' })
+    expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
   it('shows compact models immediately and leaves effort and tier to the owner', async () => {
@@ -616,6 +691,7 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
+  // The thumb travels between 3 + 12 and width - 15: the first and last stops.
   it('maps pointer positions onto discrete effort stops', async () => {
     expect(
       getEffortIndexFromPointer({
@@ -645,11 +721,12 @@ describe('ModelSelector', () => {
   })
 
   it('switches only in the final quarter of a drag in either direction', () => {
+    // Inset 3 + half a 24px thumb puts the first stop at 15; 330 wide leaves 300 of travel.
     const at = (position: number, currentIndex: number) =>
       getEffortIndexFromPointer({
-        clientX: 18 + position * 100,
+        clientX: 15 + position * 100,
         left: 0,
-        width: 336,
+        width: 330,
         stopCount: 4,
         currentIndex,
       })
