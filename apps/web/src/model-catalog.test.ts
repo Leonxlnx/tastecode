@@ -8,12 +8,14 @@ import {
   filterModelChoicesByQuery,
   isCustomModelChoice,
   migrateHiddenModels,
+  migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
   modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
   sourceKey,
   unlistedHiddenModels,
+  type ModelChoice,
 } from './model-catalog.js'
 
 const model: Model = {
@@ -371,8 +373,84 @@ describe('model catalog', () => {
     it('leaves a current profile untouched', () => {
       expect(migrateHiddenModels(saved, MODEL_VISIBILITY_VERSION, claudeChoices)).toEqual(saved)
     })
-  })
 
+    describe('once per row', () => {
+      const direct = catalog.filter((choice) => !choice.agent)
+      const keysOf = (choices: readonly ModelChoice[]) => choices.map((choice) => choice.key)
+      const progress = (version: string | null, migratedRows: readonly string[] = []) => ({
+        version,
+        rows: new Map(migratedRows.map((key) => [key, MODEL_VISIBILITY_VERSION])),
+      })
+      const sorted = (hidden: ReadonlySet<string>) => [...hidden].sort()
+      const converged = migratePendingHiddenModels(
+        new Set(savedByOlderBuild),
+        progress('4'),
+        direct,
+      ).hidden
+
+      it.each(['4', '5', '6'])(
+        'brings a profile saved at version %s to the same list and keeps it there',
+        (version) => {
+          const migration = migratePendingHiddenModels(
+            new Set(savedByOlderBuild),
+            progress(version),
+            direct,
+          )
+
+          expect(migration.migrated).toEqual(keysOf(direct))
+          expect(sorted(migration.hidden)).toEqual(sorted(converged))
+          expect(visible(migration.hidden, 'claude-code')).toEqual(currentLineup)
+          // Saved at the current version, the list is left as it is.
+          expect(
+            migratePendingHiddenModels(
+              migration.hidden,
+              progress(MODEL_VISIBILITY_VERSION),
+              direct,
+            ),
+          ).toEqual({ hidden: migration.hidden, migrated: [] })
+        },
+      )
+
+      it('never moves a row again once it was migrated', () => {
+        // Claude Code and Codex were migrated on an earlier launch while Grok
+        // could not be listed; the user then turned Opus 5 back on.
+        const chosen = new Set(converged)
+        chosen.delete('claude-code:claude-opus-5')
+        const migration = migratePendingHiddenModels(
+          chosen,
+          progress('4', keysOf(direct.filter((choice) => choice.provider !== 'grok'))),
+          direct,
+        )
+
+        expect(migration.migrated).toEqual(['grok:grok-4.7', 'grok:grok-4.7-build-fast'])
+        expect(visible(migration.hidden, 'claude-code')).toEqual([...currentLineup, 'Opus 5'])
+        expect(sorted(migration.hidden)).toEqual(sorted(chosen))
+      })
+
+      it('migrates a row its source lists after the rest of it was migrated', () => {
+        // The cached catalog lacked the dated Haiku 4.5 row that the Claude
+        // Code CLI lists now; the user turned Opus 5 on after the first paint.
+        const haiku = 'claude-code:claude-haiku-4-5-20251001'
+        const cached = direct.filter((choice) => choice.key !== haiku)
+        const firstPaint = migratePendingHiddenModels(
+          new Set(savedByOlderBuild),
+          progress('4'),
+          cached,
+        )
+        const chosen = new Set(firstPaint.hidden)
+        chosen.delete('claude-code:claude-opus-5')
+
+        const discovery = migratePendingHiddenModels(
+          chosen,
+          progress('4', firstPaint.migrated),
+          direct,
+        )
+
+        expect(discovery.migrated).toEqual([haiku])
+        expect(visible(discovery.hidden, 'claude-code')).toEqual([...currentLineup, 'Opus 5'])
+      })
+    })
+  })
   it('keeps an effort that the next model supports', () => {
     expect(
       resolveReasoningEffort({
