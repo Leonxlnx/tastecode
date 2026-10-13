@@ -3,52 +3,55 @@ import { describe, expect, it } from 'vitest'
 
 const css = readFileSync(new URL('./account-limits.css', import.meta.url), 'utf8')
 
-describe('account limits layout', () => {
-  it('keeps the limits section compact and readable', () => {
-    const usage = css.match(/\.account-menu__usage \{(?<body>[\s\S]*?)\n\}/)?.groups?.['body']
-    const reveal = css.match(/\.account-menu__usage-reveal \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
-      'body'
-    ]
-    const details = css.match(/\.account-menu__usage-details \{(?<body>[\s\S]*?)\n\}/)?.groups?.[
-      'body'
-    ]
-    const separator = css.match(
-      /\.account-menu__source \+ \.account-menu__source \{(?<body>[\s\S]*?)\n\}/,
-    )?.groups?.['body']
+function rule(selector: string): string | undefined {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return css.match(new RegExp(`(?:^|\\n)${escaped} \\{(?<body>[\\s\\S]*?)\\n\\}`))?.groups?.['body']
+}
 
-    expect(usage).toContain('gap: 0')
+describe('account limits layout', () => {
+  it('sets the limits in one soft scrolling well instead of ruled sections', () => {
+    const usage = rule('.account-menu__usage')
+    expect(usage).toContain('gap: 14px')
     expect(usage).toContain('font-size: var(--t-xs)')
-    expect(usage).toContain('padding: 0 0 2px')
-    expect(reveal).toContain('order: -1')
-    expect(reveal).toContain('grid-template-rows: 1fr')
-    expect(reveal).toContain('grid-template-rows var(--dur-slow) var(--ease-out)')
-    expect(reveal).toContain('opacity var(--dur-slow) var(--ease-out)')
+    expect(usage).toContain('border-radius: var(--r-lg)')
+    expect(usage).toContain('background: color-mix(in srgb, var(--text) 4%, var(--menu-bg))')
+    expect(usage).toContain('max-height: min(360px, calc(100vh - 150px))')
+    expect(usage).toContain('overflow-y: auto')
+    expect(usage).toContain('overscroll-behavior: contain')
+    expect(usage).toContain('min-height: 0')
+    expect(rule('.account-menu__usage:focus-visible')).toContain('outline: var(--focus-ring)')
+    // No hard rules between providers or under the list.
+    expect(css).not.toMatch(/border-(?:top|bottom): 1px solid/)
+    expect(css).not.toContain('.account-menu__source + .account-menu__source')
+    expect(css).not.toContain('.account-menu__usage-head')
+    expect(css).not.toContain('.account-menu__usage-reveal')
+  })
+
+  it('keeps a failed source calm: a muted status and a text Retry, no alert colour', () => {
+    expect(css).not.toContain('.account-menu__usage-error')
+    const status = rule('.account-menu__source-status')
+    expect(status).toContain('color: var(--text-3)')
+    expect(status).toContain('text-overflow: ellipsis')
+    const retry = rule('.account-menu__retry')
+    expect(retry).toContain('background: none')
+    expect(retry).toContain('border: 0')
+    expect(retry).toContain('color: var(--text-2)')
+    expect(retry).not.toContain('--error')
+    expect(status).not.toContain('--error')
     expect(css).toMatch(
-      /\.account-menu__usage-reveal\[data-open='false'\] \{[^}]*grid-template-rows: 0fr;[^}]*opacity: 0;/s,
+      /\.account-menu__retry:focus-visible,\s*\.account-menu__limit-btn:focus-visible \{\s*outline: var\(--focus-ring\);\s*outline-offset: var\(--focus-ring-offset\);/s,
     )
-    expect(css).toMatch(
-      /@starting-style \{[\s\S]*?\.account-menu__usage-reveal \{[^}]*grid-template-rows: 0fr;[^}]*opacity: 0;/s,
+  })
+
+  it('draws quiet bars that only turn red when an allowance runs low', () => {
+    expect(rule('.account-menu__source')).toContain('gap: 8px')
+    expect(rule('.account-menu__limit')).toContain('gap: 5px')
+    const bar = rule('.account-menu__limit-bar')
+    expect(bar).toContain('height: 4px')
+    expect(bar).toContain('border-radius: var(--r-pill)')
+    expect(rule('.account-menu__limit-bar > span')).toContain(
+      'background: color-mix(in srgb, var(--text) 52%, transparent)',
     )
-    expect(css).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.account-menu__usage-reveal \{[^}]*transition: opacity var\(--dur-fast\) var\(--ease-out\) !important;/s,
-    )
-    expect(details).toContain('max-height: min(340px, calc(100vh - 160px))')
-    expect(details).toContain('overscroll-behavior: contain')
-    expect(details).toContain('scrollbar-gutter: stable')
-    expect(details).toContain('margin: 0 7px 3px')
-    expect(details).toContain('padding: 6px 0 9px')
-    expect(details).toContain('border-bottom: 1px solid var(--line-strong)')
-    expect(separator).toContain('border-top: 1px solid var(--line-strong)')
-    expect(separator).toContain('margin-top: 9px')
-    expect(separator).toContain('padding-top: 9px')
-    expect(css).toMatch(
-      /\.account-menu__usage-head \{[^}]*min-height: 26px;[^}]*border-radius: var\(--r-md\);/s,
-    )
-    expect(css).toMatch(
-      /\.account-menu__usage-head:focus-visible \{[^}]*border-color: var\(--text-2\);/s,
-    )
-    expect(css).toMatch(/\.account-menu__source \{[^}]*gap: 7px;/s)
-    expect(css).toMatch(/\.account-menu__limit \{[^}]*gap: 4px;/s)
-    expect(css).toMatch(/\.account-menu__limit-bar \{[^}]*height: 3px;/s)
+    expect(rule('.account-menu__limit-bar > span[data-low]')).toContain('background: var(--error)')
   })
 })

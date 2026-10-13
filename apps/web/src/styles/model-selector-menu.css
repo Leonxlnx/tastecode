@@ -1,5 +1,10 @@
+/* The panel is a grid (.menu), and a grid item's automatic minimum is its
+   min-content width: one long nowrap model name widened the whole picker past
+   the panel, so the search field, the list and the effort pill were clipped,
+   and focusing the search field scrolled everything sideways. */
 .model-selector {
   width: 100%;
+  min-width: 0;
 }
 
 .model-selector__fast {
@@ -58,6 +63,7 @@
 
 .model-selector__controls {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
   padding: 6px 10px 10px;
   background: var(--model-picker-controls-bg);
@@ -213,10 +219,12 @@
   container-type: inline-size;
 }
 
+/* clip, not hidden: a hidden box is still a scroll container, and the lit
+   dots overflow the fill by up to the whole travel. */
 .model-selector__slider-clip {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   border-radius: var(--r-pill);
 }
 
@@ -252,7 +260,7 @@
   inset-block: 0;
   left: calc(-1 * var(--effort-thumb));
   width: calc(100% + var(--effort-thumb));
-  overflow: hidden;
+  overflow: clip;
   border-radius: var(--r-pill);
   background: var(--effort-fill);
   transform: translateX(calc((var(--effort-p) - 1) * var(--effort-travel)));
@@ -374,6 +382,7 @@
 .model-selector__models {
   min-width: 0;
   min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 4px;
   /* Keyboard focus lands clear of the sticky header and the bottom fade. */
@@ -452,8 +461,6 @@
 }
 
 .model-selector__models--flat .model-selector__group-title {
-  display: flex;
-  align-items: center;
   gap: 6px;
   padding: 6px 8px 3px;
 }
@@ -477,7 +484,11 @@
   background: var(--model-picker-title-bg);
 }
 
+/* Flex, so the provider identity shrinks and its label ellipsizes; as an
+   inline box it was cut off mid-letter in the rail heading. */
 .model-selector__group-title {
+  display: flex;
+  align-items: center;
   min-width: 0;
   overflow: hidden;
   margin: 0;
@@ -485,7 +496,6 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   font-weight: 450;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 

@@ -68,11 +68,30 @@
   outline-offset: -1px;
 }
 
-.account__avatar img,
-.account__avatar svg {
+.account__avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+/* Initials on the seal's hue, toned like the generated avatar's grounds and
+   inks: a deep ground with a soft ink in dark, the inverse in light. */
+.account__initials {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  background: hsl(var(--avatar-hue) 16% 26%);
+  color: hsl(var(--avatar-hue) 30% 82%);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+:root[data-theme='light'] .account__initials {
+  background: hsl(var(--avatar-hue) 26% 88%);
+  color: hsl(var(--avatar-hue) 32% 30%);
 }
 
 .account__identity {
@@ -96,27 +115,37 @@
 .account__usage {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   color: var(--text-3);
   font-size: var(--t-xs);
   line-height: 12px;
 }
 
+/* The mark names the provider the figure belongs to. */
+.account__usage-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+}
+
+/* Same quiet track and fill as the popup's bars, so a full allowance does
+   not draw a bright rule under the name. */
 .account__meter {
   flex: 1;
   min-width: 24px;
   max-width: 76px;
   height: 3px;
   overflow: hidden;
-  background: var(--surface-3);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
   border-radius: var(--r-pill);
 }
 
 .account__meter > span {
   display: block;
   height: 100%;
-  background: var(--text-2);
+  background: color-mix(in srgb, var(--text) 52%, transparent);
   border-radius: inherit;
   transform-origin: left center;
   transition: transform var(--dur-slow) var(--ease-out);

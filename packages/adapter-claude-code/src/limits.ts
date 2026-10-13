@@ -24,7 +24,16 @@ export type ClaudeLimitSourceOptions = {
   timeoutMs?: number | undefined
 }
 
-const TIMEOUT_MS = 10_000
+/**
+ * Claude answers the usage request only after it has scanned the local
+ * transcripts behind `/usage`. Captured against Claude Code 2.1.296 on a
+ * machine with about 10 GB of history, the request itself took 17 to 60
+ * seconds after a 2-second start, so a 10-second deadline reported a working
+ * account as a failure. A slow answer is still an answer; only a stuck one is
+ * cut off, with headroom because the scan grows with the history.
+ */
+const TIMEOUT_MS = 120_000
+const TIMED_OUT = 'Claude usage request timed out.'
 const PercentSchema = z
   .number()
   .finite()
@@ -127,8 +136,10 @@ export async function claudeLimitSource(
       query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
       options.timeoutMs ?? TIMEOUT_MS,
     )
-  } catch {
-    throw new Error('Claude usage request failed.')
+  } catch (error) {
+    // Only stable messages leave the adapter; the CLI's own text can carry
+    // account details.
+    throw new Error(error instanceof TimeoutError ? TIMED_OUT : 'Claude usage request failed.')
   } finally {
     abortController.abort()
     query.close()
@@ -136,10 +147,12 @@ export async function claudeLimitSource(
   return mapClaudeUsage(usage)
 }
 
+class TimeoutError extends Error {}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error('Claude usage timed out.')), timeoutMs)
+    timer = setTimeout(() => reject(new TimeoutError(TIMED_OUT)), timeoutMs)
     timer.unref?.()
   })
   try {

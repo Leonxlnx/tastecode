@@ -29,7 +29,6 @@ import {
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
-  IconGauge as Gauge,
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
@@ -56,7 +55,12 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import {
+  providerDisplayName,
+  providerMark,
+  sessionSourcePresentation,
+} from '../provider-presentation.js'
+import { generatedAvatar } from '../generated-avatar.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { sidebarRail } from '../sidebar-order.js'
 import {
@@ -66,7 +70,6 @@ import {
   shortcutAria,
   type Keybindings,
 } from '../shortcuts.js'
-import { GeneratedAvatar } from './GeneratedAvatar.js'
 import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
@@ -90,27 +93,23 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
 const AccountLimits = lazy(loadAccountLimits)
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
-  const summary = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLElement>(null)
   const visible = props.states.some(({ summary }) =>
     summary?.limitSource
       ? summary.limitSource.status !== 'unavailable'
       : !summary || summary.limits.length > 0,
   )
-  useLayoutEffect(() => summary.current?.focus(), [])
+  useLayoutEffect(() => panel.current?.focus(), [])
   if (!visible) return null
   return (
-    <section className="account-menu__usage" aria-label="Plan limits" aria-busy>
-      <button
-        ref={summary}
-        className="account-menu__usage-head"
-        type="button"
-        aria-label="Usage, Checking…"
-        aria-expanded={false}
-      >
-        <Gauge size={14} aria-hidden />
-        <span>Usage</span>
-        <span className="account-menu__usage-value">Checking…</span>
-      </button>
+    <section
+      ref={panel}
+      className="account-menu__usage"
+      aria-label="Plan limits"
+      aria-busy
+      tabIndex={0}
+    >
+      <p className="account-menu__usage-note">Checking plan limits…</p>
     </section>
   )
 }
@@ -253,23 +252,9 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
-  const usageLimit = (props.usageStates ?? [])
-    .flatMap((state) => {
-      const source = state.summary?.limitSource
-      const limits = source
-        ? source.status === 'ready'
-          ? source.limits
-          : []
-        : (state.summary?.limits ?? [])
-      return limits.map((limit) => ({ ...limit, provider: state.provider }))
-    })
-    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
-    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
-      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
-      undefined,
-    )
+  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
   const usageRemaining = usageLimit
-    ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
+    ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
   useEffect(() => {
     void loadAccountLimits()
@@ -902,19 +887,20 @@ function SidebarComponent(props: {
               trigger={() => (
                 <span className="account">
                   <span className="account__avatar">
-                    {props.profileIdentity?.avatarDataUrl ? (
-                      <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                    ) : (
-                      <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
-                    )}
+                    <AccountAvatar identity={props.profileIdentity} />
                   </span>
                   <span className="account__identity">
                     <span className="account__name">{profileDisplayName}</span>
                     {usageLimit && usageRemaining !== undefined ? (
                       <span
                         className="account__usage"
-                        title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                        title={`${providerDisplayName(usageLimit.provider)} · ${usageLimit.label} · ${usageRemaining}% left`}
                       >
+                        <ProviderIcon
+                          className="account__usage-mark"
+                          mark={providerMark(usageLimit.provider)}
+                          size={12}
+                        />
                         <span
                           className="account__meter"
                           data-low={usageRemaining <= USAGE_LOW_PERCENT ? '' : undefined}
@@ -922,9 +908,7 @@ function SidebarComponent(props: {
                         >
                           <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
                         </span>
-                        <span className="account__usage-value">
-                          {Math.round(usageRemaining)}% left
-                        </span>
+                        <span className="account__usage-value">{usageRemaining}% left</span>
                       </span>
                     ) : null}
                   </span>
@@ -954,7 +938,10 @@ function SidebarComponent(props: {
                           close()
                         }}
                       >
-                        <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                        <DialogAction
+                          icon={<UserRound size={14} aria-hidden />}
+                          title="Edit profile"
+                        />
                       </button>
                       <button
                         type="button"
@@ -2062,6 +2049,63 @@ function displayName(project: Project): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+type CardUsageLimit = { provider: ProviderId; label: string; usedPercent: number }
+
+/**
+ * The card's one usage figure: the tightest percentage limit any provider
+ * reports, shown with that provider's mark so it says what it measures. A
+ * provider whose read failed with nothing on record could be the tighter one,
+ * so the card then shows no figure rather than a reassuring "100% left".
+ */
+function tightestUsageLimit(
+  states: readonly AccountLimitsState[] | undefined,
+): CardUsageLimit | undefined {
+  let tightest: CardUsageLimit | undefined
+  for (const state of states ?? []) {
+    if (state.status === 'error' && !state.summary) return undefined
+    const source = state.summary?.limitSource
+    const limits = source
+      ? source.status === 'ready'
+        ? source.limits
+        : []
+      : (state.summary?.limits ?? [])
+    for (const limit of limits) {
+      if (limit.valueLabel !== undefined || !Number.isFinite(limit.usedPercent)) continue
+      if (tightest && limit.usedPercent <= tightest.usedPercent) continue
+      tightest = { provider: state.provider, label: limit.label, usedPercent: limit.usedPercent }
+    }
+  }
+  return tightest
+}
+
+/**
+ * The profile's picture on the account card: the photo when there is one,
+ * otherwise the name's initials on a tint of its seal's hue, so it still
+ * matches the coin on the profile page. The seal itself is a dozen tiles over
+ * three rings; at card size it read as a speckled blob, so it stays where it
+ * has room. A profile without a name gets a person mark on the same tint
+ * rather than invented initials.
+ */
+function AccountAvatar(props: { identity: ProfileIdentityPreferences | undefined }) {
+  const seed = avatarSeedName(props.identity)
+  const hue = useMemo(() => generatedAvatar(seed).hue, [seed])
+  const name = props.identity?.displayName.trim() ?? ''
+  if (props.identity?.avatarDataUrl) return <img src={props.identity.avatarDataUrl} alt="" />
+  return (
+    <span className="account__initials" style={{ '--avatar-hue': hue } as CSSProperties}>
+      {name ? nameInitials(name) : <UserRound size={15} aria-hidden />}
+    </span>
+  )
+}
+
+/** First letter of the first and last word: "Leon Lin" → "LL", "Leon" → "L". */
+function nameInitials(name: string): string {
+  const words = name.split(/\s+/u).filter(Boolean)
+  const first = Array.from(words[0] ?? '')[0] ?? ''
+  const last = words.length > 1 ? (Array.from(words.at(-1) ?? '')[0] ?? '') : ''
+  return `${first}${last}`.toLocaleUpperCase()
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {
