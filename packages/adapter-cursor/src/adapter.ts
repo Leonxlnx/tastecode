@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, readNdjson, runCli, spawnCli } from '@harness/proc'
+import { CURSOR_SIGN_IN_REQUIRED, cursorNeedsSignIn } from './auth.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
 import { spawnCursorAgent } from './launch.js'
 import {
@@ -228,6 +229,7 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   async listModels(): Promise<Model[]> {
     const result = await this.#run('cursor-agent', ['models'])
+    if (cursorNeedsSignIn(result)) throw new Error(CURSOR_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Cursor model discovery failed')
     return parseCursorModels(result.stdout)
   }

@@ -16,6 +16,17 @@ vi.mock('@harness/proc/kill', async (original) => ({
 
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
 
+type CapturedRun = { code: number; stdout: string; stderr: string }
+
+function expiredSignIn(): { status: CapturedRun; models: CapturedRun } {
+  return JSON.parse(
+    readFileSync(
+      new URL('./fixtures/cursor-expired-sign-in-2026-10-14.json', import.meta.url),
+      'utf8',
+    ),
+  ) as { status: CapturedRun; models: CapturedRun }
+}
+
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform)
   vi.unstubAllEnvs()
@@ -226,6 +237,23 @@ describe('Cursor adapter', () => {
         serviceTiers: [],
       },
     ])
+  })
+
+  it('asks for a fresh sign-in when the CLI refuses an expired one', async () => {
+    const capture = expiredSignIn()
+    const adapter = new CursorAdapter({ run: async () => capture.models })
+
+    await expect(adapter.listModels()).rejects.toThrow(
+      'Your Cursor sign-in has expired or is missing. Sign in to Cursor again.',
+    )
+  })
+
+  it('keeps the plain discovery error for any other failure', async () => {
+    const adapter = new CursorAdapter({
+      run: async () => ({ code: 1, stdout: '', stderr: 'Error: connect ETIMEDOUT\n' }),
+    })
+
+    await expect(adapter.listModels()).rejects.toThrow('Cursor model discovery failed')
   })
 
   it('completes a turn whose result rides the final unterminated chunk', async () => {
