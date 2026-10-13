@@ -199,6 +199,35 @@ describe('model catalog', () => {
       ])
     })
 
+    it('hides the older Claude rows that came back after the aliases moved to 5.5', () => {
+      // Saved while `opus` still meant Opus 5: the 5.0 catalog rows were not
+      // listed then, so the profile never hid them.
+      const lineup = choicesFor(
+        { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+        [
+          'claude-fable-5-1[1m]',
+          'opus',
+          'sonnet',
+          'haiku',
+          'claude-fable-5',
+          'claude-opus-5',
+          'claude-sonnet-5',
+          'claude-opus-4-8',
+          'claude-haiku-4-5',
+        ].map((id) => ({ ...model, id })),
+      )
+      const savedAtFive = new Set(['claude-code:sonnet', 'codex:gpt-5.5'])
+
+      expect([...migrateHiddenModels(savedAtFive, '5', lineup)]).toEqual([
+        'claude-code:sonnet',
+        'codex:gpt-5.5',
+        'claude-code:claude-fable-5',
+        'claude-code:claude-opus-5',
+        'claude-code:claude-sonnet-5',
+        'claude-code:claude-haiku-4-5',
+      ])
+    })
+
     it('leaves a current profile untouched', () => {
       expect(migrateHiddenModels(saved, MODEL_VISIBILITY_VERSION, claudeChoices)).toEqual(saved)
     })

@@ -1602,7 +1602,7 @@ describe('web client', () => {
       ),
     )
     expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
   })
 
   it.each(['failed', 'empty'] as const)(
@@ -1776,7 +1776,7 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
   })
 
   it('reveals Haiku 5.5 for a version 4 profile and keeps its other choices', async () => {
@@ -1828,7 +1828,7 @@ describe('web client', () => {
         '["codex:gpt-5.5","claude-code:opus"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('5')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {
