@@ -1957,20 +1957,24 @@ describe('web client', () => {
     expect(offered('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
     // Codex keeps its saved choices: GPT-5.5 stays hidden, Sol stays shown.
     expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
-    const hidden = JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]
-    expect(hidden.filter((key) => key.startsWith('codex:'))).toEqual([
-      'codex:gpt-5.5',
-      'codex:gpt-5.4',
-    ])
-    expect(hidden.filter((key) => key.startsWith('claude-code:')).sort()).toEqual(
-      [
-        ...claudeCodeLineup()
-          .slice(4)
-          .map((model) => `claude-code:${model.id}`),
-        // A key the catalog no longer lists stays as saved.
-        'claude-code:opus%5B1m%5D',
-      ].sort(),
-    )
+    // The version is recorded during discovery; the hidden list is saved by
+    // the effect after the next commit, so wait for it rather than read once.
+    await waitFor(() => {
+      const hidden = JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]
+      expect(hidden.filter((key) => key.startsWith('codex:'))).toEqual([
+        'codex:gpt-5.5',
+        'codex:gpt-5.4',
+      ])
+      expect(hidden.filter((key) => key.startsWith('claude-code:')).sort()).toEqual(
+        [
+          ...claudeCodeLineup()
+            .slice(4)
+            .map((model) => `claude-code:${model.id}`),
+          // A key the catalog no longer lists stays as saved.
+          'claude-code:opus%5B1m%5D',
+        ].sort(),
+      )
+    })
   })
 
   it('shows the current Claude lineup from the cached catalog before discovery answers', async () => {
