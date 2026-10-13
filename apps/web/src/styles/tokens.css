@@ -382,7 +382,7 @@
   /* Light: a white thumb with a dark dot on a grey fill. */
   --effort-track: color-mix(in srgb, var(--text) 6%, var(--bg-prompt));
   --effort-track-line: color-mix(in srgb, var(--text) 9%, transparent);
-  --effort-fill: color-mix(in srgb, var(--text) 30%, var(--bg-prompt));
+  --effort-fill: color-mix(in srgb, var(--text) 27%, var(--bg-prompt));
   --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
   --effort-dot-lit: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
   --effort-thumb-bg: var(--bg-prompt);
