@@ -623,6 +623,27 @@ describe('cached usage limits', () => {
     expect(hooks.onAuthChanged).toHaveBeenCalledWith('grok')
   })
 
+  it('rereads when an account read reports another account', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'ready' as const, limits: [] }))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test', plan: 'pro' })
+    const { registry } = setup({ services: { grok: { account, usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    // The same account again changes nothing.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
   it('forwards the first change at once and collapses a burst into one trailing signal', async () => {
     const { registry, hooks } = setup({ limitChangeIntervalMs: 1_000 })
     registry.usageChanged('codex')

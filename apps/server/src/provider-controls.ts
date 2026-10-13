@@ -133,6 +133,8 @@ type LoginEntry = {
 type LimitEntry = {
   /** Bumped by every change so a read that started earlier cannot refresh the cache. */
   version: number
+  /** The last account read, which shows a sign-in or switch made outside the app. */
+  account?: string | undefined
   value?: ProviderLimitSource | undefined
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
@@ -306,8 +308,12 @@ export class ProviderControls {
     }
     const control: ProviderControl = {
       capabilities,
-      account: (agent) =>
-        this.#read(async () => (await services.account?.(agent)) ?? { signedIn: false }),
+      account: async (agent) => {
+        const account = await this.#read(
+          async () => (await services.account?.(agent)) ?? { signedIn: false },
+        )
+        return agent === undefined ? this.#accountRead(provider, account) : account
+      },
       usageLimitSource: () =>
         services.usageLimitSource
           ? this.#cachedLimits(provider, () =>
@@ -346,7 +352,8 @@ export class ProviderControls {
     if (provider !== 'codex') return control
     return {
       ...control,
-      account: () => this.#withShared((adapter) => adapter.account()),
+      account: async () =>
+        this.#accountRead(provider, await this.#withShared((adapter) => adapter.account())),
       listModels: (agent) =>
         agent
           ? this.#readModels(provider, agent)
@@ -468,8 +475,18 @@ export class ProviderControls {
   }
 
   #authChanged(provider: ProviderId): void {
-    this.#invalidateLimits(provider)
+    // The next account read describes the new account; it is no further change.
+    this.#invalidateLimits(provider).account = undefined
     this.#options.onAuthChanged?.(provider)
+  }
+
+  /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
+  #accountRead(provider: ProviderId, account: Account): Account {
+    const entry = this.#limitEntry(provider)
+    const identity = JSON.stringify([account.signedIn, account.email ?? null, account.plan ?? null])
+    if (entry.account !== undefined && entry.account !== identity) this.#invalidateLimits(provider)
+    entry.account = identity
+    return account
   }
 
   async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {

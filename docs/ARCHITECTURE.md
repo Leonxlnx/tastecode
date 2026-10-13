@@ -527,7 +527,9 @@ while its process is still stopping. An isolated start receives its base ref dir
 Shared orchestration reads declared capabilities and merges shared local configuration.
 Settings views renew 60-second notification leases; one read cannot hold a control process
 for the whole app lifetime. Usage-limit reads are cached per provider for 60 seconds and shared
-by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale.
+by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale; so
+does an account read that reports a different account, which is how a sign-in or switch made in
+the provider's own CLI reaches the app.
 Change notifications to clients are coalesced to one leading and one trailing notice per
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
