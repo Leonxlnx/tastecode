@@ -11,19 +11,39 @@ function rule(selector: string): string {
   )
 }
 
-describe('effort slider motion', () => {
-  it('keeps the slider fill width but removes width animation from the fill', () => {
-    const fill = rule('.model-selector__slider-fill')
+const sliderSection =
+  css.match(
+    /\/\* -{10} effort slider -{10}[\s\S]*?(?=\n\.dither-slider \{|\n\.model-selector__catalog \{)/,
+  )?.[0] ?? ''
 
-    expect(fill).toContain('width: var(--model-selector-slider-width)')
-    expect(fill).not.toContain('transition:')
-    expect(fill).not.toContain('animation:')
+describe('effort slider motion', () => {
+  it('glides the fill, its lit dots and the thumb on transform with one shared spring', () => {
+    for (const selector of [
+      '.model-selector__slider-fill',
+      '.model-selector__slider-dots.is-lit',
+      '.model-selector__slider-thumb',
+    ]) {
+      const body = rule(selector)
+      expect(body, selector).toMatch(/transform: translateX\(/)
+      expect(body, selector).toContain(
+        'transition: transform var(--effort-glide) var(--effort-spring);',
+      )
+    }
+    expect(rule('.model-selector__slider')).toMatch(/--effort-glide: (1[89]\d|2[0-4]\d)ms;/)
   })
 
-  it('does not animate width inside the model selector slider styles', () => {
-    const sliderSection = css.match(
-      /\.model-selector__slider \{[\s\S]*?\.model-selector__slider-stop \{/,
-    )?.[0]
-    expect(sliderSection).not.toMatch(/transition:[\s\S]*?\bwidth\b/)
+  it('moves the lit dots exactly against the fill so they stay put', () => {
+    expect(rule('.model-selector__slider-fill')).toContain(
+      'translateX(calc((var(--effort-p) - 1) * var(--effort-travel)))',
+    )
+    expect(rule('.model-selector__slider-dots.is-lit')).toContain(
+      'translateX(calc((1 - var(--effort-p)) * var(--effort-travel)))',
+    )
+  })
+
+  it('never animates layout or paints a texture', () => {
+    expect(sliderSection).not.toBe('')
+    expect(sliderSection).not.toMatch(/transition:[^;]*\b(width|left|right|clip-path)\b/)
+    expect(sliderSection).not.toMatch(/canvas|dither/)
   })
 })

@@ -127,21 +127,18 @@
   --error: #e5687a;
   --success: #6fbf8e;
 
-  --effort-track: #171719;
-  --effort-track-shadow:
-    inset 0 1px rgb(255 255 255 / 1.2%), inset 0 0 0 1px rgb(255 255 255 / 0.8%),
-    0 1px 2px rgb(0 0 0 / 18%);
-  --effort-fill: linear-gradient(
-    180deg,
-    #2d2d2f 0%,
-    #252527 19%,
-    #262628 43%,
-    #2a2a2a 68%,
-    #2f2f2f 95%,
-    #363638 100%
-  );
-  --effort-fill-shadow: inset 0 1px rgb(255 255 255 / 2%), inset 0 -1px rgb(255 255 255 / 2.5%);
-  --effort-value: #f5f5f7;
+  /* Effort slider: a recessed pill, a mid-grey fill through the chosen level
+     and a thumb in the text colour on it, so the level reads at a glance.
+     Mixed from the text and surface tokens so backdrops follow. */
+  --effort-track: color-mix(in srgb, black 34%, var(--surface));
+  --effort-track-line: color-mix(in srgb, var(--text) 7%, transparent);
+  --effort-fill: color-mix(in srgb, var(--text) 24%, var(--surface));
+  --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--text) 80%, transparent);
+  --effort-thumb-bg: var(--text);
+  --effort-thumb-dot: var(--surface);
+  --effort-thumb-shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 0 0 0.5px rgb(0 0 0 / 35%);
+  --effort-ring: color-mix(in srgb, var(--text) 50%, transparent);
   --dither-texture-filter: none;
   --dither-texture-opacity: 1;
   --dither-bloom-filter: blur(1.75px) brightness(1.2);
@@ -407,11 +404,16 @@
   --error: #be123c;
   --success: #16803c;
 
-  --effort-track: linear-gradient(180deg, #f3f3f5 0%, #ffffff 100%);
-  --effort-track-shadow: inset 0 1px 2px rgb(24 24 27 / 7%), inset 0 0 0 1px #dedee2;
-  --effort-fill: linear-gradient(180deg, #fafafa 0%, #ececef 100%);
-  --effort-fill-shadow: inset 0 1px #ffffff, 0 1px 2px rgb(24 24 27 / 7%);
-  --effort-value: #27272a;
+  /* Light: a white thumb with a dark dot on a grey fill. */
+  --effort-track: color-mix(in srgb, var(--text) 6%, var(--bg-prompt));
+  --effort-track-line: color-mix(in srgb, var(--text) 9%, transparent);
+  --effort-fill: color-mix(in srgb, var(--text) 30%, var(--bg-prompt));
+  --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
+  --effort-thumb-bg: var(--bg-prompt);
+  --effort-thumb-dot: var(--text);
+  --effort-thumb-shadow: 0 1px 3px rgb(24 24 27 / 22%), 0 0 0 0.5px rgb(24 24 27 / 20%);
+  --effort-ring: color-mix(in srgb, var(--text) 40%, transparent);
   --dither-texture-filter: invert(1);
   --dither-texture-opacity: 0.26;
   --dither-bloom-filter: invert(1) blur(1.25px);
