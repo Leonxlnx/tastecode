@@ -3240,7 +3240,6 @@ describe('new chats', () => {
     transport.request.mockClear()
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Usage,/ }))
     const codexLimits = await screen.findByRole('region', { name: 'Codex' })
     expect(within(codexLimits).getByText('75% left')).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
@@ -3276,7 +3275,6 @@ describe('new chats', () => {
 
     transport.request.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(await screen.findByRole('button', { name: /^Usage,/ }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
