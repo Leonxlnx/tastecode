@@ -182,6 +182,9 @@ describe('ModelSelector', () => {
     expect(trigger.querySelector('.model-selector__trigger-fast')).toBeNull()
     expect(getCompactModelName('GPT-5.6 Sol')).toBe('5.6 Sol')
     expect(getFriendlyEffortLabel('xhigh')).toBe('Extra High')
+    // The top levels Codex (ultra) and Claude Code (ultracode) advertise.
+    expect(getFriendlyEffortLabel('ultra')).toBe('Ultra')
+    expect(getFriendlyEffortLabel('ultracode')).toBe('Ultracode')
   })
 
   it('shows active fast mode in the compact trigger', async () => {

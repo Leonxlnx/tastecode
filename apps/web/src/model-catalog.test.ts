@@ -233,4 +233,15 @@ describe('model catalog', () => {
       }),
     ).toBe('high')
   })
+
+  it("carries Codex's Ultra and Claude Code's Ultracode onto each other's top level", () => {
+    const codex = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultra'])
+    const claude = reasoningModel(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+    const resolve = (currentEffort: string, currentModel: typeof codex, nextModel: typeof codex) =>
+      resolveReasoningEffort({ currentEffort, currentModel, nextModel })
+
+    expect(resolve('ultra', codex, claude)).toBe('ultracode')
+    expect(resolve('ultracode', claude, codex)).toBe('ultra')
+    expect(resolve('max', claude, codex)).toBe('max')
+  })
 })
