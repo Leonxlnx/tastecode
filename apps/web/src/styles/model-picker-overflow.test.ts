@@ -44,6 +44,12 @@ describe('model picker horizontal overflow', () => {
     expect(list).toContain('overflow-y: auto;')
   })
 
+  it('ellipsizes a long provider name in either layout instead of cutting it', () => {
+    const title = rule(menuCss, '.model-selector__group-title')
+    expect(title).toContain('display: flex;')
+    expect(title).toContain('min-width: 0;')
+  })
+
   it('clips the effort pill without a scroll range for its lit dots', () => {
     for (const selector of ['.model-selector__slider-clip', '.model-selector__slider-fill']) {
       expect(rule(menuCss, selector), selector).toContain('overflow: clip;')
