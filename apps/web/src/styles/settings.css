@@ -1065,8 +1065,8 @@
 }
 
 .usage-metric:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .usage-metric > strong {
