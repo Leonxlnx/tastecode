@@ -12,9 +12,7 @@ function rule(selector: string): string {
 }
 
 const sliderSection =
-  css.match(
-    /\/\* -{10} effort slider -{10}[\s\S]*?(?=\n\.dither-slider \{|\n\.model-selector__catalog \{)/,
-  )?.[0] ?? ''
+  css.match(/\/\* -{10} effort slider -{10}[\s\S]*?(?=\n\.model-selector__catalog \{)/)?.[0] ?? ''
 
 describe('effort slider motion', () => {
   it('glides the fill, its lit dots and the thumb on transform with one shared spring', () => {
