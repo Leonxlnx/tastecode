@@ -178,8 +178,8 @@
 }
 
 .workspace-provider-login__actions > button:focus-visible {
-  outline: 1px solid var(--text-2);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .workspace-provider-login__actions > button:disabled {
@@ -1357,8 +1357,8 @@
 }
 
 .workspace-selector__list > button:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .workspace-selector__list > button:hover {

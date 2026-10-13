@@ -137,6 +137,7 @@ import {
   providerMark,
   resolveReasoningEffort,
   sourceKey,
+  unlistedHiddenModels,
   type ModelChoice,
 } from './model-catalog.js'
 import {
@@ -243,6 +244,8 @@ const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
+/** Every direct-provider model key the profile has listed, so a later arrival gets its default. */
+const LISTED_MODELS_KEY = 'harness.listedModels'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -718,6 +721,8 @@ export function App() {
     }
   })
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
+  const [initialListedModels] = useState(readListedModels)
+  const listedModelsRef = useRef(initialListedModels)
   // Read via ref inside the catalog effect so toggling visibility does not
   // refetch every provider's model list.
   const hiddenModelsRef = useRef(hiddenModels)
@@ -1890,12 +1895,14 @@ export function App() {
       // older models as soon as that source answers, so a picker opened during
       // discovery never lists a model it is about to drop. Nothing is saved
       // here: the first full catalog still decides and persists the profile.
+      // A saved profile only gets this for models it has never listed.
       const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
-        if (cancelled || modelVisibilityInitialized.current) return
+        if (cancelled) return
         const current = hiddenModelsRef.current
-        const additions = models.filter(
-          (choice) => !modelVisibleByDefault(choice.model) && !current.has(choice.key),
-        )
+        const candidates = modelVisibilityInitialized.current
+          ? unlistedHiddenModels(models, listedModelsRef.current)
+          : models.filter((choice) => !modelVisibleByDefault(choice.model))
+        const additions = candidates.filter((choice) => !current.has(choice.key))
         if (additions.length === 0) return
         const next = new Set(current)
         for (const choice of additions) next.add(choice.key)
@@ -2161,6 +2168,22 @@ export function App() {
         )
         modelVisibilityInitialized.current = true
         hiddenChanged = true
+      } else if (catalogReady) {
+        const additions = unlistedHiddenModels(catalog, listedModelsRef.current).filter(
+          (choice) => !hidden.has(choice.key),
+        )
+        if (additions.length > 0) {
+          hidden = new Set([...hidden, ...additions.map((choice) => choice.key)])
+          hiddenChanged = true
+        }
+      }
+      if (catalogReady && modelVisibilityInitialized.current) {
+        const listed = listedModelsRef.current
+        if (!listed || catalog.some((choice) => !listed.has(choice.key))) {
+          const next = new Set([...(listed ?? []), ...catalog.map((choice) => choice.key)])
+          listedModelsRef.current = next
+          writeSetting(LISTED_MODELS_KEY, JSON.stringify([...next]))
+        }
       }
       const visibilityVersion = readSetting(MODEL_VISIBILITY_VERSION_KEY)
       if (catalogReady && visibilityVersion !== MODEL_VISIBILITY_VERSION) {
@@ -6184,6 +6207,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
+}
+
+/** `null` until a full catalog has been recorded; an unreadable record is rebuilt then. */
+function readListedModels(): Set<string> | null {
+  try {
+    const stored: unknown = JSON.parse(readSetting(LISTED_MODELS_KEY) ?? 'null')
+    return isStringArray(stored) ? new Set(stored) : null
+  } catch {
+    return null
+  }
 }
 
 function isProviderId(value: unknown): value is ProviderId {

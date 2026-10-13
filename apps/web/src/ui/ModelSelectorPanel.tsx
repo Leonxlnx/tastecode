@@ -7,17 +7,18 @@ import {
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
-import { IconCheck as Check, IconBolt as Zap } from '@tabler/icons-react'
+import {
+  IconArrowNarrowRight as ArrowRight,
+  IconCheck as Check,
+  IconBolt as Zap,
+} from '@tabler/icons-react'
 import { performAppHaptic, prepareAppHaptics } from '../haptics.js'
 import { readModelPickerLayout, subscribeModelPickerLayout } from '../model-picker-layout.js'
 import { filterModelChoicesByQuery, type ModelChoice } from '../model-catalog.js'
-import { DitherSlider } from './dither-kit/DitherSlider.js'
 import { ModelSearchField } from './ModelSearchField.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
-  SLIDER_DITHER_INSET,
-  SLIDER_DITHER_MIN_WIDTH,
   getEffortIndexFromPointer,
   getFastModeOffValue,
   getFastServiceTier,
@@ -222,42 +223,72 @@ function hasPointerCaptureSafe(target: HTMLDivElement, pointerId: number): boole
   return typeof target.hasPointerCapture === 'function' ? target.hasPointerCapture(pointerId) : true
 }
 
-function DitherChoiceRow(props: {
-  label: string
-  ariaLabel?: string
+function indexFromPointer(
+  event: PointerEvent<HTMLDivElement>,
+  stopCount: number,
+  currentIndex: number | null,
+): number {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return getEffortIndexFromPointer({
+    clientX: event.clientX,
+    left: rect.left,
+    width: rect.width,
+    stopCount,
+    currentIndex,
+  })
+}
+
+function stopProgress(index: number, count: number): number {
+  return count < 2 || index < 0 ? 0 : index / (count - 1)
+}
+
+/**
+ * One pill track with a dot per level. The fill and the thumb glide to the
+ * level on `transform` alone; the lit dots ride inside the fill with the
+ * opposite transform, so a dot changes colour exactly when the fill's edge
+ * passes it. A press or drag previews a level and release commits it; a plain
+ * hover only rings the level a click would choose.
+ */
+function EffortSlider(props: {
+  ariaLabel: string
   optionLabels: string[]
   selectedIndex: number
+  defaultIndex: number
   disabled: boolean
   onPreviewIndex: (index: number | null) => void
+  onHoverIndex: (index: number | null) => void
   onCommitIndex: (index: number) => void
 }) {
   const [pointerIndex, setPointerIndex] = useState<number | null>(null)
   const pointerIndexRef = useRef<number | null>(null)
+  // The ring keeps its last level while it fades out, so it never slides away.
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const [hovering, setHovering] = useState(false)
+  const hoverRef = useRef<number | null>(null)
+  // Focus that arrives with a press gets no ring; the next key press shows it.
+  const [pointerFocused, setPointerFocused] = useState(false)
+  const count = props.optionLabels.length
 
   const displayIndex = pointerIndex ?? props.selectedIndex
   const displayedLabel =
     props.optionLabels[displayIndex] ?? props.optionLabels[props.selectedIndex] ?? 'Default'
-  const selectedProgress =
-    displayIndex < 0 || props.optionLabels.length < 2
-      ? 0.5
-      : displayIndex / (props.optionLabels.length - 1)
-  const ditherWidthOffset =
-    (1 - selectedProgress) * SLIDER_DITHER_MIN_WIDTH - selectedProgress * SLIDER_DITHER_INSET * 2
-  const ditherWidth = `calc(${selectedProgress * 100}% + ${ditherWidthOffset}px)`
+  const ringVisible =
+    hovering && pointerIndex === null && hoverIndex !== null && hoverIndex !== displayIndex
   const sliderVars = {
-    '--model-selector-slider-width': ditherWidth,
-    '--model-selector-slider-inset': `${SLIDER_DITHER_INSET}px`,
+    '--effort-p': stopProgress(displayIndex, count),
+    '--effort-hover-p': stopProgress(hoverIndex ?? displayIndex, count),
   } as CSSProperties
 
+  const showHover = (index: number | null) => {
+    if (hoverRef.current === index) return
+    hoverRef.current = index
+    setHovering(index !== null)
+    if (index !== null) setHoverIndex(index)
+    props.onHoverIndex(index)
+  }
+
   const previewFromPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    const nextIndex = getEffortIndexFromPointer({
-      clientX: event.clientX,
-      left: rect.left,
-      width: rect.width,
-      stopCount: props.optionLabels.length,
-      currentIndex: pointerIndexRef.current,
-    })
+    const nextIndex = indexFromPointer(event, count, pointerIndexRef.current)
     if (pointerIndexRef.current !== nextIndex) {
       const previousIndex = pointerIndexRef.current ?? displayIndex
       pointerIndexRef.current = nextIndex
@@ -273,35 +304,48 @@ function DitherChoiceRow(props: {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (props.disabled || props.optionLabels.length === 0) return
+    if (props.disabled || count === 0) return
     let nextIndex = props.selectedIndex < 0 ? 0 : props.selectedIndex
     if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') {
       nextIndex = Math.max(0, nextIndex - 1)
     } else if (event.key === 'ArrowRight' || event.key === 'ArrowUp') {
-      nextIndex = Math.min(props.optionLabels.length - 1, nextIndex + 1)
+      nextIndex = Math.min(count - 1, nextIndex + 1)
     } else if (event.key === 'Home') {
       nextIndex = 0
     } else if (event.key === 'End') {
-      nextIndex = props.optionLabels.length - 1
+      nextIndex = count - 1
     } else {
       return
     }
     event.preventDefault()
+    setPointerFocused(false)
+    // A resting pointer's ring would sit on the old level until it moves.
+    showHover(null)
     commitIndex(nextIndex)
   }
+
+  const dots = props.optionLabels.map((option, index) => (
+    <span
+      key={option}
+      className={`model-selector__slider-dot${index === props.defaultIndex ? ' is-default' : ''}`}
+      style={{ '--effort-stop': stopProgress(index, count) } as CSSProperties}
+    />
+  ))
 
   return (
     <div
       role="slider"
       tabIndex={props.disabled ? -1 : 0}
-      aria-label={props.ariaLabel ?? props.label}
+      aria-label={props.ariaLabel}
       aria-disabled={props.disabled}
       aria-valuemin={0}
-      aria-valuemax={Math.max(0, props.optionLabels.length - 1)}
+      aria-valuemax={Math.max(0, count - 1)}
       aria-valuenow={Math.max(0, displayIndex)}
       aria-valuetext={displayedLabel}
-      className={`model-selector__slider${props.disabled ? ' is-disabled' : ''}${pointerIndex !== null ? ' is-dragging' : ''}`}
+      className={`model-selector__slider${props.disabled ? ' is-disabled' : ''}${pointerIndex !== null ? ' is-dragging' : ''}${ringVisible ? ' is-previewing' : ''}`}
       style={sliderVars}
+      data-focus-source={pointerFocused ? 'pointer' : undefined}
+      onBlur={() => setPointerFocused(false)}
       onClick={(event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -318,15 +362,20 @@ function DitherChoiceRow(props: {
         // which left it in the search field: arrow keys after a click then
         // edited the query instead of moving the effort.
         event.currentTarget.focus({ preventScroll: true })
+        setPointerFocused(true)
         prepareAppHaptics()
         setPointerCaptureSafe(event.currentTarget, event.pointerId)
         previewFromPointer(event)
       }}
       onPointerMove={(event) => {
-        if (!props.disabled && hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
+        if (props.disabled) return
+        if (hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
           previewFromPointer(event)
+        } else if (event.pointerType !== 'touch') {
+          showHover(indexFromPointer(event, count, null))
         }
       }}
+      onPointerLeave={() => showHover(null)}
       onPointerUp={(event) => {
         if (props.disabled || !hasPointerCaptureSafe(event.currentTarget, event.pointerId)) {
           // Capture can be lost without a pointercancel — a re-render under
@@ -341,16 +390,11 @@ function DitherChoiceRow(props: {
         }
         event.preventDefault()
         event.stopPropagation()
-        const rect = event.currentTarget.getBoundingClientRect()
-        const nextIndex = getEffortIndexFromPointer({
-          clientX: event.clientX,
-          left: rect.left,
-          width: rect.width,
-          stopCount: props.optionLabels.length,
-          currentIndex: pointerIndexRef.current,
-        })
+        const nextIndex = indexFromPointer(event, count, pointerIndexRef.current)
         releasePointerCaptureSafe(event.currentTarget, event.pointerId)
         pointerIndexRef.current = null
+        // The pointer now rests on the level it chose: no ring left behind.
+        if (event.pointerType !== 'touch') showHover(nextIndex)
         requestAnimationFrame(() => {
           commitIndex(nextIndex)
           setPointerIndex(null)
@@ -366,23 +410,15 @@ function DitherChoiceRow(props: {
         props.onPreviewIndex(null)
       }}
     >
-      <div className="model-selector__slider-track">
-        <div className="model-selector__slider-fill">
-          <DitherSlider active={!props.disabled && pointerIndex !== null} />
+      <div className="model-selector__slider-rail" aria-hidden>
+        <div className="model-selector__slider-clip">
+          <div className="model-selector__slider-dots">{dots}</div>
+          <div className="model-selector__slider-fill">
+            <div className="model-selector__slider-dots is-lit">{dots}</div>
+          </div>
         </div>
-        <div className="model-selector__slider-stops" aria-hidden>
-          {props.optionLabels.map((option, index) => (
-            <span
-              className={`model-selector__slider-stop${index <= displayIndex ? ' is-active' : ''}`}
-              style={
-                {
-                  '--model-selector-stop': index / Math.max(1, props.optionLabels.length - 1),
-                } as CSSProperties
-              }
-              key={option}
-            />
-          ))}
-        </div>
+        <span className="model-selector__slider-ring" />
+        <span className="model-selector__slider-thumb" />
       </div>
     </div>
   )
@@ -390,6 +426,7 @@ function DitherChoiceRow(props: {
 
 export function ModelSelectorPanel(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
+  const [hoverEffortIndex, setHoverEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
   const choice = getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
@@ -399,10 +436,19 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
   const effortLabels = effortOptions.map((value) => getFriendlyEffortLabel(value))
   const selectedEffortIndex =
     selectedEffort === undefined ? -1 : Math.max(0, effortOptions.indexOf(selectedEffort))
+  const defaultEffortIndex = model?.defaultReasoningEffort
+    ? effortOptions.indexOf(model.defaultReasoningEffort)
+    : -1
   const fastTier = getFastServiceTier(model)
   const fastEnabled = isFastModeEnabled(model, props.serviceTier)
   const displayedEffortLabel =
     effortLabels[previewEffortIndex ?? selectedEffortIndex] ?? effortLabel
+  const hoveredEffortLabel =
+    previewEffortIndex === null &&
+    hoverEffortIndex !== null &&
+    hoverEffortIndex !== selectedEffortIndex
+      ? effortLabels[hoverEffortIndex]
+      : undefined
 
   const commitEffortIndex = (nextIndex: number) => {
     const nextValue = effortOptions[nextIndex]
@@ -438,7 +484,17 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           <div className="model-selector__controls-head">
             {effortOptions.length > 0 ? (
               <span className="model-selector__effort-title">
-                Effort: <span>{displayedEffortLabel}</span>
+                <span className="model-selector__effort-label">Effort:</span>{' '}
+                <span className="model-selector__effort-value">{displayedEffortLabel}</span>
+              </span>
+            ) : null}
+            {hoveredEffortLabel ? (
+              <span className="model-selector__effort-preview" aria-hidden>
+                <ArrowRight size={13} />
+                {hoveredEffortLabel}
+                {hoverEffortIndex === defaultEffortIndex ? (
+                  <span className="model-selector__effort-preview-note">· default</span>
+                ) : null}
               </span>
             ) : null}
             {fastTier ? (
@@ -463,13 +519,14 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
           </div>
 
           {effortOptions.length > 0 ? (
-            <DitherChoiceRow
-              label="Effort"
+            <EffortSlider
               ariaLabel="Reasoning effort"
               optionLabels={effortLabels}
               selectedIndex={selectedEffortIndex}
+              defaultIndex={defaultEffortIndex}
               disabled={props.disabled || effortOptions.length <= 1}
               onPreviewIndex={setPreviewEffortIndex}
+              onHoverIndex={setHoverEffortIndex}
               onCommitIndex={commitEffortIndex}
             />
           ) : null}

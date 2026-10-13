@@ -68,7 +68,16 @@ const CommandLifecycleSchema = z.object({
 })
 const ToolLocationSchema = z.object({ cwd: z.string().optional() })
 const ToolInputSchema = z.record(z.string(), JsonRpcValueSchema)
-const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
+const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+/** Only the `applied` block is read; the rest of the answer carries the user's own settings. */
+const ClaudeAppliedSettingsSchema = z.object({
+  applied: z
+    .object({
+      ultracode: z.boolean().optional(),
+      ultracodeAvailable: z.boolean().optional(),
+    })
+    .optional(),
+})
 const TodoInputSchema = z.object({
   todos: z.array(
     z.object({
@@ -158,6 +167,43 @@ function claudeModel(
     serviceTiers: [],
     ...(reasoningEfforts.length > 0 ? { defaultReasoningEffort } : {}),
   }
+}
+
+/**
+ * Ultracode is the top level of Claude's effort control, but it is not an API
+ * effort. claude 2.1.296 reads it as the session-scoped `ultracode` flag setting:
+ * xhigh effort plus standing dynamic-workflow orchestration. That is what its
+ * own `--effort ultracode` alias resolves to, so this sends the same pair.
+ */
+export const CLAUDE_ULTRACODE_EFFORT = 'ultracode'
+
+export function claudeEffortOptions(
+  effort: string | undefined,
+): Pick<ClaudeQueryOptions, 'effort' | 'settings'> {
+  if (effort === undefined) return {}
+  const level = ClaudeEffortSchema.parse(effort)
+  return level === CLAUDE_ULTRACODE_EFFORT
+    ? { effort: 'xhigh', settings: { ultracode: true } }
+    : { effort: level }
+}
+
+/**
+ * Claude Code offers Ultracode only while dynamic workflows are enabled and the
+ * model supports xhigh effort. Discovery learns the first half from the
+ * runtime's `applied.ultracodeAvailable`; each model's effort list gives the second.
+ */
+function withUltracode(model: Model, ultracodeAvailable: boolean): Model {
+  if (!ultracodeAvailable || !model.reasoningEfforts.includes('xhigh')) return model
+  if (model.reasoningEfforts.includes(CLAUDE_ULTRACODE_EFFORT)) return model
+  return { ...model, reasoningEfforts: [...model.reasoningEfforts, CLAUDE_ULTRACODE_EFFORT] }
+}
+
+async function readClaudeAppliedSettings(
+  query: ClaudeQueryRuntime,
+): Promise<z.infer<typeof ClaudeAppliedSettingsSchema>['applied']> {
+  if (typeof query.getSettings !== 'function') return undefined
+  const parsed = ClaudeAppliedSettingsSchema.safeParse(await query.getSettings())
+  return parsed.success ? parsed.data.applied : undefined
 }
 
 const PERMISSION_MODE = {
@@ -635,7 +681,19 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         30_000,
         'Claude model discovery timed out',
       )
-      return models.length > 0 ? mergeClaudeModels(models) : CLAUDE_MODELS
+      if (models.length === 0) return CLAUDE_MODELS
+      const ultracodeAvailable = await withTimeout(
+        readClaudeAppliedSettings(query),
+        10_000,
+        'Claude settings discovery timed out',
+      ).then(
+        (applied) => applied?.ultracodeAvailable === true,
+        (error: unknown) => {
+          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+          return false
+        },
+      )
+      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
     } catch (error) {
       this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
       return CLAUDE_MODELS
@@ -737,8 +795,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const promptQueue = new PromptQueue()
     const abort = new AbortController()
     this.#queryAbort = abort
-    const effort =
-      options.effort === undefined ? undefined : ClaudeEffortSchema.parse(options.effort)
+    const effortOptions = claudeEffortOptions(options.effort)
     let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
     let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
     try {
@@ -759,7 +816,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
                 env: { ...this.#environment, ...claudeContextEnvironment(options.context) },
                 ...(bootstrap ? { mcpServers: bootstrap.servers } : {}),
                 ...(options.model ? { model: options.model } : {}),
-                ...(effort ? { effort: effort } : {}),
+                ...effortOptions,
                 systemPrompt: {
                   type: 'preset',
                   preset: 'claude_code',
@@ -791,6 +848,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
             await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
+          if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
         })(),
         this.#startupTimeoutMs,
         'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
@@ -839,6 +897,18 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ),
       ...overrides,
     }
+  }
+
+  /** The runtime can still decline Ultracode, for example after dynamic workflows were turned off. */
+  #confirmUltracode(query: ClaudeQueryRuntime): void {
+    void readClaudeAppliedSettings(query).then(
+      (applied) => {
+        if (applied && applied.ultracode !== true) {
+          this.#log('Claude Code did not turn Ultracode on for this session')
+        }
+      },
+      () => undefined,
+    )
   }
 
   async #restartSession(options: ClaudeStartOptions): Promise<void> {

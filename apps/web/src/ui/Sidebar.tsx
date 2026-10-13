@@ -26,7 +26,6 @@ import type {
 } from '@harness/contracts'
 import {
   IconTrash as Trash,
-  IconChevronUp as ChevronUp,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
@@ -72,7 +71,10 @@ import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
 import type { InboxActions } from './InboxSidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
+import { ProviderIcon } from './ProviderIcon.js'
+import { activeIndicatorRef } from './active-indicator.js'
+import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
+import '../styles/account-card.css'
 import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
@@ -184,12 +186,15 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+/** Matches the account menu's own limit bars, which turn red at the same point. */
+const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
-const VIRTUAL_SESSION_ROW_HEIGHT = 27
+/** A 28px chat row plus the list's 2px row gap. */
+const VIRTUAL_SESSION_ROW_HEIGHT = 30
 const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
 const VIRTUAL_SESSION_OVERSCAN = 6
 const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
@@ -885,78 +890,103 @@ function SidebarComponent(props: {
         )}
 
         <div className="rail__foot">
-          <Menu
-            drop="up"
-            gap={14}
-            label="Account"
-            panelClassName="menu--compact menu--settings"
-            panelRole="dialog"
-            panelLabel="Account and plan limits"
-            trigger={() => (
-              <span className="account">
-                <span className="account__avatar">
-                  {props.profileIdentity?.avatarDataUrl ? (
-                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                  ) : (
-                    <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
-                  )}
-                </span>
-                <span className="account__name">{profileDisplayName}</span>
-                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
-                  <span
-                    className="account__usage"
-                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
-                  >
-                    {Math.round(usageRemaining)}%
+          <div className="account-card">
+            <Menu
+              drop="up"
+              gap={8}
+              label="Account"
+              triggerClassName="account-card__trigger"
+              panelClassName="menu--compact menu--settings menu--account"
+              panelRole="dialog"
+              panelLabel="Account and plan limits"
+              trigger={() => (
+                <span className="account">
+                  <span className="account__avatar">
+                    {props.profileIdentity?.avatarDataUrl ? (
+                      <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                    ) : (
+                      <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
+                    )}
                   </span>
-                ) : null}
-                <ChevronUp className="account__chevron" size={13} aria-hidden />
-              </span>
-            )}
-          >
-            {(close) => {
-              const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
-              return (
-                <>
-                  {props.usageStates ? (
-                    <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
-                      <RenderedAccountLimits
-                        states={props.usageStates}
-                        onRetry={props.onRetryUsage ?? noop}
-                        onConsumeReset={props.onConsumeReset}
-                      />
-                    </Suspense>
-                  ) : null}
-                  <div className="account-menu__actions">
-                    <button
-                      type="button"
-                      className="menu__item"
-                      onClick={() => {
-                        props.onOpenSettings('profile')
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                    </button>
-                    <button
-                      type="button"
-                      className="menu__item"
-                      aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                      onClick={() => {
-                        props.onOpenSettings()
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                    </button>
-                  </div>
-                </>
-              )
-            }}
-          </Menu>
+                  <span className="account__identity">
+                    <span className="account__name">{profileDisplayName}</span>
+                    {usageLimit && usageRemaining !== undefined ? (
+                      <span
+                        className="account__usage"
+                        title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                      >
+                        <span
+                          className="account__meter"
+                          data-low={usageRemaining <= USAGE_LOW_PERCENT ? '' : undefined}
+                          aria-hidden
+                        >
+                          <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
+                        </span>
+                        <span className="account__usage-value">
+                          {Math.round(usageRemaining)}% left
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              )}
+            >
+              {(close) => {
+                const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
+                return (
+                  <>
+                    {props.usageStates ? (
+                      <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
+                        <RenderedAccountLimits
+                          states={props.usageStates}
+                          onRetry={props.onRetryUsage ?? noop}
+                          onConsumeReset={props.onConsumeReset}
+                        />
+                      </Suspense>
+                    ) : null}
+                    <div className="account-menu__actions">
+                      <button
+                        type="button"
+                        className="menu__item"
+                        onClick={() => {
+                          props.onOpenSettings('profile')
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                      </button>
+                      <button
+                        type="button"
+                        className="menu__item"
+                        aria-keyshortcuts={shortcutAria(keybindings.settings)}
+                        onClick={() => {
+                          props.onOpenSettings()
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                      </button>
+                    </div>
+                  </>
+                )
+              }}
+            </Menu>
+            <button
+              type="button"
+              className="account-card__settings"
+              aria-label="Settings"
+              title="Settings"
+              aria-keyshortcuts={shortcutAria(keybindings.settings)}
+              onClick={() => {
+                props.onOpenSettings()
+                closeOnNarrowViewport()
+              }}
+            >
+              <Settings size={15} aria-hidden />
+            </button>
+          </div>
           {isDesktop ? <AppUpdateNotice /> : null}
         </div>
       </nav>
@@ -1223,6 +1253,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
   const previousCount = useRef(count)
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
@@ -1288,11 +1319,11 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
-            onCommit={(name) => {
+            onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
-              setRenaming(false)
+              finishRename(fromKeyboard)
             }}
-            onCancel={() => setRenaming(false)}
+            onCancel={finishRename}
           />
         ) : (
           <>
@@ -1696,6 +1727,7 @@ function SessionRow(props: {
 }) {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
 
   if (renaming) {
     return (
@@ -1705,15 +1737,16 @@ function SessionRow(props: {
         aria-posinset={props.virtualPosition}
         aria-setsize={props.virtualSetSize}
       >
+        {props.active ? <ActiveIndicator /> : null}
         <InlineRename
           value={props.session.title}
           className="rename--chat rename--session"
           ariaLabel={`Rename ${props.session.title}`}
-          onCommit={(title) => {
+          onCommit={(title, fromKeyboard) => {
             props.onRename(title)
-            setRenaming(false)
+            finishRename(fromKeyboard)
           }}
-          onCancel={() => setRenaming(false)}
+          onCancel={finishRename}
         />
       </li>
     )
@@ -1723,7 +1756,7 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''}`}
+      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1735,6 +1768,7 @@ function SessionRow(props: {
       aria-posinset={props.virtualPosition}
       aria-setsize={props.virtualSetSize}
     >
+      {props.active ? <ActiveIndicator /> : null}
       <button
         ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
@@ -1743,14 +1777,20 @@ function SessionRow(props: {
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
-        {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon
+            mark={sessionSourcePresentation(props.session.provider, props.session.agent).mark}
+            size={12}
+          />
+        </span>
         <span className="sess__title">{props.session.title}</span>
-        <SourceIdentity
-          className="sess__source"
-          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
-          density="compact"
-        />
-        <SessionStatus status={props.session.status} />
+        <span className="sess__meta">
+          <SessionStatus
+            status={props.session.status}
+            since={props.session.statusSince ?? props.session.createdAt}
+          />
+          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        </span>
       </button>
 
       <span className="sess__actions">
@@ -1872,7 +1912,15 @@ function deleteChatsCopy(project: Project): ConfirmCopy {
   }
 }
 
-function SessionStatus(props: { status: Session['status'] }) {
+/** The one active-chat pill. Only the active row renders it, and it slides in
+ *  from wherever the previous active row's pill stood. */
+function ActiveIndicator() {
+  return <span className="sessrow__indicator" ref={activeIndicatorRef} aria-hidden />
+}
+
+/** A live state takes the time's place: while a chat works or waits, that is
+ *  the news, and how long ago it started is not. */
+function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
     return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
   }
@@ -1885,7 +1933,17 @@ function SessionStatus(props: { status: Session['status'] }) {
     return <span className="sess__status-dot is-failed" aria-hidden />
   }
 
-  return null
+  return <SessionTime at={props.since} />
+}
+
+function SessionTime(props: { at: number }) {
+  const now = useSyncExternalStore(subscribeSessionClock, readSessionClock, readSessionClock)
+  if (!(props.at > 0)) return null
+  return (
+    <span className="sess__time" aria-hidden>
+      {compactRelativeTime(props.at, now)}
+    </span>
+  )
 }
 
 function sessionLabel(session: Session): string {
@@ -1926,12 +1984,37 @@ function virtualSessionStyle(top: number | undefined): CSSProperties | undefined
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */
+/**
+ * Ends an inline rename. The input replaced the row's button, so a rename
+ * finished with Enter or Escape would leave focus on the document body; put it
+ * back on the row. A rename that ends on blur leaves focus where the user went.
+ */
+function useRenameFocusReturn(
+  renaming: boolean,
+  setRenaming: (renaming: boolean) => void,
+  row: RefObject<HTMLButtonElement | null>,
+) {
+  const returnFocus = useRef(false)
+  useEffect(() => {
+    if (renaming || !returnFocus.current) return
+    returnFocus.current = false
+    row.current?.focus()
+  }, [renaming, row])
+  return useCallback(
+    (fromKeyboard: boolean) => {
+      returnFocus.current = fromKeyboard
+      setRenaming(false)
+    },
+    [setRenaming],
+  )
+}
+
 function InlineRename(props: {
   value: string
   className?: string
   ariaLabel?: string
-  onCommit: (value: string) => void
-  onCancel: () => void
+  onCommit: (value: string, fromKeyboard: boolean) => void
+  onCancel: (fromKeyboard: boolean) => void
 }) {
   const [draft, setDraft] = useState(props.value)
   const input = useRef<HTMLInputElement>(null)
@@ -1940,10 +2023,10 @@ function InlineRename(props: {
     input.current?.select()
   }, [])
 
-  const commit = () => {
+  const commit = (fromKeyboard: boolean) => {
     const trimmed = draft.trim()
-    if (trimmed === '') props.onCancel()
-    else props.onCommit(trimmed)
+    if (trimmed === '') props.onCancel(fromKeyboard)
+    else props.onCommit(trimmed, fromKeyboard)
   }
 
   return (
@@ -1954,11 +2037,19 @@ function InlineRename(props: {
       aria-label={props.ariaLabel}
       spellCheck={false}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onBlur={() => commit(false)}
       onKeyDown={(e) => {
         if (isComposingKey(e)) return
-        if (isConfirmEnter(e)) commit()
-        if (e.key === 'Escape') props.onCancel()
+        // Without preventDefault the Enter keypress that follows lands on the
+        // row button focus just returned to, and clicks it.
+        if (isConfirmEnter(e)) {
+          e.preventDefault()
+          commit(true)
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          props.onCancel(true)
+        }
       }}
     />
   )

@@ -723,7 +723,7 @@
 }
 
 .pr-toolbar-menu-trigger:focus-visible .pr-toolbar-button {
-  outline: 2px solid var(--text-2);
+  outline: var(--focus-ring);
   outline-offset: 1px;
 }
 

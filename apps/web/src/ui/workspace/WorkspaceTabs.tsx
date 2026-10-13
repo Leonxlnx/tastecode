@@ -173,11 +173,25 @@ export function WorkspaceTabs(props: {
     [],
   )
 
+  const tabNode = (id: string | undefined) =>
+    Array.from(host.current?.querySelectorAll<HTMLElement>('[data-tab-motion-id]') ?? []).find(
+      (element) => element.dataset['tabMotionId'] === id,
+    )
+
   const close = (id: string) => {
     if (exits.current.has(id)) return
-    const node = Array.from(
-      host.current?.querySelectorAll<HTMLElement>('[data-tab-motion-id]') ?? [],
-    ).find((element) => element.dataset['tabMotionId'] === id)
+    const node = tabNode(id)
+    // The closing tab turns inert (or leaves at once), which drops focus on
+    // its close button to the document body. Hand focus to the tab that is
+    // selected afterwards; the panel falls back to its last tab.
+    if (node?.contains(document.activeElement)) {
+      const remaining = props.tabs.filter((tab) => tab.id !== id && !closing.has(tab.id))
+      const next =
+        id === props.activeId
+          ? remaining.at(-1)
+          : remaining.find((tab) => tab.id === props.activeId)
+      tabNode(next?.id)?.querySelector<HTMLElement>('[role="tab"]')?.focus()
+    }
     if (!node?.animate || matchMedia('(prefers-reduced-motion: reduce)').matches) {
       onClose.current(id)
       return

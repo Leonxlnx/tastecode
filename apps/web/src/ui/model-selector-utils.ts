@@ -1,8 +1,10 @@
 import { resolveReasoningEffort, sourceKey, type ModelChoice } from '../model-catalog.js'
 import { PROVIDER_ORDER, providerRank } from '../provider-presentation.js'
 
-export const SLIDER_DITHER_MIN_WIDTH = 32
-export const SLIDER_DITHER_INSET = 2
+/** Padding between the effort track's edge and its thumb, mirrored in model-selector-menu.css. */
+export const EFFORT_TRACK_INSET = 3
+/** Diameter of the effort thumb; the level dots sit on the line its centre travels. */
+export const EFFORT_THUMB_SIZE = 24
 
 export type ModelSelectorProps = {
   models: ModelChoice[]
@@ -63,10 +65,10 @@ export function getEffortProgressFromPointer(input: {
   left: number
   width: number
 }): number {
-  const innerWidth = input.width - SLIDER_DITHER_INSET * 2
-  if (innerWidth <= SLIDER_DITHER_MIN_WIDTH) return 0
-  const travelWidth = innerWidth - SLIDER_DITHER_MIN_WIDTH
-  const relativeX = input.clientX - input.left - SLIDER_DITHER_INSET - SLIDER_DITHER_MIN_WIDTH / 2
+  const innerWidth = input.width - EFFORT_TRACK_INSET * 2
+  if (innerWidth <= EFFORT_THUMB_SIZE) return 0
+  const travelWidth = innerWidth - EFFORT_THUMB_SIZE
+  const relativeX = input.clientX - input.left - EFFORT_TRACK_INSET - EFFORT_THUMB_SIZE / 2
   return Math.min(1, Math.max(0, relativeX / travelWidth))
 }
 

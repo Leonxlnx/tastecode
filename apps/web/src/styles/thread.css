@@ -358,8 +358,17 @@ button.thread__older:hover {
 }
 
 .response-actions.said__actions button {
+  position: relative;
   width: 24px;
   height: 24px;
+}
+
+/* The prompt strip keeps 24px buttons so it fits the 27px row reserved for
+   it, and each one reaches 2px past its edge so the target is still 28px. */
+.response-actions.said__actions button::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
 }
 
 .said:focus-within > .said__actions {
@@ -852,8 +861,8 @@ button.thread__older:hover {
 }
 
 .viewed-image-preview__open:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .viewed-image-preview__open img {
@@ -1510,8 +1519,8 @@ button.thread__older:hover {
 }
 
 .diff__review:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 1px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .diff__undo-error {
