@@ -1252,6 +1252,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
   const previousCount = useRef(count)
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
@@ -1317,11 +1318,11 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
-            onCommit={(name) => {
+            onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
-              setRenaming(false)
+              finishRename(fromKeyboard)
             }}
-            onCancel={() => setRenaming(false)}
+            onCancel={finishRename}
           />
         ) : (
           <>
@@ -1725,6 +1726,7 @@ function SessionRow(props: {
 }) {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
 
   if (renaming) {
     return (
@@ -1739,11 +1741,11 @@ function SessionRow(props: {
           value={props.session.title}
           className="rename--chat rename--session"
           ariaLabel={`Rename ${props.session.title}`}
-          onCommit={(title) => {
+          onCommit={(title, fromKeyboard) => {
             props.onRename(title)
-            setRenaming(false)
+            finishRename(fromKeyboard)
           }}
-          onCancel={() => setRenaming(false)}
+          onCancel={finishRename}
         />
       </li>
     )
@@ -1978,12 +1980,37 @@ function virtualSessionStyle(top: number | undefined): CSSProperties | undefined
 }
 
 /** Rename in place. Enter commits, Escape reverts, blur commits. */
+/**
+ * Ends an inline rename. The input replaced the row's button, so a rename
+ * finished with Enter or Escape would leave focus on the document body; put it
+ * back on the row. A rename that ends on blur leaves focus where the user went.
+ */
+function useRenameFocusReturn(
+  renaming: boolean,
+  setRenaming: (renaming: boolean) => void,
+  row: RefObject<HTMLButtonElement | null>,
+) {
+  const returnFocus = useRef(false)
+  useEffect(() => {
+    if (renaming || !returnFocus.current) return
+    returnFocus.current = false
+    row.current?.focus()
+  }, [renaming, row])
+  return useCallback(
+    (fromKeyboard: boolean) => {
+      returnFocus.current = fromKeyboard
+      setRenaming(false)
+    },
+    [setRenaming],
+  )
+}
+
 function InlineRename(props: {
   value: string
   className?: string
   ariaLabel?: string
-  onCommit: (value: string) => void
-  onCancel: () => void
+  onCommit: (value: string, fromKeyboard: boolean) => void
+  onCancel: (fromKeyboard: boolean) => void
 }) {
   const [draft, setDraft] = useState(props.value)
   const input = useRef<HTMLInputElement>(null)
@@ -1992,10 +2019,10 @@ function InlineRename(props: {
     input.current?.select()
   }, [])
 
-  const commit = () => {
+  const commit = (fromKeyboard: boolean) => {
     const trimmed = draft.trim()
-    if (trimmed === '') props.onCancel()
-    else props.onCommit(trimmed)
+    if (trimmed === '') props.onCancel(fromKeyboard)
+    else props.onCommit(trimmed, fromKeyboard)
   }
 
   return (
@@ -2006,11 +2033,19 @@ function InlineRename(props: {
       aria-label={props.ariaLabel}
       spellCheck={false}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onBlur={() => commit(false)}
       onKeyDown={(e) => {
         if (isComposingKey(e)) return
-        if (isConfirmEnter(e)) commit()
-        if (e.key === 'Escape') props.onCancel()
+        // Without preventDefault the Enter keypress that follows lands on the
+        // row button focus just returned to, and clicks it.
+        if (isConfirmEnter(e)) {
+          e.preventDefault()
+          commit(true)
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          props.onCancel(true)
+        }
       }}
     />
   )

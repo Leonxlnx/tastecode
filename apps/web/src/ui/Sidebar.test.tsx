@@ -642,6 +642,79 @@ describe('Sidebar chat actions', () => {
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
+  it('returns focus to the row after a rename ends with Enter or Escape, not on blur', () => {
+    const onRenameSession = vi.fn()
+    const onRenameProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [session('thread-1', 'Polish the sidebar')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={onRenameProject}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={onRenameSession}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+    const chatRow = () => screen.getByRole('button', { name: 'Polish the sidebar, Codex' })
+    const renameChat = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Rename Polish the sidebar' }))
+      return screen.getByRole('textbox', { name: 'Rename Polish the sidebar' })
+    }
+
+    let input = renameChat()
+    fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
+    // A cancelled keydown suppresses the keypress that would click the row.
+    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false)
+    expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
+    expect(document.activeElement).toBe(chatRow())
+
+    input = renameChat()
+    expect(fireEvent.keyDown(input, { key: 'Escape' })).toBe(false)
+    expect(document.activeElement).toBe(chatRow())
+
+    const elsewhere = document.createElement('button')
+    document.body.append(elsewhere)
+    try {
+      input = renameChat()
+      elsewhere.focus()
+      fireEvent.blur(input)
+      expect(screen.queryByRole('textbox', { name: 'Rename Polish the sidebar' })).toBeNull()
+      expect(document.activeElement).toBe(elsewhere)
+    } finally {
+      elsewhere.remove()
+    }
+
+    fireEvent.focus(screen.getByRole('button', { name: 'TasteCode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Edit name/ }))
+    const projectInput = screen.getByDisplayValue('TasteCode')
+    fireEvent.change(projectInput, { target: { value: 'Harness' } })
+    fireEvent.keyDown(projectInput, { key: 'Enter' })
+    expect(onRenameProject).toHaveBeenCalledWith('/work/harness', 'Harness')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'TasteCode' }))
+  })
+
   it('confirms bulk archive and sidebar removal before acting', async () => {
     const onArchiveProject = vi.fn()
     const onRemoveProject = vi.fn()
