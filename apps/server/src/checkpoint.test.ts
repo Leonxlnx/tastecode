@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -7,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -155,6 +157,103 @@ describe('takeSnapshot', () => {
     expect(git('log', '-1', '--format=%an <%ae>', snapshot.commit).trim()).toBe(
       'TasteCode checkpoint <checkpoint@tastecode.invalid>',
     )
+  })
+})
+
+describe('takeSnapshot from the checkout index', () => {
+  /** Older than any index written here, so no entry is racily clean by accident. */
+  const settled = new Date('2020-01-01T00:00:00Z')
+  const show = (commit: string, file: string) => git('show', `${commit}:${file}`)
+
+  it
+    .skipIf(process.platform === 'win32' || process.getuid?.() === 0)
+    .each(['checkout', 'linked worktree'])(
+    'does not read a tracked file whose recorded stat is unchanged in a %s',
+    async (kind) => {
+      const linked = kind === 'linked worktree'
+      const checkout = linked ? mkdtempSync(path.join(os.tmpdir(), 'harness-cp-linked-')) : repo
+      if (linked) git('worktree', 'add', '--detach', checkout, 'HEAD')
+      const inCheckout = (...args: string[]) =>
+        execFileSync('git', args, { cwd: checkout, windowsHide: true }).toString()
+      const tracked = path.join(checkout, 'tracked.txt')
+      // Revoking read access changes ctime, which git would otherwise compare.
+      git('config', 'core.trustctime', 'false')
+      utimesSync(tracked, settled, settled)
+      inCheckout('update-index', '--refresh')
+      chmodSync(tracked, 0o000)
+      writeFileSync(path.join(checkout, 'agent.txt'), 'agent edit\n')
+      try {
+        // Hashing every tracked file would have to open this one and fail.
+        const snapshot = await takeSnapshot(checkout)
+        expect(show(snapshot.commit, 'tracked.txt')).toBe('original\n')
+        expect(show(snapshot.commit, 'agent.txt')).toBe('agent edit\n')
+      } finally {
+        chmodSync(tracked, 0o644)
+        if (linked) {
+          git('worktree', 'remove', '--force', checkout)
+          rmSync(checkout, { recursive: true, force: true })
+        }
+      }
+    },
+  )
+
+  it('re-reads a same-size edit written in the tick its index was', async () => {
+    // Only the racy-entry check can see this edit: size, mtime and inode all match.
+    git('config', 'core.trustctime', 'false')
+    const tracked = path.join(repo, 'tracked.txt')
+    utimesSync(tracked, settled, settled)
+    git('update-index', '--refresh')
+    utimesSync(path.join(repo, '.git', 'index'), settled, settled)
+    write('tracked.txt', 'changed!\n')
+    utimesSync(tracked, settled, settled)
+
+    const snapshot = await takeSnapshot(repo)
+
+    expect(show(snapshot.commit, 'tracked.txt')).toBe('changed!\n')
+  })
+
+  it.each(['--assume-unchanged', '--skip-worktree'])(
+    'records working edits to a file marked %s and keeps the mark',
+    async (mark) => {
+      git('update-index', mark, 'tracked.txt')
+      const marks = git('ls-files', '-v')
+      write('tracked.txt', 'kept out of git status\n')
+
+      const snapshot = await takeSnapshot(repo)
+
+      // Trusting the mark would record HEAD here, and a restore would overwrite the edit.
+      expect(show(snapshot.commit, 'tracked.txt')).toBe('kept out of git status\n')
+      expect(git('ls-files', '-v')).toBe(marks)
+    },
+  )
+
+  it('records the working copy of a file staged and then edited again', async () => {
+    write('tracked.txt', 'staged\n')
+    git('add', 'tracked.txt')
+    write('tracked.txt', 'edited after staging\n')
+
+    const snapshot = await takeSnapshot(repo)
+
+    expect(show(snapshot.commit, 'tracked.txt')).toBe('edited after staging\n')
+    expect(git('diff', '--cached', '--name-only')).toBe('tracked.txt\n')
+  })
+
+  it('records conflict markers while the merge is still unresolved', async () => {
+    git('checkout', '-q', '-b', 'side')
+    write('tracked.txt', 'side\n')
+    git('commit', '-q', '-am', 'side')
+    git('checkout', '-q', 'main')
+    write('tracked.txt', 'main\n')
+    git('commit', '-q', '-am', 'main')
+    expect(() =>
+      execFileSync('git', ['merge', 'side'], { cwd: repo, stdio: 'ignore', windowsHide: true }),
+    ).toThrow()
+    const conflicted = read('tracked.txt')
+
+    const snapshot = await takeSnapshot(repo)
+
+    expect(show(snapshot.commit, 'tracked.txt')).toBe(conflicted)
+    expect(git('ls-files', '--unmerged')).not.toBe('')
   })
 })
 

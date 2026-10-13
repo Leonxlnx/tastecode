@@ -445,6 +445,16 @@ size or modification time changes.
 tools users already trust, identical across every engine. Non-git directories fall back to a
 content-addressed snapshot of touched files only.
 
+A snapshot stages the working tree into a temporary index seeded from a copy of the
+checkout's own index, reset to HEAD with `read-tree --reset -i`, so `add -A` re-reads only
+files whose stat data changed. The copy keeps the source index's timestamp, so git still
+re-checks racily clean entries. An index that marks any entry assume-unchanged or
+skip-worktree falls back to a plain `read-tree`, because `add -A` would trust the mark and
+record HEAD instead of the working file. _Rejected:_ a plain `read-tree` for every snapshot
+(no stat data, so every tracked file was hashed before each turn: `add -A` took 404 ms of a
+451 ms snapshot of a 2,487-file checkout) · listing changes with `git status` against the
+real index (it hides the same marked files and may lock the index the agent is using).
+
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well. Messages are indexed in
@@ -655,6 +665,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
 | 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
