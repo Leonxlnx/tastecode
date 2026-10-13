@@ -192,18 +192,21 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
-    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(dialog).queryByRole('region', { name: 'Plan limits' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Edit profile' })).toBeTruthy()
   })
 
-  it('shows Usage on the first menu render while limits are still loading', () => {
+  it('opens on the plan limits while they are still loading', () => {
     renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
 
     const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
-    const usage = within(dialog).getByRole('button', { name: 'Usage, Checking…' })
-    expect(dialog.firstElementChild?.contains(usage)).toBe(true)
-    expect(document.activeElement).toBe(usage)
+    const limits = within(dialog).getByRole('region', { name: 'Plan limits' })
+    expect(dialog.firstElementChild).toBe(limits)
+    expect(limits.getAttribute('aria-busy')).toBe('true')
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(document.activeElement).toBe(limits)
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
@@ -520,30 +523,29 @@ describe('Sidebar chat actions', () => {
     expect(accountDialog).toBeTruthy()
     expect(accountDialog.classList.contains('menu--compact')).toBe(true)
     expect(accountDialog.classList.contains('menu--settings')).toBe(true)
-    const usage = within(accountDialog).getByRole('button', { name: 'Usage, 15% left' })
-    expect(usage.getAttribute('aria-expanded')).toBe('false')
-    expect(within(accountDialog).getByText('15% left')).toBeTruthy()
-    expect(screen.queryByText('7 days')).toBeNull()
-    expect(document.activeElement).toBe(usage)
-
-    fireEvent.click(usage)
-    expect(usage.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('7 days')).toBeTruthy()
+    // The limits show straight away; there is no second "Usage … left" row
+    // repeating them under the list.
+    const limits = await within(accountDialog).findByRole('region', { name: 'Codex' })
+    expect(within(accountDialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(limits).getByText('7 days')).toBeTruthy()
+    expect(within(accountDialog).getAllByText('15% left')).toHaveLength(1)
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
-    expect(document.activeElement).toBe(usage)
+    expect(document.activeElement).toBe(
+      within(accountDialog).getByRole('region', { name: 'Plan limits' }),
+    )
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     const accountActions = screen
       .getAllByRole('button')
-      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
+      .filter((button) => ['Edit profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
     expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
     expect(
       within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Profile',
+        name: 'Edit profile',
       }),
     ).toBeTruthy()
     expect(
@@ -551,7 +553,7 @@ describe('Sidebar chat actions', () => {
         name: 'Settings',
       }),
     ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
 

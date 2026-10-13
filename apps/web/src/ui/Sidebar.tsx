@@ -29,7 +29,6 @@ import {
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
-  IconGauge as Gauge,
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
@@ -90,27 +89,23 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
 const AccountLimits = lazy(loadAccountLimits)
 
 function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
-  const summary = useRef<HTMLButtonElement>(null)
+  const panel = useRef<HTMLElement>(null)
   const visible = props.states.some(({ summary }) =>
     summary?.limitSource
       ? summary.limitSource.status !== 'unavailable'
       : !summary || summary.limits.length > 0,
   )
-  useLayoutEffect(() => summary.current?.focus(), [])
+  useLayoutEffect(() => panel.current?.focus(), [])
   if (!visible) return null
   return (
-    <section className="account-menu__usage" aria-label="Plan limits" aria-busy>
-      <button
-        ref={summary}
-        className="account-menu__usage-head"
-        type="button"
-        aria-label="Usage, Checking…"
-        aria-expanded={false}
-      >
-        <Gauge size={14} aria-hidden />
-        <span>Usage</span>
-        <span className="account-menu__usage-value">Checking…</span>
-      </button>
+    <section
+      ref={panel}
+      className="account-menu__usage"
+      aria-label="Plan limits"
+      aria-busy
+      tabIndex={0}
+    >
+      <p className="account-menu__usage-note">Checking plan limits…</p>
     </section>
   )
 }
@@ -953,7 +948,10 @@ function SidebarComponent(props: {
                           close()
                         }}
                       >
-                        <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
+                        <DialogAction
+                          icon={<UserRound size={14} aria-hidden />}
+                          title="Edit profile"
+                        />
                       </button>
                       <button
                         type="button"

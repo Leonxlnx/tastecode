@@ -5722,7 +5722,7 @@ describe('new chats', () => {
     render(<App />)
 
     fireEvent.click(await screen.findByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
 
     expect(await screen.findByRole('dialog', { name: 'Settings' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Profile' }).getAttribute('aria-current')).toBe(

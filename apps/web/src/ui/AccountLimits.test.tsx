@@ -40,16 +40,8 @@ function limits(
   return <AccountLimits states={[state]} onRetry={onRetry} onConsumeReset={onConsumeReset} />
 }
 
-function openUsage() {
-  const trigger = screen.getByRole('button', { name: /^Usage,/ })
-  fireEvent.click(trigger)
-  return trigger
-}
-
-function dispatchTransitionEnd(element: Element, propertyName: string) {
-  const event = new Event('transitionend', { bubbles: true })
-  Object.defineProperty(event, 'propertyName', { configurable: true, value: propertyName })
-  element.dispatchEvent(event)
+function statusOf(region: HTMLElement): HTMLElement | null {
+  return region.querySelector<HTMLElement>('.account-menu__source-status')
 }
 
 const resetLimit = {
@@ -69,7 +61,7 @@ const resetState: AccountLimitsState = {
 }
 
 describe('account limits', () => {
-  it('keeps provider details behind one compact usage row', () => {
+  it('shows every provider at once, with no summary row to expand', () => {
     render(
       <AccountLimits
         states={[
@@ -88,49 +80,14 @@ describe('account limits', () => {
       />,
     )
 
-    const trigger = screen.getByRole('button', { name: 'Usage, 88% left' })
-    expect(trigger.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.queryByRole('region', { name: 'Codex' })).toBeNull()
-    expect(document.activeElement).toBe(trigger)
-
-    fireEvent.click(trigger)
-    expect(trigger.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByRole('region', { name: 'Grok' })).toBeTruthy()
-    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
-    const details = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
-    expect(details?.getAttribute('data-open')).toBe('true')
-
-    fireEvent.click(trigger)
-    expect(details?.getAttribute('data-open')).toBe('false')
-    expect(details?.getAttribute('aria-hidden')).toBe('true')
-    expect(details?.hasAttribute('inert')).toBe(true)
-    expect(screen.queryByRole('region', { name: 'Codex' })).toBeNull()
-
-    act(() => dispatchTransitionEnd(details!, 'grid-template-rows'))
-    expect(details?.isConnected).toBe(true)
-
-    act(() => dispatchTransitionEnd(details!, 'opacity'))
-    expect(details?.isConnected).toBe(false)
-  })
-
-  it('reverses an unreveal without unmounting its details', () => {
-    render(
-      limits({
-        status: 'ready',
-        provider: 'codex',
-        summary: summary([{ label: 'Weekly', usedPercent: 30 }]),
-      }),
-    )
-
-    const trigger = openUsage()
-    const details = document.getElementById(trigger.getAttribute('aria-controls') ?? '')
-    fireEvent.click(trigger)
-    fireEvent.click(trigger)
-
-    expect(details?.getAttribute('data-open')).toBe('true')
-    act(() => dispatchTransitionEnd(details!, 'opacity'))
-    expect(details?.isConnected).toBe(true)
-    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(screen.getByRole('region', { name: 'Grok' })).getByText('90% left')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: 'Codex' })).getByText('88% left')).toBeTruthy()
+    const panel = screen.getByRole('region', { name: 'Plan limits' })
+    // The popup lands on the list, not on its first Retry or Use button.
+    expect(document.activeElement).toBe(panel)
+    expect(panel.tabIndex).toBe(0)
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
   })
 
   it('keeps ordered provider states and hides sources without limits', () => {
@@ -158,18 +115,50 @@ describe('account limits', () => {
         onRetry={vi.fn()}
       />,
     )
-    openUsage()
 
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
     ).toEqual(['Codex', 'Claude Code'])
-    expect(within(screen.getByRole('region', { name: 'Codex' })).getByText(/Checking/)).toBeTruthy()
-    expect(
-      within(screen.getByRole('region', { name: 'Claude Code' })).getByText(
-        'No plan limits reported.',
-      ),
-    ).toBeTruthy()
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))?.textContent).toBe('Checking…')
+    const claude = statusOf(screen.getByRole('region', { name: 'Claude Code' }))
+    expect(claude?.textContent).toBe('None reported. No plan limits reported.')
+    expect(claude?.title).toBe('No plan limits reported.')
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+  })
+
+  it('reports a failed provider as one muted line with a text Retry, never an alert', () => {
+    const onRetry = vi.fn()
+    render(
+      <AccountLimits
+        states={[
+          { status: 'error', provider: 'claude-code', message: 'Claude usage request failed.' },
+          {
+            status: 'ready',
+            provider: 'codex',
+            summary: summary([{ label: 'Weekly', usedPercent: 29 }]),
+          },
+        ]}
+        onRetry={onRetry}
+      />,
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    const status = statusOf(claude)!
+    // The reason is there for hover and assistive tech, not printed in the list.
+    expect(status.firstChild?.textContent).toBe('Unavailable')
+    expect(status.title).toBe('Plan limits couldn’t be loaded. Claude usage request failed.')
+    expect(status.querySelector('.visually-hidden')?.textContent).toContain(
+      'Claude usage request failed.',
+    )
+    expect(within(claude).queryByRole('progressbar')).toBeNull()
+
+    const retry = within(claude).getByRole('button', { name: 'Retry' })
+    expect(retry.getAttribute('aria-describedby')).toBe(status.id)
+    expect(retry.classList.contains('account-menu__retry')).toBe(true)
+    fireEvent.click(retry)
+    expect(onRetry).toHaveBeenCalledWith('claude-code')
+    expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Plan limits' }))
   })
 
   it('keeps last known values and retries each source independently', () => {
@@ -193,36 +182,36 @@ describe('account limits', () => {
         onRetry={onRetry}
       />,
     )
-    openUsage()
 
     expect(
       screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent),
     ).toEqual(['Codex', 'Claude Code', 'Grok'])
 
     const codex = screen.getByRole('region', { name: 'Codex' })
-    expect(within(codex).getByRole('alert').textContent).not.toContain('Last known values')
+    expect(statusOf(codex)?.firstChild?.textContent).toBe('Unavailable')
     fireEvent.click(within(codex).getByRole('button', { name: 'Retry' }))
     expect(onRetry).toHaveBeenCalledWith('codex')
 
+    // A refresh with values on screen is quiet: the values stay, nothing flickers.
     const claude = screen.getByRole('region', { name: 'Claude Code' })
     expect(within(claude).getByText('75% left')).toBeTruthy()
-    expect(within(claude).getByRole('status').textContent).toContain('Last known values')
+    expect(statusOf(claude)).toBeNull()
+    expect(claude.getAttribute('aria-busy')).toBe('true')
 
     const grok = screen.getByRole('region', { name: 'Grok' })
     const grokValue = within(grok).getByText('$8.24')
     expect(grokValue.classList.contains('account-menu__limit-value')).toBe(true)
-    expect(within(grok).getByRole('alert').textContent).toContain('Last known values')
+    expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
+    expect(statusOf(grok)?.title).toBe('Couldn’t refresh plan limits. Timed out')
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('distinguishes loading from an empty successful response', () => {
     const view = render(limits({ status: 'loading', provider: 'codex' }))
-    const trigger = openUsage()
-    expect(screen.getByRole('status').textContent).toContain('Checking plan limits')
-    expect(screen.getByRole('region', { name: 'Codex' })).toBeTruthy()
-    expect(document.activeElement).toBe(trigger)
-    expect(screen.getByRole('region', { name: 'Plan limits' }).getAttribute('aria-busy')).toBe(
-      'true',
-    )
+    const panel = screen.getByRole('region', { name: 'Plan limits' })
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))?.textContent).toBe('Checking…')
+    expect(document.activeElement).toBe(panel)
+    expect(panel.getAttribute('aria-busy')).toBe('true')
 
     view.rerender(
       limits({
@@ -234,8 +223,10 @@ describe('account limits', () => {
         },
       }),
     )
-    expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByText('No plan limits reported.')).toBeTruthy()
+    expect(screen.queryByText('Checking…')).toBeNull()
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))?.title).toBe(
+      'No plan limits reported.',
+    )
 
     view.rerender(limits({ status: 'ready', provider: 'claude-code', summary: summary() }))
     expect(screen.queryByRole('region', { name: 'Plan limits' })).toBeNull()
@@ -261,7 +252,6 @@ describe('account limits', () => {
       },
     }
     const view = render(limits(state))
-    openUsage()
 
     const codex = screen.getByRole('region', { name: 'Codex' })
     expect(within(codex).getByText('15% left')).toBeTruthy()
@@ -287,8 +277,7 @@ describe('account limits', () => {
         limits({ status: 'error', provider: 'grok', message: 'Offline', summary: emptySummary }),
       )
       expect(screen.queryByRole('alert')).toBeNull()
-      expect(screen.queryByText('No plan limits reported.')).toBeNull()
-      expect(screen.queryByText(/aren’t available/)).toBeNull()
+      expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
     }
   })
 
@@ -311,7 +300,6 @@ describe('account limits', () => {
         },
       }),
     )
-    openUsage()
 
     const epoch = screen.getByText('Epoch').closest('.account-menu__limit')
     const farFuture = screen.getByText('Far future').closest('.account-menu__limit')
@@ -338,7 +326,6 @@ describe('account limits', () => {
         summary: summary([{ ...resetLimit, valueLabel: '5 available', resetCredits: credits }]),
       }),
     )
-    openUsage()
 
     expect(
       within(screen.getByRole('region', { name: 'Codex' })).getByText('5 available'),
@@ -376,22 +363,19 @@ describe('account limits', () => {
     vi.useFakeTimers()
     const now = Date.UTC(2026, 8, 13, 12)
     vi.setSystemTime(now)
-    render(
+    const view = render(
       limits({
         status: 'ready',
         provider: 'codex',
         summary: summary([{ ...resetLimit, resetCredits: [{ expiresAt: now + 86_400_000 }] }]),
       }),
     )
-    const trigger = openUsage()
     const time = screen.getByRole('list').querySelector('time')!
     expect(time.hasAttribute('data-expiring-soon')).toBe(false)
 
     act(() => vi.advanceTimersByTime(60_000))
     expect(time.hasAttribute('data-expiring-soon')).toBe(true)
-    const details = document.getElementById(trigger.getAttribute('aria-controls')!)!
-    fireEvent.click(trigger)
-    act(() => dispatchTransitionEnd(details, 'opacity'))
+    view.unmount()
     expect(vi.getTimerCount()).toBe(0)
   })
 
@@ -409,7 +393,6 @@ describe('account limits', () => {
         ]),
       }),
     )
-    openUsage()
     expect(screen.getByText(/^Expired /).hasAttribute('data-expiring-soon')).toBe(false)
     expect(screen.getByText('Expiry date unavailable')).toBeTruthy()
   })
@@ -427,19 +410,21 @@ describe('account limits', () => {
         onRetry,
       ),
     )
-    const trigger = openUsage()
+    const panel = screen.getByRole('region', { name: 'Plan limits' })
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
 
-    expect(
-      within(screen.getByRole('region', { name: 'Claude Code' })).getByText('58% left'),
-    ).toBeTruthy()
-    expect(screen.getByRole('alert').textContent).toContain('Last known values are still shown')
-    expect(screen.getByRole('alert').textContent).toContain('Temporary connection failure')
+    expect(within(claude).getByText('58% left')).toBeTruthy()
+    expect(statusOf(claude)?.firstChild?.textContent).toBe('Last known')
+    expect(statusOf(claude)?.title).toBe(
+      'Couldn’t refresh plan limits. Temporary connection failure',
+    )
+    expect(screen.queryByRole('alert')).toBeNull()
     const retry = screen.getByRole('button', { name: 'Retry' })
     retry.focus()
     expect(document.activeElement).toBe(retry)
     fireEvent.click(retry)
     expect(onRetry).toHaveBeenCalledOnce()
-    expect(document.activeElement).toBe(trigger)
+    expect(document.activeElement).toBe(panel)
 
     view.rerender(
       limits(
@@ -451,7 +436,8 @@ describe('account limits', () => {
         onRetry,
       ),
     )
-    expect(document.activeElement).toBe(trigger)
+    expect(document.activeElement).toBe(panel)
+    expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
   })
 
   it('hides Use on ordinary quota rows and does not consume on the first press', async () => {
@@ -474,7 +460,6 @@ describe('account limits', () => {
         onConsumeReset,
       ),
     )
-    openUsage()
 
     const weekly = screen.getByText('Weekly').closest('.account-menu__limit') as HTMLElement
     expect(within(weekly).queryByRole('button', { name: 'Use rate limit reset' })).toBeNull()
@@ -515,7 +500,6 @@ describe('account limits', () => {
         onConsumeReset,
       ),
     )
-    openUsage()
 
     const heading = screen.getByText('Rate limit resets').parentElement!
     expect(within(heading).queryByRole('button')).toBeNull()
@@ -561,7 +545,6 @@ describe('account limits', () => {
         vi.fn(),
       ),
     )
-    openUsage()
     const rows = within(screen.getByRole('list')).getAllByRole('listitem')
     expect(within(rows[0]!).queryByRole('button')).toBeNull()
     expect(within(rows[1]!).queryByRole('button')).toBeNull()
@@ -579,7 +562,6 @@ describe('account limits', () => {
     )
     onConsumeReset.mockRejectedValueOnce(new Error('Still failing'))
     render(limits(resetState, () => {}, onConsumeReset))
-    openUsage()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     const confirm = screen.getByRole('button', { name: 'Confirm use rate limit reset' })
@@ -608,7 +590,6 @@ describe('account limits', () => {
   ] as const)('explains a %s consume outcome', async (outcome, message) => {
     const onConsumeReset = vi.fn(async () => ({ outcome }))
     render(limits(resetState, () => {}, onConsumeReset))
-    openUsage()
 
     fireEvent.click(screen.getByRole('button', { name: 'Use rate limit reset' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirm use rate limit reset' }))

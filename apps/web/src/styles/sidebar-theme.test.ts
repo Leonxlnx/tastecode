@@ -155,7 +155,7 @@ describe('sidebar theme CSS', () => {
     )
     expect(appCss).toMatch(/\.menu--compact \{[^}]*gap: 0;[^}]*padding: 3px;/s)
     expect(accountLimitsCss).toMatch(
-      /\.account-menu__usage-details \{[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;[^}]*scrollbar-gutter: stable;/s,
+      /\.account-menu__usage \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto;[^}]*overscroll-behavior: contain;/s,
     )
     expect(appCss).toMatch(
       /\.account-menu__actions \{[^}]*flex: none;[^}]*gap: 0;[^}]*padding-top: 0;/s,
@@ -163,9 +163,9 @@ describe('sidebar theme CSS', () => {
     expect(appCss).toMatch(/\.menu--settings \.menu__item \{[^}]*padding: 4px 6px;/s)
   })
 
-  it('uses the same quiet type as the other account menu rows', () => {
+  it('names each provider group in the same quiet type as the account menu', () => {
     expect(accountLimitsCss).toMatch(
-      /\.account-menu__usage-head \{[^}]*font-weight: 460;[^}]*letter-spacing: -0\.006em;/s,
+      /\.account-menu__source h3 \{[^}]*color: var\(--text\);[^}]*font-size: var\(--t-xs\);[^}]*font-weight: 560;/s,
     )
   })
 

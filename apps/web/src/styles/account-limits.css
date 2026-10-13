@@ -1,141 +1,54 @@
+/* Plan limits sit in one soft well above the account actions, grouped by
+   provider and separated by space instead of rules. The well scrolls on its
+   own so Edit profile and Settings stay pinned beside the card. */
 .account-menu__usage {
+  flex: 0 1 auto;
   min-height: 0;
+  max-height: min(360px, calc(100vh - 150px));
   display: grid;
-  gap: 0;
-  font-size: var(--t-xs);
-  color: var(--text-2);
-  padding: 0 0 2px;
-  border-bottom: 1px solid var(--menu-line);
-  margin-bottom: 2px;
-}
-
-.account-menu__usage-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 26px;
-  padding: 4px 6px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--text);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-  font-weight: 460;
-  letter-spacing: -0.006em;
-  line-height: 1.3;
-  text-align: left;
-  transition:
-    background var(--dur-fast) var(--ease-out),
-    border-color var(--dur-fast) var(--ease-out),
-    box-shadow var(--dur-fast) var(--ease-out);
-}
-
-.account-menu__usage-head:hover {
-  background: var(--menu-hover);
-  border-color: transparent;
-  box-shadow: none;
-}
-
-.account-menu__usage-head:focus-visible {
-  background: var(--menu-hover);
-  border-color: var(--text-2);
-  box-shadow: none;
-  outline: 0;
-}
-
-.account-menu__usage-head svg {
-  flex: none;
-  width: 13px;
-  height: 13px;
-  color: var(--text-3);
-}
-
-.account-menu__usage-value {
-  margin-left: auto;
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-  font-weight: 400;
-  letter-spacing: 0;
-  white-space: nowrap;
-}
-
-.account-menu__usage-reveal {
-  /* The popup is anchored to its bottom edge. Reveal details above the
-     summary so Usage stays beside the fixed Profile and Settings actions. */
-  order: -1;
-  min-height: 0;
-  display: grid;
-  grid-template-rows: 1fr;
-  opacity: 1;
-  transition:
-    grid-template-rows var(--dur-slow) var(--ease-out),
-    opacity var(--dur-slow) var(--ease-out);
-}
-
-.account-menu__usage-reveal[data-open='false'] {
-  grid-template-rows: 0fr;
-  opacity: 0;
-  pointer-events: none;
-}
-
-@starting-style {
-  .account-menu__usage-reveal {
-    grid-template-rows: 0fr;
-    opacity: 0;
-  }
-}
-
-.account-menu__usage-reveal-clip {
-  min-height: 0;
-  overflow: hidden;
-}
-
-.account-menu__usage-details {
-  min-height: 0;
-  display: grid;
-  gap: 0;
-  max-height: min(340px, calc(100vh - 160px));
+  align-content: start;
+  gap: 14px;
+  margin-bottom: 4px;
+  padding: 10px 10px 12px;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  margin: 0 7px 3px;
-  padding: 6px 0 9px;
-  border-bottom: 1px solid var(--line-strong);
+  scrollbar-width: thin;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--text) 4%, var(--menu-bg));
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  line-height: 1.3;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .account-menu__usage-reveal {
-    transition: opacity var(--dur-fast) var(--ease-out) !important;
-  }
+.account-menu__usage:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .account-menu__usage-note {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
   margin: 0;
   color: var(--text-3);
-  line-height: 1.35;
 }
 
 .account-menu__source {
   display: grid;
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
 
-.account-menu__source + .account-menu__source {
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid var(--line-strong);
+.account-menu__source-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 18px;
 }
 
 .account-menu__source h3 {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   margin: 0;
   color: var(--text);
   font-size: var(--t-xs);
@@ -143,55 +56,60 @@
   line-height: 1.3;
 }
 
+.account-menu__source h3 > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .account-menu__source h3 svg {
+  flex: none;
   width: 13px;
   height: 13px;
 }
 
-.account-menu__usage-error {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: start;
-  gap: 7px;
-  color: var(--error);
-}
-
-.account-menu__usage-error span,
-.account-menu__usage-error small {
-  display: block;
-}
-
-.account-menu__usage-error small {
-  margin-top: 2px;
+/* One muted word, never an alert colour: a provider that cannot report is a
+   missing number, not something that went wrong for the person. */
+.account-menu__source-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
   color: var(--text-3);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.account-menu__usage-error button {
-  align-self: center;
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  background: var(--chrome-raised);
-  color: inherit;
+.account-menu__retry {
+  flex: none;
+  margin: -2px -5px -2px -1px;
+  padding: 2px 5px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
   cursor: pointer;
   font: inherit;
-  padding: 2px 6px;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.account-menu__retry:hover {
+  background: var(--menu-hover);
+  color: var(--text);
 }
 
 .account-menu__limit {
   display: grid;
-  gap: 4px;
-}
-
-.account-menu__limit-skeleton {
-  display: grid;
-  gap: 7px;
+  gap: 5px;
 }
 
 .account-menu__limit-row {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  gap: 6px;
+  align-items: baseline;
+  gap: 8px;
   min-height: 16px;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
@@ -199,35 +117,35 @@
 
 .account-menu__limit-label {
   min-width: 0;
-  color: var(--text);
-  font-weight: 520;
+  color: var(--text-2);
 }
 
 .account-menu__limit-value {
   flex: none;
-  color: var(--text-2);
+  color: var(--text);
   white-space: nowrap;
 }
 
 .account-menu__limit-btn {
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  background: var(--chrome-raised);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
   color: var(--text);
   cursor: pointer;
   font: inherit;
   line-height: 1.3;
-  padding: 1px 6px;
+  padding: 2px 7px;
 }
 
 .account-menu__limit-btn:hover:not(:disabled),
 .account-menu__limit-btn:focus-visible {
-  background: var(--control-hover);
+  background: color-mix(in srgb, var(--text) 13%, transparent);
 }
 
+.account-menu__retry:focus-visible,
 .account-menu__limit-btn:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .account-menu__limit-btn:disabled {
@@ -284,10 +202,12 @@
   font-size: var(--t-xs);
 }
 
+/* A full allowance is a long bar, so it has to stay quiet: a mid-tone fill
+   on a faint track, never a bright rule across the well. */
 .account-menu__limit-bar {
-  height: 3px;
+  height: 4px;
   border-radius: var(--r-pill);
-  background: var(--surface-3);
+  background: color-mix(in srgb, var(--text) 9%, transparent);
   overflow: hidden;
 }
 
@@ -295,7 +215,7 @@
   display: block;
   height: 100%;
   border-radius: inherit;
-  background: var(--running);
+  background: color-mix(in srgb, var(--text) 52%, transparent);
 }
 
 .account-menu__limit-bar > span[data-low] {
