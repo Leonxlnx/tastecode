@@ -209,6 +209,46 @@ describe('Sidebar chat actions', () => {
     expect(document.activeElement).toBe(limits)
   })
 
+  it('labels the card meter with its provider and drops it while a provider has failed', () => {
+    const totals = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const ready = (
+      provider: AccountLimitsState['provider'],
+      usedPercent: number,
+    ): AccountLimitsState => ({
+      provider,
+      status: 'ready',
+      summary: {
+        session: totals,
+        today: totals,
+        limits: [],
+        limitSource: { provider, status: 'ready', limits: [{ label: 'Weekly', usedPercent }] },
+      },
+    })
+    const meter = () => document.querySelector<HTMLElement>('.account__usage')
+    const view = renderProjectCatalog([], undefined, [ready('codex', 0), ready('grok', 40)])
+
+    // The tightest limit wins and says whose it is.
+    expect(meter()?.title).toBe('Grok · Weekly · 60% left')
+    expect(meter()?.querySelector('.account__usage-value')?.textContent).toBe('60% left')
+    expect(meter()?.querySelector('svg.account__usage-mark')).not.toBeNull()
+
+    // A provider that failed with nothing on record might be the tighter one,
+    // so a full bar for the others would be a false all-clear.
+    view.unmount()
+    renderProjectCatalog([], undefined, [
+      ready('codex', 0),
+      { provider: 'claude-code', status: 'error', message: 'Claude usage request failed.' },
+    ])
+    expect(meter()).toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+  })
+
   it('mounts a large project catalog in bounded idle batches', () => {
     const callbacks = controlledIdleCallbacks()
     const projects = Array.from({ length: 100 }, (_, index) => ({
@@ -504,8 +544,9 @@ describe('Sidebar chat actions', () => {
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
     expect(accountTrigger.querySelector('.account__usage-value')?.textContent).toBe('15% left')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
-      '15% left · codex · 7 days',
+      'Codex · 7 days · 15% left',
     )
+    expect(accountTrigger.querySelector('.account__usage .account__usage-mark')).not.toBeNull()
     expect(
       accountTrigger.querySelector<HTMLElement>('.account__meter > span')?.style.transform,
     ).toBe('scaleX(0.15)')

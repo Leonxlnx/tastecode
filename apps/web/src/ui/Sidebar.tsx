@@ -55,7 +55,11 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { providerPresentation } from '../provider-presentation.js'
+import {
+  providerDisplayName,
+  providerMark,
+  providerPresentation,
+} from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { sidebarRail } from '../sidebar-order.js'
 import {
@@ -247,23 +251,9 @@ function SidebarComponent(props: {
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
-  const usageLimit = (props.usageStates ?? [])
-    .flatMap((state) => {
-      const source = state.summary?.limitSource
-      const limits = source
-        ? source.status === 'ready'
-          ? source.limits
-          : []
-        : (state.summary?.limits ?? [])
-      return limits.map((limit) => ({ ...limit, provider: state.provider }))
-    })
-    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
-    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
-      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
-      undefined,
-    )
+  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
   const usageRemaining = usageLimit
-    ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
+    ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
   useEffect(() => {
     void loadAccountLimits()
@@ -907,8 +897,13 @@ function SidebarComponent(props: {
                     {usageLimit && usageRemaining !== undefined ? (
                       <span
                         className="account__usage"
-                        title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
+                        title={`${providerDisplayName(usageLimit.provider)} · ${usageLimit.label} · ${usageRemaining}% left`}
                       >
+                        <ProviderIcon
+                          className="account__usage-mark"
+                          mark={providerMark(usageLimit.provider)}
+                          size={12}
+                        />
                         <span
                           className="account__meter"
                           data-low={usageRemaining <= USAGE_LOW_PERCENT ? '' : undefined}
@@ -916,9 +911,7 @@ function SidebarComponent(props: {
                         >
                           <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
                         </span>
-                        <span className="account__usage-value">
-                          {Math.round(usageRemaining)}% left
-                        </span>
+                        <span className="account__usage-value">{usageRemaining}% left</span>
                       </span>
                     ) : null}
                   </span>
@@ -2056,6 +2049,35 @@ function displayName(project: Project): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+type CardUsageLimit = { provider: ProviderId; label: string; usedPercent: number }
+
+/**
+ * The card's one usage figure: the tightest percentage limit any provider
+ * reports, shown with that provider's mark so it says what it measures. A
+ * provider whose read failed with nothing on record could be the tighter one,
+ * so the card then shows no figure rather than a reassuring "100% left".
+ */
+function tightestUsageLimit(
+  states: readonly AccountLimitsState[] | undefined,
+): CardUsageLimit | undefined {
+  let tightest: CardUsageLimit | undefined
+  for (const state of states ?? []) {
+    if (state.status === 'error' && !state.summary) return undefined
+    const source = state.summary?.limitSource
+    const limits = source
+      ? source.status === 'ready'
+        ? source.limits
+        : []
+      : (state.summary?.limits ?? [])
+    for (const limit of limits) {
+      if (limit.valueLabel !== undefined || !Number.isFinite(limit.usedPercent)) continue
+      if (tightest && limit.usedPercent <= tightest.usedPercent) continue
+      tightest = { provider: state.provider, label: limit.label, usedPercent: limit.usedPercent }
+    }
+  }
+  return tightest
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {
