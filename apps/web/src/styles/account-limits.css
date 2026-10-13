@@ -82,7 +82,8 @@
 
 .account-menu__retry {
   flex: none;
-  margin: -2px -5px -2px -1px;
+  /* Pulled flush right, with room on the left for the focus ring. */
+  margin: -2px -5px -2px 2px;
   padding: 2px 5px;
   background: none;
   border: 0;
