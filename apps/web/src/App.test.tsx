@@ -14,7 +14,7 @@ import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
-import type { ModelChoice } from './model-catalog.js'
+import { MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
 import { IndeterminateRequestError, type ConnectionState } from './transport.js'
@@ -1830,6 +1830,68 @@ describe('web client', () => {
     )
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('6')
   })
+
+  it.each([
+    ['a listed record', '["codex:gpt-6.1-sol","claude-code:opus"]', ['claude-code:claude-opus-5']],
+    ['no listed record', null, []],
+  ])(
+    'gives an older model a saved profile never listed its default with %s',
+    async (_label, listed, expectedHidden) => {
+      localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
+      localStorage.setItem('harness.hiddenModels', '[]')
+      if (listed) localStorage.setItem('harness.listedModels', listed)
+      serverProviders = [
+        ...serverProviders,
+        {
+          id: 'claude-code',
+          displayName: 'Claude Code',
+          installed: true,
+          auth: 'authenticated',
+          capabilities: {
+            steer: false,
+            fork: false,
+            interrupt: true,
+            reasoningItems: true,
+            approvals: false,
+            images: false,
+          },
+        },
+      ]
+      const listedModel = (id: string) => ({
+        id,
+        displayName: id,
+        isDefault: false,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      })
+      const request = transport.request.getMockImplementation()
+      if (!request) throw new Error('missing request mock')
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        return Promise.resolve({
+          models:
+            methods['models.list'].params.parse(params).provider === 'claude-code'
+              ? ['opus', 'claude-opus-5'].map(listedModel)
+              : [listedModel('gpt-6.1-sol')],
+        })
+      })
+
+      render(<App />)
+
+      // Without a record, Opus 5 may be a model the user turned on, so only
+      // the record is written; with one, the unlisted Opus 5 starts hidden.
+      await waitFor(() =>
+        expect(JSON.parse(localStorage.getItem('harness.listedModels') ?? '[]')).toEqual([
+          'codex:gpt-6.1-sol',
+          'claude-code:opus',
+          'claude-code:claude-opus-5',
+        ]),
+      )
+      expect(JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]')).toEqual(
+        expectedHidden,
+      )
+    },
+  )
 
   it('explains project loading failures and recovers after reconnect', async () => {
     const request = transport.request.getMockImplementation()

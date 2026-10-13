@@ -68,6 +68,21 @@ export function modelVisibleByDefault(model: Model): boolean {
 }
 
 /**
+ * Choices a saved profile has never listed and that start hidden. A model can
+ * appear long after the profile was set up: a newly installed provider, or an
+ * older catalog row that an alias used to stand in for. Without a record of the
+ * listed keys, a new model cannot be told apart from one the user turned on, so
+ * nothing is returned.
+ */
+export function unlistedHiddenModels(
+  choices: readonly ModelChoice[],
+  listed: ReadonlySet<string> | null,
+): ModelChoice[] {
+  if (!listed) return []
+  return choices.filter((choice) => !listed.has(choice.key) && !modelVisibleByDefault(choice.model))
+}
+
+/**
  * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
  * above changes for models a saved profile already lists.
  */
