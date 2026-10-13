@@ -63,6 +63,12 @@ describe('focus outline', () => {
     )
   })
 
+  it('rings the effort pill with the shared token on keyboard focus', () => {
+    expect(modelSelectorMenuCss).toMatch(
+      /\.model-selector__slider:focus-visible:not\(\[data-focus-source='pointer'\]\) \{\s*outline: var\(--focus-ring\);\s*outline-offset: var\(--focus-ring-offset\);/s,
+    )
+  })
+
   it('rings the account card and its gear with the shared token', () => {
     // The card sits in the rail foot with room around it, so its ring draws
     // outside like any standalone control, in the same colour as every other.
