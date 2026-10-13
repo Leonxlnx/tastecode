@@ -219,10 +219,12 @@
   container-type: inline-size;
 }
 
+/* clip, not hidden: a hidden box is still a scroll container, and the lit
+   dots overflow the fill by up to the whole travel. */
 .model-selector__slider-clip {
   position: absolute;
   inset: 0;
-  overflow: hidden;
+  overflow: clip;
   border-radius: var(--r-pill);
 }
 
@@ -258,7 +260,7 @@
   inset-block: 0;
   left: calc(-1 * var(--effort-thumb));
   width: calc(100% + var(--effort-thumb));
-  overflow: hidden;
+  overflow: clip;
   border-radius: var(--r-pill);
   background: var(--effort-fill);
   transform: translateX(calc((var(--effort-p) - 1) * var(--effort-travel)));
