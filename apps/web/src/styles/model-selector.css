@@ -47,8 +47,30 @@
   font-size: var(--t-md);
 }
 
+/* One dot per level the model offers, filled through the current one: the
+   effort pill in miniature. */
+.model-selector__trigger-level {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  margin-left: 2px;
+}
+
+.model-selector__trigger-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--r-circle);
+  background: var(--effort-mark-empty);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.model-selector__trigger-dot.is-filled {
+  background: var(--effort-mark-filled);
+}
+
 .model-selector__trigger-effort {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--t-md);
 }
 

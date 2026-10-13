@@ -353,6 +353,12 @@ describe('ModelSelector', () => {
 
   it('previews a hovered level with a ring and names the default', async () => {
     const { onEffortChange } = renderSelector({ effort: 'high' })
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(
+      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
+        mark.classList.contains('is-filled'),
+      ),
+    ).toEqual([true, true, true, false])
 
     await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
@@ -415,6 +421,14 @@ describe('ModelSelector', () => {
         onServiceTierChange={vi.fn()}
       />,
     )
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    const marks = () =>
+      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
+        mark.classList.contains('is-filled'),
+      )
+    expect(marks()).toEqual([true, true, true, true, true, true])
+    expect(trigger.textContent).toContain('Ultra')
 
     await openSelector()
     const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
