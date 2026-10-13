@@ -291,7 +291,13 @@ export const TerminalPane = memo(function TerminalPane(props: TerminalPaneProps)
           lastResize = current ? undefined : openedSize
           setStatus({ state: 'open' })
           if (activeRef.current) {
-            instance.focus()
+            // A chat switch or a reconnect attaches a new shell while the user
+            // is already typing elsewhere, usually in the composer. Take focus
+            // only when nothing else holds it or it is already in this pane.
+            const focused = document.activeElement
+            if (!focused || focused === document.body || pane.current?.contains(focused)) {
+              instance.focus()
+            }
             scheduleFit()
           }
         })
