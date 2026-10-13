@@ -1304,6 +1304,17 @@ export function App() {
     },
     [publishComposerDraft],
   )
+  // Editing a queued prompt removes it before the composer takes it back. If
+  // the user switched chats meanwhile, the prompt returns to its own chat.
+  const keepQueuedEdit = useCallback(
+    (removed: Promise<RecoverableDraft | undefined>) => {
+      const owner = threadController.draftOwner
+      void removed.then((prompt) => {
+        if (prompt) restoreRejectedDraft(owner, prompt)
+      })
+    },
+    [restoreRejectedDraft],
+  )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
   // What the sidebar shows. Navigation picks from this list so it never
@@ -1874,6 +1885,23 @@ export function App() {
         }
         return result
       }
+      // A profile without saved visibility gets its curated defaults below,
+      // once every direct source has answered. Until then, hide each source's
+      // older models as soon as that source answers, so a picker opened during
+      // discovery never lists a model it is about to drop. Nothing is saved
+      // here: the first full catalog still decides and persists the profile.
+      const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
+        if (cancelled || modelVisibilityInitialized.current) return
+        const current = hiddenModelsRef.current
+        const additions = models.filter(
+          (choice) => !modelVisibleByDefault(choice.model) && !current.has(choice.key),
+        )
+        if (additions.length === 0) return
+        const next = new Set(current)
+        for (const choice of additions) next.add(choice.key)
+        hiddenModelsRef.current = next
+        setHiddenModels(next)
+      }
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
@@ -1883,6 +1911,7 @@ export function App() {
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
+              hideDefaultHiddenModels(preserved)
               return settleSource(source, {
                 provider: entry.id,
                 discovered: false,
@@ -1900,13 +1929,13 @@ export function App() {
                 result.models,
                 false,
               )
-              return models.length > 0
-                ? settleSource(sourceKey({ provider: entry.id }), {
-                    provider: entry.id,
-                    discovered: true,
-                    models,
-                  })
-                : preserveCatalog()
+              if (models.length === 0) return preserveCatalog()
+              hideDefaultHiddenModels(models)
+              return settleSource(sourceKey({ provider: entry.id }), {
+                provider: entry.id,
+                discovered: true,
+                models,
+              })
             } catch (cause) {
               discoveryErrors[sourceKey({ provider: entry.id })] = {
                 id: `models:${entry.id}:${catalogRequest}`,
@@ -3981,6 +4010,9 @@ export function App() {
       } else {
         setThread(emptyThread)
       }
+      // A chat that is still starting only has a local id the server does not
+      // know, so asking for its history fails. The start adopts the real id.
+      if (id.startsWith('pending:')) return
 
       setLoadingThreadId(id)
       try {
@@ -4789,6 +4821,12 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
+  // The bottom panel unmounts while no project is active and forgets which
+  // toggle it last handled. Without this reset it would treat the old count as
+  // a new toggle on remount and open a terminal nobody asked for.
+  useEffect(() => {
+    if (!activePath) setBottomTerminalToggleRequest(0)
+  }, [activePath])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
@@ -4850,6 +4888,9 @@ export function App() {
     const model = selectedModelChoice?.model
     const fast = getFastServiceTier(model)
     if (!fast) return
+    // Save it to the open chat like the picker does, or the chat's saved tier
+    // comes back the next time it is opened.
+    pendingThreadModelSave.current = activeIdRef.current
     setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
   }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
@@ -5511,6 +5552,7 @@ export function App() {
                       onDraftChange={updateComposerDraftText}
                       onAttachmentsChange={updateComposerDraftAttachments}
                       onPendingAttachment={keepPendingAttachment}
+                      onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}

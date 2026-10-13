@@ -21,6 +21,8 @@ const state = vi.hoisted(() => ({
   historyLoads: [] as string[],
   failGrokHistory: false,
   failHistoryService: false,
+  historyRewritten: false,
+  historyReads: [] as number[],
 }))
 const temporary: string[] = []
 
@@ -41,6 +43,12 @@ vi.mock('./store.js', () => ({
     threadApproval() {
       return undefined
     }
+    providerHistoryChangedAfter() {
+      return false
+    }
+    historyRewrittenAfter() {
+      return state.historyRewritten
+    }
     close() {}
   },
 }))
@@ -60,6 +68,14 @@ vi.mock('./orchestrator.js', () => ({
     historyPage(threadId: string, page: unknown) {
       return state.historyPage(threadId, page) as unknown
     }
+    async historyForResponse(_threadId: string, afterSeq: number) {
+      state.historyReads.push(afterSeq)
+      return { events: [] }
+    }
+    async restoreCheckpoint() {
+      return { undo: 'undo-token' }
+    }
+    async undoRestore() {}
     isTurnRunning() {
       return true
     }
@@ -127,6 +143,8 @@ afterEach(async () => {
   state.historyLoads.length = 0
   state.failGrokHistory = false
   state.failHistoryService = false
+  state.historyRewritten = false
+  state.historyReads.length = 0
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -523,5 +541,58 @@ describe('unavailable provider history', () => {
     expect(
       await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
     ).toMatchObject({ error: { message: 'history service failed' } })
+  })
+})
+
+describe('checkpoint restores across clients', () => {
+  async function connect(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: unknown[] = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    return { client, messages }
+  }
+
+  it.each([
+    { method: 'thread.restore', params: { threadId: 't', checkpointId: 7 } },
+    { method: 'thread.undoRestore', params: { threadId: 't', undo: 'undo-token' } },
+  ])('tells every client to reload the chat after $method', async ({ method, params }) => {
+    const { port } = await listen()
+    const restorer = await connect(port)
+    const viewer = await connect(port)
+    try {
+      restorer.client.send(JSON.stringify({ id: 'restore', method, params }))
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'providerHistory.changed',
+            data: { threadIds: ['t'] },
+          }),
+        ),
+      )
+    } finally {
+      restorer.client.terminate()
+      viewer.client.terminate()
+    }
+  })
+
+  it('resets an incremental history read whose cursor saw removed events', async () => {
+    state.historyRewritten = true
+    const { port } = await listen()
+    const reader = await connect(port)
+    try {
+      reader.client.send(
+        JSON.stringify({
+          id: 'history',
+          method: 'thread.history',
+          params: { threadId: 't', afterSeq: 120 },
+        }),
+      )
+      await vi.waitFor(() => expect(reader.messages).toHaveLength(2))
+      expect(reader.messages[1]).toMatchObject({ id: 'history', result: { reset: true } })
+      expect(state.historyReads).toEqual([0])
+    } finally {
+      reader.client.terminate()
+    }
   })
 })

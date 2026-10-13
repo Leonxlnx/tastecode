@@ -222,6 +222,13 @@ function applyClaudeTurnOptions(
   return merged
 }
 
+/** claude 2.1.296 fails `--resume` of an id it has no transcript for with this result. */
+function isMissingClaudeConversation(error: unknown): boolean {
+  return /No conversation found with session ID/i.test(
+    error instanceof Error ? error.message : String(error),
+  )
+}
+
 type ImageMediaType = 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
 
 const IMAGE_MIME_TYPES = new Map<string, ImageMediaType>([
@@ -693,15 +700,28 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
-    const starting = this.#startQuery(resume ? sessionId : undefined).catch(
-      async (error: unknown) => {
+    const starting = this.#startQuery(resume ? sessionId : undefined)
+      .catch(async (error: unknown) => {
+        if (!resume || this.#disposed || !isMissingClaudeConversation(error)) throw error
+        // A session whose first prompt never reached the CLI has no transcript,
+        // so --resume can never succeed. Create it under the same id instead.
+        this.#log(`Claude session ${sessionId} has no transcript yet; creating it`)
+        // A new generation keeps the failed query's late end from reporting a disconnect.
+        this.#queryGeneration += 1
+        this.#promptQueue?.close()
+        this.#query?.close()
+        this.#promptQueue = undefined
+        this.#query = undefined
+        this.#resumeOnRestart = false
+        await this.#startQuery(undefined)
+      })
+      .catch(async (error: unknown) => {
         const message = this.#redactor.redact(
           error instanceof Error ? error.message : String(error),
         )
         await this.dispose()
         throw new Error(message)
-      },
-    )
+      })
     this.#starting = starting
     try {
       await starting

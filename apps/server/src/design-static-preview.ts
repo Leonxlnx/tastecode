@@ -131,7 +131,10 @@ export async function startStaticDesignPreview(
       headers: { connection: 'close' },
       signal: AbortSignal.timeout(1_000),
     })
-    if (!response.ok || response.headers.get(STATIC_PREVIEW_HEADER) !== previewId) {
+    const owned = response.headers.get(STATIC_PREVIEW_HEADER) === previewId
+    // The server refuses an entry page over the markup limit before reading it.
+    if (owned && response.status === 413) throw new Error('static preview HTML is too large')
+    if (!response.ok || !owned) {
       throw new Error('TasteCode static preview ownership check failed')
     }
     assertMarkupResources(realRoot, { ...plan, url }, await response.text())

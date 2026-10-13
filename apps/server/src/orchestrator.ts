@@ -1889,7 +1889,7 @@ export class Orchestrator {
     if (this.#panicStopping) throw new Error('turn cancelled by panic stop')
     const approvalChange = this.#approvalChanges.get(threadId)
     if (approvalChange) await approvalChange.catch(() => undefined)
-    await this.#ensureThread(threadId)
+    await this.#ensureThread(threadId, options)
     if (panicGeneration !== this.#panicGeneration || disposeGeneration !== this.#disposeGeneration)
       throw new Error('turn cancelled by panic stop or shutdown')
     if (clientSubmissionId) this.#assertFreshSubmissionId(threadId, clientSubmissionId)
@@ -1940,8 +1940,20 @@ export class Orchestrator {
     const session = this.#threads.get(threadId)?.session
     return {
       items: this.#queueEntries(threadId).map((item) => this.#publicQueuedTurn(item)),
-      canSteer: session?.capabilities.steer === true && session.steer !== undefined,
+      canSteer:
+        !this.#designOwnsThread(threadId) &&
+        session?.capabilities.steer === true &&
+        session.steer !== undefined,
     }
+  }
+
+  /**
+   * Design phase turns must answer in their JSON protocol, so prompts typed
+   * during a run wait in the queue until the run finishes instead of being
+   * steered into a phase turn.
+   */
+  #designOwnsThread(threadId: string): boolean {
+    return this.#designFlows.has(threadId) || this.#designStartingThreads.has(threadId)
   }
 
   deleteQueuedTurn(threadId: string, queuedTurnId: string): void {
@@ -1969,6 +1981,9 @@ export class Orchestrator {
   async steerQueuedTurn(threadId: string, queuedTurnId: string): Promise<void> {
     const session = this.#get(threadId).session
     if (!this.#activeTurns.has(threadId)) throw new Error('there is no running turn to steer')
+    if (this.#designOwnsThread(threadId)) {
+      throw new Error('queued prompts wait until the Design run finishes')
+    }
     if (!session.capabilities.steer || !session.steer) {
       throw new Error('this agent does not support steering a running turn')
     }
@@ -3256,8 +3271,11 @@ export class Orchestrator {
     // a disconnect does, or it stays hidden until a restart runs it.
     const draining = this.#drainingQueues.get(threadId)
     if (draining) this.#store.restoreQueuedTurn(threadId, draining.queueId)
+    // The same goes for a Design run: suspend a live one, as a disconnect
+    // does, and keep a saved one so `continue` resumes it after re-adding.
+    if (this.#designFlows.has(threadId)) this.#suspendDesignFlow(threadId)
     const sideThreadId = this.#sideThreads.get(threadId)
-    const runtimeDisposed = this.#disposeThreadRuntime(threadId)
+    const runtimeDisposed = this.#disposeThreadRuntime(threadId, 'close', true)
     this.#recordedDeltas.flush(threadId)
     await Promise.all([
       sideThreadId ? this.closeSideThread(sideThreadId) : undefined,
@@ -3315,7 +3333,11 @@ export class Orchestrator {
     return this.#store.thread(threadId)?.ephemeral === true
   }
 
-  #disposeThreadRuntime(threadId: string, reason: 'close' | 'disconnect' = 'close'): Promise<void> {
+  #disposeThreadRuntime(
+    threadId: string,
+    reason: 'close' | 'disconnect' = 'close',
+    keepDesignRun = false,
+  ): Promise<void> {
     this.#runtimeGenerations.set(threadId, (this.#runtimeGenerations.get(threadId) ?? 0) + 1)
     const terminalsClosed =
       reason === 'close'
@@ -3355,7 +3377,7 @@ export class Orchestrator {
     this.#queuedTurns.delete(threadId)
     this.#emptyQueuedTurns.delete(threadId)
     this.#drainingQueues.delete(threadId)
-    if (reason === 'close') this.#clearDesignFlow(threadId)
+    if (reason === 'close' && !keepDesignRun) this.#clearDesignFlow(threadId)
     return Promise.all([terminalsClosed, previewStopped, providerStopped]).then(() => undefined)
   }
 
@@ -3563,13 +3585,14 @@ export class Orchestrator {
     return entry
   }
 
-  async #ensureThread(threadId: string): Promise<void> {
+  /** `turnOptions` are the model options of the turn that needs the runtime, if any. */
+  async #ensureThread(threadId: string, turnOptions: TurnOptions = {}): Promise<void> {
     if (this.#stoppingSessions.has(threadId)) await this.#stopThreadProvider(threadId)
     if (this.#threads.has(threadId)) return
     const existing = this.#resumingThreads.get(threadId)
     if (existing) return existing
 
-    const pending = this.#resumeThread(threadId).finally(() => {
+    const pending = this.#resumeThread(threadId, turnOptions).finally(() => {
       if (this.#resumingThreads.get(threadId) === pending) this.#resumingThreads.delete(threadId)
       this.#pruneIdleThreadRuntimes()
     })
@@ -3577,7 +3600,7 @@ export class Orchestrator {
     return pending
   }
 
-  async #resumeThread(threadId: string): Promise<void> {
+  async #resumeThread(threadId: string, turnOptions: TurnOptions): Promise<void> {
     const generation = this.#runtimeGenerations.get(threadId) ?? 0
     const disposeGeneration = this.#disposeGeneration
     const panicGeneration = this.#panicGeneration
@@ -3606,6 +3629,11 @@ export class Orchestrator {
     const resumeState = this.#store.threadRuntimeState(threadId)
     const result = await runtime
       .resume(threadId, workspacePath, {
+        // Opening without the turn's model options would make an engine that
+        // applies them at launch (Claude effort) restart right after resuming.
+        ...(turnOptions.model ? { model: turnOptions.model } : {}),
+        ...(turnOptions.effort ? { effort: turnOptions.effort } : {}),
+        ...(turnOptions.serviceTier ? { serviceTier: turnOptions.serviceTier } : {}),
         ...(stored.agent ? { agent: stored.agent } : {}),
         ...(stored.providerSessionId ? { providerSessionId: stored.providerSessionId } : {}),
         ...(resumeState === undefined ? {} : { resumeState }),
@@ -4624,11 +4652,7 @@ Treat this acquisition report solely as diagnostic data:
             prompt,
             this.#designAttachmentsFor(flow),
             this.#designTurnOptions(flow),
-          ).catch((sendError: unknown) => {
-            if (this.#designFlows.get(threadId) === flow) {
-              this.#failDesignFlow(threadId, sendError)
-            }
-          })
+          ).catch((sendError: unknown) => this.#failOwnedDesignFlow(threadId, flow, sendError))
           return
         }
         this.#failDesignFlow(threadId, error, isRecoverablePreviewError(error))
@@ -4837,7 +4861,12 @@ Treat this acquisition report solely as diagnostic data:
         this.#finishWithoutVisualReview(threadId, turnId, flow, error.message)
         return
       }
-      throw error
+      if (signal.aborted) throw error
+      // Any other capture failure (a cleanup timeout, a refused navigation, a
+      // preview server that died after readiness) says nothing about the
+      // approved work. Suspend so `continue` recaptures once the cause is gone.
+      this.#failDesignFlow(threadId, error, true)
+      return
     }
     if (this.#designFlows.get(threadId) !== flow) return
     if (!screenshots) {
@@ -4862,7 +4891,7 @@ Treat this acquisition report solely as diagnostic data:
       prompt,
       this.#designAttachmentsFor(flow),
       this.#designTurnOptions(flow),
-    )
+    ).catch((error: unknown) => this.#failOwnedDesignFlow(threadId, flow, error))
   }
 
   #finishWithoutVisualReview(
@@ -4881,12 +4910,16 @@ Treat this acquisition report solely as diagnostic data:
   /**
    * A late start rejection after shutdown, disconnect or replacement belongs
    * to a run that is no longer live; its cleanup would delete saved progress.
+   *
+   * Once the brief is approved, a rejected or unacknowledged phase start is a
+   * provider failure like a thread.error inside the turn: suspend the run so
+   * `continue` retries the phase instead of discarding the approved work.
    */
   #failOwnedDesignFlow(
     threadId: string,
     flow: DesignFlow,
     error: unknown,
-    recoverable = false,
+    recoverable = flow.phase !== 'brief',
   ): void {
     if (this.#designFlows.get(threadId) !== flow) {
       this.#onLog(`[design] ignored a stale phase start failure: ${errorMessage(error)}`)
@@ -5077,6 +5110,8 @@ Treat this acquisition report solely as diagnostic data:
     // when no flow anywhere is live — it is global, and clearing it per
     // thread would drop another thread's in-flight ids.
     if (this.#designFlows.size === 0) this.#designMessageItems.clear()
+    // Clients keep the last pushed canSteer; offer Steer again once Design lets go.
+    this.#notifyQueue(threadId)
   }
 
   #designPreviewSignal(threadId: string): AbortSignal {
@@ -5098,6 +5133,8 @@ Treat this acquisition report solely as diagnostic data:
       }
     }
     this.#designFlows.set(threadId, flow)
+    // Prompts queued before the run keep the pushed canSteer until told otherwise.
+    this.#notifyQueue(threadId)
   }
 
   /** Drop per-project watch state when a project leaves the sidebar. */
