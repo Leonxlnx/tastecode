@@ -1199,6 +1199,47 @@
   margin-top: 8px;
 }
 
+/* Later loads keep the page visible; a thin line says something is on its way. */
+.workspace-browser__progress {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.workspace-browser__progress::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 36%;
+  background: var(--text-3);
+  border-radius: 1px;
+  content: '';
+  /* Linear: an eased sweep spends most of its time parked past an edge. */
+  animation: workspace-browser-progress 1.4s linear infinite;
+}
+
+@keyframes workspace-browser-progress {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(280%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-browser__progress::before {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
+}
+
 /* ---------- side chat ---------- */
 
 .workspace-side-chat {

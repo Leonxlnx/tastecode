@@ -471,6 +471,37 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(view.reload).toHaveBeenCalledOnce()
   })
+
+  it('keeps the page and shows a thin progress line for loads after the first', () => {
+    const { container } = render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    view.loadURL.mockImplementation(async (url: string) => {
+      view.getURL.mockReturnValue(url)
+      view.isLoading.mockReturnValue(true)
+      view.dispatchEvent(new Event('did-start-loading'))
+    })
+    const address = screen.getByLabelText('Browser address')
+    fireEvent.change(address, { target: { value: 'example.com/first' } })
+    fireEvent.submit(address.closest('form')!)
+    // The first page has the skeleton, not the line.
+    expect(screen.getByRole('status').textContent).toBe('Loading page…')
+    expect(container.querySelector('.workspace-browser__progress')).toBeNull()
+    act(() => {
+      view.isLoading.mockReturnValue(false)
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+
+    fireEvent.change(address, { target: { value: 'example.com/second' } })
+    fireEvent.submit(address.closest('form')!)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(container.querySelector('.workspace-browser__progress')).toBeTruthy()
+    act(() => {
+      view.isLoading.mockReturnValue(false)
+      view.dispatchEvent(new Event('did-stop-loading'))
+    })
+    expect(container.querySelector('.workspace-browser__progress')).toBeNull()
+  })
 })
 
 function failureView(): { title: string; detail: string } | null {

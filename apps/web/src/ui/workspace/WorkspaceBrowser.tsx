@@ -369,6 +369,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   }
 
   const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
+  // Later loads keep the current page visible under a thin progress line.
+  const loadingLaterPage = state.loading && hasRenderedPage && !failure
 
   return (
     <div className="workspace-browser">
@@ -462,6 +464,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         data-viewport={viewport}
         aria-busy={state.loading && !failure}
       >
+        {loadingLaterPage ? <div className="workspace-browser__progress" aria-hidden /> : null}
         <div
           ref={host}
           className="workspace-browser__guest-host"
