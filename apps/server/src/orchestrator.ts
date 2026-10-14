@@ -115,6 +115,7 @@ import {
   cleanGeneratedTitle,
   commitMessagePrompt,
   resolveBackgroundModel,
+  resolveBackgroundModelFrom,
   runBackgroundCompletion,
   titlePrompt,
   type AvailableBackgroundModelSource,
@@ -883,18 +884,20 @@ export class Orchestrator {
   }
 
   async #runBackgroundTask(prompt: string): Promise<string> {
-    const settings = await this.backgroundModelSettings()
-    if (!settings.resolved) {
+    const preference = this.#store.backgroundModelPreference()
+    // Each source read can start vendor processes; read only what this choice needs.
+    const resolved = await resolveBackgroundModelFrom(preference, this.#backgroundSourceLoaders())
+    if (!resolved) {
       throw new Error(
-        settings.preference.mode === 'manual'
+        preference.mode === 'manual'
           ? 'The selected background model is unavailable. Choose another one in Settings.'
           : 'Connect a provider with an available model before using background writing.',
       )
     }
-    const runtime = this.#runtimeFor(settings.resolved.provider, this.#onLog)
+    const runtime = this.#runtimeFor(resolved.provider, this.#onLog)
     return runBackgroundCompletion({
       runtime,
-      selection: settings.resolved,
+      selection: resolved,
       prompt,
       onCleanupError: (error) =>
         this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),

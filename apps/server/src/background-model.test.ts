@@ -13,8 +13,10 @@ import {
   cleanGeneratedTitle,
   commitMessagePrompt,
   resolveBackgroundModel,
+  resolveBackgroundModelFrom,
   runBackgroundCompletion,
   type AvailableBackgroundModelSource,
+  type BackgroundModelSourceLoader,
 } from './background-model.js'
 import { StartupCleanupError } from './provider-session.js'
 
@@ -165,6 +167,150 @@ describe('background model resolution', () => {
       effort: 'high',
       automatic: false,
     })
+  })
+})
+
+describe('staged background model resolution', () => {
+  type Entry = {
+    provider: AvailableBackgroundModelSource['provider']
+    agent?: string
+    /** Absent when the source is signed out or has no models. */
+    models?: Model[]
+    codexSubscription?: boolean
+    /** Answers after the later sources, to show completion order does not matter. */
+    slow?: boolean
+  }
+
+  const sourceOf = (entry: Entry): AvailableBackgroundModelSource | undefined =>
+    entry.models && {
+      id: entry.agent ? `${entry.provider}:${entry.agent}` : entry.provider,
+      displayName: entry.agent ?? entry.provider,
+      provider: entry.provider,
+      ...(entry.agent ? { agent: entry.agent } : {}),
+      models: entry.models,
+      ...(entry.codexSubscription !== undefined
+        ? { codexSubscription: entry.codexSubscription }
+        : {}),
+    }
+
+  const claude: Entry = { provider: 'claude-code', models: [model('claude-haiku-4-5', ['low'])] }
+  const lunaPlan: Entry = {
+    provider: 'codex',
+    codexSubscription: true,
+    models: [model('gpt-5.6-luna', ['low', 'high'])],
+  }
+  const lunaKey: Entry = { ...lunaPlan, codexSubscription: false }
+  const grok46: Entry = { provider: 'grok', models: [model('grok-4.6', ['low', 'high'])] }
+  const grok45: Entry = { provider: 'grok', models: [model('grok-4.5', ['low', 'high'])] }
+  const automatic: BackgroundModelPreference = { mode: 'automatic' }
+
+  it.each<[string, BackgroundModelPreference, Entry[], string | undefined, string[]]>([
+    [
+      'a subscription Luna reads Codex alone',
+      automatic,
+      [claude, lunaPlan, grok46],
+      'gpt-5.6-luna',
+      ['codex'],
+    ],
+    [
+      'an API-key Codex adds Grok',
+      automatic,
+      [claude, lunaKey, grok46],
+      'grok-4.6',
+      ['codex', 'grok'],
+    ],
+    [
+      'a signed-out Codex adds Grok',
+      automatic,
+      [claude, { provider: 'codex', codexSubscription: true }, grok46],
+      'grok-4.6',
+      ['codex', 'grok'],
+    ],
+    [
+      'a subscription without Luna adds Grok',
+      automatic,
+      [claude, { ...lunaPlan, models: [model('gpt-5.6', ['low'])] }, grok46],
+      'grok-4.6',
+      ['codex', 'grok'],
+    ],
+    [
+      'the cheapest fallback reads every source',
+      automatic,
+      [
+        claude,
+        { ...lunaKey, models: [model('gpt-5.6-pro', ['low'])] },
+        grok45,
+        { provider: 'codex', agent: 'fork', models: [model('gpt-4.1-mini', ['low'])] },
+      ],
+      'claude-haiku-4-5',
+      ['claude-code', 'codex', 'grok', 'codex:fork'],
+    ],
+    [
+      'a price and version tie goes to the earlier source',
+      automatic,
+      [
+        { ...claude, slow: true },
+        grok45,
+        { provider: 'claude-code', agent: 'fork', models: [model('claude-haiku-4-5', ['low'])] },
+      ],
+      'claude-haiku-4-5',
+      ['claude-code', 'grok', 'claude-code:fork'],
+    ],
+    [
+      'a custom harness Luna is no subscription pick',
+      automatic,
+      [{ ...lunaPlan, agent: 'fork' }, grok45],
+      'gpt-5.6-luna',
+      ['grok', 'codex:fork'],
+    ],
+    [
+      'nothing available reads every source',
+      automatic,
+      [{ provider: 'claude-code' }, { provider: 'codex' }, { provider: 'grok' }],
+      undefined,
+      ['claude-code', 'codex', 'grok'],
+    ],
+    [
+      'a manual target reads that source alone',
+      { mode: 'manual', target: { provider: 'claude-code', model: 'claude-haiku-4-5' } },
+      [claude, lunaPlan, grok46],
+      'claude-haiku-4-5',
+      ['claude-code'],
+    ],
+    [
+      'a manual harness target reads that harness alone',
+      { mode: 'manual', target: { provider: 'codex', agent: 'fork', model: 'gpt-5.6-luna' } },
+      [claude, lunaPlan, { ...lunaPlan, agent: 'fork' }],
+      'gpt-5.6-luna',
+      ['codex:fork'],
+    ],
+    [
+      'a missing manual model reads its source alone',
+      { mode: 'manual', target: { provider: 'grok', model: 'grok-9' } },
+      [claude, lunaPlan, grok46],
+      undefined,
+      ['grok'],
+    ],
+  ])('%s', async (_name, preference, entries, expectedModel, expectedReads) => {
+    const reads: string[] = []
+    const loaders: BackgroundModelSourceLoader[] = entries.map((entry) => ({
+      provider: entry.provider,
+      ...(entry.agent ? { agent: entry.agent } : {}),
+      load: async () => {
+        reads.push(entry.agent ? `${entry.provider}:${entry.agent}` : entry.provider)
+        if (entry.slow) await new Promise((resolve) => setTimeout(resolve, 5))
+        return sourceOf(entry)
+      },
+    }))
+    const everySource = entries
+      .map(sourceOf)
+      .filter((source): source is AvailableBackgroundModelSource => source !== undefined)
+
+    const staged = await resolveBackgroundModelFrom(preference, loaders)
+
+    expect(staged).toEqual(resolveBackgroundModel(preference, everySource))
+    expect(staged?.model).toBe(expectedModel)
+    expect([...reads].sort()).toEqual([...expectedReads].sort())
   })
 })
 

@@ -26,7 +26,10 @@ export type AvailableBackgroundModelSource = BackgroundModelSource & {
 
 /** A source whose identity is known before its account and models are read. */
 export type BackgroundModelSourceLoader = Pick<BackgroundModelSource, 'provider' | 'agent'> & {
-  /** Undefined when the source is signed out, has no models, or cannot be read. */
+  /**
+   * The source with this provider and agent, or undefined when it is signed out,
+   * has no models, or cannot be read.
+   */
   load: () => Promise<AvailableBackgroundModelSource | undefined>
 }
 
@@ -86,6 +89,36 @@ export function resolveBackgroundModel(
 ): BackgroundModelSelection | undefined {
   for (const stage of resolutionStages(preference)) {
     const resolved = stage.pick(stage.reads ? sources.filter(stage.reads) : sources)
+    if (resolved) return resolved
+  }
+  return undefined
+}
+
+/**
+ * The same selection as resolveBackgroundModel over every loaded source, but
+ * each stage loads only the sources it reads, so a decided stage leaves every
+ * later source unread. Each source loads at most once.
+ */
+export async function resolveBackgroundModelFrom(
+  preference: BackgroundModelPreference,
+  loaders: BackgroundModelSourceLoader[],
+): Promise<BackgroundModelSelection | undefined> {
+  const loading = new Map<
+    BackgroundModelSourceLoader,
+    ReturnType<BackgroundModelSourceLoader['load']>
+  >()
+  const load = (loader: BackgroundModelSourceLoader) => {
+    let source = loading.get(loader)
+    if (!source) {
+      source = loader.load()
+      loading.set(loader, source)
+    }
+    return source
+  }
+  for (const stage of resolutionStages(preference)) {
+    const reading = stage.reads ? loaders.filter(stage.reads) : loaders
+    const loaded = await Promise.all(reading.map(load))
+    const resolved = stage.pick(loaded.filter((source) => source !== undefined))
     if (resolved) return resolved
   }
   return undefined
