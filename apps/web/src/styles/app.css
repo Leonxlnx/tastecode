@@ -3411,7 +3411,6 @@
 .empty__detail {
   color: var(--text-2);
   font-size: var(--t-sm);
-  line-height: 1.45;
   margin: -6px 0 0;
   max-width: min(46ch, 100%);
   overflow-wrap: anywhere;
