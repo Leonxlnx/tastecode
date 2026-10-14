@@ -212,6 +212,54 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  /**
+   * The frame request of a running "Jump to latest" glide. A native smooth
+   * scroll fixes its target when it starts, so it lands short of a reply that
+   * keeps growing and never reaches the end it was sent to. The glide chases
+   * the settled end on every frame instead and hands over to follow-end once
+   * it is there.
+   */
+  const jumpFrame = useRef<number | undefined>(undefined)
+  const stopJump = useCallback(() => {
+    if (jumpFrame.current !== undefined) window.cancelAnimationFrame(jumpFrame.current)
+    jumpFrame.current = undefined
+  }, [])
+  const jumpToLatest = useCallback(() => {
+    const el = scroller.current
+    if (!el) return
+    stopJump()
+    const instant = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let last: number | undefined
+    const step = (now: number) => {
+      jumpFrame.current = undefined
+      const elapsed = last === undefined ? 16 : Math.min(64, Math.max(0, now - last))
+      last = now
+      const end = Math.max(0, settledScrollHeight(el) - el.clientHeight)
+      const gap = end - el.scrollTop
+      // Ease out towards wherever the end is now, at the same pace whatever
+      // the frame rate. An ease alone trails an end that keeps moving by a
+      // constant distance and never arrives; the minimum speed is faster
+      // than any reply can be read, so the glide always catches up.
+      const minimum = JUMP_MIN_PX_PER_MS * elapsed
+      if (instant || Math.abs(gap) <= minimum) {
+        modeRef.current = 'follow-end'
+        setMode('follow-end')
+        writeScrollTop(el, end)
+        return
+      }
+      const travel = Math.max(Math.abs(gap) * (1 - Math.exp(-elapsed / JUMP_EASE_MS)), minimum)
+      writeScrollTop(el, el.scrollTop + Math.sign(gap) * travel)
+      jumpFrame.current = window.requestAnimationFrame(step)
+    }
+    // Stay in free mode for the whole glide. Flipping to follow-end first
+    // would unmount the button mid-flight; the glide hands over itself.
+    jumpFrame.current = window.requestAnimationFrame(step)
+  }, [stopJump, writeScrollTop])
+  // Any other mode means something else owns the scroll position now.
+  useLayoutEffect(() => {
+    if (mode !== 'free') stopJump()
+  }, [mode, stopJump])
+  useEffect(() => stopJump, [props.threadId, stopJump])
   const {
     status: olderHistory,
     loadOlder,
@@ -614,7 +662,16 @@ export const Thread = memo(function Thread(props: ThreadProps) {
             </div>
           )
         ) : null}
-        <div className="thread" ref={scroller} onScroll={onScroll}>
+        <div
+          className="thread"
+          ref={scroller}
+          onScroll={onScroll}
+          // The user steering in any way ends a running jump on the spot.
+          onWheel={stopJump}
+          onPointerDown={stopJump}
+          onTouchStart={stopJump}
+          onKeyDown={stopJump}
+        >
           <div className="thread__col">
             <div
               className="thread__runway"
@@ -761,22 +818,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         ) : null}
 
         {mode === 'free' ? (
-          <button
-            className="jump"
-            onClick={() => {
-              const el = scroller.current
-              if (!el) return
-              // Stay in free mode for the whole glide. Flipping to follow-end
-              // here unmounts the button, and the first mid-flight scroll event
-              // then flips it straight back — remounting it with its entrance
-              // animation — until the scroll lands. The onScroll handler hands
-              // over to follow-end once the glide actually reaches the bottom.
-              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-              // Already at the bottom? Nothing animates and no scroll event
-              // comes, so there would be no handover — hide right away.
-              if (isAtBottom(el)) setMode('follow-end')
-            }}
-          >
+          <button className="jump" onClick={jumpToLatest}>
             <ArrowDownToLine size={13} aria-hidden />
             Jump to latest
           </button>
@@ -944,6 +986,11 @@ type EndAnchor = {
   target: number
   delta: number
 }
+
+/** Time constant of the jump glide: about 95% of the way after 3x this. */
+const JUMP_EASE_MS = 110
+/** The slowest the jump glide moves, about 13px per frame at 60 Hz. */
+const JUMP_MIN_PX_PER_MS = 0.8
 
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
