@@ -537,13 +537,21 @@ describe('the history index', () => {
     afterOtherBuild.close()
   })
 
-  it('forgets a deleted thread', () => {
+  it.each(['deleted', 'cleaned up'])('forgets a %s thread', (removal) => {
     const store = newStore()
     for (const event of plainTurn(0)) store.append(THREAD, event)
-    store.deleteThread(THREAD)
+    if (removal === 'deleted') store.deleteThread(THREAD)
+    else {
+      store.closeThread(THREAD)
+      store.pruneHistory(Date.now() + 1, path.join(path.dirname(fileLocation()), 'archive.json'))
+    }
 
     expect(store.historyIndexed(THREAD)).toBe(false)
     expect(store.historyKeyFirstSeqs(THREAD, ['t:turn-0'])).toEqual(new Map())
+    expect(store.historyCarryBefore(THREAD, Number.MAX_SAFE_INTEGER)).toEqual({
+      approvals: new Map(),
+      userInputs: new Map(),
+    })
     store.close()
   })
 })

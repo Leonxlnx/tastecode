@@ -2283,6 +2283,8 @@ export class Store {
           'restore_undos',
           'diff_decisions',
           'design_runs',
+          'history_keys',
+          'history_state_events',
         ]) {
           this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
         }
@@ -2291,6 +2293,7 @@ export class Store {
     })
     for (const id of ids) {
       this.#ephemeralThreads.delete(id)
+      this.#historyDeltaRuns.delete(id)
       this.#deleteCachedReplaySnapshot(id)
       this.#cacheThread(id, undefined)
     }
