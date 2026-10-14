@@ -1,7 +1,9 @@
 /* ---------- model selector ---------- */
 
 .menutrigger--model-selector {
-  max-width: min(270px, 42vw);
+  /* 100%: never wider than its wrapper, which shrinks in a narrow composer;
+     the model name truncates instead of running under Send. */
+  max-width: min(270px, 42vw, 100%);
   padding: 5px 9px 5px 8px;
 }
 
@@ -45,6 +47,26 @@
   gap: 6px;
   color: var(--text);
   font-size: var(--t-md);
+}
+
+/* The provider mark keeps its size; the name truncates with an ellipsis. */
+.model-selector__trigger-model > * {
+  flex: none;
+}
+
+.model-selector__trigger-model > .model-selector__trigger-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* In a narrow chat column (an open right panel) the level dots carry the
+   effort alone, so the model name keeps its room. */
+@container chat-stage (max-width: 420px) {
+  .model-selector__trigger-level + .model-selector__trigger-effort {
+    display: none;
+  }
 }
 
 .model-selector__trigger-level {
