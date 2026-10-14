@@ -471,6 +471,8 @@ function ComposerComponent(props: {
   voiceAvailable: boolean
   voiceLoading?: boolean
   disabled: boolean
+  /** Replaces "Do anything" while the composer cannot be used, e.g. while a turn stops. */
+  placeholder?: string | undefined
   sendAvailability: SendAvailability
   providerSignInRequired?: boolean
   errors?: readonly ComposerError[] | undefined
@@ -1073,7 +1075,7 @@ function ComposerComponent(props: {
     addFiles(files)
   }
 
-  const addPastedFiles = (files: File[]) => {
+  const addPastedFiles = (files: File[], source: 'paste' | 'drop') => {
     const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
@@ -1102,7 +1104,9 @@ function ComposerComponent(props: {
           if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
           if (!saved) {
             removeAttachment(id, previewUrl)
-            setAttachmentError('Pasting files is available in the desktop app.')
+            setAttachmentError(
+              `${source === 'drop' ? 'Dropping' : 'Pasting'} files is available in the desktop app.`,
+            )
             return undefined
           }
           const picked = saved
@@ -1187,7 +1191,7 @@ function ComposerComponent(props: {
       })
     }
     attachFiles(picked)
-    addPastedFiles(materialized)
+    addPastedFiles(materialized, 'drop')
   }
 
   useEffect(() => {
@@ -1898,10 +1902,10 @@ function ComposerComponent(props: {
                         return
                       }
                       attachFiles(paths)
-                      addPastedFiles(materialized)
+                      addPastedFiles(materialized, 'paste')
                     }
                   }}
-                  placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+                  placeholder={props.placeholder ?? 'Do anything'}
                 />
               </div>
 

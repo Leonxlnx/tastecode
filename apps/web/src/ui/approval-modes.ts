@@ -32,7 +32,7 @@ export const APPROVAL_MODES: {
     id: 'auto-review',
     title: 'Auto-review',
     short: 'Auto-review',
-    detail: 'Codex reviews elevated actions',
+    detail: 'A reviewer checks elevated actions',
     icon: ScanEye,
   },
   {
