@@ -1262,11 +1262,7 @@
   pointer-events: none;
 }
 
-/* The transcript scrolls under the floating composer. Paint the dock with the
-   pane background from its top edge to the bottom, behind the box, so text and
-   cards never show in the strip below the box or in the gutters beside it. The
-   top padding fades in for a soft edge, and the right edge stays clear for the
-   transcript's 10px scrollbar. */
+/* Hide the transcript under the floating composer; keep the scrollbar clear. */
 .stage__conversation:not(.is-new-session) > .composer::before {
   position: absolute;
   inset: 0 10px 0 0;
