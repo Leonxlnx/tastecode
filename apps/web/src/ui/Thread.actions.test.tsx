@@ -2131,3 +2131,34 @@ describe('thread message actions', () => {
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 })
+
+describe('long chat paging cost', () => {
+  it('formats every reply time without building a formatter per row', () => {
+    const localeTime = vi.spyOn(Date.prototype, 'toLocaleTimeString')
+    const items: Item[] = []
+    for (let turn = 0; turn < 40; turn++) {
+      const createdAt = Date.UTC(2026, 9, 14, 8, turn)
+      items.push(
+        turnItem(`prompt-${turn}`, createdAt, {
+          turnId: `turn-${turn}`,
+          role: 'user',
+          text: 'Next',
+        }),
+        turnItem(`answer-${turn}`, createdAt + 1, {
+          turnId: `turn-${turn}`,
+          role: 'assistant',
+          phase: 'final_answer',
+          text: `Answer ${turn}`,
+        }),
+      )
+    }
+    const view = renderCompleted(items)
+
+    const times = [...view.container.querySelectorAll('.response-actions time')]
+    expect(times).toHaveLength(40)
+    const expected = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    expect(times[7]?.textContent).toBe(expected.format(Date.UTC(2026, 9, 14, 8, 7) + 1))
+    expect(localeTime).not.toHaveBeenCalled()
+    localeTime.mockRestore()
+  })
+})
