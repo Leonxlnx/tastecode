@@ -2335,6 +2335,13 @@
   min-width: 0;
 }
 
+/* The action chips keep their size in a narrow composer (an open right panel);
+   only the model picker gives way. A shrunk options clip cut the Design chip. */
+.tools > .composer__add,
+.tools > .composer__dictation-options:not([data-hidden]) {
+  flex-shrink: 0;
+}
+
 .tool span {
   overflow: hidden;
   text-overflow: ellipsis;

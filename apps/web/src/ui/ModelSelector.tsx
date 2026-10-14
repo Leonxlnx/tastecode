@@ -72,7 +72,9 @@ export const ModelSelector = memo(function ModelSelector(props: ModelSelectorPro
           <span className="model-selector__trigger-copy">
             <span className="model-selector__trigger-model">
               {choice ? <ProviderIcon mark={choice.mark} size={14} /> : null}
-              {getCompactModelName(model?.displayName)}
+              <span className="model-selector__trigger-name">
+                {getCompactModelName(model?.displayName)}
+              </span>
             </span>
             {effortOptions.length > 1 && effortIndex >= 0 ? (
               <span className="model-selector__trigger-level" aria-hidden>
