@@ -737,6 +737,8 @@ export function App() {
   })
   const [hiddenModels, setHiddenModels] = useState(initialModelVisibility.hidden)
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
+  /** Rows a first visibility click saved on their defaults, recorded with that list. */
+  const pendingVisibilityRows = useRef<string[] | undefined>(undefined)
   const [initialListedModels] = useState(readListedModels)
   const listedModelsRef = useRef(initialListedModels)
   // Read via ref inside the catalog effect so toggling visibility does not
@@ -2824,6 +2826,13 @@ export function App() {
   useEffect(() => {
     if (!modelVisibilityInitialized.current) return
     writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
+    // The rows a first click saved on their defaults are recorded only once
+    // that list is saved.
+    const rows = pendingVisibilityRows.current
+    if (rows) {
+      pendingVisibilityRows.current = undefined
+      recordModelVisibilityProgress(rows, false)
+    }
   }, [hiddenModels])
 
   // Record what the first paint migrated only after the effect above saved
@@ -4829,11 +4838,26 @@ export function App() {
     location.reload()
   }, [cancelWorkspacePanelWidthPersistence])
   const changeModelVisibility = useCallback((key: string, visible: boolean) => {
+    // On a profile without saved visibility this click creates the saved list.
+    // A failing source can keep discovery from ever saving the curated
+    // defaults, so the click saves them for every row the picker knows, and
+    // those rows are recorded as current: the next launch must not run a
+    // pending migration over this choice. Rows that appear later still get
+    // their defaults when they are first listed. Discovery migrates the whole
+    // catalog here (direct, ACP, API connection and custom harness rows), so
+    // every catalog row is recorded.
+    const created = modelVisibilityInitialized.current
+      ? undefined
+      : catalogModelsRef.current.filter((choice) => !isCustomModelChoice(choice))
+    if (created) pendingVisibilityRows.current = created.map((choice) => choice.key)
     // A click is an explicit preference even if live discovery is still
     // replacing a cached catalog. Never let late first-run defaults erase it.
     modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
+      for (const choice of created ?? []) {
+        if (!modelVisibleByDefault(choice.model)) next.add(choice.key)
+      }
       if (visible) next.delete(key)
       else next.add(key)
       return next
