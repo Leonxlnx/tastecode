@@ -8,6 +8,11 @@ import { PLAIN_HTTP_LOOPBACK_ONLY } from './browser-url.js'
 const DNS_REJECTION =
   "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_NAME_NOT_RESOLVED (-105) loading 'https://example.com/'"
 
+const DNS_FAILURE_WITHOUT_URL = {
+  title: "Can't reach this page",
+  detail: 'No site answers at this address. Check it for typos.',
+}
+
 const nativeBrowser = vi.hoisted(() => ({
   openExternal: vi.fn(),
 }))
@@ -209,7 +214,7 @@ describe('WorkspaceBrowser', () => {
         isMainFrame: true,
       })
     })
-    expect(screen.getByRole('alert').textContent).toBe("Can't find the site. Check the address.")
+    expect(failureView()).toEqual(DNS_FAILURE_WITHOUT_URL)
 
     act(() => {
       dispatchGuestEvent(view, 'did-fail-load', {
@@ -218,9 +223,7 @@ describe('WorkspaceBrowser', () => {
         isMainFrame: true,
       })
     })
-    await waitFor(() =>
-      expect(screen.getByRole('alert').textContent).toBe("Can't find the site. Check the address."),
-    )
+    await waitFor(() => expect(failureView()).toEqual(DNS_FAILURE_WITHOUT_URL))
   })
 
   it.each(['dom-ready', 'did-stop-loading'])(
@@ -303,10 +306,10 @@ describe('WorkspaceBrowser', () => {
           })
       })
       expect(screen.queryByRole('status')).toBeNull()
-      expect(screen.getByRole('alert').textContent).toBe(
+      expect(failureView()).toEqual(
         failureKind === 'rejection'
-          ? "Can't find example.com. Check the address."
-          : "Can't find the site. Check the address.",
+          ? { title: "Can't reach example.com", detail: DNS_FAILURE_WITHOUT_URL.detail }
+          : DNS_FAILURE_WITHOUT_URL,
       )
       expect(container.querySelector('.workspace-browser__canvas')?.getAttribute('aria-busy')).toBe(
         'false',
@@ -347,9 +350,10 @@ describe('WorkspaceBrowser', () => {
       rejectLoad(new Error(DNS_REJECTION))
     })
 
-    expect(screen.getByRole('alert').textContent).toBe(
-      "Can't find nonexistent-host.invalid. Check the address.",
-    )
+    expect(failureView()).toEqual({
+      title: "Can't reach nonexistent-host.invalid",
+      detail: DNS_FAILURE_WITHOUT_URL.detail,
+    })
     // The guest still shows the previous page; the address shows what failed.
     expect((view.getURL as () => string)()).toBe('https://example.com/first')
     expect(address.value).toBe('https://nonexistent-host.invalid/')
@@ -412,8 +416,71 @@ describe('WorkspaceBrowser', () => {
     expect(screen.getByRole('alert').textContent).toBe(message)
     expect(address.value).toBe(typed)
     expect(view.loadURL).not.toHaveBeenCalled()
+    // A refused address is a notice on the toolbar, not a failed page.
+    expect(failureView()).toBeNull()
+  })
+
+  it('shows a failed page as a calm view with Retry and Edit address instead of the guest', async () => {
+    const { container } = render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement
+    fireEvent.change(address, { target: { value: 'nonexistent-host.invalid' } })
+    fireEvent.submit(address.closest('form')!)
+    await act(async () => {
+      dispatchGuestEvent(view, 'did-fail-load', {
+        errorCode: -105,
+        errorDescription: 'ERR_NAME_NOT_RESOLVED',
+        isMainFrame: true,
+        validatedURL: 'https://nonexistent-host.invalid/',
+      })
+    })
+
+    const failure = container.querySelector('.workspace-browser__failure')!
+    expect(failure.getAttribute('role')).toBe('alert')
+    expect(failureView()?.title).toBe("Can't reach nonexistent-host.invalid")
+    expect(container.querySelector('.workspace-browser__error')).toBeNull()
+    const host = container.querySelector('.workspace-browser__guest-host')!
+    expect(host.getAttribute('data-visible')).toBe('false')
+    expect(container.querySelector('.workspace-browser__placeholder')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit address' }))
+    expect(document.activeElement).toBe(address)
+    expect(address.selectionStart).toBe(0)
+    expect(address.selectionEnd).toBe(address.value.length)
+
+    view.loadURL.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(view.loadURL).toHaveBeenCalledWith('https://nonexistent-host.invalid/')
+    await waitFor(() => expect(failureView()).toBeNull())
+    expect(host.getAttribute('data-visible')).toBe('true')
+  })
+
+  it('offers Retry after the page renderer stops and reloads the page', () => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    view.getURL.mockReturnValue('https://example.com/')
+    act(() => view.dispatchEvent(new Event('did-stop-loading')))
+    act(() => dispatchGuestEvent(view, 'render-process-gone', { details: { reason: 'crashed' } }))
+
+    expect(failureView()).toEqual({
+      title: 'This page stopped',
+      detail: 'Its renderer ended (crashed). Retry to load it again.',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(view.reload).toHaveBeenCalledOnce()
   })
 })
+
+function failureView(): { title: string; detail: string } | null {
+  const view = document.querySelector('.workspace-browser__failure')
+  if (!view) return null
+  return {
+    title: view.querySelector('strong')?.textContent ?? '',
+    detail: view.querySelector('.workspace-empty > span')?.textContent ?? '',
+  }
+}
 
 function dispatchGuestEvent(
   view: HTMLElement,
