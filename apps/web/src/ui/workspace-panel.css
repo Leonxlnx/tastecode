@@ -1085,7 +1085,9 @@
   min-width: 1px;
   min-height: 1px;
   overflow: hidden;
-  background: #0b0b0c;
+  /* The page paints over this; until it does, and around a fixed preview size,
+     the canvas follows the theme instead of flashing a dark box in light mode. */
+  background: var(--bg);
   border: 1px solid var(--line);
   transform: translate(-50%, -50%);
 }
@@ -1100,7 +1102,7 @@
   height: 100%;
   min-width: 1px;
   min-height: 1px;
-  background: #0b0b0c;
+  background: var(--bg);
   border: 0;
   transform-origin: top left;
 }
