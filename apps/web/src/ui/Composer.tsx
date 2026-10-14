@@ -1952,6 +1952,12 @@ function ComposerComponent(props: {
                             >
                               <div className="composer-skeleton-permission__icon">
                                 <Skeleton className="skeleton--icon" />
+                                {/* Shown instead of the skeleton where the label is hidden. */}
+                                <approval.icon
+                                  className="composer-skeleton-permission__glyph"
+                                  size={13}
+                                  aria-hidden
+                                />
                               </div>
                               <span className="composer-skeleton-permission__label" aria-hidden>
                                 <span>{approval.short}</span>
