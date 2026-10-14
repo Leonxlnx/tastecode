@@ -2211,6 +2211,8 @@ export class Orchestrator {
       }
       const base = this.#store.replaySnapshotBase(threadId)
       const tail = this.#store.history(threadId, base?.seq ?? 0)
+      // A thread that predates the history index gets it from this full read.
+      if (!base) this.#store.backfillHistoryIndex(threadId, tail)
       const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
       const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
       // History skips unreadable and retired rows, so `seq` can name an older
