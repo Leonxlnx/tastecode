@@ -1216,7 +1216,6 @@
   inset: 0 auto 0 0;
   width: 36%;
   background: var(--text-3);
-  border-radius: 1px;
   content: '';
   /* Linear: an eased sweep spends most of its time parked past an edge. */
   animation: workspace-browser-progress 1.4s linear infinite;
