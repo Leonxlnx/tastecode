@@ -2335,11 +2335,17 @@
   min-width: 0;
 }
 
-/* The action chips keep their size in a narrow composer (an open right panel);
-   only the model picker gives way. A shrunk options clip cut the Design chip. */
+/* In a narrow composer only the model name gives way. */
 .tools > .composer__add,
-.tools > .composer__dictation-options:not([data-hidden]) {
+.tools > .composer__dictation-options:not([data-hidden]),
+.model-selector__trigger-model > svg {
   flex-shrink: 0;
+}
+
+@container chat-stage (max-width: 420px) {
+  .model-selector__trigger-level + .model-selector__trigger-effort {
+    display: none;
+  }
 }
 
 .tool span {

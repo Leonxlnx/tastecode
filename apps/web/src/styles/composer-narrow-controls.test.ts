@@ -21,11 +21,11 @@ function rule(css: string, selector: string): string {
  * min(270px, 42vw) by its own max-width, ran 12px under Send.
  */
 describe('composer controls in a narrow chat column', () => {
-  it('keeps the add button and the permission and Design chips at their size', () => {
+  it('keeps the add button, the option chips and the provider mark at their size', () => {
     expect(
       rule(
         appCss,
-        '.tools > .composer__add,\n.tools > .composer__dictation-options:not([data-hidden])',
+        '.tools > .composer__add,\n.tools > .composer__dictation-options:not([data-hidden]),\n.model-selector__trigger-model > svg',
       ),
     ).toContain('flex-shrink: 0;')
   })
@@ -36,16 +36,18 @@ describe('composer controls in a narrow chat column', () => {
     )
   })
 
-  it('truncates the model name next to a fixed provider mark', () => {
-    expect(rule(triggerCss, '.model-selector__trigger-model > *')).toContain('flex: none;')
-    const name = rule(triggerCss, '.model-selector__trigger-model > .model-selector__trigger-name')
-    expect(name).toContain('min-width: 0;')
-    expect(name).toContain('text-overflow: ellipsis;')
+  it('truncates the model name with an ellipsis', () => {
+    const truncating = rule(
+      triggerCss,
+      '.model-selector__trigger-model,\n.model-selector__trigger-name,\n.model-selector__trigger-effort',
+    )
+    expect(truncating).toContain('overflow: hidden;')
+    expect(truncating).toContain('text-overflow: ellipsis;')
   })
 
   it('lets the level dots carry the effort alone below 420px', () => {
     const narrow =
-      triggerCss.match(/@container chat-stage \(max-width: 420px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+      appCss.match(/@container chat-stage \(max-width: 420px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
     expect(
       rule(narrow, '.model-selector__trigger-level + .model-selector__trigger-effort'),
     ).toContain('display: none;')
