@@ -111,6 +111,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [error, setError] = useState<string>()
   const addressInput = useRef<HTMLInputElement>(null)
   const focusedOnOpen = useRef(false)
+  // An address entered before the guest finished starting, loaded once it has.
+  const pendingAddress = useRef<string | undefined>(undefined)
 
   // After any menu that opened the tab has handed focus back, which happens
   // earlier in the same commit, so a typed URL lands in the address.
@@ -275,14 +277,19 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         return false
       }
       const view = guest.current
-      if (!view || typeof view.loadURL !== 'function' || readyGuest.current !== view) {
-        setError(
-          view && typeof view.loadURL === 'function'
-            ? 'The in-app browser is still starting.'
-            : 'The in-app browser is unavailable in this window.',
-        )
+      if (!view || typeof view.loadURL !== 'function') {
+        setError('The in-app browser is unavailable in this window.')
         return false
       }
+      if (readyGuest.current !== view) {
+        // Typed into a tab that opened a moment ago: load it as soon as the guest is ready.
+        pendingAddress.current = url
+        editingAddress.current = false
+        setAddress(url)
+        setError(undefined)
+        return true
+      }
+      pendingAddress.current = undefined
 
       editingAddress.current = false
       setAddress(url)
@@ -296,6 +303,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     },
     [syncGuestState],
   )
+
+  useLayoutEffect(() => {
+    const pending = pendingAddress.current
+    if (!pending || !guest.current || readyGuest.current !== guest.current) return
+    navigate(pending)
+  }, [guestReadyRevision, navigate])
 
   useLayoutEffect(() => {
     if (!navigation || lastNavigationRequest.current === navigation.requestId) return

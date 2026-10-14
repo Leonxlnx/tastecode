@@ -155,6 +155,22 @@ describe('WorkspaceBrowser', () => {
     await waitFor(() => expect(view.loadURL).toHaveBeenLastCalledWith('http://127.0.0.1:5183/'))
   })
 
+  it('loads an address entered before the guest has finished starting', async () => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement
+    fireEvent.change(address, { target: { value: '127.0.0.1:5173/' } })
+    fireEvent.submit(address.closest('form')!)
+
+    expect(view.loadURL).not.toHaveBeenCalled()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(address.value).toBe('http://127.0.0.1:5173/')
+
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    await waitFor(() => expect(view.loadURL).toHaveBeenCalledWith('http://127.0.0.1:5173/'))
+    expect(view.loadURL).toHaveBeenCalledOnce()
+  })
+
   it('leaves an address the user is typing in place when the page navigates', async () => {
     render(<WorkspaceBrowser active />)
     const view = guests[0]!
