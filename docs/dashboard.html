@@ -291,15 +291,47 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-13 nightly f1a65a4e · includes main 391c147b</span>
+        <span class="meta">2026-10-14 nightly b4fcfe24 · includes main 4794e048</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          October 13 on nightly (f1a65a4e): main is synchronized through 391c147b with every nightly
-          provider, API connection and the usage history kept.
+          October 14 on nightly (b4fcfe24): an expired Cursor sign-in now reads as signed out, so
+          Settings and the composer offer Sign in, and Cursor model discovery says "Your Cursor
+          sign-in has expired or is missing. Sign in to Cursor again." instead of "Cursor model
+          discovery failed". The Cursor CLI's status counts any stored sign-in as logged in, while
+          its model list and turns refuse an expired one (PR #1547).
+        </p>
+        <p>
+          October 13 on nightly (0d93b349): main is synchronized through 4794e048 by three sync PRs,
+          with every nightly provider, API connection and the usage history kept (PRs #1533, #1541,
+          #1545). Chat rows take main's new sidebar layout and keep each ACP agent's own mark. No
+          nightly-only provider gets main's new Ultra or Ultracode efforts by hand; OpenCode, Pi and
+          ACP agents show the levels their runtimes report (PR #1541). Model visibility moves each
+          row once across nightly's whole catalog, so a source that fails discovery, such as Cursor,
+          no longer holds the other sources back. In the account popup a failed OpenCode read shows
+          Unavailable with Retry, and an API connection whose refresh failed shows Last known (PR
+          #1545).
+        </p>
+        <p>
+          Late October 12 on nightly (f1a65a4e): a search hit's jump runs once instead of again on
+          every return to the chat (PR #1498, the same fix as main's PR #1532). Cursor on Windows
+          starts its bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
+          first turn of a new chat no longer fail, and session instructions are kept until the CLI
+          starts (PR #1499). A chat that switches model runs its next turn on that model for API
+          connections and for ACP agents that choose a model through a session option, such as Kimi;
+          Gemini CLI and Qwen Code still keep their starting model (PR #1520). API connections
+          answer a tool call whose arguments fail review with a tool error instead of failing the
+          turn (PR #1504), stop the remaining tool calls of a batch on Stop (PR #1508), give
+          router-prefixed ids and current families such as claude-*, o3, Kimi K2 and GLM 4.x the 64
+          KB context budget instead of 8 KB (PR #1523), and no longer rewrite saved history for a
+          placeholder key shorter than four characters (PR #1528). OpenCode rejects a v1 model id
+          without its provider before the turn opens instead of blocking every later turn (PR
+          #1525). The Design agent reads named Tailwind radii through the workspace theme, so
+          token-correct pages no longer get false radius findings (PR #1506), and pricing, about and
+          waitlist pages for an app stay on website references (PR #1510).
         </p>
         <p>
           October 12 on nightly (abb78ddf): main is synchronized through 0e792a64 with every nightly
@@ -337,13 +369,13 @@
         <p>
           <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
           work, exact verification, local workspace risks and every open PR/issue. Nightly includes
-          main through 391c147b, synchronized on 2026-10-13. The latest published desktop remains
+          main through 4794e048, synchronized on 2026-10-13. The latest published desktop remains
           0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
           source.
         </p>
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through 391c147b. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through 4794e048. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
@@ -1249,8 +1281,9 @@
                     released on public beta. The 200 reviewed generated desktop/mobile dashboard
                     pairs (400 WebPs) are imported in a separate catalog with provenance. One
                     complete app shell is chosen by matching the request's domain, uniformly among
-                    the best matches; finished runs say "Dashboard built." Plans use operate_monitor
-                    and functional filters, sorting, tabs, navigation, drawers and charts, including
+                    the best matches; pricing, about and waitlist pages for an app stay on website
+                    references; finished runs say "Dashboard built." Plans use operate_monitor and
+                    functional filters, sorting, tabs, navigation, drawers and charts, including
                     keyboard access, focus restoration and reduced motion. Native charts and visibly
                     identified demo values avoid website-only validation blockers. Image capability
                     is checked before inference; unsupported sessions, including direct API sessions
@@ -1298,31 +1331,32 @@
                     then the uniform pool, with distinct feature/about compositions before reuse;
                     every phase keeps the anchor's one design language through shared designTokens
                     and at most two font families, Brand sees only the anchor and same-site
-                    references, and a font and radius audit adds bounded Review findings; the legacy
-                    132-direction deck remains for older saved runs; supplied reference pixels and
-                    selected direction IDs persist across phases; approved artifacts and assets are
-                    checked before reuse, duplicate briefing IDs are rejected, and exact output
-                    rules inspect nested files; brand palettes supply optional dependency-free card,
-                    section, and page gradient recipes; each section records a purposeful motion
-                    trigger, timing, easing, and reduced-motion equivalent, with visible hero and
-                    scroll entrances required by default; reference labels and line lengths are
-                    retained, while internal placeholders, unsupported claims and redundant Hero
-                    support copy remain rejected; Brand limits typography to two approved families,
-                    with forty randomized choices for new identities; Page, Asset, Build, and Review
-                    require reference-based card systems, meaningful brand-accent use, and real
-                    image acquisition when provider tools are available; they block ornamental SVG
-                    filler, divider-grid templates, off-reference card rails, unstyled controls,
-                    overflow, and heading geometry that loses the reference; representative content
-                    stays out of page disclaimers and reaches the final Harness response as a
-                    publishing verification note; serialized hidden capture remains the review
-                    authority, scrolls through lazy content, audits the whole document, captures a
-                    bounded whole-page image per viewport, waits for animation, font, and image
-                    settlement, confines navigation and redirects to the preview origin, and
-                    verifies the final URL; negotiated ACP image prompts receive the screenshots,
-                    and shared browser storage and cache are cleared before the next capture;
-                    successful previews remain reachable until their owning thread closes or starts
-                    a replacement, and a completed queued Design turn stays idle even when its
-                    provider start promise resolves late</span
+                    references, and a font and radius audit that reads named Tailwind radii through
+                    the workspace theme adds bounded Review findings; the legacy 132-direction deck
+                    remains for older saved runs; supplied reference pixels and selected direction
+                    IDs persist across phases; approved artifacts and assets are checked before
+                    reuse, duplicate briefing IDs are rejected, and exact output rules inspect
+                    nested files; brand palettes supply optional dependency-free card, section, and
+                    page gradient recipes; each section records a purposeful motion trigger, timing,
+                    easing, and reduced-motion equivalent, with visible hero and scroll entrances
+                    required by default; reference labels and line lengths are retained, while
+                    internal placeholders, unsupported claims and redundant Hero support copy remain
+                    rejected; Brand limits typography to two approved families, with forty
+                    randomized choices for new identities; Page, Asset, Build, and Review require
+                    reference-based card systems, meaningful brand-accent use, and real image
+                    acquisition when provider tools are available; they block ornamental SVG filler,
+                    divider-grid templates, off-reference card rails, unstyled controls, overflow,
+                    and heading geometry that loses the reference; representative content stays out
+                    of page disclaimers and reaches the final Harness response as a publishing
+                    verification note; serialized hidden capture remains the review authority,
+                    scrolls through lazy content, audits the whole document, captures a bounded
+                    whole-page image per viewport, waits for animation, font, and image settlement,
+                    confines navigation and redirects to the preview origin, and verifies the final
+                    URL; negotiated ACP image prompts receive the screenshots, and shared browser
+                    storage and cache are cleared before the next capture; successful previews
+                    remain reachable until their owning thread closes or starts a replacement, and a
+                    completed queued Design turn stays idle even when its provider start promise
+                    resolves late</span
                   >
                 </span>
               </li>
