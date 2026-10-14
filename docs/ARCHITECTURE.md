@@ -496,11 +496,26 @@ when provider history gained events after that sequence. A truncation that keeps
 and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
 that only retires events is detected only through the re-recorded thread start: the merge records
 `thread.started` again whenever it retires rows. Requests without `page` keep
-the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
-reader bounded before compaction, which is still to do. Until then a thread without a saved
-replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
-events; paging the event log directly also has to keep imported provider turns, which display in
-time order rather than log order, on the right page.
+the full and `afterSeq` responses.
+
+**A cold open reads only the end of the event log.** When no current replay is parsed in memory,
+the newest page is read newest first from the log itself, bounded before compaction (#1363's
+plan). The page must equal the one cut from the compacted whole log, so the reader grows its
+tail until no turn or item in it also occurs in an older row; compacting such a tail alone gives
+the same events, and its blocks after the first are the whole log's blocks. A derived index makes
+that check cheap: `history_keys` stores, per thread, the first row naming each turn and item, and
+`history_state_events` lists the usage, request, answer, turn-end and error rows that decide what
+older rows leave open. Both are written in the event's own transaction; a run of deltas writes
+its keys once, so the per-delta path stays one insert. A thread is trusted only with a complete
+mark: new threads get it at creation, older ones when a full read indexes them, and a start
+that finds rows newer than the recorded watermark (written by a build without the index, or
+just before a crash) drops the mark of those threads. Removed or retired rows leave entries that
+only make the reader read further back. A tail that compaction would leave unchanged says
+nothing about the rows before it, so the reader keeps reading. It falls back to the full read for
+imported provider turns, which display in time order rather than log order, and when it would
+read the whole log anyway; that read also saves the replay older pages are cut from. The
+reader saves no replay itself: the first older page compacts the whole log once.
+On the 10,375-event benchmark a cold newest page takes about 9 ms instead of about 40 ms.
 
 **Streamed turn diffs are stored only when they change.** Providers can resend the same
 working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
@@ -665,6 +680,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
 | 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
 | 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |

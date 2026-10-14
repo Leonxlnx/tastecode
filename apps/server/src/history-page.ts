@@ -120,6 +120,46 @@ export function readHistoryPage(
   return { events, page: { olderCursor: cursor(first), snapshotSeq } }
 }
 
+/**
+ * The newest page of a log whose older rows were never read. `tail` is the
+ * compacted end of the log and shares no turn with the rows before it;
+ * `prior` says what those rows leave open. Undefined when the page would
+ * reach the tail's first block, whose start may lie before the tail.
+ */
+export function readNewestHistoryPageFromTail(
+  threadId: string,
+  tail: readonly HistoryEntry[],
+  turnLimit: number,
+  prior: () => HistoryCarry,
+): HistoryPage | undefined {
+  const blocks = historyBlocks(tail)
+  let first = blocks.length
+  let turns = 0
+  do {
+    first -= 1
+    turns += blocks[first]?.turns ?? 0
+  } while (first > 0 && turns < turnLimit)
+  if (first <= 0) return undefined
+  const block = blocks[first]!
+  const snapshotSeq = tail.at(-1)!.seq
+  // Compaction keeps only the latest usage report; an older one counts only
+  // while the tail has none.
+  const carry = prior()
+  const earlier = tail.some(({ event }) => event.type === 'usage.updated')
+    ? { ...carry, usage: undefined }
+    : carry
+  return {
+    events: [...carriedState(tail, block.start, earlier), ...tail.slice(block.start)],
+    page: {
+      olderCursor: encodeHistoryCursor(threadId, {
+        seq: snapshotSeq,
+        turnHash: shortHash(block.firstTurn!),
+      }),
+      snapshotSeq,
+    },
+  }
+}
+
 function historyBlocks(entries: readonly HistoryEntry[]): Block[] {
   const lastIndex = new Map<string, number>()
   for (let index = 0; index < entries.length; index += 1) {

@@ -47,6 +47,7 @@ import {
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
+import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
   DESIGN_PHASE_NOTICE,
   RESTORE_CONTEXT_NOTICE,
@@ -2185,6 +2186,9 @@ export class Orchestrator {
         // A restart's newest page comes from the current replay, not the cursor's.
         if (!page.reset) return page
       }
+    } else {
+      const page = await this.#readNewestHistoryPage(threadId, request.turnLimit)
+      if (page) return page
     }
     const { events } = await this.#readHistory(threadId, 0)
     return readHistoryPage(threadId, events, {
@@ -2195,6 +2199,21 @@ export class Orchestrator {
       isStale: (cursor, snapshotSeq) =>
         cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
     })
+  }
+
+  /**
+   * A cold open reads only the end of the event log when the history index
+   * can vouch for it. A replay still held in memory is cheaper to cut.
+   */
+  async #readNewestHistoryPage(
+    threadId: string,
+    turnLimit: number | undefined,
+  ): Promise<HistoryPage | undefined> {
+    await this.#restoringThreads.get(threadId)
+    this.#touchThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
+    if (this.#store.hasTailReplaySnapshotInMemory(threadId)) return undefined
+    return readIndexedNewestHistoryPage(this.#store, threadId, turnLimit)
   }
 
   async #readHistory(threadId: string, afterSeq: number): Promise<HistoryRead> {
