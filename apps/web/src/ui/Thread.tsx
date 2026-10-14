@@ -2671,6 +2671,13 @@ function inlineActivityText(text: string | undefined): string {
   return text?.replace(/\s+/g, ' ').trim() ?? ''
 }
 
+/**
+ * One formatter for every reply's time. toLocaleTimeString builds a new
+ * formatter on each call, and every reply row that mounts while a long chat
+ * is paged calls it.
+ */
+const RESPONSE_TIME = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
 function ResponseActions({
   text,
   createdAt,
@@ -2695,9 +2702,7 @@ function ResponseActions({
           <RotateCcw aria-hidden />
         </button>
       ) : null}
-      <time dateTime={new Date(createdAt).toISOString()}>
-        {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-      </time>
+      <time dateTime={new Date(createdAt).toISOString()}>{RESPONSE_TIME.format(createdAt)}</time>
     </div>
   )
 }
