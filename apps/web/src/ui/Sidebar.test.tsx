@@ -250,7 +250,7 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
   })
 
-  it('draws the card avatar as the photo, the initials, or a tinted person mark', () => {
+  it('draws the card avatar as the generated seal unless a photo is set', () => {
     const view = (profileIdentity: ProfileIdentityPreferences) => (
       <Sidebar
         projects={[]}
@@ -280,18 +280,16 @@ describe('Sidebar chat actions', () => {
     const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
 
     const rendered = render(view({ displayName: 'Alex Rivera' }))
-    const initials = avatar().querySelector<HTMLElement>('.account__initials')
-    expect(initials?.textContent).toBe('AR')
-    expect(initials?.style.getPropertyValue('--avatar-hue')).not.toBe('')
-    // The speckled seal no longer draws on the card.
-    expect(avatar().querySelector('.generated-avatar')).toBeNull()
+    const seal = avatar().querySelector('svg.generated-avatar')
+    expect(seal).not.toBeNull()
+    const fromName = seal!.innerHTML
 
-    rendered.rerender(view({ displayName: '  émile  ' }))
-    expect(avatar().querySelector('.account__initials')?.textContent).toBe('É')
+    // The card strikes the same seal as the profile page: the chosen seed wins over the name.
+    rendered.rerender(view({ displayName: 'Alex Rivera', avatarSeed: 'tide' }))
+    expect(avatar().querySelector('svg.generated-avatar')!.innerHTML).not.toBe(fromName)
 
     rendered.rerender(view({ displayName: '' }))
-    expect(avatar().querySelector('.account__initials')?.textContent).toBe('')
-    expect(avatar().querySelector('.account__initials svg')).not.toBeNull()
+    expect(avatar().querySelector('svg.generated-avatar')).not.toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
 
     rendered.rerender(
@@ -300,7 +298,7 @@ describe('Sidebar chat actions', () => {
     expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
       'data:image/png;base64,iVBORw0KGgo=',
     )
-    expect(avatar().querySelector('.account__initials')).toBeNull()
+    expect(avatar().querySelector('svg.generated-avatar')).toBeNull()
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
