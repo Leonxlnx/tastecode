@@ -225,16 +225,16 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-13 nightly f1a65a4e · includes main 391c147b</span>
+        <span class="meta">2026-10-14 nightly b4fcfe24 · includes main 4794e048</span>
       </div>
     </div>
 
     <div class="wrap">
       <p class="intro">
         <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a>: current source, branches,
-        references and verification limits. This nightly source includes main through 391c147b,
-        synchronized on 2026-10-13. Published desktop 0.1.1 and the old 0.1.2 draft are separate
-        from the source features listed below.
+        references and verification limits. This nightly source includes main through 4794e048,
+        synchronized on 2026-10-13 (PRs #1533, #1541 and #1545). Published desktop 0.1.1 and the old
+        0.1.2 draft are separate from the source features listed below.
       </p>
       <p class="intro">
         Every feature the app has today, as concrete as it gets. This is the working checklist for
@@ -444,7 +444,10 @@
                 >Forty-plus wire variants collapsed to base models, effort on the slider
                 <span class="d"
                   >a frame that fails its schema or a listener that throws is logged and the stream
-                  keeps reading; only an oversized frame ends the turn</span
+                  keeps reading; only an oversized frame ends the turn; on Windows a turn starts the
+                  CLI's bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
+                  first turn of a new chat reach the CLI, and session instructions are kept for the
+                  next turn if the CLI cannot start</span
                 ></span
               ></label
             >
@@ -459,7 +462,15 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Sign-in detection via CLI probe, app-side login flow</span
+                >Sign-in detection via CLI probe, app-side login flow
+                <span class="d"
+                  >the CLI's status counts any stored sign-in as logged in, so when it cannot fetch
+                  the user a local model-list check decides: an expired sign-in reads as signed out
+                  and Settings and the composer offer Sign in, while an offline machine with a valid
+                  sign-in stays signed in; model discovery refused for an expired sign-in says "Your
+                  Cursor sign-in has expired or is missing. Sign in to Cursor again." instead of
+                  "Cursor model discovery failed"</span
+                ></span
               ></label
             >
           </li>
@@ -471,7 +482,11 @@
             <label
               ><input type="checkbox" /><span
                 >Live model catalog across its configured providers
-                <span class="d">free tier, MiniMax plans, and more</span></span
+                <span class="d"
+                  >free tier, MiniMax plans, and more; on the v1 protocol a model id without its
+                  provider/ prefix is rejected before the turn opens and the previous model stays,
+                  so later turns still start</span
+                ></span
               ></label
             >
           </li>
@@ -618,7 +633,11 @@
             <label
               ><input type="checkbox" /><span
                 >Full agent loop through the shared ACP adapter
-                <span class="d">K2.7 Coding, K2.7 Highspeed, K3, K3-256k</span></span
+                <span class="d"
+                  >K2.7 Coding, K2.7 Highspeed, K3, K3-256k; a model switch in a running chat is
+                  sent through the agent's session config option before the next turn, and a
+                  rejected switch fails before the turn opens</span
+                ></span
               ></label
             >
           </li>
@@ -657,7 +676,12 @@
                 >One shared OpenAI-compatible transport, Anthropic native Messages API
                 <span class="d"
                   >partial text, reasoning, and tool items settle before completed, failed, or
-                  interrupted turn terminals</span
+                  interrupted turn terminals; a tool call whose arguments fail review in ask or auto
+                  mode, such as an absolute or .env path, gets the same tool error as in full access
+                  instead of failing the turn; Stop also stops the remaining tool calls of a batch
+                  and answers them as interrupted; router-prefixed ids and current families
+                  (claude-*, o1 to o9, Kimi K2, GLM 4.x) get the 64 KB context budget, while unknown
+                  ids keep 8 KB</span
                 ></span
               ></label
             >
@@ -684,7 +708,10 @@
                 <span class="d"
                   >state is saved at turn boundaries, included in history exports, and excludes
                   configured credentials; legacy chats without saved provider context report that
-                  they cannot resume rather than silently starting an empty conversation</span
+                  they cannot resume rather than silently starting an empty conversation; a model
+                  switch runs from the next turn and is the model the saved state keeps; saved state
+                  redacts keys of at least four characters, so a shorter placeholder key such as 1
+                  leaves saved history intact</span
                 ></span
               ></label
             >
@@ -1068,41 +1095,42 @@
                   other references set composition only, Build declares one token block and loads
                   only the approved families, and Review blocks sections that change fonts, type
                   scale, buttons, radii or surfaces; a deterministic font and radius audit against
-                  the brand adds bounded Review findings; every section records purposeful motion
-                  plus its reduced-motion equivalent; visible hero entrances and distinct scroll
-                  reveals are required unless explicitly disabled; Build receives a tested one-time
-                  reveal implementation that keeps painted content visible and restores visibility
-                  on cleanup/reduced motion; Build must exercise triggers, while still captures
-                  alone cannot prove animation; ordinary follow-ups after Design clear its
-                  phase-only JSON instructions; Page, Build, and Review require coherent card
-                  systems and meaningful brand-accent use; Asset actively reuses, generates, or
-                  searches for real imagery through available provider tools, preferring generation
-                  for missing original visuals with licensed search as fallback, and records
-                  external reuse terms; the same phases reject ornamental SVG filler, divider-grid
-                  templates and card rails absent from the reference, unstyled controls, overflow,
-                  and heading geometry that loses the reference; internal status notes stay out of
-                  page copy while concept-work identification remains visible; representative
-                  content reaches the final response as a publishing verification note; command and
-                  TasteCode-owned static previews select an available port on collision and reject
-                  missing local markup resources, including srcset candidates, and clean up child
-                  trees; rendered Chromium audits require exactly one h1 and at least 44 by 44
-                  CSS-pixel interaction targets across the whole document, and model review cannot
-                  erase those findings; capture opens or reuses one dedicated Browser tab and
-                  same-URL repair passes reload it after the Electron guest is ready; serialized
-                  hidden capture remains the evidence authority, scrolls through lazy content, and
-                  waits within fixed deadlines for animation frames, animations, fonts, and images
-                  before bounded whole-page desktop and mobile PNGs, then clears shared browser
-                  storage and cache before the next capture; a page that scrolls inside a
-                  full-screen element reports what that element hides, so review covers the captured
-                  part only, and its controls are audited like the document's; a successful preview
-                  remains reachable until thread close or a replacement Design run, with process and
-                  port release awaited before cleanup and a static preview's open media responses
-                  ended when it stops; exhausted validation corrections finish their turn and
-                  activity as failed; completed queued phases remain idle when their provider
-                  promise settles late; source checks accept HTML with embedded images above 2 MB
-                  while retaining a 32 MB total scan limit; since 0.1.1, history replies and live
-                  pushes have separate bounded output budgets, and failed repair validation retains
-                  its correction guard to prevent unlimited retries</span
+                  the brand, which reads named Tailwind radii through the workspace's own theme,
+                  adds bounded Review findings; every section records purposeful motion plus its
+                  reduced-motion equivalent; visible hero entrances and distinct scroll reveals are
+                  required unless explicitly disabled; Build receives a tested one-time reveal
+                  implementation that keeps painted content visible and restores visibility on
+                  cleanup/reduced motion; Build must exercise triggers, while still captures alone
+                  cannot prove animation; ordinary follow-ups after Design clear its phase-only JSON
+                  instructions; Page, Build, and Review require coherent card systems and meaningful
+                  brand-accent use; Asset actively reuses, generates, or searches for real imagery
+                  through available provider tools, preferring generation for missing original
+                  visuals with licensed search as fallback, and records external reuse terms; the
+                  same phases reject ornamental SVG filler, divider-grid templates and card rails
+                  absent from the reference, unstyled controls, overflow, and heading geometry that
+                  loses the reference; internal status notes stay out of page copy while
+                  concept-work identification remains visible; representative content reaches the
+                  final response as a publishing verification note; command and TasteCode-owned
+                  static previews select an available port on collision and reject missing local
+                  markup resources, including srcset candidates, and clean up child trees; rendered
+                  Chromium audits require exactly one h1 and at least 44 by 44 CSS-pixel interaction
+                  targets across the whole document, and model review cannot erase those findings;
+                  capture opens or reuses one dedicated Browser tab and same-URL repair passes
+                  reload it after the Electron guest is ready; serialized hidden capture remains the
+                  evidence authority, scrolls through lazy content, and waits within fixed deadlines
+                  for animation frames, animations, fonts, and images before bounded whole-page
+                  desktop and mobile PNGs, then clears shared browser storage and cache before the
+                  next capture; a page that scrolls inside a full-screen element reports what that
+                  element hides, so review covers the captured part only, and its controls are
+                  audited like the document's; a successful preview remains reachable until thread
+                  close or a replacement Design run, with process and port release awaited before
+                  cleanup and a static preview's open media responses ended when it stops; exhausted
+                  validation corrections finish their turn and activity as failed; completed queued
+                  phases remain idle when their provider promise settles late; source checks accept
+                  HTML with embedded images above 2 MB while retaining a 32 MB total scan limit;
+                  since 0.1.1, history replies and live pushes have separate bounded output budgets,
+                  and failed repair validation retains its correction guard to prevent unlimited
+                  retries</span
                 ></span
               ></label
             >
@@ -1115,12 +1143,14 @@
         desktop/mobile pairs (400 WebPs) are imported with a separate catalog and provenance. One
         complete app shell is chosen by matching the request's words against each screen's domain,
         tags and cues, uniformly among the best matches and over all screens when nothing matches; a
-        finished dashboard run says Dashboard built. Dashboard plans use operate_monitor with
-        working filters, sorting, tabs, navigation, drawers and charts, keyboard access, focus
-        restoration and reduced motion. Native chart SVG and visibly labeled demo values avoid
-        website-only blockers; asserted product claims still require evidence. Image capability is
-        checked before inference; direct API sessions currently declare images: false and cannot run
-        visual Design, while ordinary coding remains available. This work in
+        finished dashboard run says Dashboard built. Pricing, about, waitlist, careers, blog,
+        contact, features and changelog pages for an app product stay on website references.
+        Dashboard plans use operate_monitor with working filters, sorting, tabs, navigation, drawers
+        and charts, keyboard access, focus restoration and reduced motion. Native chart SVG and
+        visibly labeled demo values avoid website-only blockers; asserted product claims still
+        require evidence. Image capability is checked before inference; direct API sessions
+        currently declare images: false and cannot run visual Design, while ordinary coding remains
+        available. This work in
         <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
         is integrated on nightly after merged
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>. The 172 shipped
@@ -1810,7 +1840,8 @@
                   indexed range seeks; opaque result identities retain selection and DOM focus
                   across inserts, and closing search restores an available opener or composer; full
                   messages remain searchable, while tool output indexes its first 12K and last 4K
-                  characters</span
+                  characters; opening a message hit jumps to it once, and returning to that chat
+                  later does not jump or stop following a streaming answer again</span
                 ></span
               ></label
             >
@@ -2393,7 +2424,7 @@
 
       <footer>
         Companion to docs/dashboard.html. Nightly retains its full provider roster and usage history
-        alongside main 391c147b, synchronized on 2026-10-13.
+        alongside main 4794e048, synchronized on 2026-10-13.
         <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
         merged into nightly at 17aa22a3; dashboard support is integrated on nightly through
         <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>, not a public
