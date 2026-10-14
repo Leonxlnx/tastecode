@@ -487,6 +487,8 @@ function ComposerComponent(props: {
         text: string
         attachments?: string[] | undefined
         resources?: ComposerResource[] | undefined
+        /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
+        undoable?: boolean | undefined
         request: number
       }
     | undefined
@@ -967,6 +969,17 @@ function ComposerComponent(props: {
     })
   }
 
+  /** Replace the whole text through the editor, which keeps it on the native undo stack. */
+  const insertUndoably = (value: string): boolean => {
+    const el = area.current
+    if (!el || el.disabled || typeof document.execCommand !== 'function') return false
+    el.focus()
+    el.select()
+    // The input event this fires runs onChange, which records the new text.
+    if (!document.execCommand('insertText', false, value)) return false
+    return el.value === value
+  }
+
   const replaceDraft = (value: string) => {
     updateText(value, true, false)
     setResourceTrigger(undefined)
@@ -984,7 +997,8 @@ function ComposerComponent(props: {
     if (!props.draftRequest) return
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish.
-    replaceDraft(props.draftRequest.text)
+    if (!props.draftRequest.undoable || !insertUndoably(props.draftRequest.text))
+      replaceDraft(props.draftRequest.text)
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)

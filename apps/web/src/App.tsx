@@ -205,6 +205,7 @@ import {
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
+const DRAFT_REPLACED_NOTICE = 'Your draft was replaced.'
 const PROVIDER_IDS = ['claude-code', 'codex', 'grok'] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
 /** Which custom harness source was chosen. The key names predate custom
@@ -791,6 +792,8 @@ export function App() {
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
+  /** The unsent draft an "Edit as new prompt" replaced, offered back in the notice. */
+  const [replacedDraft, setReplacedDraft] = useState<{ owner: string; text: string } | undefined>()
   const [actionError, setActionError] = useState<ComposerError>()
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
@@ -3923,10 +3926,30 @@ export function App() {
     [transport, threadController, loadHistory],
   )
   const editMessage = useCallback((text: string) => {
-    threadController.editDraft(threadController.draftOwner, { text })
-    setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+    const owner = threadController.draftOwner
+    const draft = threadController.draft(owner).text
+    threadController.editDraft(owner, { text })
+    setComposerDraft((current) => ({ text, undoable: true, request: (current?.request ?? 0) + 1 }))
     setComposerFocusRequest((request) => request + 1)
+    // An unsent draft must not vanish without a way back.
+    if (draft.trim() && draft !== text) {
+      setReplacedDraft({ owner, text: draft })
+      setNotice(DRAFT_REPLACED_NOTICE)
+    }
   }, [])
+  const restoreReplacedDraft = useCallback(() => {
+    const replaced = replacedDraft
+    setNotice(undefined)
+    setReplacedDraft(undefined)
+    if (!replaced || replaced.owner !== threadController.draftOwner) return
+    threadController.editDraft(replaced.owner, { text: replaced.text })
+    setComposerDraft((current) => ({
+      text: replaced.text,
+      undoable: true,
+      request: (current?.request ?? 0) + 1,
+    }))
+    setComposerFocusRequest((request) => request + 1)
+  }, [replacedDraft])
   const revertCheckpoint = useCallback(
     (checkpoint: Checkpoint) => {
       setRollbackInspection(undefined)
@@ -5676,9 +5699,15 @@ export function App() {
         onDismiss={() => {
           setNotice(undefined)
           setUndoRestore(undefined)
+          setReplacedDraft(undefined)
         }}
       >
         <span className="notice__text">{notice}</span>
+        {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
+          <button className="ghost" onClick={restoreReplacedDraft}>
+            Restore
+          </button>
+        ) : null}
         {undoRestore ? (
           <button className="ghost" onClick={() => void reverseRestore()}>
             Undo restore

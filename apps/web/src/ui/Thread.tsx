@@ -1406,8 +1406,8 @@ const Row = memo(function Row({
               <button
                 type="button"
                 onClick={() => onEditMessage(item.text!)}
-                aria-label="Edit prompt"
-                title="Edit"
+                aria-label="Edit as new prompt"
+                title="Edit as new prompt"
               >
                 <Pencil aria-hidden />
               </button>
