@@ -10,11 +10,11 @@ import {
 import { flushSync } from 'react-dom'
 import { IconCheck as Check, IconColorPicker as PickColor } from '@tabler/icons-react'
 import {
-  hexToHsl,
-  hslToHex,
+  hexToHsv,
+  hsvToHex,
   normalizeHexColor,
   type HexColor,
-  type HslColor,
+  type HsvColor,
 } from '../theme-colors.js'
 import '../styles/appearance-color-picker.css'
 
@@ -50,10 +50,8 @@ type PickerProps<Value extends string> = {
 
 /**
  * A colour value on an Appearance row, opened into the same kind of panel as
- * the font menu beside it: the named presets as menu rows, then the colour
- * itself as rows of the page, each a name, a leader and a value. On the
- * channel rows the leader is painted in the channel's colours and the thumb
- * rides on it.
+ * the font menu beside it: the named presets as menu rows, then a
+ * saturation/brightness square with the hue bar under it, then the hex row.
  */
 export function AppearanceColorPicker<Value extends string>(props: PickerProps<Value>) {
   const id = useId()
@@ -202,10 +200,43 @@ export function AppearanceColorPicker<Value extends string>(props: PickerProps<V
   )
 }
 
+/** The thumb's centre travels a radius inside the control, read from its CSS. */
+function thumbSize(element: HTMLElement, name: string, fallback: number): number {
+  const value = Number.parseFloat(getComputedStyle(element).getPropertyValue(name))
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+function usePointerDrag(apply: (event: ReactPointerEvent<HTMLDivElement>) => void) {
+  const dragging = useRef(false)
+  return {
+    onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+      if (event.button !== 0) return
+      dragging.current = true
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+      apply(event)
+    },
+    onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+      if (!dragging.current) return
+      // A release the element never heard about (outside the window) ends the drag.
+      if ((event.buttons & 1) === 0) {
+        dragging.current = false
+        return
+      }
+      apply(event)
+    },
+    onPointerUp() {
+      dragging.current = false
+    },
+    onPointerCancel() {
+      dragging.current = false
+    },
+  }
+}
+
 function ColorPickerContent<Value extends string>(
   props: PickerProps<Value> & { sampling: { current: boolean } },
 ) {
-  const [hsl, setHsl] = useState(() => hexToHsl(props.color))
+  const [hsv, setHsv] = useState(() => hexToHsv(props.color))
   const [draft, setDraft] = useState<string>(props.color)
   const [invalid, setInvalid] = useState(false)
   const hexId = useId()
@@ -215,14 +246,14 @@ function ColorPickerContent<Value extends string>(
   useEffect(() => {
     // Keep the local channels while they still name this colour: a grey or
     // black has no hue of its own, and the hue row must not jump back to red.
-    setHsl((current) => (hslToHex(current) === props.color ? current : hexToHsl(props.color)))
+    setHsv((current) => (hsvToHex(current) === props.color ? current : hexToHsv(props.color)))
     setDraft(props.color)
     setInvalid(false)
   }, [props.color])
 
-  const change = (next: HslColor) => {
-    setHsl(next)
-    const color = hslToHex(next)
+  const change = (next: HsvColor) => {
+    setHsv(next)
+    const color = hsvToHex(next)
     setDraft(color)
     setInvalid(false)
     if (color !== props.color) props.onChange(color)
@@ -272,16 +303,64 @@ function ColorPickerContent<Value extends string>(
     group?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
   }
 
-  // The tracks paint each channel in a colour light and strong enough to read
-  // on the menu; the thumb always carries the exact colour.
-  const hueTrack = `linear-gradient(to right, ${Array.from(
-    { length: 13 },
-    (_, step) =>
-      `hsl(${step * 30} ${Math.round(Math.max(hsl.s, 0.5) * 100)}% ${Math.round(clamp(hsl.l, 0.4, 0.7) * 100)}%)`,
-  ).join(', ')})`
-  const saturationTrack = `linear-gradient(to right, hsl(${hsl.h} 0% ${Math.round(clamp(hsl.l, 0.3, 0.7) * 100)}%), hsl(${hsl.h} 100% ${Math.round(clamp(hsl.l, 0.3, 0.7) * 100)}%))`
-  const lightnessTrack = `linear-gradient(to right, #000, hsl(${hsl.h} ${Math.round(hsl.s * 100)}% 50%), #fff)`
-  const color = hslToHex(hsl)
+  const color = hsvToHex(hsv)
+  const fieldDrag = usePointerDrag((event) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const thumb = thumbSize(event.currentTarget, '--field-thumb', 18)
+    change({
+      ...hsv,
+      s: clamp((event.clientX - bounds.left - thumb / 2) / Math.max(1, bounds.width - thumb)),
+      v: 1 - clamp((event.clientY - bounds.top - thumb / 2) / Math.max(1, bounds.height - thumb)),
+    })
+  })
+  const hueDrag = usePointerDrag((event) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    const thumb = thumbSize(event.currentTarget, '--hue-thumb', 26)
+    change({
+      ...hsv,
+      h: clamp((event.clientX - bounds.left - thumb / 2) / Math.max(1, bounds.width - thumb)) * 360,
+    })
+  })
+  const onFieldKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 0.1 : 0.01
+    const next =
+      event.key === 'ArrowLeft'
+        ? { ...hsv, s: clamp(hsv.s - step) }
+        : event.key === 'ArrowRight'
+          ? { ...hsv, s: clamp(hsv.s + step) }
+          : event.key === 'ArrowDown'
+            ? { ...hsv, v: clamp(hsv.v - step) }
+            : event.key === 'ArrowUp'
+              ? { ...hsv, v: clamp(hsv.v + step) }
+              : event.key === 'Home'
+                ? { ...hsv, s: 0 }
+                : event.key === 'End'
+                  ? { ...hsv, s: 1 }
+                  : undefined
+    if (!next) return
+    event.preventDefault()
+    change(next)
+  }
+  const onHueKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 10 : 1
+    const next =
+      event.key === 'ArrowLeft' || event.key === 'ArrowDown'
+        ? hsv.h - step
+        : event.key === 'ArrowRight' || event.key === 'ArrowUp'
+          ? hsv.h + step
+          : event.key === 'PageDown'
+            ? hsv.h - 10
+            : event.key === 'PageUp'
+              ? hsv.h + 10
+              : event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                  ? 360
+                  : undefined
+    if (next === undefined) return
+    event.preventDefault()
+    change({ ...hsv, h: clamp(next, 0, 360) })
+  }
 
   return (
     <>
@@ -314,79 +393,90 @@ function ColorPickerContent<Value extends string>(
           <div className="color-picker__rule" aria-hidden />
         </>
       ) : null}
-      <div className="color-picker__mix">
-        <ChannelRow
-          name="Hue"
-          position={hsl.h / 360}
-          max={360}
-          unit="°"
-          spoken="degrees"
-          track={hueTrack}
-          color={color}
-          onChange={(position) => change({ ...hsl, h: position * 360 })}
-        />
-        <ChannelRow
-          name="Saturation"
-          position={hsl.s}
-          max={100}
-          unit="%"
-          spoken="percent"
-          track={saturationTrack}
-          color={color}
-          onChange={(position) => change({ ...hsl, s: position })}
-        />
-        <ChannelRow
-          name="Lightness"
-          position={hsl.l}
-          max={100}
-          unit="%"
-          spoken="percent"
-          track={lightnessTrack}
-          color={color}
-          onChange={(position) => change({ ...hsl, l: position })}
-        />
-        <div className="color-picker__row color-picker__hex">
-          <label className="color-picker__name" htmlFor={hexId}>
-            Hex
-          </label>
-          <div className="color-picker__line">
-            <span className="color-picker__leader" aria-hidden />
-            <input
-              id={hexId}
-              type="text"
-              aria-label={`${props.label} hex color`}
-              aria-invalid={invalid || undefined}
-              aria-describedby={invalid ? errorId : undefined}
-              autoComplete="off"
-              spellCheck={false}
-              maxLength={16}
-              value={draft}
-              onChange={(event) => {
-                const next = event.currentTarget.value
-                setDraft(next)
-                setInvalid(false)
-                // A full six-digit value shows at once; a short one waits for Enter.
-                const color = /^\s*#?[\da-f]{6}\s*$/i.test(next)
-                  ? normalizeHexColor(next)
-                  : undefined
-                if (color && color !== props.color) props.onChange(color)
-              }}
-              onBlur={commitHex}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  event.preventDefault()
-                  commitHex()
-                }
-              }}
-            />
-          </div>
+      <div className="color-picker__picker">
+        <div
+          className="color-picker__field"
+          style={
+            {
+              backgroundColor: `hsl(${hsv.h} 100% 50%)`,
+              '--s': hsv.s,
+              '--v': hsv.v,
+            } as CSSProperties
+          }
+          role="slider"
+          tabIndex={0}
+          aria-label="Saturation and brightness"
+          aria-description="Use left and right arrows for saturation, up and down for brightness."
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(hsv.s * 100)}
+          aria-valuetext={`Saturation ${Math.round(hsv.s * 100)}%, brightness ${Math.round(hsv.v * 100)}%`}
+          {...fieldDrag}
+          onKeyDown={onFieldKeyDown}
+        >
+          <span
+            className="color-picker__field-thumb"
+            style={{ backgroundColor: color }}
+            aria-hidden
+          />
         </div>
-        {invalid ? (
-          <p className="color-picker__error" id={errorId}>
-            Use a hex color, like #5E6AD2.
-          </p>
-        ) : null}
+        <div
+          className="color-picker__hue"
+          style={{ '--h': hsv.h / 360 } as CSSProperties}
+          role="slider"
+          tabIndex={0}
+          aria-label="Hue"
+          aria-valuemin={0}
+          aria-valuemax={360}
+          aria-valuenow={Math.round(hsv.h)}
+          aria-valuetext={`${Math.round(hsv.h)} degrees`}
+          {...hueDrag}
+          onKeyDown={onHueKeyDown}
+        >
+          <span
+            className="color-picker__hue-thumb"
+            style={{ backgroundColor: color }}
+            aria-hidden
+          />
+        </div>
       </div>
+      <div className="color-picker__hex">
+        <label className="color-picker__name" htmlFor={hexId}>
+          Hex
+        </label>
+        <span className="color-picker__leader" aria-hidden />
+        <input
+          id={hexId}
+          type="text"
+          aria-label={`${props.label} hex color`}
+          aria-invalid={invalid || undefined}
+          aria-describedby={invalid ? errorId : undefined}
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={16}
+          value={draft}
+          onChange={(event) => {
+            const next = event.currentTarget.value
+            setDraft(next)
+            setInvalid(false)
+            // A full six-digit value shows at once; a short one waits for Enter.
+            const color = /^\s*#?[\da-f]{6}\s*$/i.test(next) ? normalizeHexColor(next) : undefined
+            if (color && color !== props.color) props.onChange(color)
+          }}
+          onBlur={commitHex}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              commitHex()
+            }
+          }}
+        />
+      </div>
+      {invalid ? (
+        <p className="color-picker__error" id={errorId}>
+          Use a hex color, like #5E6AD2.
+        </p>
+      ) : null}
       {dropper ? (
         <>
           <div className="color-picker__rule" aria-hidden />
@@ -402,106 +492,5 @@ function ColorPickerContent<Value extends string>(
         </>
       ) : null}
     </>
-  )
-}
-
-/**
- * One channel as a row of the page: its name, a leader painted from the
- * channel's lowest to highest colour that the thumb rides on, and the number.
- */
-function ChannelRow(props: {
-  name: string
-  position: number
-  max: number
-  unit: string
-  spoken: string
-  track: string
-  color: HexColor
-  onChange: (position: number) => void
-}) {
-  const nameId = useId()
-  const dragging = useRef(false)
-  const value = Math.round(props.position * props.max)
-
-  const fromPointer = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const track = event.currentTarget
-    const bounds = track.getBoundingClientRect()
-    // The thumb's centre travels a radius inside the track (--thumb in the CSS).
-    const thumb = Number.parseFloat(getComputedStyle(track).getPropertyValue('--thumb')) || 12
-    const travel = Math.max(1, bounds.width - thumb)
-    props.onChange(clamp((event.clientX - bounds.left - thumb / 2) / travel))
-  }
-
-  return (
-    <div className="color-picker__row">
-      <span className="color-picker__name" id={nameId}>
-        {props.name}
-      </span>
-      <div className="color-picker__line">
-        <div
-          className="color-picker__track"
-          style={{ '--track': props.track, '--position': props.position } as CSSProperties}
-          role="slider"
-          tabIndex={0}
-          aria-labelledby={nameId}
-          aria-valuemin={0}
-          aria-valuemax={props.max}
-          aria-valuenow={value}
-          aria-valuetext={`${value} ${props.spoken}`}
-          onPointerDown={(event) => {
-            if (event.button !== 0) return
-            dragging.current = true
-            event.currentTarget.setPointerCapture?.(event.pointerId)
-            fromPointer(event)
-          }}
-          onPointerMove={(event) => {
-            if (!dragging.current) return
-            // A release the element never heard about (outside the window) ends the drag.
-            if ((event.buttons & 1) === 0) {
-              dragging.current = false
-              return
-            }
-            fromPointer(event)
-          }}
-          onPointerUp={() => {
-            dragging.current = false
-          }}
-          onPointerCancel={() => {
-            dragging.current = false
-          }}
-          onKeyDown={(event) => {
-            const step = (event.shiftKey ? 10 : 1) / props.max
-            const big = 10 / props.max
-            const next =
-              event.key === 'ArrowRight' || event.key === 'ArrowUp'
-                ? props.position + step
-                : event.key === 'ArrowLeft' || event.key === 'ArrowDown'
-                  ? props.position - step
-                  : event.key === 'PageUp'
-                    ? props.position + big
-                    : event.key === 'PageDown'
-                      ? props.position - big
-                      : event.key === 'Home'
-                        ? 0
-                        : event.key === 'End'
-                          ? 1
-                          : undefined
-            if (next === undefined) return
-            event.preventDefault()
-            props.onChange(clamp(next))
-          }}
-        >
-          <span
-            className="color-picker__thumb"
-            style={{ backgroundColor: props.color }}
-            aria-hidden
-          />
-        </div>
-        <span className="color-picker__value" aria-hidden>
-          {value}
-          {props.unit}
-        </span>
-      </div>
-    </div>
   )
 }
