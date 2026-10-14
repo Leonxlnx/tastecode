@@ -174,6 +174,7 @@ import type {
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
 import { restoreWorkspacePanelWidth } from './ui/workspace/workspace-panel-width.js'
+import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
@@ -1127,6 +1128,11 @@ export function App() {
   usePersistedSettingChange(
     appearanceKey(GLASS_KEY, 'dark'),
     String(appearancePreferences.dark.glass),
+  )
+  // After the theme, backdrop and glass above have reached the document.
+  useWindowChrome(
+    theme,
+    `${backdropPreference}|${sidebarGlass}|${settingsOpen}|${onboardingMounted}|${providerLoginTerminal !== undefined}`,
   )
 
   useEffect(() => {

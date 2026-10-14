@@ -4,6 +4,7 @@ import type { AppUpdateState } from './app-updater.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
 import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import type { WindowChrome } from './window-theme.js'
 
 type PickedAttachment = {
   path: string
@@ -60,6 +61,8 @@ const api = {
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
+  setWindowChrome: (chrome: WindowChrome): Promise<void> =>
+    ipcRenderer.invoke('harness:setWindowChrome', chrome),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
