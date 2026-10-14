@@ -3,6 +3,15 @@ import type { DomainEvent } from '@harness/contracts'
 
 type HistoryEntry = { seq: number; event: DomainEvent }
 
+/** What the rows before a cut still hold open: the latest usage and unanswered requests. */
+export type HistoryCarry = {
+  usage?: HistoryEntry | undefined
+  approvals: ReadonlyMap<string, HistoryEntry>
+  userInputs: ReadonlyMap<string, HistoryEntry>
+}
+
+const NOTHING_CARRIED: HistoryCarry = { approvals: new Map(), userInputs: new Map() }
+
 /** Newest whole turns sent when a client asks for a page without a size. */
 export const DEFAULT_HISTORY_PAGE_TURNS = 10
 
@@ -114,7 +123,7 @@ export function readHistoryPage(
 function historyBlocks(entries: readonly HistoryEntry[]): Block[] {
   const lastIndex = new Map<string, number>()
   for (let index = 0; index < entries.length; index += 1) {
-    const turn = turnKey(entries[index]!.event)
+    const turn = historyTurnKey(entries[index]!.event)
     if (turn !== undefined) lastIndex.set(turn, index)
   }
 
@@ -123,7 +132,7 @@ function historyBlocks(entries: readonly HistoryEntry[]): Block[] {
   let block: Block = { start: 0, turns: 0, firstTurn: undefined }
   let reach = -1
   for (let index = 0; index < entries.length; index += 1) {
-    const turn = turnKey(entries[index]!.event)
+    const turn = historyTurnKey(entries[index]!.event)
     if (turn === undefined) continue
     // Every turn in the current block has finished: this turn starts the next.
     if (block.turns > 0 && index > reach) {
@@ -141,7 +150,8 @@ function historyBlocks(entries: readonly HistoryEntry[]): Block[] {
   return blocks
 }
 
-function turnKey(event: DomainEvent): string | undefined {
+/** The turn an event belongs to for page boundaries; undefined for thread-level events. */
+export function historyTurnKey(event: DomainEvent): string | undefined {
   switch (event.type) {
     case 'turn.started':
       return event.turn.id || undefined
@@ -163,11 +173,24 @@ function turnKey(event: DomainEvent): string | undefined {
   }
 }
 
-/** Replays the renderer's thread-level rules for the rows before a page. */
-function carriedState(entries: readonly HistoryEntry[], end: number): HistoryEntry[] {
-  let usage: number | undefined
-  const approvals = new Map<string, number>()
-  const userInputs = new Map<string, number>()
+/**
+ * Replays the renderer's thread-level rules for the rows before a page.
+ * `prior` is what rows before `entries` left open; those rows rank first, in
+ * log order.
+ */
+function carriedState(
+  entries: readonly HistoryEntry[],
+  end: number,
+  prior: HistoryCarry = NOTHING_CARRIED,
+): HistoryEntry[] {
+  const earlier = [...prior.approvals.values(), ...prior.userInputs.values()]
+  if (prior.usage) earlier.push(prior.usage)
+  earlier.sort((left, right) => left.seq - right.seq)
+  const ranks = new Map(earlier.map((entry, index) => [entry, index - earlier.length]))
+  const rank = (entry: HistoryEntry) => ranks.get(entry)!
+  let usage = prior.usage ? rank(prior.usage) : undefined
+  const approvals = new Map([...prior.approvals].map(([id, entry]) => [id, rank(entry)]))
+  const userInputs = new Map([...prior.userInputs].map(([id, entry]) => [id, rank(entry)]))
   for (let index = 0; index < end; index += 1) {
     const event = entries[index]!.event
     if (event.type === 'usage.updated') usage = index
@@ -184,7 +207,9 @@ function carriedState(entries: readonly HistoryEntry[], end: number): HistoryEnt
   }
   const carried = [...approvals.values(), ...userInputs.values()]
   if (usage !== undefined) carried.push(usage)
-  return carried.sort((left, right) => left - right).map((index) => entries[index]!)
+  return carried
+    .sort((left, right) => left - right)
+    .map((index) => (index < 0 ? earlier[index + earlier.length]! : entries[index]!))
 }
 
 function shortHash(value: string): string {
