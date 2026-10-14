@@ -1160,6 +1160,15 @@
 
 /* ---------- stage ---------- */
 
+/* The right panel width is written inline on .workspace-layout on every frame
+   of a resize drag, and only that grid reads it. Left inheritable, each write
+   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
+   to a long chat); not inherited, it restyles one element. */
+@property --workspace-panel-w {
+  syntax: '*';
+  inherits: false;
+}
+
 .workspace-layout {
   position: relative;
   display: grid;
