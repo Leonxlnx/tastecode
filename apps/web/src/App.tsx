@@ -1000,20 +1000,29 @@ export function App() {
       (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
-  const selectedModelChoice =
+  const resolvedModelChoice =
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels.find((choice) => choice.key === preferredModelKey) ??
-    selectableModels.find((choice) => modelSource(choice) === preferredModelSource) ??
+    selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
+  // The preferred source has not listed its models yet, so the model a send
+  // would use is not known. The placeholder below keeps that source, but it is
+  // only the provider default: the picker waits and Send stays off instead of
+  // starting a turn the label does not describe.
+  const modelChoicePending = !resolvedModelChoice && preferredSourcePending
+  const selectedModelChoice =
+    resolvedModelChoice ??
     (preferredSourcePending ? selectableImplicitChoice : undefined) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = resolveSendAvailability({
-    catalog: catalogAvailability,
-    activeProvider: activeSession?.provider,
-    selectedChoice: selectedModelChoice,
-    providerStatuses,
-    accountCheck,
-  })
+  const sendAvailability = modelChoicePending
+    ? 'loading'
+    : resolveSendAvailability({
+        catalog: catalogAvailability,
+        activeProvider: activeSession?.provider,
+        selectedChoice: selectedModelChoice,
+        providerStatuses,
+        accountCheck,
+      })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -2792,6 +2801,9 @@ export function App() {
   // transition. Requests already use the effective values above, so even an
   // interaction before this effect runs cannot observe the stale setup.
   useEffect(() => {
+    // The provider-default placeholder must not replace a stored model that
+    // its source is still about to list.
+    if (modelChoicePending) return
     if (!selectedModelChoice) {
       setModelId(undefined)
       setEffort(undefined)
@@ -2820,6 +2832,7 @@ export function App() {
     selectedEffort,
     selectedServiceTier,
     commitModelChoice,
+    modelChoicePending,
   ])
 
   const selectModel = useCallback(
@@ -5337,6 +5350,8 @@ export function App() {
                       models={selectableModels}
                       modelsLoaded={modelsLoaded}
                       modelId={selectedModelChoice?.key}
+                      modelChoice={selectedModelChoice}
+                      modelPending={modelChoicePending}
                       effort={selectedEffort}
                       serviceTier={selectedServiceTier}
                       usage={thread.usage}
