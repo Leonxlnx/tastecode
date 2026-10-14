@@ -195,6 +195,11 @@ vi.mock('./ui/Thread.js', async () => {
             </span>
           ))}
           {frame.running && !props.stopping && frame.activeTurn ? <span>Working</span> : null}
+          {props.loadFailure !== undefined ? (
+            <button type="button" onClick={props.onRetryLoad}>
+              Retry loading: {props.loadFailure}
+            </button>
+          ) : null}
         </div>
       )
     },
@@ -6790,6 +6795,72 @@ describe('new chats', () => {
     await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
     await waitFor(() => expect(permissions.textContent).toContain('Full access'))
     expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
+  })
+
+  it('falls back to Ask first and offers a retry when a chat cannot be read', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      return reads === 1
+        ? Promise.reject(new Error('request timed out'))
+        : Promise.resolve({
+            events: [completedHistoryEvent(1, 'base', 'Existing message')],
+            running: false,
+            approval: 'full',
+          })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    const retry = await screen.findByRole('button', { name: 'Retry loading: request timed out' })
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(within(permissions).queryByRole('status')).toBeNull()
+    expect(permissions.textContent).toContain('Ask first')
+    expect(permissions.hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByText('request timed out')).toBeNull()
+
+    fireEvent.click(retry)
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    expect(screen.queryByRole('button', { name: /^Retry loading/ })).toBeNull()
+    expect(reads).toBe(2)
+  })
+
+  it('reopens a chat with its last access mode while its history reloads', async () => {
+    serverProjects[0]!.sessions.push({
+      id: 'second-thread',
+      title: 'Second session',
+      provider: 'codex',
+      createdAt: 1,
+      running: false,
+    })
+    const request = transport.request.getMockImplementation()!
+    let hold = false
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = methods['thread.history'].params.parse(params)
+      if (hold) return new Promise(() => undefined)
+      return Promise.resolve({
+        events: [],
+        running: false,
+        approval: threadId === 'untouched-thread' ? 'full' : 'ask',
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
+    await waitFor(() => expect(permissions.textContent).toContain('Ask first'))
+
+    hold = true
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(within(permissions).queryByRole('status')).toBeNull()
+    expect(permissions.textContent).toContain('Full access')
   })
 
   it('waits for the provider list before showing the default access mode', async () => {

@@ -3408,6 +3408,16 @@
   text-align: center;
 }
 
+.empty__detail {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  margin: -6px 0 0;
+  max-width: min(46ch, 100%);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .notice {
   position: fixed;
   /* Above every modal surface (settings 60, palette 70, image viewer 100) —

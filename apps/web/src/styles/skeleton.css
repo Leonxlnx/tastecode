@@ -269,8 +269,10 @@
 }
 
 .composer-skeleton-permission__icon {
+  display: grid;
   flex: none;
   width: 13px;
+  color: var(--text-3);
 }
 
 /* Reserve the actual permission label's width instead of guessing each mode. */
