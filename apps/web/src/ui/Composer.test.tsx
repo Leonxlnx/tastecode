@@ -432,6 +432,28 @@ describe('Composer media attachments', () => {
     expect(onSend).toHaveBeenCalledWith('', ['/work/large.zip'])
   })
 
+  it('names a drop, not a paste, when the web build cannot save the file', async () => {
+    bridge.savePastedFile.mockResolvedValueOnce(undefined)
+    renderComposer(vi.fn())
+    fireEvent.drop(document.querySelector('.composer__box')!, {
+      dataTransfer: { files: [new File(['notes'], 'notes.txt')], types: ['Files'] },
+    })
+    expect(await screen.findByText('Dropping files is available in the desktop app.')).toBeTruthy()
+
+    bridge.savePastedFile.mockResolvedValueOnce(undefined)
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    expect(await screen.findByText('Pasting files is available in the desktop app.')).toBeTruthy()
+  })
+
+  it('shows the placeholder its owner gives while it is disabled', () => {
+    const view = renderComposer(vi.fn())
+    view.rerenderComposer({ disabled: true, placeholder: 'Stopping…' })
+    expect(screen.getByPlaceholderText('Stopping…')).toBeTruthy()
+    expect(screen.queryByPlaceholderText('Add a project folder first')).toBeNull()
+  })
+
   it('keeps a pasted file registered with its original draft while saving', async () => {
     let resolve!: (value: { path: string; name: string }) => void
     bridge.savePastedFile.mockReturnValueOnce(

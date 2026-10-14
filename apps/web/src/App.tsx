@@ -5407,6 +5407,7 @@ export function App() {
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
                       voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
                       disabled={stopping}
+                      placeholder={stopping ? 'Stopping…' : undefined}
                       sendAvailability={sendAvailability}
                       errors={composerErrors}
                       errorsVisible={!settingsOpen && surface === 'chat'}

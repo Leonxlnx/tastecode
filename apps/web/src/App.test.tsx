@@ -9236,6 +9236,34 @@ describe('live sessions', () => {
     })
   })
 
+  it('says the composer is stopping instead of asking for a project folder', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [{ id: 'thread-1', title: 'Old chat', running: false }],
+      },
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'thread.sendTurn' || method === 'thread.interrupt'
+        ? new Promise(() => {})
+        : request(method, params),
+    )
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Old chat,/ }))
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'A slow turn' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('button', { name: 'Stop' }))
+
+    expect(composer.getAttribute('placeholder')).toBe('Stopping…')
+    expect(screen.queryByPlaceholderText('Add a project folder first')).toBeNull()
+  })
+
   it('keeps an old-chat submission above a colder history response', async () => {
     serverProjects = [
       {
