@@ -885,6 +885,10 @@ function sidebarProps() {
   >
 }
 
+function terminalOpenRequests() {
+  return transport.request.mock.calls.filter(([method]) => method === 'terminal.open').length
+}
+
 async function openCheckpointHistory() {
   const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
     typeof import('./ui/StageHeader.js').StageHeader
@@ -8765,7 +8769,7 @@ describe('global shortcuts', () => {
     expect(screen.queryByTestId('terminal-pane')).toBeNull()
   }, 20_000)
 
-  it('keeps the bottom panel closed when it remounts after the pull requests view', async () => {
+  it('keeps a parked bottom panel parked behind the pull requests view', async () => {
     localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     await import('./ui/pull-requests/PullRequestsView.js')
     render(<App />)
@@ -8779,22 +8783,50 @@ describe('global shortcuts', () => {
     await waitFor(() =>
       expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
     )
+    const panel = screen.getByTestId('bottom-terminal')
+    const opens = terminalOpenRequests()
 
-    // The pull requests view replaces the stage, bottom panel included.
+    // The pull requests view covers the stage; the bottom panel waits behind it.
     fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
     expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
-    expect(screen.queryByTestId('bottom-terminal')).toBeNull()
+    expect(panel.isConnected).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(true)
 
     await act(async () => {
       await sidebarProps().onSelectSession('untouched-thread')
     })
-    const remounted = await screen.findByTestId('bottom-terminal')
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
-    expect(remounted.classList.contains('is-open')).toBe(false)
-    expect(screen.queryByTestId('terminal-pane')).toBeNull()
+    expect(screen.getByTestId('bottom-terminal')).toBe(panel)
+    expect(panel.classList.contains('is-parked')).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(false)
+    expect(terminalOpenRequests()).toBe(opens)
+  }, 20_000)
+
+  it('keeps an open bottom terminal and its shell across the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    const pane = await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    const opens = terminalOpenRequests()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByTestId('terminal-pane')).toBe(pane)
+    expect(screen.getByTestId('bottom-terminal').classList.contains('is-open')).toBe(true)
+    expect(terminalOpenRequests()).toBe(opens)
   }, 20_000)
 
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {

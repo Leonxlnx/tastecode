@@ -4639,14 +4639,12 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
-  // The bottom panel unmounts while no project is active or the pull requests
-  // view replaces the stage, and forgets which toggle it last handled. Without
-  // this reset it would treat the old count as a new toggle on remount and
-  // open a terminal nobody asked for.
-  const bottomPanelHost = Boolean(activePath) && surface !== 'pull-requests'
+  // The bottom panel unmounts while no project is active and forgets which
+  // toggle it last handled. Without this reset it would treat the old count as
+  // a new toggle on remount and open a terminal nobody asked for.
   useEffect(() => {
-    if (!bottomPanelHost) setBottomTerminalToggleRequest(0)
-  }, [bottomPanelHost])
+    if (!activePath) setBottomTerminalToggleRequest(0)
+  }, [activePath])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
@@ -5269,184 +5267,186 @@ export function App() {
                 />
               </Suspense>
             ) : (
-              <>
-                <StageHeader
-                  sessionId={active?.session.id}
-                  title={active?.session.title}
-                  pinned={active?.session.pinned ?? false}
-                  projectPath={activePath}
-                  checkpointCount={thread.running ? 0 : checkpoints.length}
-                  worktreeBranch={active?.session.worktreeBranch}
-                  keybindings={keybindings}
-                  menuActions={keybindingActions}
-                  onOpenRollback={openRollback}
-                  onRenameSession={renameSidebarSession}
-                  onToggleSessionPin={toggleSidebarSessionPin}
-                  onArchiveSession={deleteSidebarSession}
-                />
+              <StageHeader
+                sessionId={active?.session.id}
+                title={active?.session.title}
+                pinned={active?.session.pinned ?? false}
+                projectPath={activePath}
+                checkpointCount={thread.running ? 0 : checkpoints.length}
+                worktreeBranch={active?.session.worktreeBranch}
+                keybindings={keybindings}
+                menuActions={keybindingActions}
+                onOpenRollback={openRollback}
+                onRenameSession={renameSidebarSession}
+                onToggleSessionPin={toggleSidebarSessionPin}
+                onArchiveSession={deleteSidebarSession}
+              />
+            )}
 
-                <div
-                  className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
-                >
-                  <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
-                    {activeId ? (
-                      <Suspense fallback={<ThreadSkeleton />}>
-                        <LazyThread
-                          key={threadEntryKey}
-                          frameStore={threadFrameStore}
-                          errorsInComposer
-                          stopping={stopping}
-                          loading={loadingThreadId === activeId}
-                          projectPath={activePath}
-                          threadId={activeId}
-                          transport={transport}
-                          searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                          onSearchJumpDone={finishSearchJump}
-                          revealRequest={threadRevealRequest}
-                          checkpoints={checkpoints}
-                          onDecide={decideApproval}
-                          onAnswerUserInput={answerUserInput}
-                          onEditMessage={editMessage}
-                          onRevertCheckpoint={revertCheckpoint}
-                          onUndoChanges={undoTurnChanges}
-                          onLoadOlderHistory={loadOlderHistory}
-                          onLoadCompleteHistory={loadCompleteHistory}
-                        />
-                      </Suspense>
-                    ) : (
-                      <Empty
-                        projects={projects}
-                        activePath={activePath}
-                        status={projectsStatus}
-                        startupProjectName={startupProjectName}
-                        onAddProject={addSidebarProject}
-                        onRetry={retryProjects}
+            {/* The pull requests view covers the stage, but the bottom panel stays
+                mounted behind it so its tabs and running shells survive the visit. */}
+            <div
+              className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
+              hidden={surface === 'pull-requests'}
+            >
+              {surface === 'chat' ? (
+                <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
+                  {activeId ? (
+                    <Suspense fallback={<ThreadSkeleton />}>
+                      <LazyThread
+                        key={threadEntryKey}
+                        frameStore={threadFrameStore}
+                        errorsInComposer
+                        stopping={stopping}
+                        loading={loadingThreadId === activeId}
+                        projectPath={activePath}
+                        threadId={activeId}
+                        transport={transport}
+                        searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                        onSearchJumpDone={finishSearchJump}
+                        revealRequest={threadRevealRequest}
+                        checkpoints={checkpoints}
+                        onDecide={decideApproval}
+                        onAnswerUserInput={answerUserInput}
+                        onEditMessage={editMessage}
+                        onRevertCheckpoint={revertCheckpoint}
+                        onUndoChanges={undoTurnChanges}
+                        onLoadOlderHistory={loadOlderHistory}
+                        onLoadCompleteHistory={loadCompleteHistory}
                       />
-                    )}
+                    </Suspense>
+                  ) : (
+                    <Empty
+                      projects={projects}
+                      activePath={activePath}
+                      status={projectsStatus}
+                      startupProjectName={startupProjectName}
+                      onAddProject={addSidebarProject}
+                      onRetry={retryProjects}
+                    />
+                  )}
 
-                    <Composer
+                  <Composer
+                    transport={transport}
+                    provider={provider}
+                    projects={projectChoices}
+                    projectPath={activePath}
+                    projectName={activeProject ? displayName(activeProject) : undefined}
+                    projectsLoading={projectsStatus === 'loading'}
+                    branch={
+                      (!activeId && activePath
+                        ? projectBranches.current.get(activePath)
+                        : undefined) ??
+                      active?.session.worktreeBranch ??
+                      workspace?.branch ??
+                      branches[0]
+                    }
+                    branches={branches}
+                    branchesLoading={Boolean(activePath) && branchesPath !== activePath}
+                    models={selectableModels}
+                    modelsLoaded={modelsLoaded}
+                    modelId={selectedModelChoice?.key}
+                    effort={selectedEffort}
+                    serviceTier={selectedServiceTier}
+                    usage={thread.usage}
+                    approval={displayedApproval}
+                    approvalLoading={approvalLoading}
+                    autoReviewSupported={autoReviewSupported}
+                    attachmentsSupported={attachmentsSupported}
+                    attachmentsLoading={catalogAvailability === 'loading'}
+                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                    voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
+                    disabled={stopping}
+                    sendAvailability={sendAvailability}
+                    errors={composerErrors}
+                    errorsVisible={!settingsOpen && surface === 'chat'}
+                    providerError={composerProviderError}
+                    providerSignInRequired={providerStatuses.some(
+                      (status) => status.id === provider && status.installed,
+                    )}
+                    running={visibleRunning}
+                    newSession={!activeId}
+                    isolate={active?.session.worktreeBranch ? true : isolateSession}
+                    designMode={designMode}
+                    keybindings={keybindings}
+                    focusRequest={composerFocusRequest}
+                    draftRequest={composerDraft}
+                    onDraftChange={updateComposerDraftText}
+                    onAttachmentsChange={updateComposerDraftAttachments}
+                    onPendingAttachment={keepPendingAttachment}
+                    onPendingQueuedEdit={keepQueuedEdit}
+                    onResourcesChange={updateComposerDraftResources}
+                    onReady={handleComposerReady}
+                    queuedTurns={queuedTurns}
+                    canSteerQueue={canSteerQueue}
+                    onModelChange={selectModel}
+                    onEffortChange={changeEffort}
+                    onServiceTierChange={changeServiceTier}
+                    onApprovalChange={changeApproval}
+                    onIsolateChange={setIsolateSession}
+                    onDesignModeChange={changeDesignMode}
+                    onTranscribeVoice={transcribeVoice}
+                    onCancelVoice={cancelVoice}
+                    onProjectChange={selectProject}
+                    onBranchChange={changeBranch}
+                    onProjectRequired={requireProject}
+                    onSetupProvider={openProviderSetup}
+                    onSend={sendTurn}
+                    onSteer={steerTurn}
+                    onInterrupt={interrupt}
+                    stopping={stopping}
+                    onDeleteQueuedTurn={deleteQueuedTurn}
+                    onMoveQueuedTurn={moveQueuedTurn}
+                    onSteerQueuedTurn={steerQueuedTurn}
+                  />
+                </div>
+              ) : null}
+
+              {activePath && bottomTerminalMounted ? (
+                <div
+                  className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
+                  style={{ height: terminalHeight }}
+                  data-testid="bottom-terminal"
+                  aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
+                  inert={
+                    bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
+                      ? true
+                      : undefined
+                  }
+                  onTransitionEnd={finishBottomTerminalMotion}
+                >
+                  <Suspense
+                    fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
+                  >
+                    <BottomWorkspacePanel
+                      placement="bottom"
+                      open={terminalOpen}
+                      expanded={false}
+                      width={terminalHeight}
                       transport={transport}
-                      provider={provider}
-                      projects={projectChoices}
+                      threadId={activeId}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
-                      projectsLoading={projectsStatus === 'loading'}
-                      branch={
-                        (!activeId && activePath
-                          ? projectBranches.current.get(activePath)
-                          : undefined) ??
-                        active?.session.worktreeBranch ??
-                        workspace?.branch ??
-                        branches[0]
+                      branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                      theme={themeColorScheme}
+                      sideChatParentStatus={sideChatParentStatus}
+                      sideChatStartOptions={sideChatStartOptions}
+                      nativeSurfacesVisible={
+                        surface === 'chat' &&
+                        !settingsOpen &&
+                        paletteScope === null &&
+                        !rollbackOpen &&
+                        !checkoutDelete
                       }
-                      branches={branches}
-                      branchesLoading={Boolean(activePath) && branchesPath !== activePath}
-                      models={selectableModels}
-                      modelsLoaded={modelsLoaded}
-                      modelId={selectedModelChoice?.key}
-                      effort={selectedEffort}
-                      serviceTier={selectedServiceTier}
-                      usage={thread.usage}
-                      approval={displayedApproval}
-                      approvalLoading={approvalLoading}
-                      autoReviewSupported={autoReviewSupported}
-                      attachmentsSupported={attachmentsSupported}
-                      attachmentsLoading={catalogAvailability === 'loading'}
-                      voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                      voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
-                      disabled={stopping}
-                      sendAvailability={sendAvailability}
-                      errors={composerErrors}
-                      errorsVisible={!settingsOpen && surface === 'chat'}
-                      providerError={composerProviderError}
-                      providerSignInRequired={providerStatuses.some(
-                        (status) => status.id === provider && status.installed,
-                      )}
-                      running={visibleRunning}
-                      newSession={!activeId}
-                      isolate={active?.session.worktreeBranch ? true : isolateSession}
-                      designMode={designMode}
-                      keybindings={keybindings}
-                      focusRequest={composerFocusRequest}
-                      draftRequest={composerDraft}
-                      onDraftChange={updateComposerDraftText}
-                      onAttachmentsChange={updateComposerDraftAttachments}
-                      onPendingAttachment={keepPendingAttachment}
-                      onPendingQueuedEdit={keepQueuedEdit}
-                      onResourcesChange={updateComposerDraftResources}
-                      onReady={handleComposerReady}
-                      queuedTurns={queuedTurns}
-                      canSteerQueue={canSteerQueue}
-                      onModelChange={selectModel}
-                      onEffortChange={changeEffort}
-                      onServiceTierChange={changeServiceTier}
-                      onApprovalChange={changeApproval}
-                      onIsolateChange={setIsolateSession}
-                      onDesignModeChange={changeDesignMode}
-                      onTranscribeVoice={transcribeVoice}
-                      onCancelVoice={cancelVoice}
-                      onProjectChange={selectProject}
-                      onBranchChange={changeBranch}
-                      onProjectRequired={requireProject}
-                      onSetupProvider={openProviderSetup}
-                      onSend={sendTurn}
-                      onSteer={steerTurn}
-                      onInterrupt={interrupt}
-                      stopping={stopping}
-                      onDeleteQueuedTurn={deleteQueuedTurn}
-                      onMoveQueuedTurn={moveQueuedTurn}
-                      onSteerQueuedTurn={steerQueuedTurn}
+                      onOpen={openBottomPanel}
+                      onClose={closeTerminal}
+                      onWidthChange={setTerminalHeight}
+                      terminalToggleRequest={bottomTerminalToggleRequest}
                     />
-                  </div>
-
-                  {activePath && bottomTerminalMounted ? (
-                    <div
-                      className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
-                      style={{ height: terminalHeight }}
-                      data-testid="bottom-terminal"
-                      aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
-                      inert={
-                        bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
-                          ? true
-                          : undefined
-                      }
-                      onTransitionEnd={finishBottomTerminalMotion}
-                    >
-                      <Suspense
-                        fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
-                      >
-                        <BottomWorkspacePanel
-                          placement="bottom"
-                          open={terminalOpen}
-                          expanded={false}
-                          width={terminalHeight}
-                          transport={transport}
-                          threadId={activeId}
-                          projectPath={activePath}
-                          projectName={activeProject ? displayName(activeProject) : undefined}
-                          branch={
-                            active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]
-                          }
-                          theme={themeColorScheme}
-                          sideChatParentStatus={sideChatParentStatus}
-                          sideChatStartOptions={sideChatStartOptions}
-                          nativeSurfacesVisible={
-                            !settingsOpen &&
-                            paletteScope === null &&
-                            !rollbackOpen &&
-                            !checkoutDelete
-                          }
-                          onOpen={openBottomPanel}
-                          onClose={closeTerminal}
-                          onWidthChange={setTerminalHeight}
-                          terminalToggleRequest={bottomTerminalToggleRequest}
-                        />
-                      </Suspense>
-                    </div>
-                  ) : null}
+                  </Suspense>
                 </div>
-              </>
-            )}
+              ) : null}
+            </div>
           </main>
 
           {workspacePanelHasMounted ? (

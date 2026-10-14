@@ -1239,6 +1239,10 @@
   border-top-left-radius: inherit;
 }
 
+.stage__body[hidden] {
+  display: none;
+}
+
 .stage__conversation {
   position: relative;
   display: grid;
