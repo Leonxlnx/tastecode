@@ -48,32 +48,74 @@ function lowestReasoningEffort(model: Model): string | undefined {
   return lowest?.effort
 }
 
+type SourceKey = Pick<BackgroundModelSource, 'provider' | 'agent'>
+
+/** One step of the priority order. Its pick sees only the sources it reads, in source order. */
+type ResolutionStage = {
+  /** Every source when absent. */
+  reads?: (source: SourceKey) => boolean
+  pick: (sources: AvailableBackgroundModelSource[]) => BackgroundModelSelection | undefined
+}
+
+function resolutionStages(preference: BackgroundModelPreference): ResolutionStage[] {
+  if (preference.mode === 'manual') {
+    const { target } = preference
+    return [
+      {
+        reads: (source) => source.provider === target.provider && source.agent === target.agent,
+        pick: (sources) => resolveManual(target, sources),
+      },
+    ]
+  }
+  return [
+    { reads: isBuiltIn('codex'), pick: pickCodexLuna },
+    { reads: isBuiltIn('grok'), pick: pickGrok46 },
+    { pick: pickCheapest },
+  ]
+}
+
 export function resolveBackgroundModel(
   preference: BackgroundModelPreference,
   sources: AvailableBackgroundModelSource[],
 ): BackgroundModelSelection | undefined {
-  if (preference.mode === 'manual') return resolveManual(preference.target, sources)
+  for (const stage of resolutionStages(preference)) {
+    const resolved = stage.pick(stage.reads ? sources.filter(stage.reads) : sources)
+    if (resolved) return resolved
+  }
+  return undefined
+}
 
-  const codex = sources.find(
-    (source) => source.provider === 'codex' && !source.agent && source.codexSubscription,
-  )
+function isBuiltIn(provider: BackgroundModelSource['provider']): (source: SourceKey) => boolean {
+  return (source) => source.provider === provider && !source.agent
+}
+
+function pickCodexLuna(
+  sources: AvailableBackgroundModelSource[],
+): BackgroundModelSelection | undefined {
+  const codex = sources.find((source) => source.codexSubscription)
   const luna = codex?.models
     .filter((model) => isLuna(model))
     .sort((left, right) => compareVersions(right, left))[0]
-  if (codex && luna) {
-    const low = luna.reasoningEfforts.find((effort) => normalize(effort) === 'low')
-    return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
-  }
+  if (!codex || !luna) return undefined
+  const low = luna.reasoningEfforts.find((effort) => normalize(effort) === 'low')
+  return selection(codex, luna, low ?? lowestReasoningEffort(luna), true)
+}
 
-  const grok = sources.find((source) => source.provider === 'grok' && !source.agent)
+function pickGrok46(
+  sources: AvailableBackgroundModelSource[],
+): BackgroundModelSelection | undefined {
+  const grok = sources[0]
   const grok46 = grok?.models
     .filter((model) => isGrok46(model))
     .sort((left, right) => compareVersions(right, left))[0]
-  if (grok && grok46) {
-    const low = grok46.reasoningEfforts.find((effort) => normalize(effort) === 'low')
-    return selection(grok, grok46, low ?? lowestReasoningEffort(grok46), true)
-  }
+  if (!grok || !grok46) return undefined
+  const low = grok46.reasoningEfforts.find((effort) => normalize(effort) === 'low')
+  return selection(grok, grok46, low ?? lowestReasoningEffort(grok46), true)
+}
 
+function pickCheapest(
+  sources: AvailableBackgroundModelSource[],
+): BackgroundModelSelection | undefined {
   const candidates = sources.flatMap((source, sourceIndex) =>
     source.models.map((model, modelIndex) => ({ source, sourceIndex, model, modelIndex })),
   )
