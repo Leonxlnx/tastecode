@@ -14,4 +14,19 @@ describe('source identity style ownership', () => {
     expect(shared).toMatch(/\.source-identity__mark > svg \{[^}]*display: block;/s)
     expect(shared).toMatch(/\.source-identity--compact \{[^}]*gap: 3px;/s)
   })
+
+  it('clips truncated names outside the letters, without moving any box', () => {
+    const rule = /\.source-identity__label,\s*\.source-identity__qualifier \{([^}]*)\}/s.exec(
+      shared,
+    )?.[1]
+    expect(rule).toMatch(/overflow: hidden;/)
+    expect(rule).toMatch(/text-overflow: ellipsis;/)
+    const padding = /padding-inline: (\d+(?:\.\d+)?)px;/.exec(rule ?? '')?.[1]
+    const margin = /margin-inline: -(\d+(?:\.\d+)?)px;/.exec(rule ?? '')?.[1]
+    // The slack must cover a device pixel at 1.25x, and cancel out exactly.
+    expect(Number(padding)).toBeGreaterThanOrEqual(1)
+    expect(margin).toBe(padding)
+    // Nothing else in the shared sheet resets the inline slack.
+    expect(shared.match(/padding-inline|margin-inline/g)).toHaveLength(2)
+  })
 })

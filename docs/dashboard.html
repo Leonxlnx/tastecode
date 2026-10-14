@@ -291,14 +291,17 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-14 nightly b4fcfe24 · includes main 4794e048</span>
+        <span class="meta">2026-10-14 nightly 2a6c7e1c · includes main 16b95be9</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
         <p>
-          October 14 on nightly (b4fcfe24): an expired Cursor sign-in now reads as signed out, so
+          October 14 on nightly (2a6c7e1c): main is synchronized through 16b95be9 with every nightly
+          provider, API connection and the usage history kept, bringing main's October 12 to 14
+          merges below; on nightly a new profile's first visibility choice also covers ACP, API
+          connection and custom harness rows. An expired Cursor sign-in now reads as signed out, so
           Settings and the composer offer Sign in, and Cursor model discovery says "Your Cursor
           sign-in has expired or is missing. Sign in to Cursor again." instead of "Cursor model
           discovery failed". The Cursor CLI's status counts any stored sign-in as logged in, while
@@ -347,6 +350,56 @@
           Antigravity is found in %LOCALAPPDATA%\agy\bin (PR #1489).
         </p>
         <p>
+          October 14 (main f47782bc): the shared source label no longer shaves the edge off its
+          first and last letter at fractional display scaling, in the model picker, session search,
+          Settings › Models and Inbox rows (PR #1548). A brand-new profile keeps its first model
+          visibility choice: that click saves the curated defaults with it, even while a model
+          source fails discovery or its first discovery is still running (PR #1549).
+        </p>
+        <p>
+          October 13: the sidebar ends in a raised identity card with an initials avatar, a usage
+          meter that names the provider it measures, and a gear for Settings; chat rows show a
+          provider mark and a quiet relative time, project chats hang off a soft guide, and one
+          active pill slides between rows (PR #1502). Focus rings, hover fades and dark muted text
+          are consistent and readable (PR #1515). The effort control is one smooth pill, and the
+          composer model button shows the level as dots (PR #1536). Claude models with xhigh offer
+          Ultracode when Claude Code reports it available, and Codex GPT-6-Astra, GPT-5.6 Sol and
+          Terra keep Ultra (PR #1537). The account popup shows plan limits calmly, without red error
+          blocks or a second Usage row, and Claude's limits read gets 120 s instead of failing after
+          10 s (PR #1543).
+        </p>
+        <p>
+          Model visibility the same day: Claude Code shows the current lineup (Fable 5.1, Opus 5.5,
+          Sonnet 5.5, Haiku 5.5) and hides every older generation by default, Opus 5 and dated
+          snapshots included; a one-time reset returns saved Claude Code rows to that lineup (PRs
+          #1534, #1542), and each row is migrated once, so a later choice survives even while a
+          source fails discovery (PR #1546). Long model names no longer clip the picker (PR #1544).
+          Smaller fixes: no gap under code block labels, a clicked effort slider takes arrow keys,
+          unread and pinned titles line up, the account menu matches its trigger, and the model list
+          stays stable while discovery settles (PR #1513); a search jump runs once (PR #1532); the
+          permission chip keeps its icon in a narrow composer (PR #1535); focus stays in the
+          composer when a chat switch reopens the terminal, returns to the row after an inline
+          rename, and moves to the next workspace tab when one closes (PRs #1538, #1539, #1540).
+        </p>
+        <p>
+          October 12 evening bug hunt: a background chat compacted to save memory gets its earlier
+          turns back when reopened (PR #1500); prompts queued during a Design run wait for it
+          instead of steering into a phase turn (PR #1503); a Design run is suspended rather than
+          deleted when a later phase fails to start (PR #1521), when preview capture fails or the
+          static entry page is too large (PR #1527), or when its project is removed (PR #1530); a
+          checkpoint restore reaches every connected client (PR #1531). Grok starts no turn after
+          its session closes and reports the reason from its error frame (PRs #1505, #1509). A
+          Claude chat whose first prompt never reached the CLI works again (PR #1512), and the first
+          send after a restart resumes with that turn's model and effort, so Claude starts once
+          instead of twice (PR #1522). The desktop resets menus and captures only when a page really
+          loads (PR #1507), and a legacy server process exits when the main process dies (PR #1519).
+          In the renderer, the bottom terminal stays closed when its panel remounts (PR #1514), the
+          composer no longer takes focus back after Stop (PR #1517), fast mode toggled from the
+          shortcut or menu is saved to the chat (PR #1524), a chat that is still starting is not
+          read from the server (PR #1526), and an edited queued prompt survives a chat switch during
+          its delete (PR #1529).
+        </p>
+        <p>
           October 12 (main 0e792a64): Claude Code is listed first wherever providers appear and is
           the default for new users, and picker groups keep that order while models load (PR #1486).
           Claude lists the 5.5 lineup first in tier order with Haiku 5.5 visible (PR #1482); Codex
@@ -369,13 +422,13 @@
         <p>
           <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
           work, exact verification, local workspace risks and every open PR/issue. Nightly includes
-          main through 4794e048, synchronized on 2026-10-13. The latest published desktop remains
+          main through 16b95be9, synchronized on 2026-10-14. The latest published desktop remains
           0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
           source.
         </p>
         <p>
           Nightly synchronization retains the complete provider roster and usage history while
-          integrating main through 4794e048. OpenCode shares concurrent starts, rejects interrupted
+          integrating main through 16b95be9. OpenCode shares concurrent starts, rejects interrupted
           session opening, recovers disconnected streams, and grants automatic permissions for one
           request only. ACP prompt rejection settles pending work and approvals. New API chats
           preserve their model, connection, and complete tool context across restart; older API
@@ -833,10 +886,10 @@
                 <span
                   >Codex plan
                   <span class="d"
-                    >OAuth, live models limited to the ones the installed CLI ships, effort, steer,
-                    approvals, questions that reach the user even with blank fields, limits, and
-                    account-backed dictation with white voice ribbons and file attachments during
-                    recording</span
+                    >OAuth, live models limited to the ones the installed CLI ships, effort up to
+                    Ultra on GPT-6-Astra, GPT-5.6 Sol and Terra, steer, approvals, questions that
+                    reach the user even with blank fields, limits, and account-backed dictation with
+                    white voice ribbons and file attachments during recording</span
                   >
                 </span>
               </li>
@@ -846,10 +899,13 @@
                   >Claude Code plan
                   <span class="d"
                     >Agent SDK session over the installed CLI, complete versioned models with the
-                    5.5 lineup first in tier order and Haiku 5.5 visible, steer, resume, approvals,
-                    structured questions, pasted and selected image input, selected file references,
-                    structured subscription limits, and project MCP definitions on start and resume;
-                    unsupported inherited-server hiding is rejected before saving</span
+                    current lineup (Fable 5.1, Opus 5.5, Sonnet 5.5, Haiku 5.5) first and visible
+                    and every older generation hidden by default, effort up to Ultracode while
+                    Claude Code reports it available, steer, resume (also for a chat whose first
+                    prompt never reached the CLI), approvals, structured questions, pasted and
+                    selected image input, selected file references, structured subscription limits
+                    with a 120 s read, and project MCP definitions on start and resume; unsupported
+                    inherited-server hiding is rejected before saving</span
                   >
                 </span>
               </li>
@@ -865,7 +921,8 @@
                     captures the provider-confirmed email without manual entry; pasted and selected
                     images plus selected file resources reach the CLI through ACP prompt blocks;
                     project MCP servers selected in Settings join MCP-enabled sessions through
-                    Grok's ACP handshake</span
+                    Grok's ACP handshake; an error frame's reason reaches the chat, and a closed
+                    session starts no new grok process</span
                   >
                 </span>
               </li>
@@ -881,10 +938,12 @@
                     workspace split; selected files, drag/drop, and immediate Ctrl/Command+V image
                     chips follow each source's declared capability; file-only prompts send and name
                     new sessions from their attachments; permission and Design actions compact
-                    before a narrow toolbar can overlap; plus an in-pane session header with shared
-                    rename, pin, delete, checkpoint, Workspace, and Terminal actions; the idle voice
-                    control stays flat; Stop immediately restores the idle presentation while
-                    provider interruption finishes in the background</span
+                    before a narrow toolbar can overlap, and the permission chip keeps its icon; one
+                    smooth effort pill, with the level shown as dots on the composer model button;
+                    plus an in-pane session header with shared rename, pin, delete, checkpoint,
+                    Workspace, and Terminal actions; the idle voice control stays flat; Stop
+                    immediately restores the idle presentation while provider interruption finishes
+                    in the background</span
                   >
                 </span>
               </li>
@@ -912,11 +971,14 @@
                     a duplicate parent-status header and erases its transcript when its last tab
                     closes; one fixed in-chat toggle opens a 2-by-2-plus-one icon launcher and swaps
                     its icon in place to close; it stays visible throughout the closing transition.
-                    The right panel resizes from 300 px and there stacks its launcher and its Review
-                    and Files trees; both panels reflow their tools by the panel's own width.
-                    Aligned dividers stay square, resizing preserves a 360 px center chat with or
-                    without the left sidebar, missing workspace items fail without exposing raw
-                    paths, startup is bounded, and 390 px layouts do not overflow</span
+                    Closing a focused tab hands focus to the next tab, a reattached terminal leaves
+                    focus in the composer, and removing the active project does not reopen the
+                    bottom terminal. The right panel resizes from 300 px and there stacks its
+                    launcher and its Review and Files trees; both panels reflow their tools by the
+                    panel's own width. Aligned dividers stay square, resizing preserves a 360 px
+                    center chat with or without the left sidebar, missing workspace items fail
+                    without exposing raw paths, startup is bounded, and 390 px layouts do not
+                    overflow</span
                   >
                 </span>
               </li>
@@ -930,8 +992,10 @@
                     only the requested permission profile and aborts with the original thread and
                     turn IDs; failed OpenCode approval replies remain retryable; and Design accepts
                     real startup events while a 30-second start-only watchdog fails silent starts
-                    visibly without limiting running work; obsolete approval warnings are omitted
-                    from new and saved transcripts</span
+                    visibly without limiting running work; a Design run whose later phase fails to
+                    start, whose preview capture fails, or whose project is removed is suspended for
+                    continue instead of deleted, and prompts queued during a run wait for it;
+                    obsolete approval warnings are omitted from new and saved transcripts</span
                   >
                 </span>
               </li>
@@ -952,7 +1016,8 @@
                   >Lifecycle hardening
                   <span class="d"
                     >reply guidance survives resume, stale usage indexes rebuild, failed scans
-                    recover without retry storms, Windows PTY cleanup waits for exit</span
+                    recover without retry storms, Windows PTY cleanup waits for exit, and a server
+                    run as a legacy Node child exits when the main process dies</span
                   >
                 </span>
               </li>
@@ -987,14 +1052,17 @@
                     >a fixed-width rail translates in both directions without clipping or squeezing
                     its contents, including while a drag is held past the fold threshold; active
                     resize state clears when another control closes it, it settles in 260 ms,
-                    remains interruptible during rapid toggles, and uses chevron-free 36 px project
-                    rows aligned on the folder mark; project chats use the full row width without a
-                    decorative nesting rail, while working chats reserve a separate spinner slot
-                    before the title and the larger project add action stays clear of the scrollbar;
-                    project and chat reordering share the same inset drop-line feedback; the fixed
-                    New chat, New project, and Pull requests block gains a strong divider only while
-                    the list below is scrolled; new profiles start on V1 Classic with three-day
-                    settling enabled</span
+                    remains interruptible during rapid toggles, and uses chevron-free 28 px project
+                    and chat rows aligned on the folder mark; project chats hang off a soft guide
+                    under the folder mark, each row shows a 12 px provider mark and a quiet relative
+                    time whose place a working spinner or a waiting or failed dot takes, one active
+                    pill slides between rows, and the larger project add action stays clear of the
+                    scrollbar; the rail ends in a raised identity card with an initials avatar, a
+                    usage meter that names its provider, and a gear for Settings; project and chat
+                    reordering share the same inset drop-line feedback; the fixed New chat, New
+                    project, and Pull requests block gains a strong divider only while the list
+                    below is scrolled; new profiles start on V1 Classic with three-day settling
+                    enabled</span
                   >
                 </span>
               </li>
@@ -1011,10 +1079,14 @@
                     Codex and Grok groups keep that order while models load, followed on nightly by
                     the other CLIs, ACP agents and API connections, and new users start on Claude
                     Code; current Codex and exact Claude defaults are prioritized; superseded GPT
-                    and Claude versions start hidden, Claude account labels include the available
-                    Max multiplier, and Grok 4.5 and 4.6 remain discoverable, provider readiness
-                    stays silent during new-chat source changes, and saved custom ids remain usable
-                    while their management UI is parked</span
+                    versions and every Claude generation older than the current lineup start hidden,
+                    also when a saved profile meets them for the first time; visibility updates move
+                    each row once from the first paint, so later choices stay even while a source
+                    fails discovery, and a new profile's first choice is kept; long model names no
+                    longer clip the picker; Claude account labels include the available Max
+                    multiplier, and Grok 4.5 and 4.6 remain discoverable, provider readiness stays
+                    silent during new-chat source changes, and saved custom ids remain usable while
+                    their management UI is parked</span
                   >
                 </span>
               </li>
@@ -1065,7 +1137,8 @@
                   >Incremental durable-history catch-up
                   <span class="d"
                     >reconnects, push gaps, and cached reopens fetch only the missing event suffix;
-                    checkpoint restore and undo keep files, transcript, and cursor atomic</span
+                    checkpoint restore and undo keep files, transcript, and cursor atomic and reach
+                    every connected client</span
                   >
                 </span>
               </li>
@@ -1087,8 +1160,10 @@
                   >Search, menus, and focus
                   <span class="d"
                     >Readable command and search rows, a guided search empty state, responsive
-                    filters, stable result identity, keyboard-complete menus, trapped focus, and
-                    deterministic focus restoration across task changes</span
+                    filters, stable result identity, a search jump that runs once, keyboard-complete
+                    menus, trapped focus, one shared focus ring, and deterministic focus restoration
+                    across task changes, inline renames, and closed workspace tabs; the composer no
+                    longer pulls focus back after Stop</span
                   >
                 </span>
               </li>
@@ -1155,14 +1230,15 @@
                     validated avatar stay on this device; provider actions share a fixed right edge
                     and empty action slots no longer double signed-in row height; clear labels and
                     notes use 48 px base rows and 56 px provider rows; background-prefetched limits
-                    open from the lifted account menu without a fresh request; clear dividers
-                    separate provider groups, while loading, unavailable, successful-empty, and
-                    failure states preserve usable values through Retry; roomy Data rows; app-level
-                    failures use a compact bottom-right notice without an accent rail; short-window
-                    scrolling, contained keyboard focus, and a scoped confirmation before resetting
-                    renderer preferences preserve projects, files, history, and credentials; legacy
-                    history and configuration move into TasteCode paths without overwriting existing
-                    TasteCode data; About and update checks point at the renamed
+                    open at once in the account card's popup without a fresh request; space
+                    separates provider groups, and loading, unavailable, successful-empty, and
+                    failure states show as one muted word, without alert colour, while usable values
+                    stay through Retry; roomy Data rows; app-level failures use a compact
+                    bottom-right notice without an accent rail; short-window scrolling, contained
+                    keyboard focus, and a scoped confirmation before resetting renderer preferences
+                    preserve projects, files, history, and credentials; legacy history and
+                    configuration move into TasteCode paths without overwriting existing TasteCode
+                    data; About and update checks point at the renamed
                     <code>Leonxlnx/tastecode</code> repository;
                     <a href="./screenshots/provider-density-after.png">compact provider</a>,
                     <a href="./screenshots/model-settings-no-search.png">model settings</a>,

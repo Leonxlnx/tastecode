@@ -32,6 +32,13 @@
 .source-identity__qualifier {
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Without slack the clip sits on the advance edges of the first and last
+     letter. Their antialiased edge reaches past that, and at fractional
+     display scaling the clip also snaps inward, so both letters lose a
+     sliver. The padding moves the clip out; the matching negative margin
+     keeps every box, and the ellipsis, where it was. */
+  padding-inline: 2px;
+  margin-inline: -2px;
 }
 
 .source-identity__qualifier {
