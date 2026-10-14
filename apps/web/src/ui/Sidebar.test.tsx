@@ -250,8 +250,8 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
   })
 
-  it('draws the card avatar as the photo, the initials, or a tinted person mark', () => {
-    const view = (profileIdentity: ProfileIdentityPreferences) => (
+  it('draws the card avatar as the photo, else the generated seal for the name', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences | undefined) => (
       <Sidebar
         projects={[]}
         activeProjectPath={undefined}
@@ -278,20 +278,18 @@ describe('Sidebar chat actions', () => {
       />
     )
     const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+    const seal = () => avatar().querySelector<SVGSVGElement>('svg.generated-avatar')
 
     const rendered = render(view({ displayName: 'Alex Rivera' }))
-    const initials = avatar().querySelector<HTMLElement>('.account__initials')
-    expect(initials?.textContent).toBe('AR')
-    expect(initials?.style.getPropertyValue('--avatar-hue')).not.toBe('')
-    // The speckled seal no longer draws on the card.
-    expect(avatar().querySelector('.generated-avatar')).toBeNull()
+    expect(seal()).not.toBeNull()
+    expect(avatar().textContent).toBe('')
+    const alex = seal()!.innerHTML
 
-    rendered.rerender(view({ displayName: '  émile  ' }))
-    expect(avatar().querySelector('.account__initials')?.textContent).toBe('É')
-
-    rendered.rerender(view({ displayName: '' }))
-    expect(avatar().querySelector('.account__initials')?.textContent).toBe('')
-    expect(avatar().querySelector('.account__initials svg')).not.toBeNull()
+    // Another name draws another seal; a profile without one still gets a seal.
+    rendered.rerender(view({ displayName: 'Leon' }))
+    expect(seal()!.innerHTML).not.toBe(alex)
+    rendered.rerender(view(undefined))
+    expect(seal()).not.toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
 
     rendered.rerender(
@@ -300,7 +298,7 @@ describe('Sidebar chat actions', () => {
     expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
       'data:image/png;base64,iVBORw0KGgo=',
     )
-    expect(avatar().querySelector('.account__initials')).toBeNull()
+    expect(seal()).toBeNull()
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
