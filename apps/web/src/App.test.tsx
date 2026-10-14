@@ -1185,6 +1185,23 @@ describe('web client', () => {
     ])
   })
 
+  it('offers an unsent draft back after Edit as new prompt replaces it', async () => {
+    await openNewSession()
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    // An empty composer has nothing to lose, so it gets no notice.
+    act(() => threadCallbacks.editMessage?.('An earlier prompt'))
+    expect(composer.value).toBe('An earlier prompt')
+    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: 'my unsent draft' } })
+    act(() => threadCallbacks.editMessage?.('An earlier prompt'))
+    expect(composer.value).toBe('An earlier prompt')
+    expect(screen.getByText('Your draft was replaced.')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(composer.value).toBe('my unsent draft'))
+  })
   it('keeps an acknowledged access mode when a change is rejected', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -9089,23 +9106,6 @@ describe('live sessions', () => {
     })
   })
 
-  it('offers an unsent draft back after Edit as new prompt replaces it', async () => {
-    await openNewSession()
-    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
-
-    // An empty composer has nothing to lose, so it gets no notice.
-    act(() => threadCallbacks.editMessage?.('An earlier prompt'))
-    expect(composer.value).toBe('An earlier prompt')
-    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
-
-    fireEvent.change(composer, { target: { value: 'my unsent draft' } })
-    act(() => threadCallbacks.editMessage?.('An earlier prompt'))
-    expect(composer.value).toBe('An earlier prompt')
-    expect(screen.getByText('Your draft was replaced.')).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
-    await waitFor(() => expect(composer.value).toBe('my unsent draft'))
-  })
   it('keeps an old-chat submission above a colder history response', async () => {
     serverProjects = [
       {
