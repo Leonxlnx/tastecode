@@ -739,7 +739,9 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
 
   /** `grok models` prints a default line plus an "Available models:" list. */
   async listModels(): Promise<Model[]> {
-    return parseGrokModels(await this.#capture(['models']))
+    // A custom harness launches its own binary, so only the built-in CLI shares a read.
+    const shared = this.#spawn === spawnOwned ? await sharedSignInModels() : undefined
+    return parseGrokModels(shared ?? (await this.#capture(['models'])))
   }
 
   dispose(): Promise<void> {
@@ -933,13 +935,48 @@ function readableGrokValue(value: unknown, depth = 0): string | undefined {
 /** Auth as the CLI reports it on `grok models` — nothing else is read. */
 export type GrokSignIn = { signedIn: boolean }
 
+/**
+ * How long a signed-in `grok models` answer also serves as the model list. It
+ * spans the account's subscription read (two bounded ACP requests) that runs
+ * between the sign-in check and the model read that usually follows it.
+ */
+const SIGN_IN_MODELS_SHARE_MS = 30_000
+
+/** The newest sign-in check's `grok models` read; infinite expiry while in flight. */
+let signInModels: { output: Promise<string>; expiresAt: number } | undefined
+
 export async function grokSignIn(): Promise<GrokSignIn> {
-  return parseGrokAccount(await captureGrok(spawnOwned, ['models']))
+  // The sign-in state itself is always read fresh; only its model list is shared.
+  const read = { output: captureGrok(spawnOwned, ['models']), expiresAt: Number.POSITIVE_INFINITY }
+  signInModels = read
+  try {
+    const signIn = parseGrokAccount(await read.output)
+    if (signInModels === read) {
+      if (signIn.signedIn) read.expiresAt = Date.now() + SIGN_IN_MODELS_SHARE_MS
+      else signInModels = undefined
+    }
+    return signIn
+  } catch (error) {
+    if (signInModels === read) signInModels = undefined
+    throw error
+  }
+}
+
+/** A sign-in check's output that is still in flight, or signed in and recent. */
+async function sharedSignInModels(): Promise<string | undefined> {
+  const read = signInModels
+  if (!read || read.expiresAt <= Date.now()) return undefined
+  return read.output.catch(() => undefined)
 }
 
 /** `grok logout` clears the CLI's own cached credentials. */
 export async function signOutGrok(): Promise<void> {
-  await captureGrok(spawnOwned, ['logout'])
+  signInModels = undefined
+  try {
+    await captureGrok(spawnOwned, ['logout'])
+  } finally {
+    signInModels = undefined
+  }
 }
 
 /** One streamed text item (message or reasoning): started lazily on the
