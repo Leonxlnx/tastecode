@@ -14,164 +14,267 @@
 }
 
 /* A square chip of the colour, edged so near-white and near-black still show. */
-.appearance-color__swatch {
+.appearance-color__swatch,
+.color-picker__swatch {
   width: 10px;
   height: 10px;
   flex: none;
-  align-self: center;
-  background: var(--appearance-color);
   border-radius: var(--r-xs);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 22%, transparent);
 }
 
-/* The popup shares the menus' surface. Presets come first, as the same square
-   chips the rows show; the mixer below is for any other colour. */
+.appearance-color__swatch {
+  align-self: center;
+  background: var(--appearance-color);
+}
+
+/* The font menu's panel: same surface, shadow, padding and motion, and the
+   row's own type, so the list reads at the size of the value it opened from.
+   It is a manual popover; the component dismisses it, so the screen sampler
+   can take a click without closing it. */
 .color-picker {
   position: fixed;
+  z-index: 80;
   inset: auto;
-  width: min(220px, calc(100vw - 16px));
+  width: min(288px, calc(100vw - 16px));
   max-height: calc(100dvh - 16px);
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0;
-  padding: 10px;
+  padding: 3px;
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-popup);
   background: var(--menu-bg);
   color: var(--text);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 8%),
-    0 8px 24px -14px rgb(0 0 0 / 40%);
-  font: 400 var(--t-sm) var(--font-ui);
+    0 6px 18px -14px rgb(0 0 0 / 35%);
 }
 
-.color-picker__label {
-  margin: 0 0 9px;
-  color: var(--text-3);
-  font-weight: 500;
+/* The shared popup motion, plus the discrete steps a popover needs to play
+   its exit before it leaves the top layer. */
+.color-picker.popup {
+  transition:
+    transform 120ms var(--ease-out),
+    opacity 90ms var(--ease-out),
+    display 120ms allow-discrete,
+    overlay 120ms allow-discrete;
+}
+
+.color-picker[data-drop='up'] {
+  --popup-offset: 4px;
 }
 
 .color-picker__presets {
+  display: grid;
+}
+
+.color-picker__preset {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.color-picker__presets button {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-sm);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent);
-  outline: 1.5px solid transparent;
-  outline-offset: 2px;
-  cursor: pointer;
-}
-
-.color-picker__presets button:hover {
-  outline-color: color-mix(in srgb, var(--text) 28%, transparent);
-}
-
-.color-picker__presets button[aria-pressed='true'] {
-  outline-color: var(--text);
-}
-
-.color-picker__field {
-  position: relative;
-  height: 118px;
-  border-radius: var(--r-sm);
-  background-image:
-    linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
-  touch-action: none;
-  cursor: crosshair;
-}
-
-.color-picker__handle {
-  position: absolute;
-  width: 11px;
-  height: 11px;
-  border: 2px solid #fff;
-  border-radius: var(--r-circle);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.color-picker__hue {
-  display: block;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  height: 8px;
-  margin: 12px 0;
-  padding: 0;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 7px;
   border: 0;
-  border-radius: var(--r-pill);
-  appearance: none;
-  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  border-radius: var(--r-popup-item);
+  background: none;
+  color: var(--text-2);
   cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
 }
 
-.color-picker__hue::-webkit-slider-thumb {
-  width: 12px;
-  height: 12px;
-  border: 2px solid #fff;
-  border-radius: var(--r-circle);
-  appearance: none;
-  background: transparent;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+.color-picker__preset:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
-.color-picker__hue::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
-  border-radius: var(--r-circle);
-  background: transparent;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+.color-picker__preset[aria-pressed='true'] {
+  color: var(--text);
 }
 
-.color-picker__hex {
+.color-picker__preset-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.color-picker__check {
+  flex: none;
+  color: var(--text-2);
+}
+
+/* Wider than a chip, so it sits centred on the chips' column. */
+.color-picker__sample-icon {
+  flex: none;
+  margin-inline: -2px;
+  color: var(--text-3);
+}
+
+.color-picker__rule {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--menu-line);
+}
+
+/* The colour itself, as rows of the page: name, leader, value. Tracks start
+   on one line whatever the names' widths. */
+.color-picker__mix {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  padding: 1px 7px;
+}
+
+.color-picker__row {
+  --color-picker-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+  min-height: 30px;
+  transition: --color-picker-leader var(--dur-fast) var(--ease-out);
+}
+
+.color-picker__row:is(:hover, :focus-within) {
+  --color-picker-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+@property --color-picker-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+.color-picker__name {
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.color-picker__row:is(:hover, :focus-within) .color-picker__name {
+  color: var(--text);
+}
+
+.color-picker__line {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  color: var(--text-3);
-  background: none;
+  min-width: 0;
+  margin-left: 14px;
 }
 
-.color-picker__hex input {
-  width: 100%;
+/* The page's leader, dot for dot in pitch, with beads big enough to carry
+   colour. The whole row height takes the pointer. */
+.color-picker__track {
+  --thumb: 12px;
+
+  position: relative;
+  flex: 1;
   min-width: 0;
+  height: 24px;
+  cursor: pointer;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.color-picker__track::before {
+  content: '';
+  position: absolute;
+  inset: 50% calc(var(--thumb) / 2) auto;
+  height: 5px;
+  translate: 0 -50%;
+  background: var(--track);
+  mask: radial-gradient(circle, #000 1.25px, transparent 1.7px) left center / 5px 100% repeat-x;
+  opacity: 0.72;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.color-picker__row:is(:hover, :focus-within) .color-picker__track::before {
+  opacity: 1;
+}
+
+/* The exact colour, ringed in ink the way a chosen theme is. Its centre
+   travels a radius inside the track, so at either end it stays clear of the
+   name and the number. */
+.color-picker__thumb {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2 + var(--position) * (100% - var(--thumb)));
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: var(--r-circle);
+  translate: -50% -50%;
+  box-shadow:
+    0 0 0 2px var(--menu-bg),
+    0 0 0 3.5px var(--text);
+  pointer-events: none;
+}
+
+.color-picker__track:focus-visible .color-picker__thumb {
+  outline: var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.color-picker__value {
+  flex: none;
+  min-width: 2.9em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.color-picker__leader {
+  flex: 1;
+  min-width: 16px;
+  height: 5px;
+  margin-left: 6px;
+  background: radial-gradient(circle, var(--color-picker-leader) 0.75px, transparent 1.15px) left
+    center / 5px 100% repeat-x;
+}
+
+/* Typed where the value stands: the caret is the field. */
+.color-picker__hex input {
+  flex: none;
+  min-width: 3ch;
+  max-width: 10em;
   padding: 0;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--text);
+  caret-color: var(--text);
   font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: inherit;
   text-align: right;
+  field-sizing: content;
   user-select: text;
 }
 
-.color-picker__error {
-  margin: 8px 0 0;
+.color-picker__hex input[aria-invalid='true'] {
   color: var(--error);
-  font-size: var(--t-xs);
 }
 
-.appearance-color:focus-visible,
-.color-picker__field:focus-visible,
-.color-picker__hue:focus-visible,
-.color-picker__hex:focus-within {
+.color-picker__error {
+  grid-column: 1 / -1;
+  margin: -2px 0 6px;
+  color: var(--error);
+  font-size: var(--t-sm);
+  text-align: right;
+}
+
+.appearance-color:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
 }
 
-.color-picker__presets button:focus-visible {
+.color-picker__preset:focus-visible {
   outline: var(--focus-ring);
-}
-
-.color-picker__hex input:focus-visible {
-  outline: none;
+  outline-offset: var(--focus-ring-inset);
 }
