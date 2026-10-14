@@ -74,14 +74,11 @@ async function terminate(child: KillableProcess): Promise<void> {
   // contain pid 0, which means the caller's own process group on POSIX.
   if (!child.pid && child.kill === ChildProcess.prototype.kill) return
   if (process.platform === 'win32' && child.pid) {
-    const result = spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-      windowsHide: true,
-      timeout: 1_500,
-    })
+    // taskkill takes about half a second. Run it asynchronously: a synchronous
+    // call would stop the server's only event loop, and every stream with it.
     // taskkill can finish before Node observes the child's exit event.
     if (
-      !result.error &&
-      result.status === 0 &&
+      (await taskkillTree(child.pid, 1_500)) &&
       (await waitUntil(() => child.exitCode != null || child.signalCode != null, 500))
     )
       return
@@ -95,6 +92,36 @@ async function terminate(child: KillableProcess): Promise<void> {
   if (!(await waitUntil(() => child.exitCode != null || child.signalCode != null, 1_000))) {
     throw new Error('Child process did not exit after forced termination')
   }
+}
+
+/** Resolves true when `taskkill /T /F` exits cleanly within `timeoutMs`. */
+function taskkillTree(pid: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false
+    let timer: NodeJS.Timeout | undefined
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      if (timer) clearTimeout(timer)
+      resolve(ok)
+    }
+    let killer: ChildProcess
+    try {
+      killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        windowsHide: true,
+        stdio: 'ignore',
+      })
+    } catch {
+      finish(false)
+      return
+    }
+    timer = setTimeout(() => {
+      killer.kill()
+      finish(false)
+    }, timeoutMs)
+    killer.once('error', () => finish(false))
+    killer.once('exit', (code) => finish(code === 0))
+  })
 }
 
 async function signalGroup(pid: number, signal: NodeJS.Signals): Promise<boolean> {
