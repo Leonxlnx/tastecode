@@ -156,4 +156,74 @@ describe('Thread scroll position', () => {
     view.unmount()
     expect(disconnect).toHaveBeenCalledOnce()
   })
+
+  describe('Jump to latest', () => {
+    let frames: FrameRequestCallback[]
+    let now: number
+    const runFrame = () => {
+      now += 16
+      const pending = frames
+      frames = []
+      act(() => pending.forEach((frame) => frame(now)))
+    }
+
+    beforeEach(() => {
+      frames = []
+      now = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((frame) => {
+        frames.push(frame)
+        return frames.length
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => (frames = []))
+    })
+
+    it('chases an end that keeps growing and then follows it', () => {
+      const store = new ThreadFrameStore({ ...emptyThread, items })
+      const view = render(<Thread {...props(store)} threadId="streaming" />)
+      const scroller = view.container.querySelector('.thread')!
+      scroller.scrollTop = 200
+      fireEvent.scroll(scroller)
+
+      fireEvent.click(view.getByRole('button', { name: 'Jump to latest' }))
+      // The answer keeps streaming while the glide runs: 40 px every frame.
+      for (let frame = 0; frame < 40 && frames.length > 0; frame += 1) {
+        layout.height += 40
+        runFrame()
+      }
+
+      expect(frames).toHaveLength(0)
+      expect(scroller.scrollTop).toBe(layout.height - 200)
+      expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+
+      // Landed in follow-end: the next delta stays in view on its own.
+      layout.height += 300
+      act(() =>
+        store.publish({
+          ...emptyThread,
+          items: [{ ...items[0]!, text: 'Latest answer, now longer' }],
+        }),
+      )
+      expect(scroller.scrollTop).toBe(layout.height - 200)
+    })
+
+    it('stops gliding when the user scrolls again', () => {
+      const view = render(<Thread {...props()} threadId="interrupted" />)
+      const scroller = view.container.querySelector('.thread')!
+      scroller.scrollTop = 200
+      fireEvent.scroll(scroller)
+
+      fireEvent.click(view.getByRole('button', { name: 'Jump to latest' }))
+      runFrame()
+      const reached = scroller.scrollTop
+      expect(reached).toBeGreaterThan(200)
+
+      fireEvent.wheel(scroller, { deltaY: -120 })
+      expect(frames).toHaveLength(0)
+      scroller.scrollTop = reached - 120
+      fireEvent.scroll(scroller)
+
+      expect(scroller.scrollTop).toBe(reached - 120)
+      expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
+    })
+  })
 })

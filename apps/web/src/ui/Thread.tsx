@@ -118,6 +118,14 @@ const RowMeasureContext = createContext<
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
 
+/** Share of the remaining distance Jump to latest covers per 60 Hz frame. */
+const JUMP_EASE_PER_FRAME = 0.2
+/** The tail of the glide moves at least this far per frame, so it lands. */
+const JUMP_MIN_STEP = 12
+/** The glide snaps to the end after this long, whatever the stream does. */
+const JUMP_MAX_MS = 900
+const FRAME_MS = 1000 / 60
+
 /**
  * The thread.
  *
@@ -331,9 +339,71 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     setMode(modeForNewTurn(el ? isAtBottom(el) : true))
   }, [running, props.threadId, activeAnchor])
 
+  /**
+   * Jump to latest glides with its own frames instead of a native smooth
+   * scroll. A native glide aims at the bottom as it was at the click; a
+   * streaming answer has moved that bottom by the time it lands, so it stopped
+   * short and the view never followed again. Each frame here retargets the
+   * current end and hands over to follow-end once it gets there.
+   */
+  const jumpFrame = useRef<number | undefined>(undefined)
+  const cancelJump = useCallback(() => {
+    if (jumpFrame.current === undefined) return
+    cancelAnimationFrame(jumpFrame.current)
+    jumpFrame.current = undefined
+  }, [])
+  const jumpToLatest = useCallback(() => {
+    const el = scroller.current
+    if (!el) return
+    cancelJump()
+    const land = () => {
+      jumpFrame.current = undefined
+      writeScrollTop(el, settledScrollHeight(el) - el.clientHeight)
+      modeRef.current = 'follow-end'
+      setMode('follow-end')
+    }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      land()
+      return
+    }
+    const started = performance.now()
+    let previous = started
+    let previousTarget: number | undefined
+    const step = (now: number) => {
+      const target = settledScrollHeight(el) - el.clientHeight
+      const distance = target - el.scrollTop
+      if (distance < 1 || now - started >= JUMP_MAX_MS) {
+        land()
+        return
+      }
+      // Ride along with whatever streamed in since the last frame, then ease
+      // out the rest, so a fast answer cannot outrun the glide.
+      const growth = previousTarget === undefined ? 0 : Math.max(0, target - previousTarget)
+      previousTarget = target
+      const remaining = Math.max(0, distance - growth)
+      // Ease out by time, not by frame, so a 120 Hz display glides as long.
+      const eased = 1 - Math.pow(1 - JUMP_EASE_PER_FRAME, (now - previous) / FRAME_MS)
+      previous = now
+      const glide = Math.max(remaining * eased, Math.min(remaining, JUMP_MIN_STEP))
+      writeScrollTop(el, el.scrollTop + Math.min(distance, growth + glide))
+      if (target - el.scrollTop < 1) land()
+      else jumpFrame.current = requestAnimationFrame(step)
+    }
+    jumpFrame.current = requestAnimationFrame(step)
+  }, [cancelJump, writeScrollTop])
+  // A chat switch or unmount ends the glide with the view it belonged to.
+  useEffect(() => cancelJump, [props.threadId, cancelJump])
+
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
+    // The glide owns the scroll until it lands or the user takes over (see
+    // the input handlers on the scroller); a virtual row measuring mid-glide
+    // must not read as the user scrolling away.
+    if (jumpFrame.current !== undefined) {
+      writtenScrollTop.current = undefined
+      return
+    }
     // Our own corrections are not the user's opinion. The event that lands
     // where we wrote is ours; anything else is a real gesture.
     if (
@@ -614,7 +684,15 @@ export const Thread = memo(function Thread(props: ThreadProps) {
             </div>
           )
         ) : null}
-        <div className="thread" ref={scroller} onScroll={onScroll}>
+        <div
+          className="thread"
+          ref={scroller}
+          onScroll={onScroll}
+          onWheel={cancelJump}
+          onTouchStart={cancelJump}
+          onPointerDown={cancelJump}
+          onKeyDown={cancelJump}
+        >
           <div className="thread__col">
             <div
               className="thread__runway"
@@ -761,22 +839,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         ) : null}
 
         {mode === 'free' ? (
-          <button
-            className="jump"
-            onClick={() => {
-              const el = scroller.current
-              if (!el) return
-              // Stay in free mode for the whole glide. Flipping to follow-end
-              // here unmounts the button, and the first mid-flight scroll event
-              // then flips it straight back — remounting it with its entrance
-              // animation — until the scroll lands. The onScroll handler hands
-              // over to follow-end once the glide actually reaches the bottom.
-              el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-              // Already at the bottom? Nothing animates and no scroll event
-              // comes, so there would be no handover — hide right away.
-              if (isAtBottom(el)) setMode('follow-end')
-            }}
-          >
+          // Stays in free mode for the whole glide, so the button leaves once,
+          // when the view lands on the end and starts following it.
+          <button className="jump" onClick={jumpToLatest}>
             <ArrowDownToLine size={13} aria-hidden />
             Jump to latest
           </button>
