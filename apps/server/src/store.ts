@@ -849,7 +849,7 @@ export class Store {
    * The item and turn of each thread's last indexed delta. A run of deltas
    * names the same keys, so the history index is written once per run.
    */
-  #historyDeltaRuns = new Map<string, string>()
+  #historyDeltaRuns = new Map<string, { itemId: string; turnId: string }>()
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -2797,14 +2797,15 @@ export class Store {
     // names once. Keep the dominant write path to one serialization and one
     // prepared SQLite insert.
     if (event.type === 'item.delta') {
-      const run = this.#historyDeltaRun(threadId, event)
-      if (run === undefined) return this.#insertEventRow(threadId, at, serializedEvent)
+      if (this.#continuesHistoryDeltaRun(threadId, event)) {
+        return this.#insertEventRow(threadId, at, serializedEvent)
+      }
       const seq = this.#transaction(() => {
         const seq = this.#insertEventRow(threadId, at, serializedEvent)
         this.#indexHistory(seq, threadId, event)
         return seq
       })
-      this.#historyDeltaRuns.set(threadId, run)
+      this.#historyDeltaRuns.set(threadId, { itemId: event.itemId, turnId: event.turnId })
       return seq
     }
     const historyKeys = historyIndexKeys(event)
@@ -2883,10 +2884,9 @@ export class Store {
     const seq = this.#insertEventRow(threadId, at, payload)
     if (event.type === 'item.delta') {
       // Callers hold a transaction; a rollback clears the remembered runs.
-      const run = this.#historyDeltaRun(threadId, event)
-      if (run !== undefined) {
+      if (!this.#continuesHistoryDeltaRun(threadId, event)) {
         this.#indexHistory(seq, threadId, event)
-        this.#historyDeltaRuns.set(threadId, run)
+        this.#historyDeltaRuns.set(threadId, { itemId: event.itemId, turnId: event.turnId })
       }
       return seq
     }
@@ -3362,13 +3362,13 @@ export class Store {
     }
   }
 
-  /** The run a delta starts, or undefined when its run's keys are already indexed. */
-  #historyDeltaRun(
+  /** Whether the thread's last indexed delta named the same item and turn. */
+  #continuesHistoryDeltaRun(
     threadId: string,
     event: Extract<DomainEvent, { type: 'item.delta' }>,
-  ): string | undefined {
-    const run = `${event.itemId}\u0000${event.turnId}`
-    return this.#historyDeltaRuns.get(threadId) === run ? undefined : run
+  ): boolean {
+    const run = this.#historyDeltaRuns.get(threadId)
+    return run !== undefined && run.itemId === event.itemId && run.turnId === event.turnId
   }
 
   #indexHistory(seq: number, threadId: string, event: DomainEvent): void {
