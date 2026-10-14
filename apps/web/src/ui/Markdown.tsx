@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useEffect, useLayoutEffect, useRef } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   LIVE_MARKDOWN_BULK_TEXT_MIN,
   LiveMarkdownParser,
@@ -7,10 +7,42 @@ import {
 } from './live-markdown.js'
 import '../styles/markdown.css'
 
-const loadCompletedMarkdown = () => import('./CompletedMarkdown.js')
-const CompletedMarkdown = lazy(() =>
-  loadCompletedMarkdown().then((module) => ({ default: module.CompletedMarkdown })),
-)
+type CompletedMarkdownModule = typeof import('./CompletedMarkdown.js')
+
+// The rich renderer is a separate chunk. Once it has loaded, a completing
+// reply renders it in the same commit. A lazy() boundary would suspend once
+// more on its first mount even after the preload, and React then holds its
+// fallback for at least 300 ms: the reply collapsed to plain paragraphs.
+let completedMarkdownModule: CompletedMarkdownModule | undefined
+let completedMarkdownLoad: Promise<CompletedMarkdownModule> | undefined
+const loadCompletedMarkdown = (): Promise<CompletedMarkdownModule> =>
+  (completedMarkdownLoad ??= import('./CompletedMarkdown.js').then(
+    (module) => (completedMarkdownModule = module),
+    (cause: unknown) => {
+      completedMarkdownLoad = undefined
+      throw cause
+    },
+  ))
+
+/** The rich renderer when it has loaded; until then, starts loading it. */
+function useCompletedMarkdown(needed: boolean) {
+  const [, setLoaded] = useState(false)
+  const component = completedMarkdownModule?.CompletedMarkdown
+  useEffect(() => {
+    if (!needed || component) return
+    let current = true
+    loadCompletedMarkdown().then(
+      () => {
+        if (current) setLoaded(true)
+      },
+      () => undefined,
+    )
+    return () => {
+      current = false
+    }
+  }, [needed, component])
+  return needed ? component : undefined
+}
 
 const LIVE_MARKDOWN_ANIMATION_CHARACTER_LIMIT = 4 * 1024
 
@@ -276,8 +308,11 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
   text,
   liveUpdate,
   updateVersion,
+  busy = true,
 }: {
   text: string
+  /** False while a completed reply waits for the rich renderer. */
+  busy?: boolean
   liveUpdate?: LiveMarkdownChange | undefined
   updateVersion?: number | undefined
 }) {
@@ -344,7 +379,7 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
     lastText.current = text
   }, [liveUpdate, text, updateVersion])
 
-  return <div aria-busy="true" className="md" data-streaming-markdown ref={root} />
+  return <div aria-busy={busy} className="md" data-streaming-markdown ref={root} />
 })
 
 const PlainCompletedMarkdown = memo(function PlainCompletedMarkdown({ text }: { text: string }) {
@@ -373,13 +408,20 @@ export const Markdown = memo(function Markdown({
   liveUpdate?: LiveMarkdownChange | undefined
   updateVersion?: number | undefined
 }) {
-  if (streaming) {
-    return <StreamingMarkdown text={text} liveUpdate={liveUpdate} updateVersion={updateVersion} />
+  const rich = !streaming && needsRichMarkdown(text)
+  const RichMarkdown = useCompletedMarkdown(rich)
+  if (RichMarkdown) return <RichMarkdown text={text} projectPath={projectPath} />
+  // A rich reply that completes before its renderer has loaded keeps the live
+  // DOM at the same position in the tree, so it never collapses meanwhile.
+  if (streaming || rich) {
+    return (
+      <StreamingMarkdown
+        text={text}
+        liveUpdate={streaming ? liveUpdate : undefined}
+        updateVersion={streaming ? updateVersion : undefined}
+        busy={streaming}
+      />
+    )
   }
-  if (!needsRichMarkdown(text)) return <PlainCompletedMarkdown text={text} />
-  return (
-    <Suspense fallback={<PlainCompletedMarkdown text={text} />}>
-      <CompletedMarkdown text={text} projectPath={projectPath} />
-    </Suspense>
-  )
+  return <PlainCompletedMarkdown text={text} />
 })
