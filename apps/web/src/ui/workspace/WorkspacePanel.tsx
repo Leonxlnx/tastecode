@@ -66,7 +66,12 @@ export type WorkspaceProviderLoginRequest = {
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
 
 type WorkspaceTab =
-  | { id: string; kind: WorkspaceTool }
+  | {
+      id: string
+      kind: WorkspaceTool
+      /** Opened by the user, not restored or opened for them: take focus. */
+      userOpened?: boolean
+    }
   | {
       id: string
       kind: 'provider-login'
@@ -174,6 +179,7 @@ function WorkspacePanelComponent(props: {
       showTool({
         id: ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind,
         kind,
+        userOpened: true,
       })
       props.onOpen()
     },
@@ -448,7 +454,13 @@ function WorkspaceToolSurface(props: {
     )
   }
   if (props.tab.kind === 'browser') {
-    return <WorkspaceBrowser active={props.active} navigation={props.browserNavigation} />
+    return (
+      <WorkspaceBrowser
+        active={props.active}
+        navigation={props.browserNavigation}
+        focusAddressOnOpen={props.tab.userOpened}
+      />
+    )
   }
   if (props.tab.kind === 'files') {
     return (

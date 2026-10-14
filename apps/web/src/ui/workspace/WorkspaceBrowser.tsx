@@ -89,9 +89,12 @@ export type BrowserNavigationRequest = {
 export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
+  focusAddressOnOpen,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
+  /** The user opened this tab to type a URL: focus the address once it mounts. */
+  focusAddressOnOpen?: boolean | undefined
 }) {
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -106,6 +109,16 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   const [error, setError] = useState<string>()
+  const addressInput = useRef<HTMLInputElement>(null)
+  const focusedOnOpen = useRef(false)
+
+  // After any menu that opened the tab has handed focus back, which happens
+  // earlier in the same commit, so a typed URL lands in the address.
+  useLayoutEffect(() => {
+    if (!focusAddressOnOpen || focusedOnOpen.current) return
+    focusedOnOpen.current = true
+    addressInput.current?.focus()
+  }, [focusAddressOnOpen])
 
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
@@ -346,6 +359,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         >
           <Globe2 size={14} aria-hidden />
           <input
+            ref={addressInput}
             value={address}
             placeholder="Enter a URL"
             aria-label="Browser address"
