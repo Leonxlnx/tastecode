@@ -1160,19 +1160,43 @@
   aspect-ratio: 16 / 9;
 }
 
+/* A notice about the toolbar (an address it refused). Neutral: nothing is broken. */
 .workspace-browser__error {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   top: 12px;
   left: 50%;
   max-width: min(540px, calc(100% - 24px));
   padding: 8px 11px;
-  background: color-mix(in srgb, var(--error) 13%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--error) 35%, var(--line));
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  color: var(--error);
+  box-shadow: var(--shadow-raised);
+  color: var(--text-2);
   font-size: var(--t-xs);
+  line-height: 1.45;
   transform: translateX(-50%);
+}
+
+/* A page that failed to load: a calm state in place of the guest, which stays hidden. */
+.workspace-browser__failure {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  background: var(--bg);
+}
+
+.workspace-browser__failure .workspace-empty strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.workspace-browser__failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 /* ---------- side chat ---------- */

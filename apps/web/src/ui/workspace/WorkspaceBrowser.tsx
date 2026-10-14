@@ -17,7 +17,11 @@ import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
-import { browserLoadErrorMessage, loadRejectionFailure } from './browser-load-error.js'
+import {
+  browserLoadFailureView,
+  loadRejectionFailure,
+  type BrowserLoadFailureView,
+} from './browser-load-error.js'
 import { browserAddress } from './browser-url.js'
 import {
   BROWSER_VIEWPORTS,
@@ -115,7 +119,11 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
+  // A notice about the toolbar: an address it refused, a native call that failed.
   const [error, setError] = useState<string>()
+  // A page that failed to load or stopped; the canvas shows it instead of the guest.
+  const [failure, setFailure] = useState<BrowserLoadFailureView>()
+  const addressInput = useRef<HTMLInputElement>(null)
 
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
@@ -162,6 +170,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     const onStart = () => {
       stopRequested.current = false
       setError(undefined)
+      setFailure(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
     const onStop = () => syncGuestState(true)
@@ -187,15 +196,15 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       const failure = LoadFailureEventSchema.safeParse(event)
       if (failure.success && failure.data.isMainFrame !== false && !stopRequested.current) {
         const url = webPageUrl(failure.data.validatedURL)
-        const message = browserLoadErrorMessage({
+        const failedView = browserLoadFailureView({
           code: failure.data.errorCode,
           name: failure.data.errorDescription,
           url,
         })
-        if (message) {
+        if (failedView) {
           failureReported.current = true
           if (url) failedAddress.current = url
-          setError(message)
+          setFailure(failedView)
         }
       }
       syncGuestState()
@@ -203,7 +212,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     const onRendererGone = (event: Event) => {
       const stopped = RendererGoneEventSchema.safeParse(event)
       const reason = stopped.success ? stopped.data.details?.reason : undefined
-      setError(`Page renderer stopped${reason ? `: ${reason}` : '.'}`)
+      setFailure({
+        title: 'This page stopped',
+        detail: `Its renderer ended${reason ? ` (${reason})` : ''}. Retry to load it again.`,
+      })
       syncGuestState()
     }
 
@@ -302,14 +314,15 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       setAddress(url)
       setState((current) => ({ ...current, url, loading: true }))
       setError(undefined)
+      setFailure(undefined)
       void view.loadURL(url).catch((cause: unknown) => {
         // A newer navigation replaced this one and reports for itself.
         if (sequence !== navigationSequence.current) return
         if (!failureReported.current && !stopRequested.current) {
-          const message = browserLoadErrorMessage(loadRejectionFailure(cause, url))
-          if (message) {
+          const failedView = browserLoadFailureView(loadRejectionFailure(cause, url))
+          if (failedView) {
             failedAddress.current = url
-            setError(message)
+            setFailure(failedView)
           }
         }
         syncGuestState()
@@ -348,7 +361,14 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
   }
 
-  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !error
+  const editAddress = () => {
+    const input = addressInput.current
+    if (!input) return
+    input.focus()
+    input.select()
+  }
+
+  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
 
   return (
     <div className="workspace-browser">
@@ -389,6 +409,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         >
           <Globe2 size={14} aria-hidden />
           <input
+            ref={addressInput}
             value={address}
             placeholder="Enter a URL"
             aria-label="Browser address"
@@ -439,12 +460,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         ref={canvas}
         className="workspace-browser__canvas"
         data-viewport={viewport}
-        aria-busy={state.loading && !error}
+        aria-busy={state.loading && !failure}
       >
         <div
           ref={host}
           className="workspace-browser__guest-host"
-          data-visible={Boolean(state.url)}
+          data-visible={Boolean(state.url) && !failure}
           aria-hidden={!active}
         >
           {loadingFirstPage ? (
@@ -462,7 +483,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             </SkeletonStatus>
           ) : null}
         </div>
-        {!state.url ? (
+        {failure ? (
+          <div className="workspace-browser__failure" role="alert">
+            <WorkspaceEmptyState
+              kind="browser-failed"
+              title={failure.title}
+              detail={failure.detail}
+            >
+              <div className="workspace-browser__failure-actions">
+                <button type="button" className="btn" onClick={() => action('reload')}>
+                  Retry
+                </button>
+                <button type="button" className="ghost" onClick={editAddress}>
+                  Edit address
+                </button>
+              </div>
+            </WorkspaceEmptyState>
+          </div>
+        ) : !state.url ? (
           <div className="workspace-browser__placeholder">
             <WorkspaceEmptyState
               kind="browser"
