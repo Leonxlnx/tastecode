@@ -43,7 +43,7 @@ export {
 export type { ModelSelectorProps } from './model-selector-utils.js'
 
 export const ModelSelector = memo(function ModelSelector(props: ModelSelectorProps) {
-  const choice = getSelectedChoice(props.models, props.modelId)
+  const choice = props.choice ?? getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortLabel = getFriendlyEffortLabel(selectedEffort)

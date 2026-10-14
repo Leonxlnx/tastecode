@@ -1751,6 +1751,84 @@ describe('web client', () => {
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
   })
 
+  it('never starts a chat on another provider than the picker names while its source loads', async () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: false,
+      images: false,
+    }
+    serverProviders = [
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities,
+      },
+      { id: 'grok', displayName: 'Grok', installed: true, auth: 'authenticated', capabilities },
+    ]
+    // No stored model yet, and the stored provider is still listing its models.
+    localStorage.setItem('harness.provider', 'claude-code')
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: ['low', 'high'],
+      defaultReasoningEffort: 'high',
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseClaude!: (value: unknown) => void
+    const claudeModels = new Promise((resolve) => {
+      releaseClaude = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return methods['models.list'].params.parse(params).provider === 'claude-code'
+        ? claudeModels
+        : Promise.resolve({ models: [listed('grok-4.7')] })
+    })
+
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+
+    // Grok has answered and Claude Code has not. The picker must not name the
+    // Grok default while a send would start Claude Code without a model.
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('grok:grok-4.7'),
+    )
+    expect(composerProps().modelPending).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    expect(document.querySelector('.composer-skeleton-model')).toBeTruthy()
+    fireEvent.change(composer, { target: { value: 'Wait for the model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('title')).toBe(
+      'Loading models…',
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+
+    await act(async () => {
+      releaseClaude({ models: [listed('opus')] })
+      await claudeModels
+    })
+
+    const trigger = await screen.findByRole('button', { name: 'Model and reasoning' })
+    expect(trigger.textContent).toContain('opus')
+    expect(composerProps().modelChoice?.key).toBe('claude-code:opus')
+    expect(composer.value).toBe('Wait for the model')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'claude-code', model: 'opus' }),
+      ),
+    )
+  })
+
   it.each(['failed', 'empty'] as const)(
     'waits for every installed beta catalog when one is %s',
     async (claudeCatalog) => {
