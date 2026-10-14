@@ -3,7 +3,15 @@ import { useTabDrag } from './useTabDrag.js'
 import { performAppHaptic } from '../../haptics.js'
 import { IconX } from '@tabler/icons-react'
 
-export type WorkspaceTabLabel = { id: string; title: string; icon: ReactNode }
+export type WorkspaceTabLabel = {
+  id: string
+  title: string
+  icon: ReactNode
+  /** Hover text when it says more than the title, e.g. a page's full URL. */
+  tooltip?: string | undefined
+  /** Accessible name when the title alone is ambiguous, e.g. "Browser: Docs". */
+  accessibleName?: string | undefined
+}
 
 /** Characters a shrinking label always keeps before its ellipsis. */
 const READABLE_PREFIX = 5
@@ -258,8 +266,8 @@ export function WorkspaceTabs(props: {
             type="button"
             role="tab"
             aria-selected={tab.id === props.activeId}
-            aria-label={tab.title}
-            title={tab.title}
+            aria-label={tab.accessibleName ?? tab.title}
+            title={tab.tooltip ?? tab.title}
             onClick={() => props.onSelect(tab.id)}
             onKeyDown={(event) => {
               if (!event.altKey || !props.onReorder) return
@@ -279,7 +287,7 @@ export function WorkspaceTabs(props: {
           <button
             type="button"
             className="workspace-tabs__close"
-            aria-label={`Close ${tab.title}`}
+            aria-label={`Close ${tab.accessibleName ?? tab.title}`}
             onClick={() => close(tab.id)}
           >
             <IconX size={13} aria-hidden />

@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { z } from 'zod'
 import {
   IconArrowLeft as ArrowLeft,
@@ -17,6 +17,7 @@ import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import type { BrowserPageInfo } from './browser-page.js'
 import { browserUrl } from './browser-url.js'
 import {
   BROWSER_VIEWPORTS,
@@ -75,7 +76,7 @@ const RendererGoneEventSchema = z.object({
 
 const EMPTY_STATE: BrowserState = {
   url: '',
-  title: 'New tab',
+  title: '',
   loading: false,
   canGoBack: false,
   canGoForward: false,
@@ -89,9 +90,15 @@ export type BrowserNavigationRequest = {
 export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
+  tabId,
+  onPageInfo,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
+  /** Passed back to onPageInfo, so one stable owner callback serves every tab. */
+  tabId?: string | undefined
+  /** The page's URL and title whenever either changes, for the tab label. */
+  onPageInfo?: ((tabId: string, page: BrowserPageInfo) => void) | undefined
 }) {
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -106,6 +113,15 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
   const [error, setError] = useState<string>()
+  // Read through a ref: the report below runs when the page changes, never
+  // because the owner handed over a new function (#283).
+  const pageInfoListener = useRef(onPageInfo)
+  pageInfoListener.current = onPageInfo
+
+  useEffect(() => {
+    if (tabId === undefined) return
+    pageInfoListener.current?.(tabId, { url: state.url, title: state.url ? state.title : '' })
+  }, [tabId, state.url, state.title])
 
   const syncGuestState = useCallback((pageReady = false) => {
     const view = guest.current
@@ -114,7 +130,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       const currentUrl = webPageUrl(view.getURL())
       setState({
         url: currentUrl,
-        title: view.getTitle() || 'New tab',
+        title: view.getTitle(),
         loading: view.isLoading(),
         canGoBack: view.canGoBack(),
         canGoForward: view.canGoForward(),
