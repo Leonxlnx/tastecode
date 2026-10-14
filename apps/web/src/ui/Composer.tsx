@@ -558,6 +558,7 @@ function ComposerComponent(props: {
     revision: 0,
     items: props.queuedTurns.map((turn) => ({ turn, phase: 'present' })),
   }))
+  const hasQueuePanel = renderedQueue.items.length > 0
   const [selectedResources, setSelectedResources] = useState<ComposerResource[]>([])
   const [resourceTrigger, setResourceTrigger] = useState<ComposerResourceTrigger>()
   const [resourcePickerMounted, setResourcePickerMounted] = useState(false)
@@ -711,8 +712,14 @@ function ComposerComponent(props: {
     const conversation = root?.parentElement
     if (!root || !conversation?.classList.contains('stage__conversation')) return
 
+    // The queued prompts tray sits above the box, outside the root's own
+    // height. It covers the transcript all the same, so the reserved space
+    // starts at whichever top is higher.
+    const queue = queuePanel.current
     const updateOverlayHeight = () => {
-      const height = root.getBoundingClientRect().height
+      const box = root.getBoundingClientRect()
+      const top = Math.min(box.top, queue?.getBoundingClientRect().top ?? box.top)
+      const height = box.bottom - top
       if (height > 0) {
         conversation.style.setProperty('--composer-overlay-height', `${height}px`)
       }
@@ -724,12 +731,13 @@ function ComposerComponent(props: {
       ? new ResizeObserverConstructor(updateOverlayHeight)
       : undefined
     observer?.observe(root)
+    if (queue) observer?.observe(queue)
 
     return () => {
       observer?.disconnect()
       conversation.style.removeProperty('--composer-overlay-height')
     }
-  }, [props.newSession])
+  }, [props.newSession, hasQueuePanel])
 
   // T3 Code's draft composer uses a FLIP transition: remember where the real
   // composer was before send, render it in the docked layout, then animate only

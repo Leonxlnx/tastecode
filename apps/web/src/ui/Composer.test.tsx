@@ -747,6 +747,29 @@ describe('Composer send handoff', () => {
 })
 
 describe('Composer queue', () => {
+  it('reserves transcript space for the queued prompts tray above the box', () => {
+    const conversation = document.body.appendChild(document.createElement('div'))
+    conversation.className = 'stage__conversation'
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('composer__queue')) return queueRect(640, 70)
+      if (this.classList.contains('composer')) return queueRect(700, 200)
+      return queueRect(0, 0)
+    })
+    const view = renderComposer(vi.fn(), { newSession: false }, { container: conversation })
+    expect(conversation.style.getPropertyValue('--composer-overlay-height')).toBe('200px')
+
+    view.rerenderComposer({
+      queuedTurns: [{ id: 'q1', text: 'Queued prompt', attachments: [], createdAt: 1 }],
+    })
+    // The tray starts 60 px above the box, still in front of the transcript.
+    expect(conversation.style.getPropertyValue('--composer-overlay-height')).toBe('260px')
+
+    view.unmount()
+    conversation.remove()
+  })
+
   it('waits for queue deletion confirmation and preserves typing during the wait', async () => {
     let finish!: (removed: boolean) => void
     const onDeleteQueuedTurn = vi.fn(
@@ -1952,6 +1975,7 @@ describe('Composer focus requests', () => {
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
+  options: { container?: HTMLElement } = {},
 ) {
   let currentOverrides = overrides
   const transport = overrides.transport ?? createResourceTransport()
@@ -2003,7 +2027,7 @@ function renderComposer(
       {...currentOverrides}
     />
   )
-  const view = render(composer())
+  const view = render(composer(), options)
   return Object.assign(view, {
     rerenderComposer(next: Partial<Parameters<typeof Composer>[0]>) {
       currentOverrides = { ...currentOverrides, ...next }
