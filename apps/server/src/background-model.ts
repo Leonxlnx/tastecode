@@ -24,6 +24,12 @@ export type AvailableBackgroundModelSource = BackgroundModelSource & {
   codexSubscription?: boolean | undefined
 }
 
+/** A source whose identity is known before its account and models are read. */
+export type BackgroundModelSourceLoader = Pick<BackgroundModelSource, 'provider' | 'agent'> & {
+  /** Undefined when the source is signed out, has no models, or cannot be read. */
+  load: () => Promise<AvailableBackgroundModelSource | undefined>
+}
+
 const EFFORT_RANKS = new Map([
   ['none', 0],
   ['minimal', 1],
