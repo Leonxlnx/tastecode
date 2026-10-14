@@ -19,6 +19,9 @@ const state = vi.hoisted(() => ({
   historyClosed: Promise.resolve(),
   historySources: [] as string[][],
   historyLoads: [] as string[],
+  historyRefreshed: Promise.resolve(),
+  historyChanged: false,
+  invalidated: [] as string[],
   failGrokHistory: false,
   failHistoryService: false,
   historyRewritten: false,
@@ -82,6 +85,9 @@ vi.mock('./orchestrator.js', () => ({
     markThreadRead(threadId: string) {
       state.read.push(threadId)
     }
+    invalidateImportedHistory(threadId: string) {
+      state.invalidated.push(threadId)
+    }
     async submitTurn() {
       return { queued: false, turnId: 'turn' }
     }
@@ -94,10 +100,12 @@ vi.mock('./provider-history.js', () => ({
       if (state.failHistoryService) throw new Error('history service failed')
       state.historySources.push(sources.map(({ provider }) => provider))
     }
-    async refresh() {}
+    async refresh() {
+      await state.historyRefreshed
+    }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
-      return false
+      return state.historyChanged
     }
     async close() {
       state.shutdown.push('history')
@@ -141,6 +149,9 @@ afterEach(async () => {
   state.historyClosed = Promise.resolve()
   state.historySources.length = 0
   state.historyLoads.length = 0
+  state.historyRefreshed = Promise.resolve()
+  state.historyChanged = false
+  state.invalidated.length = 0
   state.failGrokHistory = false
   state.failHistoryService = false
   state.historyRewritten = false
@@ -529,6 +540,44 @@ describe('unavailable provider history', () => {
     expect(state.historyLoads).toEqual(['local', 'local', 'external:codex:s'])
   })
 
+  it('opens a local chat before the startup history scan finishes', async () => {
+    let finishScan!: () => void
+    state.historyRefreshed = new Promise((resolve) => (finishScan = resolve))
+    state.historyChanged = true
+    state.historyPage.mockResolvedValue(opened.result)
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<{ id?: string; channel?: string; data?: unknown }> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    const reply = (id: string) => messages.find((message) => message.id === id)
+    const ask = (id: string, threadId: string) =>
+      client.send(JSON.stringify({ id, method: 'thread.history', params: { threadId, page: {} } }))
+    try {
+      ask('local', 'local')
+      await vi.waitFor(() => expect(reply('local')).toMatchObject(opened))
+      ask('imported', 'external:codex:s')
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(reply('imported')).toBeUndefined()
+      expect(state.historyLoads).toEqual([])
+
+      finishScan()
+      await vi.waitFor(() => expect(reply('imported')).toMatchObject(opened))
+      // The scan's outside changes still reach the local chat once it is done.
+      await vi.waitFor(() =>
+        expect(messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'providerHistory.changed',
+            data: { threadIds: ['local'] },
+          }),
+        ),
+      )
+      expect(state.invalidated).toContain('local')
+      expect(state.historyLoads).toEqual(expect.arrayContaining(['local', 'external:codex:s']))
+    } finally {
+      client.terminate()
+    }
+  })
   it('fails only imported chats when the history service cannot start', async () => {
     state.failHistoryService = true
     state.historyPage.mockResolvedValue(opened.result)

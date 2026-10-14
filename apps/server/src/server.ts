@@ -250,7 +250,32 @@ export function startServer(
     await history.refresh()
     return history
   })
-  void initialProviderHistory.catch(() => undefined)
+  let initialProviderHistorySettled = false
+  void initialProviderHistory
+    .catch(() => undefined)
+    .finally(() => {
+      initialProviderHistorySettled = true
+    })
+
+  /**
+   * Opening a chat must not wait for the startup scan of every provider's saved
+   * sessions, which takes seconds against a large shared history. Only an
+   * imported chat needs the scan for its transcript and ownership; a local chat
+   * answers from the store, and an outside change found by the scan is merged
+   * afterwards and announced like any other provider history change.
+   */
+  async function openProviderHistory(threadId: string): Promise<void> {
+    if (initialProviderHistorySettled || threadId.startsWith('external:'))
+      return loadProviderHistory(threadId)
+    void initialProviderHistory
+      .then(async (history) => {
+        if (await history.load(threadId)) {
+          orchestrator.invalidateImportedHistory(threadId)
+          if (!historyClosing) push.broadcast('providerHistory.changed', { threadIds: [threadId] })
+        }
+      })
+      .catch(() => undefined)
+  }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
     let history: ProviderHistory
@@ -821,7 +846,7 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        await loadProviderHistory(p.threadId)
+        await openProviderHistory(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
           const running = orchestrator.isTurnRunning(p.threadId)
