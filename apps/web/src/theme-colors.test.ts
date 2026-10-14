@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   backdropColorScheme,
   colorForeground,
-  hexToHsl,
-  hslToHex,
+  hexToHsv,
+  hsvToHex,
   normalizeHexColor,
 } from './theme-colors.js'
 
@@ -12,7 +12,7 @@ describe('custom color values', () => {
     'round-trips %s through the picker without drift',
     (color) => {
       const hex = normalizeHexColor(color)!
-      expect(hslToHex(hexToHsl(hex))).toBe(hex)
+      expect(hsvToHex(hexToHsv(hex))).toBe(hex)
     },
   )
 

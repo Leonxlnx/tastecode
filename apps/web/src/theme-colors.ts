@@ -1,5 +1,5 @@
 export type HexColor = `#${string}`
-export type HslColor = { h: number; s: number; l: number }
+export type HsvColor = { h: number; s: number; v: number }
 
 export function normalizeHexColor(value: string): HexColor | undefined {
   const hex = value.trim().replace(/^#/, '')
@@ -27,37 +27,30 @@ export function colorForeground(color: HexColor): '#ffffff' | '#171717' {
   return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! > 0.179 ? '#171717' : '#ffffff'
 }
 
-export function hexToHsl(color: HexColor): HslColor {
+export function hexToHsv(color: HexColor): HsvColor {
   const [r, g, b] = rgbChannels(color)
-  const max = Math.max(r, g, b)
-  const min = Math.min(r, g, b)
-  const delta = max - min
-  const l = (max + min) / 2
+  const v = Math.max(r, g, b)
+  const delta = v - Math.min(r, g, b)
   const hue =
     delta === 0
       ? 0
-      : max === r
+      : v === r
         ? (g - b) / delta
-        : max === g
+        : v === g
           ? (b - r) / delta + 2
           : (r - g) / delta + 4
-  return {
-    h: (hue * 60 + 360) % 360,
-    s: delta === 0 ? 0 : delta / (1 - Math.abs(2 * l - 1)),
-    l,
-  }
+  return { h: (hue * 60 + 360) % 360, s: v === 0 ? 0 : delta / v, v }
 }
 
-export function hslToHex({ h, s, l }: HslColor): HexColor {
-  const a = s * Math.min(l, 1 - l)
+export function hsvToHex({ h, s, v }: HsvColor): HexColor {
   const channel = (offset: number) => {
-    const k = (offset + h / 30) % 12
-    const value = l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))
+    const k = (offset + h / 60) % 6
+    const value = v - v * s * Math.max(0, Math.min(k, 4 - k, 1))
     return Math.round(value * 255)
       .toString(16)
       .padStart(2, '0')
   }
-  return `#${channel(0)}${channel(8)}${channel(4)}`.toUpperCase() as HexColor
+  return `#${channel(5)}${channel(3)}${channel(1)}`.toUpperCase() as HexColor
 }
 
 const ACCENT_COLORS = {
