@@ -556,7 +556,7 @@
 }
 
 .appearance-row {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 55%, transparent);
+  --appearance-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
 
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
@@ -569,7 +569,7 @@
 }
 
 .appearance-row:is(:hover, :focus-within) {
-  --appearance-leader: var(--text-2);
+  --appearance-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
 @property --appearance-leader {
@@ -600,12 +600,13 @@
   line-height: 1.4;
 }
 
-/* The provider roster's open wire, used as a leader: dots on the baseline. */
+/* The provider defaults' leader, dot for dot: small and close-set on the
+   baseline, so it reads as a line rather than a row of beads. */
 .appearance-row__leader {
   height: 5px;
   margin-inline: 14px;
-  background: radial-gradient(circle, var(--appearance-leader) 0.9px, transparent 1.35px) left
-    center / 8px 100% repeat-x;
+  background: radial-gradient(circle, var(--appearance-leader) 0.75px, transparent 1.15px) left
+    center / 5px 100% repeat-x;
 }
 
 .appearance-row__value {
