@@ -2,6 +2,11 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { WorkspaceBrowser } from './WorkspaceBrowser.js'
+import { PLAIN_HTTP_LOOPBACK_ONLY } from './browser-url.js'
+
+// What Electron rejects <webview>.loadURL() with, verbatim from the desktop shell.
+const DNS_REJECTION =
+  "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_NAME_NOT_RESOLVED (-105) loading 'https://example.com/'"
 
 const nativeBrowser = vi.hoisted(() => ({
   openExternal: vi.fn(),
@@ -204,7 +209,7 @@ describe('WorkspaceBrowser', () => {
         isMainFrame: true,
       })
     })
-    expect(screen.getByRole('alert').textContent).toBe('NAME_NOT_RESOLVED')
+    expect(screen.getByRole('alert').textContent).toBe("Can't find the site. Check the address.")
 
     act(() => {
       dispatchGuestEvent(view, 'did-fail-load', {
@@ -213,7 +218,9 @@ describe('WorkspaceBrowser', () => {
         isMainFrame: true,
       })
     })
-    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('NAME_NOT_RESOLVED'))
+    await waitFor(() =>
+      expect(screen.getByRole('alert').textContent).toBe("Can't find the site. Check the address."),
+    )
   })
 
   it.each(['dom-ready', 'did-stop-loading'])(
@@ -287,7 +294,7 @@ describe('WorkspaceBrowser', () => {
       expect(screen.getByRole('status').textContent).toBe('Loading page…')
 
       await act(async () => {
-        if (failureKind === 'rejection') rejectLoad(new Error('NAME_NOT_RESOLVED'))
+        if (failureKind === 'rejection') rejectLoad(new Error(DNS_REJECTION))
         else
           dispatchGuestEvent(view, 'did-fail-load', {
             errorCode: -105,
@@ -296,12 +303,116 @@ describe('WorkspaceBrowser', () => {
           })
       })
       expect(screen.queryByRole('status')).toBeNull()
-      expect(screen.getByRole('alert').textContent).toBe('NAME_NOT_RESOLVED')
+      expect(screen.getByRole('alert').textContent).toBe(
+        failureKind === 'rejection'
+          ? "Can't find example.com. Check the address."
+          : "Can't find the site. Check the address.",
+      )
       expect(container.querySelector('.workspace-browser__canvas')?.getAttribute('aria-busy')).toBe(
         'false',
       )
     },
   )
+
+  it('explains a failed load once, in words, and keeps the address that failed', async () => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement
+    fireEvent.change(address, { target: { value: 'example.com/first' } })
+    fireEvent.submit(address.closest('form')!)
+    await waitFor(() => expect((view.getURL as () => string)()).toBe('https://example.com/first'))
+
+    let rejectLoad!: (error: Error) => void
+    view.loadURL.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectLoad = reject
+          view.isLoading.mockReturnValue(true)
+          view.dispatchEvent(new Event('did-start-loading'))
+        }),
+    )
+    fireEvent.change(address, { target: { value: 'nonexistent-host.invalid' } })
+    fireEvent.submit(address.closest('form')!)
+    await act(async () => {
+      view.isLoading.mockReturnValue(false)
+      dispatchGuestEvent(view, 'did-fail-load', {
+        errorCode: -105,
+        errorDescription: 'ERR_NAME_NOT_RESOLVED',
+        isMainFrame: true,
+        validatedURL: 'https://nonexistent-host.invalid/',
+      })
+      view.dispatchEvent(new Event('did-stop-loading'))
+      // Electron rejects after the event; that must not replace the message with its own text.
+      rejectLoad(new Error(DNS_REJECTION))
+    })
+
+    expect(screen.getByRole('alert').textContent).toBe(
+      "Can't find nonexistent-host.invalid. Check the address.",
+    )
+    // The guest still shows the previous page; the address shows what failed.
+    expect((view.getURL as () => string)()).toBe('https://example.com/first')
+    expect(address.value).toBe('https://nonexistent-host.invalid/')
+
+    fireEvent.click(screen.getByTitle('Reload'))
+    expect(view.loadURL).toHaveBeenLastCalledWith('https://nonexistent-host.invalid/')
+    expect(view.reload).not.toHaveBeenCalled()
+  })
+
+  it('treats Stop as cancelling the load, not as an error', async () => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    let rejectLoad!: (error: Error) => void
+    view.loadURL.mockImplementation(
+      (url: string) =>
+        new Promise<void>((_resolve, reject) => {
+          rejectLoad = reject
+          view.getURL.mockReturnValue(url)
+          view.isLoading.mockReturnValue(true)
+          view.dispatchEvent(new Event('did-start-loading'))
+        }),
+    )
+    const address = screen.getByLabelText('Browser address')
+    fireEvent.change(address, { target: { value: '127.0.0.1:4432/hang' } })
+    fireEvent.submit(address.closest('form')!)
+
+    fireEvent.click(screen.getByTitle('Stop loading'))
+    expect(view.stop).toHaveBeenCalledOnce()
+    await act(async () => {
+      view.isLoading.mockReturnValue(false)
+      dispatchGuestEvent(view, 'did-fail-load', {
+        errorCode: -2,
+        errorDescription: 'ERR_FAILED',
+        isMainFrame: true,
+        validatedURL: 'http://127.0.0.1:4432/hang',
+      })
+      view.dispatchEvent(new Event('did-stop-loading'))
+      rejectLoad(
+        new Error(
+          "Error invoking remote method 'GUEST_VIEW_MANAGER_CALL': Error: ERR_FAILED (-2) loading 'http://127.0.0.1:4432/hang'",
+        ),
+      )
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it.each([
+    ['not a url', 'Enter a valid URL.'],
+    ['http://example.com/', PLAIN_HTTP_LOOPBACK_ONLY],
+    ['192.168.0.10:5173', PLAIN_HTTP_LOOPBACK_ONLY],
+  ])('refuses %s before loading and keeps the typed text', (typed, message) => {
+    render(<WorkspaceBrowser active />)
+    const view = guests[0]!
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+    const address = screen.getByLabelText('Browser address') as HTMLInputElement
+    fireEvent.change(address, { target: { value: typed } })
+    fireEvent.submit(address.closest('form')!)
+
+    expect(screen.getByRole('alert').textContent).toBe(message)
+    expect(address.value).toBe(typed)
+    expect(view.loadURL).not.toHaveBeenCalled()
+  })
 })
 
 function dispatchGuestEvent(
