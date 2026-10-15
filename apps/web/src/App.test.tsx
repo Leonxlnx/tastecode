@@ -11604,3 +11604,62 @@ describe('workspace panel loading', () => {
     expect(screen.getByRole('textbox', { name: 'Message temporary chat' })).toBeTruthy()
   }, 30_000)
 })
+
+describe('feedback entry points', () => {
+  function enableFeedback() {
+    const base = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'feedback.status'
+        ? Promise.resolve({ enabled: true })
+        : method === 'feedback.preview'
+          ? Promise.resolve({ payload: '{}', redactions: 0 })
+          : base(method, params),
+    )
+  }
+
+  it('stays hidden when this build has no feedback inbox', async () => {
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const commandSearch = await screen.findByRole(
+      'textbox',
+      { name: 'Search commands' },
+      { timeout: 10_000 },
+    )
+    fireEvent.change(commandSearch, { target: { value: 'send feedback' } })
+    expect(screen.queryByText('Send feedback…')).toBeNull()
+    fireEvent.keyDown(commandSearch, { key: 'Escape' })
+    expect(transport.request.mock.calls.some(([method]) => method === 'feedback.status')).toBe(true)
+    expect(composer).toBeTruthy()
+  })
+
+  it('opens the dialog from the palette and from /feedback without sending anything', async () => {
+    enableFeedback()
+    render(<App />)
+    const composer = await screen.findByPlaceholderText('Do anything')
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    const commandSearch = await screen.findByRole(
+      'textbox',
+      { name: 'Search commands' },
+      { timeout: 10_000 },
+    )
+    fireEvent.change(commandSearch, { target: { value: 'send feedback' } })
+    await screen.findByText('Send feedback…')
+    fireEvent.keyDown(commandSearch, { key: 'Enter' })
+    const dialog = await screen.findByRole('dialog', { name: 'Send feedback' })
+    fireEvent.keyDown(within(dialog).getByLabelText('Message'), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Send feedback' })).toBeNull())
+
+    fireEvent.change(composer, { target: { value: '/feedback the export button does nothing' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    const fromCommand = await screen.findByRole('dialog', { name: 'Send feedback' })
+    expect(within(fromCommand).getByLabelText('Message')).toHaveProperty(
+      'value',
+      'the export button does nothing',
+    )
+    expect(transport.request.mock.calls.some(([method]) => method === 'feedback.submit')).toBe(
+      false,
+    )
+    expect(transport.request.mock.calls.some(([method]) => method === 'thread.start')).toBe(false)
+  })
+})

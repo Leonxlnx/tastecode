@@ -40,6 +40,7 @@ import {
   savePastedFile,
   type PickedAttachment,
 } from '../bridge.js'
+import { parseFeedbackCommand } from '../feedback-command.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { type VoiceRecording } from '../voice-capability.js'
@@ -404,7 +405,7 @@ export function composerResourceTriggerAt(
   const marker = text[markerIndex]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = text.slice(queryStart, position)
-  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = position
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start: markerIndex, end }
@@ -420,7 +421,7 @@ function composerResourceTriggerAtLongToken(
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
@@ -532,6 +533,8 @@ function ComposerComponent(props: {
   onSetupProvider: () => void
   onSend: (text: string, attachments: string[]) => void
   onSteer: (text: string, attachments: string[]) => void
+  /** /feedback [text] opens TasteCode's feedback dialog instead of reaching a provider. */
+  onFeedbackCommand?: ((text: string) => void) | undefined
   onInterrupt: () => void
   /** An interrupt is sent and the turn has not ended yet. */
   stopping?: boolean | undefined
@@ -1244,6 +1247,12 @@ function ComposerComponent(props: {
   }, [selectedResources, props.onResourcesChange])
 
   const sendContent = (content: string, submission: RunningSubmission = 'queue') => {
+    const feedback = selectedResources.length === 0 ? parseFeedbackCommand(content) : undefined
+    if (feedback && props.onFeedbackCommand) {
+      updateText('')
+      props.onFeedbackCommand(feedback.text)
+      return true
+    }
     const trimmed = composerPromptWithResources(content, selectedResources)
     const paths = attachments.flatMap((attachment) => attachment.path ?? [])
     if (

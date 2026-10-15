@@ -32,6 +32,7 @@ import {
   IconGitPullRequest as GitPullRequest,
   IconLayoutSidebarLeftCollapse as PanelLeftClose,
   IconLoader2 as LoaderCircle,
+  IconMessage as MessageSquare,
   IconPencil as Pencil,
   IconPinned as Pin,
   IconPinnedOff as PinOff,
@@ -248,6 +249,8 @@ function SidebarComponent(props: {
   pullRequestsActive?: boolean | undefined
   onOpenPullRequests?: (() => void) | undefined
   onOpenSettings: (section?: 'profile') => void
+  /** Present only when this build can send feedback. */
+  onSendFeedback?: (() => void) | undefined
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
   const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
@@ -946,6 +949,22 @@ function SidebarComponent(props: {
                           title="Edit profile"
                         />
                       </button>
+                      {props.onSendFeedback ? (
+                        <button
+                          type="button"
+                          className="menu__item"
+                          onClick={() => {
+                            props.onSendFeedback?.()
+                            closeOnNarrowViewport()
+                            close()
+                          }}
+                        >
+                          <DialogAction
+                            icon={<MessageSquare size={14} aria-hidden />}
+                            title="Send feedback"
+                          />
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="menu__item"
