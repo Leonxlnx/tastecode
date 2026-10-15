@@ -355,16 +355,12 @@ function WorkspacePanelComponent(props: {
     )
     const previousTransition = layout?.style.transition
     if (layout) layout.style.transition = 'none'
+    const bounds = panelSizeBounds(layout, bottom)
     resizeCleanup.current = beginPanelResize(event, {
       axis: bottom ? 'clientY' : 'clientX',
       initialSize: props.width,
-      minSize: bottom ? 200 : MIN_WORKSPACE_PANEL_WIDTH,
-      maxSize: bottom
-        ? Math.max(200, (layout?.parentElement?.clientHeight || window.innerHeight) - 80)
-        : Math.max(
-            MIN_WORKSPACE_PANEL_WIDTH,
-            (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH,
-          ),
+      minSize: bounds.min,
+      maxSize: bounds.max,
       style: layout?.style,
       property: bottom ? 'height' : '--workspace-panel-w',
       onFinish: (size, commit) => {
@@ -512,6 +508,26 @@ function WorkspacePanelComponent(props: {
       </div>
     </aside>
   )
+}
+
+/** The sizes a panel can take inside its host right now: the chat keeps its minimum width. */
+function panelSizeBounds(
+  layout: HTMLElement | null,
+  bottom: boolean,
+): { min: number; max: number } {
+  if (bottom) {
+    return {
+      min: 200,
+      max: Math.max(200, (layout?.parentElement?.clientHeight || window.innerHeight) - 80),
+    }
+  }
+  return {
+    min: MIN_WORKSPACE_PANEL_WIDTH,
+    max: Math.max(
+      MIN_WORKSPACE_PANEL_WIDTH,
+      (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH,
+    ),
+  }
 }
 
 /** Keep the closed host subscribed without reconciling its full shell on unrelated app updates. */
