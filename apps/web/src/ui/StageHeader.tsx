@@ -175,7 +175,7 @@ function StageHeaderComponent(props: {
         {renaming ? (
           <input
             ref={renameInput}
-            className="stagehead__rename rename--chat"
+            className="rename stagehead__rename rename--chat"
             value={draft}
             aria-label="Rename chat"
             onChange={(event) => setDraft(event.target.value)}
