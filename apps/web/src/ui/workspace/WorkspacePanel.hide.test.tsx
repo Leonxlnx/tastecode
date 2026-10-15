@@ -178,3 +178,22 @@ it('keeps the bottom panel X closing its tabs', async () => {
   )
   expect(screen.queryByRole('button', { name: 'Exit terminal' })).toBeNull()
 })
+
+it('offers Back to chat in the right panel, which hides it like the X', async () => {
+  const base = props()
+  const view = render(
+    <WorkspacePanel {...base} externalToolRequest={{ request: 1, kind: 'terminal' }} />,
+  )
+  await screen.findByRole('button', { name: 'Exit terminal' })
+
+  fireEvent.click(screen.getByRole('button', { name: 'Back to chat' }))
+  expect(base.onClose).toHaveBeenCalledOnce()
+  view.rerender(<WorkspacePanel {...base} externalToolRequest={{ request: 1, kind: 'terminal' }} />)
+  expect(tabNames()).toEqual(['Terminal 1'])
+  expect(mounts.terminal).toBe(1)
+})
+
+it('leaves Back to chat out of the bottom panel, which never covers the chat', () => {
+  render(<WorkspacePanel {...props()} placement="bottom" />)
+  expect(screen.queryByRole('button', { name: 'Back to chat' })).toBeNull()
+})
