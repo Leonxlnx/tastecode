@@ -20,6 +20,7 @@ import {
   useIsCodeFenceIncomplete,
   type HighlightOptions,
   type BlockProps,
+  type StreamdownContextType,
 } from 'streamdown'
 import { shikiPlugin } from './highlighter.js'
 import type { HighlightResult } from './highlighter-protocol.js'
@@ -27,6 +28,15 @@ import type { HighlightResult } from './highlighter-protocol.js'
 const LARGE_CODE_CHARACTERS = 32 * 1024
 const CHUNK_LINES = 12
 type Token = HighlightResult['tokens'][number][number]
+
+/** Which of Streamdown's code block buttons its `controls` setting shows. */
+function codeBlockControls(controls: StreamdownContextType['controls']) {
+  const code = typeof controls === 'boolean' ? controls : controls.code
+  return {
+    copy: code !== false && (code === true || code?.copy !== false),
+    download: code !== false && (code === true || code?.download !== false),
+  }
+}
 
 /** A simple complete fence needs no HTML/Markdown AST; keep complex syntax on Streamdown. */
 export const MarkdownBlock = memo(function MarkdownBlock(props: BlockProps) {
@@ -208,10 +218,7 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
     frame = requestAnimationFrame(paint)
     return () => cancelAnimationFrame(frame)
   }, [chunks.length, hasColors, result])
-  const codeControls = typeof controls === 'boolean' ? controls : controls.code
-  const showCopy = codeControls !== false && (codeControls === true || codeControls?.copy !== false)
-  const showDownload =
-    codeControls !== false && (codeControls === true || codeControls?.download !== false)
+  const { copy: showCopy, download: showDownload } = codeBlockControls(controls)
   return (
     <CodeBlockContainer
       language={language}
