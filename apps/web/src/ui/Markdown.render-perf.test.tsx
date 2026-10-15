@@ -231,6 +231,18 @@ describe('streamed Markdown renders', () => {
     expect(rendered.container.textContent).toBe('See the docs now')
   })
 
+  it('gives a streamed file name the finished file reference box', () => {
+    const rendered = render(
+      <Markdown text={'Edit `src/handler.ts` and run `pnpm test` with `process.env`.'} streaming />,
+    )
+    const reference = rendered.container.querySelector('.md-file-ref')
+    expect(reference?.textContent).toBe('src/handler.ts')
+    expect(reference?.querySelector('.md-file-ref__icon[aria-hidden="true"] > svg')).toBeTruthy()
+    expect(
+      [...rendered.container.querySelectorAll('code')].map((code) => code.textContent),
+    ).toEqual(['pnpm test', 'process.env'])
+  })
+
   it('renders streamed task markers as disabled checkboxes', () => {
     const rendered = render(<Markdown text={'- [x] reviewed\n- [ ] deploy\n'} streaming />)
     const boxes = [...rendered.container.querySelectorAll<HTMLInputElement>('li > input')]
