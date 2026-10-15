@@ -253,6 +253,11 @@
   color: var(--text);
 }
 
+.md [data-streamdown='code-block'] button[aria-pressed='true'] {
+  background: var(--control-pressed);
+  color: var(--text);
+}
+
 .md [data-streamdown='code-block'] button svg {
   width: 13px;
   height: 13px;
@@ -422,6 +427,14 @@
 .md pre code > span {
   display: block;
   min-height: 1lh;
+}
+
+/* The Wrap toggle on a code block soft-wraps long lines in every block,
+   streaming ones too. Only white-space changes, so toggling never renders or
+   highlights a block again. */
+:root[data-code-wrap='on'] .md pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Block chunks keep late token layout local while retaining normal selection and overflow. */
