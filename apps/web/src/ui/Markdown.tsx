@@ -6,6 +6,7 @@ import {
   type LiveMarkdownOperation,
 } from './live-markdown.js'
 import { applyCodeWrap } from '../code-wrap.js'
+import { isInlineFileReference } from './file-reference.js'
 import '../styles/markdown.css'
 
 // Code blocks read the wrap choice from the document root; set it before the
@@ -136,7 +137,28 @@ const LIVE_NODE_TAG = {
   strong: 'strong',
   emphasis: 'em',
   'inline-code': 'code',
-} satisfies Record<Exclude<LiveMarkdownNode, 'code-block'>, keyof HTMLElementTagNameMap>
+  'table-head': 'thead',
+  'table-body': 'tbody',
+  'table-row': 'tr',
+  'table-header-cell': 'th',
+  'table-cell': 'td',
+  link: 'a',
+} satisfies Record<Exclude<LiveMarkdownNode, 'code-block' | 'table'>, keyof HTMLElementTagNameMap>
+
+/** The completed renderer's markers, so a live table is styled as the finished one. */
+function liveTablePart(node: LiveMarkdownNode): string | undefined {
+  switch (node) {
+    case 'table-head':
+      return 'table-header'
+    case 'table-body':
+    case 'table-row':
+    case 'table-header-cell':
+    case 'table-cell':
+      return node
+    default:
+      return undefined
+  }
+}
 
 function mountLiveMarkdownLeaf(parent: HTMLElement, text = ''): HTMLElement {
   const span = document.createElement('span')
@@ -168,9 +190,81 @@ function openLiveMarkdownNode(
     return
   }
 
+  if (operation.node === 'table') {
+    // The completed table's wrapper: a controls row above a scroller. The
+    // controls row is empty while streaming but keeps its height, so the
+    // finished table lands exactly where the live one was.
+    const wrapper = document.createElement('div')
+    const controls = document.createElement('div')
+    const scroller = document.createElement('div')
+    const table = document.createElement('table')
+    wrapper.dataset.streamdown = 'table-wrapper'
+    table.dataset.streamdown = 'table'
+    scroller.append(table)
+    wrapper.append(controls, scroller)
+    parent.append(wrapper)
+    dom.stack.push(table)
+    return
+  }
+
   const element = document.createElement(LIVE_NODE_TAG[operation.node])
+  const part = liveTablePart(operation.node)
+  if (part) element.dataset.streamdown = part
+  if (operation.align) element.style.textAlign = operation.align
+  if (operation.node === 'link' && operation.href && element instanceof HTMLAnchorElement) {
+    element.href = operation.href
+    element.target = '_blank'
+    element.rel = 'noreferrer'
+  }
   parent.append(element)
   dom.stack.push(element)
+}
+
+const SVG_NAMESPACE = 'http://www.w3.org/2000/svg'
+const LIVE_FILE_ICON_PATHS = [
+  'M14 3v4a1 1 0 0 0 1 1h4',
+  'M17 21h-10a2 2 0 0 1 -2 -2v-14a2 2 0 0 1 2 -2h7l5 5v11a2 2 0 0 1 -2 2z',
+]
+
+/**
+ * A finished backticked file name renders as a file reference: an icon and
+ * prose type instead of a code chip. Settling the live span into the same box
+ * (a generic file icon until the typed one arrives) keeps a table's columns
+ * and a paragraph's line breaks where they will be once the reply completes.
+ */
+function settleLiveInlineCode(code: HTMLElement): void {
+  if (!isInlineFileReference(code.textContent ?? '')) return
+  const reference = document.createElement('span')
+  const icon = document.createElement('span')
+  const svg = document.createElementNS(SVG_NAMESPACE, 'svg')
+  reference.className = 'md-file-ref'
+  icon.className = 'md-file-ref__icon'
+  icon.setAttribute('aria-hidden', 'true')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
+  for (const d of LIVE_FILE_ICON_PATHS) {
+    const path = document.createElementNS(SVG_NAMESPACE, 'path')
+    path.setAttribute('d', d)
+    svg.append(path)
+  }
+  icon.append(svg)
+  reference.append(icon, ...code.childNodes)
+  code.replaceWith(reference)
+}
+
+/** A GFM task marker: the same disabled checkbox the completed list renders. */
+function mountLiveTaskMarker(parent: HTMLElement, checked: boolean): void {
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.disabled = true
+  input.checked = checked
+  parent.append(input, ' ')
+  parent.classList.add('task-list-item')
+  parent.parentElement?.classList.add('contains-task-list')
 }
 
 function applyAnimatedLiveMarkdown(
@@ -192,7 +286,12 @@ function applyAnimatedLiveMarkdown(
       continue
     }
     if (operation.type === 'node.close') {
-      dom.stack.pop()
+      const element = dom.stack.pop()
+      if (operation.node === 'inline-code' && element) settleLiveInlineCode(element)
+      continue
+    }
+    if (operation.type === 'task') {
+      mountLiveTaskMarker(parent, operation.checked)
       continue
     }
     if (operation.type === 'leaf.bulk') {
@@ -261,7 +360,13 @@ function applyBufferedLiveMarkdown(
     }
     if (operation.type === 'node.close') {
       flushText()
-      dom.stack.pop()
+      const element = dom.stack.pop()
+      if (operation.node === 'inline-code' && element) settleLiveInlineCode(element)
+      continue
+    }
+    if (operation.type === 'task') {
+      flushText()
+      mountLiveTaskMarker(parent, operation.checked)
       continue
     }
     if (operation.type === 'leaf.bulk') {
