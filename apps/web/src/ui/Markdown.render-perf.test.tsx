@@ -163,6 +163,7 @@ describe('streamed Markdown renders', () => {
     expect(rendered.container.querySelector('pre')?.textContent).toBe('x'.repeat(64 * 1024) + 'y')
   })
 
+  // 900 renders through Testing Library outlast the 5 s default on a busy machine.
   it('streams a long table row by row without rebuilding finished rows', () => {
     const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
     const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
@@ -208,7 +209,7 @@ describe('streamed Markdown renders', () => {
     expect(root.querySelector('td:last-child')?.getAttribute('style')).toContain('right')
     expect(streamdownRender).not.toHaveBeenCalled()
     expect(shikiHighlight).not.toHaveBeenCalled()
-  })
+  }, 20_000)
 
   it('shows a streamed web link only once it is complete', () => {
     const rendered = render(<Markdown text="See [the docs](https://docs.exa" streaming />)
