@@ -156,4 +156,78 @@ describe('Thread scroll position', () => {
     view.unmount()
     expect(disconnect).toHaveBeenCalledOnce()
   })
+
+  describe('Jump to latest', () => {
+    let frames: FrameRequestCallback[]
+    let now: number
+    const runFrame = () => {
+      now += 16
+      const due = frames.splice(0)
+      act(() => due.forEach((callback) => callback(now)))
+    }
+
+    beforeEach(() => {
+      frames = []
+      now = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        frames.push(callback)
+        return frames.length
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {
+        frames = []
+      })
+      // A native smooth scroll would only glide to the end it saw at the click.
+      vi.spyOn(Element.prototype, 'scrollTo').mockImplementation(() => undefined)
+    })
+
+    function scrolledUp() {
+      const view = render(<Thread {...props()} threadId="jump" />)
+      const scroller = view.container.querySelector('.thread')!
+      scroller.scrollTop = 400
+      fireEvent.scroll(scroller)
+      frames = []
+      return { view, scroller }
+    }
+
+    it('lands at the end of a reply that keeps growing during the glide', () => {
+      const { view, scroller } = scrolledUp()
+
+      fireEvent.click(view.getByRole('button', { name: 'Jump to latest' }))
+      const tops: number[] = []
+      for (let frame = 0; frame < 120 && frames.length > 0; frame += 1) {
+        // The answer grows by about one line every few frames.
+        if (frame % 3 === 0) layout.height += 20
+        runFrame()
+        tops.push(scroller.scrollTop)
+      }
+
+      expect(frames).toHaveLength(0)
+      expect(scroller.scrollTop).toBe(layout.height - 200)
+      expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+      // A glide, not a single jump, and never backwards.
+      expect(tops.length).toBeGreaterThan(3)
+      expect(tops.every((top, index) => index === 0 || top >= tops[index - 1]!)).toBe(true)
+
+      // From there on the end is followed as usual.
+      layout.height += 300
+      view.rerender(<Thread {...props()} threadId="jump" loading={false} />)
+      expect(scroller.scrollTop).toBe(layout.height - 200)
+    })
+
+    it('stops the glide when the user scrolls during it', () => {
+      const { view, scroller } = scrolledUp()
+
+      fireEvent.click(view.getByRole('button', { name: 'Jump to latest' }))
+      runFrame()
+      runFrame()
+      const reached = scroller.scrollTop
+      expect(reached).toBeGreaterThan(400)
+      fireEvent.wheel(scroller, { deltaY: -120 })
+      runFrame()
+
+      expect(frames).toHaveLength(0)
+      expect(scroller.scrollTop).toBe(reached)
+      expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
+    })
+  })
 })
