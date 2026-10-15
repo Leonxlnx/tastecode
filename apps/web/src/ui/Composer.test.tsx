@@ -1729,8 +1729,28 @@ describe('Composer context usage', () => {
       },
     })
 
-    expect(await screen.findByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
+    const meter = await screen.findByRole('img', { name: /context tokens used \(15%\)/ })
     expect(screen.getByRole('tooltip').textContent).toContain('15% context used')
+    // The number sits next to the ring so it reads as usage, not as a spinner.
+    expect(meter.querySelector('.context-usage__track')).toBeTruthy()
+    expect(meter.querySelector('.context-usage__value')?.textContent).toBe('15%')
+  })
+
+  it('never shows 0% once the chat has used some context', async () => {
+    renderComposer(vi.fn(), {
+      usage: {
+        inputTokens: 400,
+        cachedInputTokens: 0,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        totalTokens: 500,
+        contextWindow: 200_000,
+      },
+    })
+
+    const meter = await screen.findByRole('img', { name: /context tokens used \(<1%\)/ })
+    expect(meter.querySelector('.context-usage__value')?.textContent).toBe('<1%')
+    expect(screen.getByRole('tooltip').textContent).toContain('<1% context used')
   })
 
   it('does not render a false ring restored from cumulative accounting', () => {
