@@ -563,6 +563,140 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
   })
 
+  describe('a turn the user stopped', () => {
+    const stoppedItems: Item[] = [
+      {
+        id: 'prompt-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Fix the duplicate charge',
+        createdAt: 1_000,
+      },
+      {
+        id: 'command-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        createdAt: 1_500,
+      },
+      {
+        id: 'command-2',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'started',
+        command: 'pnpm vitest run',
+        createdAt: 2_000,
+      },
+      {
+        id: 'answer-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'started',
+        text: 'The handler charges the card before it',
+        createdAt: 3_000,
+      },
+    ]
+    const stoppedTiming = {
+      'turn-1': { startedAt: 1_000, completedAt: 5_000, interrupted: true as const },
+    }
+
+    it('settles with a stopped summary and ends on a stopped marker', () => {
+      const { container } = render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({ ...emptyThread, items: stoppedItems, turnTiming: stoppedTiming })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const summary = screen.getByRole('button', { name: 'Stopped after 4s' })
+      expect(summary.getAttribute('aria-expanded')).toBe('false')
+      expect(summary.querySelector('.activity__glyph svg')).toBeTruthy()
+      expect(screen.queryByText('Worked for 4s')).toBeNull()
+      const answer = screen.getByText('The handler charges the card before it')
+      const marker = screen.getByText('Stopped by you')
+      expect(marker.closest('.reply')).toBe(answer.closest('.reply'))
+      expect(container.querySelectorAll('.turn-stopped')).toHaveLength(1)
+    })
+
+    it('puts the stopped marker between a settled answer and its actions', () => {
+      const settled = stoppedItems.map((item) =>
+        item.id === 'answer-1' ? { ...item, status: 'completed' as const } : item,
+      )
+      const { container } = render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({ ...emptyThread, items: settled, turnTiming: stoppedTiming })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const reply = container.querySelector('.reply')!
+      expect([...reply.children].map((child) => child.className)).toEqual([
+        expect.stringContaining('md'),
+        'turn-stopped',
+        expect.stringContaining('response-actions'),
+      ])
+    })
+
+    it('does not credit the user with an interruption a restart explains', () => {
+      const restart: Item = {
+        id: 'error:restart',
+        turnId: '',
+        type: 'error',
+        status: 'completed',
+        text: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
+        createdAt: 6_000,
+      }
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [...stoppedItems, restart],
+              turnTiming: stoppedTiming,
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: 'Stopped after 4s' })).toBeTruthy()
+      expect(screen.queryByText('Stopped by you')).toBeNull()
+    })
+
+    it('marks the prompt when the turn stopped before any output', () => {
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [stoppedItems[0]!],
+              turnTiming: stoppedTiming,
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const prompt = screen.getByText('Fix the duplicate charge')
+      expect(screen.getByText('Stopped by you').closest('.thread__row')).toBe(
+        prompt.closest('.thread__row'),
+      )
+    })
+  })
+
   it('keeps the content mounted while toggling the animated reveal state', () => {
     const items: Item[] = [
       {
@@ -1793,7 +1927,13 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    const restore = screen.getByRole('button', { name: 'Restore to before this turn' })
+    // The checkpoint predates the prompt; restoring also removes this reply.
+    expect(restore.title).toBe('Restore to before this turn')
+    // A history clock, not the circular arrow that reads as "regenerate".
+    expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
+    expect(restore.querySelector('.tabler-icon-rotate')).toBeNull()
+    fireEvent.click(restore)
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
@@ -1817,16 +1957,16 @@ describe('completed activity disclosure', () => {
     }
     const view = render(<Thread {...props} />)
     expect(view.container.querySelector('.activity--working')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Restore to before this turn' })).toBeNull()
 
     view.rerender(<Thread {...props} stopping />)
 
     expect(view.container.querySelector('.activity--working')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Restore to before this turn' })).toBeNull()
 
     act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to before this turn' }))
     expect(props.onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
@@ -2089,7 +2229,10 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    const restore = screen.getByRole('button', { name: 'Restore to before this prompt' })
+    expect(restore.title).toBe('Restore to before this prompt')
+    expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
+    fireEvent.click(restore)
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
@@ -2127,7 +2270,7 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to before this prompt' }))
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 })

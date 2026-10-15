@@ -53,6 +53,7 @@ import {
   beginOptimisticTurn,
   createOptimisticMessageId,
   emptyThread,
+  lastSentPrompt,
   removeOptimisticMessage,
   type ThreadState,
 } from './thread-store.js'
@@ -173,7 +174,10 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
-import { restoreWorkspacePanelWidth } from './ui/workspace/workspace-panel-width.js'
+import {
+  DEFAULT_BOTTOM_PANEL_HEIGHT,
+  restoreWorkspacePanelWidth,
+} from './ui/workspace/workspace-panel-width.js'
 import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
@@ -3988,6 +3992,13 @@ export function App() {
       setNotice(DRAFT_REPLACED_NOTICE)
     }
   }, [])
+  // Arrow Up in an empty composer takes the same path as the Edit action.
+  const recallLastPrompt = useCallback(() => {
+    if (!activeIdRef.current) return undefined
+    const text = lastSentPrompt(threadFrameStore.getStructureSnapshot())
+    if (text !== undefined) editMessage(text)
+    return text
+  }, [editMessage, threadFrameStore])
   const restoreReplacedDraft = useCallback(() => {
     const replaced = replacedDraft
     setNotice(undefined)
@@ -5450,6 +5461,7 @@ export function App() {
                       onPendingAttachment={keepPendingAttachment}
                       onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
+                      onRecallLastPrompt={recallLastPrompt}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}
                       canSteerQueue={canSteerQueue}
@@ -5904,7 +5916,7 @@ function basename(path: string): string {
 
 function readTerminalHeight(): number {
   const stored = Number(readSetting(TERMINAL_HEIGHT_KEY))
-  const height = Number.isFinite(stored) && stored >= 160 ? stored : 260
+  const height = Number.isFinite(stored) && stored >= 160 ? stored : DEFAULT_BOTTOM_PANEL_HEIGHT
   return Math.min(height, Math.max(160, Math.floor(window.innerHeight * 0.72)))
 }
 

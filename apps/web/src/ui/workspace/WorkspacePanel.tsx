@@ -9,9 +9,11 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type KeyboardEvent,
   type PointerEvent,
 } from 'react'
 import {
+  IconArrowLeft as ArrowLeft,
   IconFileDiff as FileDiff,
   IconFolderOpen as FolderOpen,
   IconWorld as Globe2,
@@ -21,10 +23,10 @@ import {
   IconPlus as Plus,
   type TablerIcon,
 } from '@tabler/icons-react'
-import { prepareAppHaptics } from '../../haptics.js'
+import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
-import { beginPanelResize } from '../panel-resize.js'
+import { beginPanelResize, settlePanelSize } from '../panel-resize.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -33,7 +35,11 @@ import type {
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
-import { MIN_WORKSPACE_PANEL_WIDTH } from './workspace-panel-width.js'
+import {
+  DEFAULT_BOTTOM_PANEL_HEIGHT,
+  DEFAULT_WORKSPACE_PANEL_WIDTH,
+  MIN_WORKSPACE_PANEL_WIDTH,
+} from './workspace-panel-width.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { RowIssue } from '../RowIssue.js'
 import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
@@ -251,6 +257,21 @@ function WorkspacePanelComponent(props: {
     props.onClose()
   }, [props.onClose, props.onProviderLoginClose])
 
+  // The right panel's X hides it like the layout toggle: every tab, browser
+  // page and running terminal stays mounted and comes back on the next open.
+  // A provider login is not one of the user's tabs; its owner closes it, and
+  // the sign-in keeps running without it.
+  const hidePanel = useCallback(() => {
+    const hadFocus = Boolean(panelElement.current?.contains(document.activeElement))
+    for (const tab of tabsRef.current) {
+      if (tab.kind === 'provider-login') props.onProviderLoginClose?.(tab.requestId)
+    }
+    props.onClose()
+    // The hidden panel turns inert, which would drop focus to the page. Hand
+    // it to the toggle that brings the panel back.
+    if (hadFocus) document.querySelector<HTMLElement>('.panel-toggles__workspace')?.focus()
+  }, [props.onClose, props.onProviderLoginClose])
+
   const closeTab = useCallback(
     (id: string) => {
       const current = tabsRef.current.find((tab) => tab.id === id)
@@ -263,6 +284,32 @@ function WorkspacePanelComponent(props: {
     },
     [forgetBrowserPage, props.onClose, props.onProviderLoginClose],
   )
+
+  // Ctrl+W in a Browser tab removes the surface that had focus. Hand focus to
+  // the tab shown next, as a tab's own X does, or to the toggle that reopens
+  // the panel when that was the last tab.
+  const focusAfterShortcutClose = useRef(false)
+  const closeTabByShortcut = useCallback(
+    (id: string) => {
+      focusAfterShortcutClose.current = true
+      closeTab(id)
+    },
+    [closeTab],
+  )
+  useLayoutEffect(() => {
+    if (!focusAfterShortcutClose.current) return
+    focusAfterShortcutClose.current = false
+    const next = panelElement.current?.querySelector<HTMLElement>(
+      '.workspace-tabs__tab.is-active [role="tab"]',
+    )
+    if (next) next.focus()
+    else
+      document
+        .querySelector<HTMLElement>(
+          bottom ? '.panel-toggles__terminal' : '.panel-toggles__workspace',
+        )
+        ?.focus()
+  })
 
   useEffect(() => {
     const request = props.terminalToggleRequest ?? 0
@@ -334,16 +381,12 @@ function WorkspacePanelComponent(props: {
     )
     const previousTransition = layout?.style.transition
     if (layout) layout.style.transition = 'none'
+    const bounds = panelSizeBounds(layout, bottom)
     resizeCleanup.current = beginPanelResize(event, {
       axis: bottom ? 'clientY' : 'clientX',
       initialSize: props.width,
-      minSize: bottom ? 200 : MIN_WORKSPACE_PANEL_WIDTH,
-      maxSize: bottom
-        ? Math.max(200, (layout?.parentElement?.clientHeight || window.innerHeight) - 80)
-        : Math.max(
-            MIN_WORKSPACE_PANEL_WIDTH,
-            (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH,
-          ),
+      minSize: bounds.min,
+      maxSize: bounds.max,
       style: layout?.style,
       property: bottom ? 'height' : '--workspace-panel-w',
       onFinish: (size, commit) => {
@@ -355,6 +398,68 @@ function WorkspacePanelComponent(props: {
       },
     })
   }
+
+  const hostOf = (handle: HTMLElement) =>
+    handle.closest<HTMLElement>(bottom ? '.bottom-terminal' : '.workspace-layout')
+
+  // Double-clicking the edge restores the default size, as split views in
+  // editors do. It eases there from the size drawn now, which is smaller than
+  // the saved one when the window clamps the panel.
+  const resetSize = (handle: HTMLElement) => {
+    if (props.expanded) return
+    resizeCleanup.current()
+    const target = bottom ? DEFAULT_BOTTOM_PANEL_HEIGHT : DEFAULT_WORKSPACE_PANEL_WIDTH
+    const layout = hostOf(handle)
+    const drawn = bottom
+      ? layout?.getBoundingClientRect().height
+      : panelElement.current?.getBoundingClientRect().width
+    performAppHaptic('alignment')
+    resizeCleanup.current = settlePanelSize({
+      from: drawn || props.width,
+      to: target,
+      style: layout?.style,
+      property: bottom ? 'height' : '--workspace-panel-w',
+      onFinish: () => {
+        resizeCleanup.current = () => {}
+        props.onWidthChange(target)
+      },
+    })
+  }
+
+  // The edge also takes focus, so the panel can be sized without a pointer:
+  // Left and Right (Up and Down at the bottom) step 16px, 64px with Shift,
+  // Home and End go to the limits and Enter restores the default size.
+  const [sizeLimit, setSizeLimit] = useState<number>()
+  const resizeByKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (props.expanded || event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      resetSize(event.currentTarget)
+      return
+    }
+    const layout = hostOf(event.currentTarget)
+    const bounds = panelSizeBounds(layout, bottom)
+    const current = Math.min(bounds.max, Math.max(bounds.min, props.width))
+    const step = event.shiftKey ? 64 : 16
+    const next =
+      event.key === (bottom ? 'ArrowUp' : 'ArrowLeft')
+        ? current + step
+        : event.key === (bottom ? 'ArrowDown' : 'ArrowRight')
+          ? current - step
+          : event.key === 'Home'
+            ? bounds.min
+            : event.key === 'End'
+              ? bounds.max
+              : undefined
+    if (next === undefined) return
+    event.preventDefault()
+    resizeCleanup.current()
+    setSizeLimit(bounds.max)
+    const size = Math.round(Math.min(bounds.max, Math.max(bounds.min, next)))
+    layout?.style.setProperty(bottom ? 'height' : '--workspace-panel-w', `${size}px`)
+    props.onWidthChange(size)
+  }
+  const sizeNow = Math.round(sizeLimit ? Math.min(sizeLimit, props.width) : props.width)
 
   return (
     <aside
@@ -369,19 +474,35 @@ function WorkspacePanelComponent(props: {
         role="separator"
         aria-label={bottom ? 'Resize bottom workspace tools' : 'Resize workspace tools'}
         aria-orientation={bottom ? 'horizontal' : 'vertical'}
+        aria-valuenow={sizeNow}
+        aria-valuemin={panelSizeBounds(null, bottom).min}
+        aria-valuemax={sizeLimit}
+        aria-valuetext={`${sizeNow} pixels ${bottom ? 'tall' : 'wide'}`}
+        tabIndex={props.expanded ? -1 : 0}
         onPointerEnter={() => {
           if (!props.expanded) prepareAppHaptics()
         }}
         onPointerDown={beginResize}
+        onDoubleClick={(event) => resetSize(event.currentTarget)}
+        onFocus={(event) => setSizeLimit(panelSizeBounds(hostOf(event.currentTarget), bottom).max)}
+        onKeyDown={resizeByKey}
       />
       <button
         type="button"
         className="workspace-panel__close"
-        aria-label={bottom ? 'Close bottom panel' : 'Close right panel'}
-        onClick={closeTool}
+        aria-label={bottom ? 'Close bottom panel' : 'Hide right panel'}
+        title={bottom ? undefined : 'Hide panel'}
+        onClick={bottom ? closeTool : hidePanel}
       >
         <X size={16} aria-hidden />
       </button>
+      {bottom ? null : (
+        // Shown only in the narrow layout, where the open panel covers the chat.
+        <button type="button" className="workspace-panel__back" onClick={hidePanel}>
+          <ArrowLeft size={14} aria-hidden />
+          <span>Back to chat</span>
+        </button>
+      )}
       <WorkspaceTabs
         tabs={tabLabels}
         activeId={tool?.id}
@@ -445,6 +566,7 @@ function WorkspacePanelComponent(props: {
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
                   onBrowserPage={updateBrowserPage}
+                  onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -456,6 +578,23 @@ function WorkspacePanelComponent(props: {
       </div>
     </aside>
   )
+}
+
+/** The sizes a panel can take inside its host right now: the chat keeps its minimum width. */
+function panelSizeBounds(layout: HTMLElement | null, bottom: boolean) {
+  if (bottom) {
+    return {
+      min: 200,
+      max: Math.max(200, (layout?.parentElement?.clientHeight || window.innerHeight) - 80),
+    }
+  }
+  return {
+    min: MIN_WORKSPACE_PANEL_WIDTH,
+    max: Math.max(
+      MIN_WORKSPACE_PANEL_WIDTH,
+      (layout?.clientWidth || window.innerWidth) - MIN_CHAT_WIDTH,
+    ),
+  }
 }
 
 /** Keep the closed host subscribed without reconciling its full shell on unrelated app updates. */
@@ -475,6 +614,8 @@ function WorkspaceToolSurface(props: {
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
+  /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
+  onCloseTab: (tabId: string) => void
   onClose: () => void
 }) {
   if (props.tab.kind === 'provider-login') {
@@ -520,6 +661,7 @@ function WorkspaceToolSurface(props: {
         focusAddressOnOpen={props.tab.userOpened}
         tabId={props.tab.id}
         onPageInfo={props.onBrowserPage}
+        onClose={props.onCloseTab}
       />
     )
   }

@@ -52,6 +52,17 @@ describe('startup CSS budget', () => {
     expect(triggerCss.byteLength).toBeLessThanOrEqual(MODEL_SELECTOR_TRIGGER_CSS_BUDGET_BYTES)
   })
 
+  it('keeps the context ring and its styles behind a lazy boundary', () => {
+    const composer = readSource('../ui/Composer.tsx')
+    const contextUsage = readSource('../ui/ContextUsage.tsx')
+    const appCss = readSource('./app.css')
+
+    expect(composer).toContain("import('./ContextUsage.js')")
+    expect(composer).not.toMatch(/from ['"]\.\/ContextUsage\.js['"]/)
+    expect(contextUsage).toContain("import '../styles/context-usage.css'")
+    expect(appCss).not.toContain('.context-usage')
+  })
+
   it('reuses prepared terminal and workspace modules without eager runtime imports', () => {
     const app = readSource('../App.tsx')
     const workspaceTerminal = readSource('../ui/workspace/WorkspaceTerminal.tsx')

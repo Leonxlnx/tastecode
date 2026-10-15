@@ -43,6 +43,7 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
+import { forwardBrowserShortcuts } from './browser-shortcuts.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
@@ -507,6 +508,7 @@ function createWindow(): void {
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
     configureImageContextMenu(guest, window)
+    forwardBrowserShortcuts(guest, window.webContents)
   })
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
