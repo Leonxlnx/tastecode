@@ -212,6 +212,20 @@
   position: relative;
 }
 
+/* Streamdown sets `content-visibility: auto` and a 200px intrinsic size inline
+   on every code block. The transcript is already a virtual list, and this
+   second layer of skipped rendering puts each block at 200px in the frame it
+   mounts in: the row is measured at the wrong height and everything below it
+   jumps when the block renders a frame later. `!important` is the only way
+   past an inline style. The containment also gave the block its own
+   formatting context, which keeps the inner margin inside it; flow-root keeps
+   that, so the space below a code block stays the same. */
+.md [data-streamdown='code-block'] {
+  display: flow-root;
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
+}
+
 .md [data-streamdown='code-block'] button {
   position: relative;
   display: grid;
