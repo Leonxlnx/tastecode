@@ -240,17 +240,17 @@ describe('WorkspacePanel', () => {
         externalToolRequest={terminal}
       />,
     )
-    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
-    fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser' }), {
+    expect(tabTitles()).toEqual(['Terminal 1', 'New tab'])
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'Browser: New tab' }), {
       key: 'ArrowLeft',
       altKey: true,
     })
-    expect(tabTitles()).toEqual(['Browser', 'Terminal 1'])
+    expect(tabTitles()).toEqual(['New tab', 'Terminal 1'])
     fireEvent.keyDown(screen.getByRole('tab', { name: 'Terminal 1' }), {
       key: 'ArrowLeft',
       altKey: true,
     })
-    expect(tabTitles()).toEqual(['Terminal 1', 'Browser'])
+    expect(tabTitles()).toEqual(['Terminal 1', 'New tab'])
 
     const removed = observer.takeRecords().flatMap((record) => Array.from(record.removedNodes))
     observer.disconnect()

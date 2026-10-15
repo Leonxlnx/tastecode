@@ -293,6 +293,14 @@ describe('workspace panel layout', () => {
     expect(css).not.toMatch(/\d+vw/)
   })
 
+  it('paints the Browser canvas with the theme instead of a fixed dark color', () => {
+    for (const selector of ['.workspace-browser__guest-host', '.workspace-browser__guest']) {
+      const body = ruleBody(selector)
+      expect(body, selector).toContain('background: var(--bg);')
+      expect(body, selector).not.toMatch(/#[\da-f]{3,8}\b|rgb\(/i)
+    }
+  })
+
   it('packs short Files and Review trees at the top instead of stretching their rows', () => {
     for (const list of ['workspace-files__tree-list', 'workspace-review__tree-list']) {
       const body =

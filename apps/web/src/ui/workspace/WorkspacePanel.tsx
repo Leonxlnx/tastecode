@@ -31,6 +31,7 @@ import type {
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
+import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import { MIN_WORKSPACE_PANEL_WIDTH } from './workspace-panel-width.js'
 import { Menu, MenuItem } from '../Menu.js'
@@ -151,11 +152,41 @@ function WorkspacePanelComponent(props: {
     setTabs((current) => [...current.filter((tab) => tab.id !== next.id), next])
     setActiveId(next.id)
   }, [])
+  // Each Browser tab's page, keyed by tab id, so two tabs never both read "Browser".
+  const [browserPages, setBrowserPages] = useState<ReadonlyMap<string, BrowserPageInfo>>(
+    () => new Map(),
+  )
+  const updateBrowserPage = useCallback((id: string, page: BrowserPageInfo) => {
+    setBrowserPages((current) => {
+      const previous = current.get(id)
+      if (previous?.url === page.url && previous.title === page.title) return current
+      return new Map(current).set(id, page)
+    })
+  }, [])
+  const forgetBrowserPage = useCallback((id: string) => {
+    setBrowserPages((current) => {
+      if (!current.has(id)) return current
+      const next = new Map(current)
+      next.delete(id)
+      return next
+    })
+  }, [])
   const tabLabels = useMemo(() => {
     let terminalNumber = 0
     return tabs.map((tab) => {
       const definition = TOOLS.find((item) => item.kind === tab.kind) ?? TOOLS[1]!
       const Icon = definition.Icon
+      if (tab.kind === 'browser') {
+        const page = browserPages.get(tab.id)
+        const title = browserPageLabel(page)
+        return {
+          id: tab.id,
+          title,
+          icon: <Icon size={14} aria-hidden />,
+          tooltip: page?.url || title,
+          accessibleName: `Browser: ${title}`,
+        }
+      }
       const title =
         tab.kind === 'provider-login'
           ? tab.title
@@ -164,7 +195,7 @@ function WorkspacePanelComponent(props: {
             : definition.title
       return { id: tab.id, title, icon: <Icon size={14} aria-hidden /> }
     })
-  }, [tabs])
+  }, [tabs, browserPages])
   // Surfaces keep an order no tab move changes; React moving an iframe or webview reloads it.
   const surfaces = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : 1)), [tabs])
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
@@ -213,6 +244,7 @@ function WorkspacePanelComponent(props: {
     const current = tabsRef.current
     setTabs([])
     setActiveId(undefined)
+    setBrowserPages(new Map())
     for (const tab of current) {
       if (tab.kind === 'provider-login') props.onProviderLoginClose?.(tab.requestId)
     }
@@ -225,10 +257,11 @@ function WorkspacePanelComponent(props: {
       if (!current) return
       const remaining = tabsRef.current.filter((tab) => tab.id !== id)
       setTabs(remaining)
+      forgetBrowserPage(id)
       if (current?.kind === 'provider-login') props.onProviderLoginClose?.(current.requestId)
       else if (!remaining.length) props.onClose()
     },
-    [props.onClose, props.onProviderLoginClose],
+    [forgetBrowserPage, props.onClose, props.onProviderLoginClose],
   )
 
   useEffect(() => {
@@ -411,6 +444,7 @@ function WorkspacePanelComponent(props: {
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
+                  onBrowserPage={updateBrowserPage}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -440,6 +474,7 @@ function WorkspaceToolSurface(props: {
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
+  onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   onClose: () => void
 }) {
   if (props.tab.kind === 'provider-login') {
@@ -483,6 +518,8 @@ function WorkspaceToolSurface(props: {
         active={props.active}
         navigation={props.browserNavigation}
         focusAddressOnOpen={props.tab.userOpened}
+        tabId={props.tab.id}
+        onPageInfo={props.onBrowserPage}
       />
     )
   }
