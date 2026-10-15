@@ -1,24 +1,10 @@
 import type { ProviderMark } from '../model-catalog.js'
-import { sessionSourcePresentation } from '../provider-presentation.js'
+import { providerPresentation } from '../provider-presentation.js'
 import { bench, describe } from 'vitest'
 import { ProviderIcon } from './ProviderIcon.js'
 
-const MARKS = [
-  'openai',
-  'anthropic',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'openrouter',
-  'gemini',
-  'qwen',
-  'kimi',
-  'pi',
-  'zai',
-  'acp',
-  'custom',
-] as const satisfies readonly ProviderMark[]
+const MARKS = ['openai', 'anthropic', 'grok'] as const satisfies readonly ProviderMark[]
+const PROVIDERS = ['codex', 'claude-code', 'grok'] as const
 
 describe('provider icon lookup', () => {
   bench(
@@ -39,8 +25,7 @@ describe('provider icon lookup', () => {
     () => {
       let checksum = 0
       for (let index = 0; index < 10_000; index += 1) {
-        const agent = index % 4 === 0 ? 'gemini' : index % 4 === 1 ? 'kimi' : 'custom-agent'
-        const source = sessionSourcePresentation(index % 2 === 0 ? 'acp' : 'codex', agent)
+        const source = providerPresentation(PROVIDERS[index % PROVIDERS.length]!)
         const icon = ProviderIcon({ mark: source.mark })
         checksum += source.label.length + Number(icon.props['width'])
       }

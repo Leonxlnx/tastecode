@@ -4,7 +4,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useSyncExternalStore } from 'react'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
-import { emptyThread, reduceDeltas } from '../thread-store.js'
+import { emptyThread, reduceDeltas, type ThreadState } from '../thread-store.js'
+import { LiveMarkdownParser } from './live-markdown.js'
 
 const virtualizerRender = vi.hoisted(() => vi.fn())
 
@@ -23,6 +24,8 @@ vi.mock('@tanstack/react-virtual', () => ({
       getTotalSize: () => count * 72,
       measurementsCache: [],
       measureElement: () => undefined,
+      indexFromElement: (node: Element) => Number(node.getAttribute('data-index')),
+      resizeItem: () => undefined,
       getOffsetForIndex: () => [0],
       scrollToIndex: () => undefined,
     }
@@ -35,6 +38,107 @@ import { ThreadSearch } from './ThreadSearch.js'
 afterEach(cleanup)
 
 describe('Thread live frame isolation', () => {
+  it.each([false, true])(
+    'keeps the turn timer through streaming and freezes the final duration (tools: %s)',
+    (withTools) => {
+      vi.useFakeTimers({ now: 60_000 })
+      const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+      try {
+        const prompt: Item = {
+          id: 'prompt',
+          turnId: 'turn-1',
+          type: 'message',
+          role: 'user',
+          status: 'completed',
+          text: 'Check this',
+          createdAt: 1_000,
+        }
+        const initial = {
+          ...emptyThread,
+          items: [prompt],
+          running: true,
+          activeTurn: { id: 'turn-1', startedAt: 1_000 },
+          turnTiming: { 'turn-1': { startedAt: 1_000 } },
+        }
+        const store = new ThreadFrameStore(initial)
+        const view = render(
+          <Thread
+            frameStore={store}
+            onDecide={() => undefined}
+            onAnswerUserInput={() => undefined}
+          />,
+        )
+        const rail = view.container.querySelector('.activity--working')
+        expect(rail?.textContent).toBe('Working for 59s')
+        const rendersBeforeTick = virtualizerRender.mock.calls.length
+        act(() => vi.advanceTimersByTime(1_000))
+        expect(rail?.textContent).toBe('Working for 1m')
+        expect(virtualizerRender).toHaveBeenCalledTimes(rendersBeforeTick)
+
+        const work: Item[] = withTools
+          ? [
+              {
+                ...prompt,
+                id: 'note',
+                role: 'assistant',
+                phase: 'commentary',
+                text: 'Checking.',
+                createdAt: 61_000,
+              },
+              {
+                id: 'cmd',
+                turnId: 'turn-1',
+                type: 'command',
+                status: 'completed',
+                command: 'pwd',
+                createdAt: 61_000,
+              },
+            ]
+          : []
+        const answer: Item = {
+          ...prompt,
+          id: 'answer',
+          role: 'assistant',
+          phase: 'final_answer',
+          status: 'started',
+          text: 'The result',
+          createdAt: 61_000,
+        }
+        act(() => store.publish({ ...initial, items: [prompt, ...work, answer] }))
+        expect(view.container.querySelector('.activity--working')).toBe(rail)
+        expect(view.container.querySelectorAll('.is-rail-anchor')).toHaveLength(1)
+        act(() => vi.advanceTimersByTime(2_000))
+        expect(rail?.textContent).toBe('Working for 1m 2s')
+
+        act(() =>
+          store.publish({
+            ...initial,
+            items: [prompt, ...work, { ...answer, status: 'completed' }],
+            running: false,
+            activeTurn: undefined,
+            turnTiming: { 'turn-1': { startedAt: 1_000, completedAt: 63_000 } },
+          }),
+        )
+        expect(view.container.querySelector('.activity--working')).toBeNull()
+        expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)
+        expect(view.getByText('The result')).toBeTruthy()
+        if (withTools) {
+          fireEvent.click(view.getByRole('button', { name: 'Worked for 1m 2s' }))
+          expect(view.getByText('Checking.')).toBeTruthy()
+          expect(view.getByText('Ran pwd')).toBeTruthy()
+        }
+        act(() => vi.advanceTimersByTime(10_000))
+        expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)
+        view.unmount()
+        expect(vi.getTimerCount()).toBe(0)
+      } finally {
+        cleanup()
+        visibility.mockRestore()
+        vi.useRealTimers()
+      }
+    },
+  )
+
   it('finds text that arrives after thread search opens', () => {
     const item: Item = {
       id: 'answer-1',
@@ -254,6 +358,44 @@ describe('Thread live frame isolation', () => {
     })
     expect(renders).toBe(2)
     expect(view.getByText('2')).toBeTruthy()
+  })
+
+  it('appends live reasoning deltas that end in whitespace without re-parsing', () => {
+    const item: Item = {
+      id: 'reasoning-1',
+      turnId: 'turn-1',
+      type: 'reasoning',
+      status: 'started',
+      text: '**Plan**',
+      createdAt: 1,
+    }
+    let state: ThreadState = {
+      ...emptyThread,
+      items: [item],
+      running: true,
+      activeTurn: { id: 'turn-1', startedAt: 1 },
+    }
+    const store = new ThreadFrameStore(state)
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    fireEvent.click(view.getByRole('button', { name: /thinking/i }))
+    const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+    const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+
+    for (const textDelta of [' first.\n', 'Second ', 'step. ', 'Done.']) {
+      state = reduceDeltas(state, [
+        { type: 'item.delta', turnId: 'turn-1', itemId: 'reasoning-1', textDelta },
+      ])
+      act(() => store.publish(state))
+    }
+
+    expect(replace).not.toHaveBeenCalled()
+    expect(append).toHaveBeenCalledTimes(4)
+    expect(view.container.querySelector('.reasoning-summary')?.textContent).toContain(
+      'Second step. Done.',
+    )
+    vi.restoreAllMocks()
   })
 
   it('resolves live activity rows when the collapsed disclosure opens', () => {

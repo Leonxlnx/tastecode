@@ -1,8 +1,8 @@
 import { bench, describe } from 'vitest'
 import { findSession, updateSession } from '../project-store.js'
 import type { Project, Session } from './Sidebar.js'
+import { classifyInboxEntries } from '../inbox-order.js'
 import {
-  classifyInboxEntries,
   createInboxEntryClassifier,
   inboxClockDelay,
   retainInboxSelection,

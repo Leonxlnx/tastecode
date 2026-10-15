@@ -48,6 +48,43 @@ apply, and neither browser cookies nor signed redirect URLs are copied into rend
 _Rejected:_ everything in Electron main (forecloses the web client). tRPC on the wire (ties us
 to a TypeScript client).
 
+**Closing a terminal ends its foreground job, not everything it ever started.** node-pty's
+`kill()` only sends the shell SIGHUP; bash and zsh forward it to their jobs, and when the shell
+exits the kernel sends it to the terminal's foreground process group. Before that hangup the
+server reads the foreground group from a shell it forked as a session leader. A shell still
+running after a grace period is SIGKILLed, and the close is done once the shell is gone. The
+manager then stops the foreground job in the background, so a chat can open a new terminal at
+once: the job gets a grace period to exit on its own, then SIGTERM, then SIGKILL, and a job that
+still cannot be stopped is logged rather than failing anything. On a pane or chat close the
+shell's grace, the job's grace and the wait after SIGTERM are three seconds each, and the wait
+after SIGKILL is one second. Server shutdown waits for every job, under one deadline counted from
+the start of the close: a shell still running is SIGKILLed and jobs get SIGTERM from 0.2 s, jobs
+get SIGKILL at 2 s, and the close gives up at 2.3 s. That keeps the last SIGKILL inside the
+desktop's three-second force stop, and leaves most of the time to SIGTERM, on which servers that
+reload on SIGHUP (gunicorn, nginx, postgres) shut down cleanly. Closing or deleting a chat,
+removing a project's chats and discarding a worktree wait only for the shells; a project's own
+terminal is closed without waiting.
+
+Before each signal the group is listed again. On Linux the job is only signalled while every live
+member is still in the closed shell's session, which keeps a recycled group id from being
+signalled. macOS `ps` prints 0 as every process's session, so there that re-check guards nothing
+and only the shell's session-leader check holds.
+
+Only processes outside the foreground group survive. A job put in the background from the
+interactive prompt gets its own group through job control and stays the shell's business, as in
+a terminal emulator: `nohup … &` and `disown` keep working, and so does a background job that
+ignores SIGHUP, which the OS cannot tell apart from `nohup`. `setsid` leaves the group from
+anywhere. Everything else in the foreground group is ended whatever it does with SIGHUP: a
+foreground `nohup` command, and the `&` or `nohup … &` children of a foreground script or of a
+one-shot `run()` command, which run without job control and stay in the group. On Windows
+node-pty already terminates every process attached to the closed ConPTY (read from its source,
+not yet tried on Windows).
+
+_Rejected:_ sweeping the whole PTY session (#1162): it also kills `nohup` and disowned jobs that
+a terminal emulator leaves running. SIGTERM straight after the hangup: it cut off jobs that need
+more than a moment to shut down cleanly. Waiting for the job in the close itself: closing a chat
+took up to nine seconds and its terminal could not be reopened meanwhile.
+
 ---
 
 ## Desktop shell: Electron
@@ -60,7 +97,18 @@ cross-platform problem.
 The local Node server remains a separate long-lived process behind the typed WebSocket
 protocol. Closing or restarting the Electron window does not stop active agents. The renderer
 stays a thin client and never owns orchestration, persistence, provider processes, the PTY, or
-credentials.
+credentials. Quitting asks the server to shut down over IPC (`{ type: 'harness:shutdown' }`),
+so it flushes streamed text and closes the store; the desktop force-stops it only after three
+seconds. A crashed renderer reloads once on its own and then offers a Reload dialog instead of
+looping. The packaged server takes its port from the renderer's compiled CSP, so a stray
+`HARNESS_PORT` cannot split the two.
+
+Durable user data never lives in the OS temp folder, which the system may clean at any time.
+Pasted attachments are written under the app's data folder, because chat history keeps their
+paths; files pasted by older builds into `<temp>/TasteCode/pasted-files` stay readable. They
+are never pruned by age: only chat history knows whether a file is still referenced. New
+isolated chat checkouts live in `trees` beside the database for the same reason
+(`HARNESS_WORKTREE_DIR` overrides it); existing checkouts keep their stored paths.
 
 Electron's weaker security defaults are fixed in the shell: `contextIsolation: true`,
 `nodeIntegration: false`, sandboxing, a strict CSP, a narrow typed `contextBridge`, and
@@ -77,15 +125,82 @@ on `archive/rust-rewrite-2026-08-15`; it is not part of `main`.
 **Page previews use a renderer-owned Electron `<webview>` guest, never an iframe or an
 operating-system webview.** Before attachment, the main process strips preload access, assigns a
 dedicated persistent partition, disables Node integration, and requires sandboxing, context
-isolation, and web security. The guest accepts only HTTP(S) navigation, denies permissions, keeps
+isolation, and web security. Top-level navigation accepts HTTPS anywhere and HTTP only on
+loopback, where dev previews bind 127.0.0.1. Programmatic navigation is checked through the
+session request API; stopping inside `did-start-navigation` can crash Chromium. This policy
+is not a general subresource or network firewall. The guest denies permissions, keeps
 attempted new windows in the same preview, and exposes an explicit validated system-browser
-handoff.
+handoff. Guests keep Chromium's background throttling, so a hidden or minimized window does not
+run a page's timers and animation frames at full rate. Hidden full-page captures use their own
+unthrottled offscreen window instead.
 
 The guest remains a normal DOM element, so it follows the animated workspace without a native
 overlay or bounds IPC. A renderer `ResizeObserver` fits fluid, desktop, tablet, and mobile modes;
 fixed modes retain their requested CSS viewport and scale the complete guest to fit instead of
 stretching it. All modes therefore share Electron's Chromium path across macOS, Windows, and
 Linux.
+
+### Desktop update assets
+
+The desktop updater finds releases in `Leonxlnx/tastecode` through the public release Atom
+feed on github.com. The API's anonymous limit is 60 requests an hour per IP address, shared
+by everything behind one office, school or VPN address, and an anonymous 304 still counts.
+The feed is outside that limit. A check that finds no newer version tag in the feed spends
+no API request. The newest newer tag costs one request to `/releases/tags/<tag>`, which
+confirms the release is published and supplies the asset digests. When that tag has no
+published release (drafts and bare tags answer 404), when none of the feed's ten newest
+tags is the installed version or older, when a feed entry has no readable tag, or when a
+full feed has nothing newer but no longer lists the installed release (later-published
+older versions can push a newer release out of the window), the release list is read
+instead. The feed is ordered by publication, so while it still lists the installed release
+everything published after it is in view. A check therefore spends at most two API
+requests while the project has fewer than 100 releases. Either way the highest semantic
+version wins regardless of publication order, and downgrades stay disabled.
+
+GitHub's pre-release flag does not matter: during the alpha every release is published as
+a pre-release, and every published release reaches every install. Drafts stay invisible.
+Beta 7 through 0.1.1 select by publication date; those installed clients still require the
+newest public release to contain both desktop installers. The client requires the matching EXE or DMG and verifies
+its size and SHA-256 against GitHub's asset metadata.
+
+Downloads survive failures and restarts. The installer is stored in the machine's cache
+directory (`~/Library/Caches/TasteCode/update-downloads` on macOS, local AppData on Windows)
+under its SHA-256, and the next attempt asks for the remaining bytes with a Range request.
+A minute without data ends an attempt and keeps the bytes so far. The bytes are verified
+before use, removed once the native updater holds its own copy, and discarded when a check
+finds nothing newer. A verified download also survives a failed preparation (`ditto`,
+`hdiutil`, `codesign`, a timeout or a Squirrel error); only proof that the package itself
+is bad (wrong signature, invalid or corrupt image) discards it, so a local failure never
+costs a silent 500 MB re-download. Removal retries and never fails an update, because
+Windows virus scanners briefly lock fresh installers.
+
+Background attempts never surface their failures. An offline launch, a GitHub outage or a
+dropped download falls back to the last verdict, is recorded in opt-in local diagnostics,
+and retries after 5, 15 and 30 minutes, then hourly. A rate-limited answer waits for
+GitHub's reset. A check the user starts, and a failed install of a ready update, show the
+error. After the machine wakes, an overdue check runs within 15 seconds.
+
+Installation remains owned by electron-updater's NSIS and Squirrel.Mac paths. On macOS,
+the client mounts the DMG read-only, validates its app ID, version and signature, and
+creates Squirrel's ZIP locally. A private loopback endpoint supplies the verified file
+with locally computed SHA-512 metadata. It closes after the native updater consumes the
+file. Quit waits for active download cleanup so a mounted DMG is detached.
+
+Beta 7 retains the public YAML/ZIP assets needed by beta 6. Starting at beta 8, only the
+EXE and DMG are uploaded; the complete checksums and packaging proof remain local.
+The cutoff and remaining beta 6 users are covered in [RELEASING.md](./RELEASING.md).
+
+_Rejected:_ replacing app bundles with a custom shell/helper installer would duplicate
+native signing checks and replacement logic; a second release repository would split
+the release process. Removing compatibility files in beta 7 would strand beta 6 users.
+Sorting by publication date allows an older, later-published platform proof to hide the
+current version and fail asset validation before the downgrade check runs.
+Conditional API requests with ETags do not save the anonymous limit. electron-updater's
+YAML feeds and blockmaps would add files to every release and give up the two-asset
+release that installed clients rely on, so differential downloads are not offered either.
+Stable and beta channels keyed on the pre-release flag were built and removed the same day:
+with every alpha release published as a pre-release, a stable default would have blocked all
+updates. Channels need a real stable line first, at v1 at the earliest.
 
 ---
 
@@ -141,8 +256,11 @@ directory, and non-secret environment overrides in
 `~/.tastecode/custom-harnesses.json`; arguments never pass through a shell, and secrets
 never belong in this file. Provider CLIs, terminals, and custom commands resolve against a
 desktop-safe PATH. GUI-launched Electron apps do not inherit a login shell, so the server
-adds conventional user locations such as `~/.local/bin` and Homebrew's prefix rather than
-sourcing `.zshrc`. When a mod boots from its own directory,
+adds conventional user locations such as `~/.local/bin`, Homebrew's prefix, and
+`%LOCALAPPDATA%/Programs/OpenAI/Codex/bin` rather than sourcing `.zshrc`. Codex's adapter
+owns its official standalone install command, so fresh desktops do not need npm to install
+their first provider. The server allowlists that same command for guided setup. When a mod boots
+from its own directory,
 `HARNESS_WORKSPACE_PATH` retains the active project for its wrapper and native protocols still
 receive that project normally. The source gets its own model catalog and persisted identity, so
 a fork can coexist with the stock CLI without replacing it.
@@ -194,6 +312,11 @@ degradation to an `unknown` item (never a crash, never silent loss), and a visib
 
 Checkpoints, worktrees, cost accounting and search live **above** the adapters, implemented
 once. Git checkpoints work identically regardless of which engine made the change.
+
+**Branch scope (2026-10-03).** `main` ships only the Codex, Claude Code and Grok adapters.
+Every other adapter in this document, the ACP agent roster and the direct API runtime exist
+only on `nightly`; on `main`, `packages/adapter-acp` remains solely as the protocol client
+behind project-enabled Grok MCP sessions. The decisions below still bind both branches.
 
 **The product must work with only a direct API provider configured.** TasteCode owns the
 shared session model, persistence, orchestration, queueing, review, worktrees, terminal and
@@ -302,13 +425,32 @@ transcripts and orchestration history; UI state is a derived read model. FTS5 fo
   lifecycle, settings, and catalog metadata remain ordinary transactional records. Never write
   directly to read models derived from the event log.
 
+**Local provider history is discovered without starting a model turn.** Codex, Claude Code,
+and Grok own their saved-file readers; shared import code only reads their declared history
+interface. A background metadata scan adds native chats only to projects already added in
+TasteCode and loads transcripts on demand. History readers never add projects. Adding a project
+starts a fresh scan; removing it stops further imports until it is added again. Stable provider
+identities prevent duplicate chats. Imported messages use the same
+typed items and renderer as local turns. New versions append events; source membership hides
+replaced native branches without moving local event positions or checkpoints. Replay orders
+imported turns by their original time and replaces stale partial client histories when needed.
+Provider files stay read-only. Local names, pins, project removal, and deletion remain local
+choices; a deleted chat or closed Side chat keeps an import marker, so a rescan does not bring
+it back. Cloud-only chats and missing native transcript files are outside this local reader.
+Background rescans stay cheap: Codex reuses indexed transcript file stats for up to 60 seconds
+while its state index is unchanged, and Grok keeps a parsed session summary until the file's
+size or modification time changes.
+
 **Checkpoints are git**, captured on turn start and completion. Correct, inspectable with
 tools users already trust, identical across every engine. Non-git directories fall back to a
 content-addressed snapshot of touched files only.
 
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
-other project?" is a real question nobody in this category answers well.
+other project?" is a real question nobody in this category answers well. Messages are indexed in
+full. Command and tool output indexes its first 12K and last 4K characters, which keeps long logs from
+being duplicated into the index. A search-index version change drops and recreates the table
+before the rebuild; deleting every row first would tokenize the old index again.
 
 **Many-thread sidebar state stays sparse and incremental.** The SQLite inbox index materializes
 only current failures and pending requests; successful historic turns do not add startup work.
@@ -325,7 +467,34 @@ share one delegated listener set instead of installing listeners on every visibl
 **Long-thread replay snapshots extend from their durable tail.** An exact snapshot is returned
 without parsing the event log. When a few newer events exist, the server reads only those events,
 folds them over the prior compact replay, and replaces the snapshot. History rewrites delete the
-snapshot first, so a stale branch can never survive a restore.
+snapshot first, so a stale branch can never survive a restore. Snapshots duplicate the log, so
+disk keeps only the 64 most recently written ones, and closing a thread deletes its snapshot. An
+older or closed thread rebuilds its replay from the log when it is opened again.
+
+**Thread history is paged by whole turns.** A `thread.history` request with `page` cuts the
+cached compact replay: the newest page holds the last turns plus the latest usage and the
+approvals and questions older turns left open (a thread error closes them, as in the renderer),
+and `olderCursor` walks back. A page ends only where every turn inside it has emitted its last
+event, so a prompt recorded before its provider's turn start or a late tool completion never
+straddles a cursor; one oversized block may exceed the requested size. Cursors are opaque,
+thread-scoped and name the boundary turn and the replay's sequence. An older page is answered
+from the replay saved at that sequence while it still exists, so a streaming turn never makes a
+page re-compact or rewrite the snapshot; any rewrite of older history deletes that replay. The
+answer is `reset` with the newest page when the boundary turn is gone (a restore removed it), when
+the replay now ends before the cursor's sequence (a truncation with nothing written since), or
+when provider history gained events after that sequence. A truncation that keeps the boundary turn
+and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
+that only retires events is detected only through the re-recorded thread start: the merge records
+`thread.started` again whenever it retires rows. Requests without `page` keep
+the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
+reader bounded before compaction, which is still to do. Until then a thread without a saved
+replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
+events; paging the event log directly also has to keep imported provider turns, which display in
+time order rather than log order, on the right page.
+
+**Streamed turn diffs are stored only when they change.** Providers can resend the same
+working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
+running turn; the latest stored diff is unchanged.
 
 |             | Windows                     | macOS                                      |
 | ----------- | --------------------------- | ------------------------------------------ |
@@ -341,10 +510,15 @@ Config is human-readable and hand-editable on purpose. It is never where secrets
 History retention is user controlled. The local `history` command reports storage size,
 exports records, previews eligible closed tasks, and archives them before explicit cleanup.
 Cleanup retains active tasks and private checkouts, then reclaims unused database pages.
-There is no automatic history expiry. See [History maintenance](./HISTORY.md).
+There is no automatic history expiry. Explicit compaction also removes streamed text fragments
+that a later completed event of the same item already holds in full; replay reads the completed
+text, so transcripts stay identical. This maintenance command is the only path that removes
+event rows without removing their task. See [History maintenance](./HISTORY.md).
 
 Checkpoint and undo commits have database-scoped Git refs. Worktree cleanup combines all
-retained commits by Git common directory before removing unused refs. Restore and branch
+retained commits by Git common directory before removing unused refs. Its identity is the
+filesystem-native canonical path, so Windows long paths and 8.3 aliases share one retained-commit
+set. Resolution errors propagate and separate repositories remain distinct. Restore and branch
 switch guards instead use the canonical checkout directory: separate worktrees can work
 independently, while tasks sharing a checkout cannot restore files during another turn or
 while its process is still stopping. An isolated start receives its base ref directly.
@@ -352,7 +526,12 @@ while its process is still stopping. An isolated start receives its base ref dir
 `ProviderControls` owns provider-specific account, login, usage, MCP and skill behavior.
 Shared orchestration reads declared capabilities and merges shared local configuration.
 Settings views renew 60-second notification leases; one read cannot hold a control process
-for the whole app lifetime. `ThreadController` owns web transcript, replay, queue, submission
+for the whole app lifetime. Usage-limit reads are cached per provider for 60 seconds and shared
+by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale.
+Change notifications to clients are coalesced to one leading and one trailing notice per
+provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
+until something changes instead of starting a limit-reading process each time.
+`ThreadController` owns web transcript, replay, queue, submission
 and draft state, while the frame store still batches streamed deltas for React.
 
 _Rejected:_ JSONL files (we'll _read_ Claude Code's, but no indexing/transactions/search) ·
@@ -360,6 +539,18 @@ libsql/Turso (sync story we don't need yet) · SQLite in the renderer (source of
 most disposable process) · whole-DB encryption (the DB holds no credentials by policy).
 
 ---
+
+### Direct API request retention
+
+Direct API sessions keep a bounded request context independently of the durable transcript.
+Known GPT-4.1/GPT-4o/GPT-5 and Claude families use a conservative 64 KiB serialized request cap;
+unknown model ids use 8 KiB. These are application safety budgets, not tokenizer estimates
+or advertised vendor context windows. Each transport checks its final JSON body too.
+Older turns are removed as complete user/assistant/tool groups; current-turn data and
+shared instructions are retained. A visible transcript notice identifies omission. If the
+current turn or tool definitions alone exceed the cap, the turn fails with an actionable
+message before network I/O. Provider errors can still impose a smaller model-specific limit.
+No transcript events are deleted by this policy.
 
 ## Long threads must feel instant
 
@@ -381,13 +572,35 @@ The rules that solve it:
    store subscription, no inline lambdas inside the message subtree.
 3. **Two-phase code blocks.** Cheap CSS treatment instantly, Shiki from a worker swapped in
    after, identical layout box so nothing reflows. Only the languages we load; cache by
-   content hash.
+   content hash. Grammar regexes scan one-byte copies of Latin-1 lines: a line cut from a
+   reply or patch with one em dash anywhere is stored two bytes wide, and V8 tokenized it
+   about half as fast in Electron 43. Copying whole blocks was rejected because one wide
+   character inside the block defeats it.
+   Completed fences above 32 KiB keep all source lines mounted while decorative token DOM
+   is applied in 12-line animation-frame batches. Repeated foreground colors inherit from
+   their line; tokens with attributes or other styles retain their elements. Simple complete
+   fences skip Markdown/HTML AST construction; complex fences retain Streamdown parsing.
+   Plain chunks reserve their full line height in one layout box, and adjacent inherited
+   text shares a text node to avoid unnecessary initial layout and removal work.
+   Large code containers override Streamdown's block-level content visibility so
+   offscreen token batches also lay out incrementally rather than all at first scroll.
+   Whole-block token commits exceeded the frame budget. CSS layout containment was rejected
+   because it increased theme compositing cost; clipping or dropping source was rejected
+   because selection, copy, horizontal scrolling and accessibility must remain intact.
 4. **Batch deltas on rAF** (~16ms). Imperceptible, an order of magnitude fewer renders.
 5. **Closed activity owns no detail DOM.** Command and tool details mount when their
    disclosure opens, stay mounted for the closing animation, then unmount. Collapsed output
-   must not consume layout, DOM, or image-preview work.
+   must not consume layout, DOM, parsing, or image-preview work: a closed row decides that it
+   can open from its arguments, or from its output once per item, and builds its detail only
+   when it mounts.
 6. **Collapse huge blocks by default** — better UX and better performance.
-7. **Never mount full history on open.** Last N turns, fetch older on demand.
+7. **Never mount full history on open.** A cold open asks for the newest ten turns; twenty more
+   load when the reader nears the top, and the row being read keeps its position as they are
+   prepended. Find in chat and search jumps need every turn, so they fetch the rest in one
+   unpaged read instead of searching only what is loaded. A failed read says so and waits for
+   Retry. Closing find only drops that read's reply: a transport request cannot be aborted, so
+   the server still sends the whole history and the renderer still parses and validates it
+   (about 133 ms for a 4.76 MB chat in the browser) before discarding it.
 8. **Partial background caches do not grow a second transcript.** At most eight inactive
    workers keep a hot transcript, with 256 items or 256 KiB per worker and 512 items or 512 KiB
    in total. Older or larger workers retain only lifecycle and attention state. Their transcript
@@ -407,6 +620,8 @@ The rules that solve it:
 | Cold start → interactive                | < 1.5 s                  |
 | Switch sessions                         | < 100 ms                 |
 | Idle memory, 5 sessions                 | < 500 MB                 |
+| Collapsed 300-call activity, 37.5 MiB   | < 8 MiB, < 200 elements  |
+| Same activity, reopened and closed      | < 2 MiB retained         |
 
 Build a 1,000-message fixture thread early, keep it in the repo, run every UI PR against it.
 **A PR that regresses a budget doesn't merge.**
@@ -435,6 +650,13 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
+| 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
+| 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
+| 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
+| 2026-10-03 | Find desktop updates through the release feed, resume interrupted downloads, keep background failures quiet, and check again after the machine wakes.                          |
+| 2026-09-30 | Batch large completed-code token rendering and inherit repeated foregrounds without reducing the source workload; enforce the frame budget against native renderer traces.     |
+| 2026-09-22 | Select desktop releases by semantic version, preventing a later-published older platform proof from hiding the current release.                                                |
 | 2026-07-28 | Initial decisions.                                                                                                                                                             |
 | 2026-08-01 | Defined ownership and precedence for project-scoped MCP configuration.                                                                                                         |
 | 2026-08-02 | Added Codex-backed voice dictation.                                                                                                                                            |
@@ -464,3 +686,11 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-08 | Added checkpoint reachability and checkout guards, explicit history maintenance, provider controls, task-state ownership, bounded leases and local Electron performance gates. |
 | 2026-09-15 | Added authenticated repository and upload image previews, isolated SVG rendering, lazy loading, and byte-bounded caches for pull-request Markdown.                             |
 | 2026-09-15 | Dropped the Claude Agent SDK's bundled per-platform CLI from the dependency graph and the desktop package; the adapter always spawns the user's `claude`.                      |
+| 2026-09-18 | Added the beta 7 updater bridge and verified EXE/DMG transport, with two public assets from beta 8 and native installers retained.                                             |
+| 2026-09-26 | Scanned one-byte copies of Latin-1 lines in every Shiki grammar pass, including the main-thread diff views.                                                                    |
+| 2026-09-26 | Kept inline tool images out of Codex tool text and imported tool calls; the transcript never shows tool attachments.                                                           |
+| 2026-09-26 | Let provider history reads skip turns already stored locally; the server drops their echoes anyway.                                                                            |
+| 2026-09-26 | Cached usage-limit reads, skipped repeated turn diffs, bounded search-indexed tool output and disk replay snapshots, and folded completed deltas during compaction.            |
+| 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
+| 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
+| 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |

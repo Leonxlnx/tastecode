@@ -4,7 +4,10 @@ import type { TurnTiming } from '../thread-state.js'
 export type { TurnTiming } from '../thread-state.js'
 
 const EMPTY_TURN_TIMING: TurnTiming = {}
-const projectionCache = new WeakMap<Item[], WeakMap<TurnTiming, ThreadProjection>>()
+const projectionCache = new WeakMap<
+  Item[],
+  WeakMap<TurnTiming, { projection: ThreadProjection; activeTurnId: string | undefined }>
+>()
 
 /**
  * Turn boundaries within the flat item list.
@@ -43,9 +46,14 @@ export type TurnPresentation = {
   workStartedAt: number
   prompt: Item | undefined
   complete: boolean
-  /** Turns carrying a design:* phase marker tell their story through the
-   *  phase labels; raw provider activity stays out of the transcript. */
+  /** Turns carrying a design:* marker retain their phase labels alongside provider work. */
   design: boolean
+  /** The user stopped the turn: it is settled like a finished one, with what it reached. */
+  stopped: boolean
+  /** The row a stopped turn's end marker follows: its answer, its work, or its prompt. */
+  endIndex: number
+  /** The last flat-list index that belongs to this turn. */
+  lastIndex: number
 }
 
 export type ThreadProjection = {
@@ -82,39 +90,49 @@ export function activityGroupAt(
 export function createThreadProjector(): (
   items: Item[],
   turnTiming?: TurnTiming,
+  activeTurnId?: string,
 ) => ThreadProjection {
   let previousItems: Item[] | undefined
   let previousTurnTiming: TurnTiming | undefined
+  let previousActiveTurnId: string | undefined
   let previousProjection: ThreadProjection | undefined
 
-  return (items, turnTiming = EMPTY_TURN_TIMING) => {
-    if (items === previousItems && turnTiming === previousTurnTiming && previousProjection) {
+  return (items, turnTiming = EMPTY_TURN_TIMING, activeTurnId) => {
+    const sameInputs =
+      previousProjection !== undefined &&
+      turnTiming === previousTurnTiming &&
+      activeTurnLayoutMatches(previousProjection, previousActiveTurnId, activeTurnId)
+
+    if (items === previousItems && sameInputs && previousProjection) {
+      previousActiveTurnId = activeTurnId
       return previousProjection
     }
 
     const cached = projectionCache.get(items)?.get(turnTiming)
-    if (cached) {
+    if (cached && activeTurnLayoutMatches(cached.projection, cached.activeTurnId, activeTurnId)) {
       previousItems = items
       previousTurnTiming = turnTiming
-      previousProjection = cached
-      return cached
+      previousActiveTurnId = activeTurnId
+      previousProjection = cached.projection
+      return cached.projection
     }
 
     if (
       previousItems &&
       previousProjection &&
-      turnTiming === previousTurnTiming &&
+      sameInputs &&
       isStartedAssistantTailTextUpdate(previousItems, items)
     ) {
       previousItems = items
-      cacheThreadProjection(items, turnTiming, previousProjection)
+      previousActiveTurnId = activeTurnId
+      cacheThreadProjection(items, turnTiming, activeTurnId, previousProjection)
       return previousProjection
     }
 
-    if (previousItems && previousProjection && turnTiming === previousTurnTiming) {
+    if (previousItems && previousProjection && sameInputs) {
       const tailStart = retainedTailStart(previousItems, items, previousProjection)
       if (tailStart !== undefined) {
-        const tail = projectThreadRange(items, turnTiming, tailStart)
+        const tail = projectThreadRange(items, turnTiming, activeTurnId, tailStart)
         const presentations = new Map(previousProjection.presentations)
         for (const turn of previousProjection.turns) {
           if (turn.index >= tailStart) presentations.delete(turn.turnId)
@@ -123,6 +141,7 @@ export function createThreadProjector(): (
           presentations.set(turnId, presentation)
         }
         previousItems = items
+        previousActiveTurnId = activeTurnId
         previousProjection = {
           turns: [
             ...previousProjection.turns.filter((turn) => turn.index < tailStart),
@@ -130,22 +149,42 @@ export function createThreadProjector(): (
           ],
           presentations,
         }
-        cacheThreadProjection(items, turnTiming, previousProjection)
+        cacheThreadProjection(items, turnTiming, activeTurnId, previousProjection)
         return previousProjection
       }
     }
 
     previousItems = items
     previousTurnTiming = turnTiming
-    previousProjection = projectThreadItems(items, turnTiming)
-    cacheThreadProjection(items, turnTiming, previousProjection)
+    previousActiveTurnId = activeTurnId
+    previousProjection = projectThreadItems(items, turnTiming, activeTurnId)
+    cacheThreadProjection(items, turnTiming, activeTurnId, previousProjection)
     return previousProjection
   }
+}
+
+/**
+ * Only the active turn's own presentation depends on which turn is active, so
+ * an id that no projected turn carries, such as an optimistic send, changes
+ * nothing.
+ */
+function activeTurnLayoutMatches(
+  projection: ThreadProjection,
+  previous: string | undefined,
+  next: string | undefined,
+): boolean {
+  if (previous === next) return true
+  const { presentations } = projection
+  return (
+    (previous === undefined || !presentations.has(previous)) &&
+    (next === undefined || !presentations.has(next))
+  )
 }
 
 function cacheThreadProjection(
   items: Item[],
   turnTiming: TurnTiming,
+  activeTurnId: string | undefined,
   projection: ThreadProjection,
 ): void {
   let byTiming = projectionCache.get(items)
@@ -153,25 +192,34 @@ function cacheThreadProjection(
     byTiming = new WeakMap()
     projectionCache.set(items, byTiming)
   }
-  byTiming.set(turnTiming, projection)
+  byTiming.set(turnTiming, { projection, activeTurnId })
 }
 
 export function projectThreadItems(
   items: Item[],
   turnTiming: TurnTiming = EMPTY_TURN_TIMING,
+  activeTurnId?: string,
 ): ThreadProjection {
-  return projectThreadRange(items, turnTiming, 0)
+  return projectThreadRange(items, turnTiming, activeTurnId, 0)
 }
 
 function projectThreadRange(
   items: Item[],
   turnTiming: TurnTiming,
+  activeTurnId: string | undefined,
   startIndex: number,
 ): ThreadProjection {
   const turns: TurnMark[] = []
   return {
     turns,
-    presentations: presentTurnsRange(items, turnTiming, startIndex, items.length, turns),
+    presentations: presentTurnsRange(
+      items,
+      turnTiming,
+      activeTurnId,
+      startIndex,
+      items.length,
+      turns,
+    ),
   }
 }
 
@@ -185,10 +233,15 @@ function projectThreadRange(
  * invisible and do not split a live batch. An explicit final-answer phase
  * wins; older unphased histories safely fall back to their last completed
  * assistant message.
+ *
+ * The active turn is never complete. Between two tool calls nothing is
+ * running, and unphased narration would pass for the final answer until the
+ * next call starts, folding the whole turn away and back.
  */
 function presentTurnsRange(
   items: Item[],
   turnTiming: TurnTiming,
+  activeTurnId: string | undefined,
   startIndex: number,
   endIndex: number,
   turns?: TurnMark[],
@@ -206,6 +259,7 @@ function presentTurnsRange(
       workEntries: Array<{ item: Item; index: number }>
       answers: Array<{ item: Item; index: number }>
       prompt?: Item
+      promptIndex?: number
       firstResponseIndex?: number
       earliest: number
       latest: number
@@ -215,6 +269,10 @@ function presentTurnsRange(
       activityCount: number
       onlyReasoning: boolean
       design: boolean
+      /** Its output ended where the user stopped it, so unfinished text is what it said. */
+      stopped: boolean
+      lastIndex: number
+      lastStackedIndex: number
     }
   >()
 
@@ -240,13 +298,18 @@ function presentTurnsRange(
         activityCount: 0,
         onlyReasoning: true,
         design: false,
+        stopped: item.turnId !== activeTurnId && turnTiming[item.turnId]?.interrupted === true,
+        lastIndex: index,
+        lastStackedIndex: -1,
       }
       drafts.set(item.turnId, draft)
     }
 
     draft.earliest = Math.min(draft.earliest, item.createdAt)
     draft.latest = Math.max(draft.latest, item.createdAt)
-    draft.design ||= item.type === 'tool_call' && item.text?.startsWith('design:') === true
+    draft.lastIndex = index
+    const designMarker = item.type === 'tool_call' && item.text?.startsWith('design:') === true
+    draft.design ||= designMarker
 
     if ((item.type !== 'message' || item.role !== 'user') && !isBlankReasoning(item)) {
       draft.firstResponseIndex ??= index
@@ -258,8 +321,14 @@ function presentTurnsRange(
       draft.hasRunningActivity ||= item.status === 'started'
     }
 
-    if (isStackedActivity(item)) {
+    if (designMarker) {
+      // A design phase is a heading of its own: the provider work on either
+      // side of it forms separate batches.
+      const openGroup = draft.activityGroups.at(-1)
+      if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
+    } else if (isStackedActivity(item)) {
       draft.workEntries.push({ item, index })
+      draft.lastStackedIndex = index
       const lastGroup = draft.activityGroups.at(-1)
       if (lastGroup?.lastIndex === index - 1) {
         lastGroup.entries.push({ item, index })
@@ -283,10 +352,14 @@ function presentTurnsRange(
       if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
       draft.latestOutputAt = item.createdAt
 
-      if (item.type === 'message' && item.role === 'user') draft.prompt ??= item
+      if (item.type === 'reasoning') draft.workEntries.push({ item, index })
+      if (item.type === 'message' && item.role === 'user' && !draft.prompt) {
+        draft.prompt = item
+        draft.promptIndex = index
+      }
       if (item.type === 'message' && item.role === 'assistant') {
         draft.latestAssistantOutputAt = item.createdAt
-        if (item.status === 'completed') {
+        if (draft.stopped ? Boolean(item.text?.trim()) : item.status === 'completed') {
           draft.answers.push({ item, index })
           draft.workEntries.push({ item, index })
         }
@@ -296,17 +369,25 @@ function presentTurnsRange(
 
   const presentations = new Map<string, TurnPresentation>()
   for (const [turnId, draft] of drafts) {
+    // A stopped turn's answer is the text it was writing when it stopped, not
+    // narration from before a tool call that came after it.
+    const answers = draft.stopped
+      ? draft.answers.filter(({ index }) => index > draft.lastStackedIndex)
+      : draft.answers
     const finalAnswer =
-      draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
-      draft.answers.findLast(({ item }) => isLegacyFinalAnswer(item))
+      answers.findLast(({ item }) => item.phase === 'final_answer') ??
+      answers.findLast(({ item }) => isLegacyFinalAnswer(item))
     const timing = turnTiming[turnId]
     const elapsedMs =
       timing?.startedAt !== undefined && timing.completedAt !== undefined
         ? Math.max(0, timing.completedAt - timing.startedAt)
         : Math.max(0, draft.latest - draft.earliest)
+    // Work the stop cut short never finishes, so a stopped turn settles as it is.
     const complete =
-      !draft.hasRunningActivity &&
-      (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning))
+      turnId !== activeTurnId &&
+      (draft.stopped ||
+        (!draft.hasRunningActivity &&
+          (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning))))
     const liveActivityGroups = draft.activityGroups.map(
       ({ entries, lastIndex, startedAt, startsTurn, completedAt }) => ({
         items: entries.map(({ item }) => item),
@@ -320,8 +401,10 @@ function presentTurnsRange(
       }),
     )
     const completedWork = draft.workEntries.filter(({ index }) => index !== finalAnswer?.index)
+    // A design turn keeps its phases and notes in view, so its work stays in
+    // chronological batches instead of folding into one summary.
     const activityGroups =
-      complete && completedWork.length > 0
+      complete && !draft.design && completedWork.length > 0
         ? [
             {
               items: completedWork.map(({ item }) => item),
@@ -342,6 +425,13 @@ function presentTurnsRange(
       prompt: draft.prompt,
       complete,
       design: draft.design,
+      stopped: draft.stopped,
+      endIndex:
+        finalAnswer?.index ??
+        activityGroups.at(-1)?.firstIndex ??
+        draft.promptIndex ??
+        draft.lastIndex,
+      lastIndex: draft.lastIndex,
     })
   }
   return presentations

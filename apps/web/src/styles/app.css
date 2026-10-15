@@ -1,4 +1,5 @@
 @import './button-feedback.css';
+@import './focus-ring.css';
 @import './popup-motion.css';
 
 /* Layout and components. Values come from tokens.css only. */
@@ -120,8 +121,13 @@
 .rail {
   --rail-text: #dcdcda;
   --rail-font-size: 13px;
-  --rail-font-weight: 380;
+  --rail-font-weight: 400;
   --rail-letter-spacing: -0.01em;
+  /* One raised surface for the rail: the account card and the active chat. */
+  --rail-raised: color-mix(in srgb, var(--surface-2) 75%, var(--bg-rail-tint));
+  --rail-raised-ring: color-mix(in srgb, var(--text) 6%, transparent);
+  /* The hairline that hangs a project's chats off its folder mark. */
+  --rail-guide: color-mix(in srgb, var(--text) 12%, transparent);
 
   position: absolute;
   inset: 0 auto 0 0;
@@ -140,6 +146,8 @@
 
 :root[data-theme='light'] .rail {
   --rail-text: var(--text);
+  --rail-raised: var(--bg-prompt);
+  --rail-raised-ring: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
 .rail__folder-drop {
@@ -181,9 +189,8 @@
   transform: translateX(0);
 }
 
-/* Showing and retracting the flyout run at their own quicker pace; entering
-   the collapsed state for real keeps the deliberate fold. is-reveal-out is set for the
-   length of the retract, since by then the revealed class is already gone. */
+/* The flyout shows and retracts faster than the real collapse fold;
+   is-reveal-out covers the retract, after the revealed class is gone. */
 .rail-slot.is-collapsed.is-revealed .rail,
 .rail-slot.is-collapsed.is-reveal-out .rail {
   transition: transform var(--dur-reveal) var(--ease-rail);
@@ -381,9 +388,12 @@
   scrollbar-gutter: stable;
 }
 
+/* The 8px side inset matches Menu's viewport gutter. At 6px the trigger sat
+   left of the edge a menu may use, so its popup could not line up with it. */
 .rail__foot {
   display: grid;
-  padding: 4px 9px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 4px 8px 8px;
 }
 
 .account-menu__actions {
@@ -410,98 +420,24 @@
   border-color: var(--text-3);
 }
 
-.account {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-}
-
-.account__avatar {
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  flex: none;
-  background: var(--surface-3);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-circle);
-  color: var(--text-2);
-  font-size: 9px;
-  font-weight: 600;
-  overflow: hidden;
-}
-
-.account__avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.account__name {
-  min-width: 0;
-  font-size: var(--rail-font-size);
-  font-weight: 460;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.account__usage {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.account__usage + .account__chevron {
-  margin-left: 0;
-}
-
-.account__chevron {
-  flex: none;
-  margin-left: auto;
-  color: var(--text-3);
-  transition: transform var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger[aria-expanded='true'] .account__chevron {
-  transform: rotate(180deg);
-}
-
-/* The full-width hit area stays easy to target while the visible content
-   leaves room for the disclosure state at the right. */
-.rail__foot .menutrigger {
-  width: 100%;
-  min-height: 32px;
-  padding: 4px 6px;
-  background: none;
-  border: 1px solid transparent;
-  border-radius: var(--r-md);
-  color: var(--rail-text);
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.rail__foot .menutrigger:hover:not(:disabled),
-.rail__foot .menutrigger[aria-expanded='true'] {
-  background: var(--control-hover);
-  color: var(--rail-text);
-}
-
-/* Inline rename, sized to sit exactly where the label was. */
+/* Inline rename: a focused field over the label, never mistaken for it. */
 .rename {
   width: 100%;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border: 1px solid var(--text-3);
   border-radius: var(--r-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+  caret-color: AccentColor;
   color: var(--rail-text);
   font: inherit;
   font-size: var(--t-sm);
   outline: none;
   padding: 4px 8px;
+}
+
+.rename::selection {
+  background: AccentColor;
+  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .sessrow {
@@ -512,7 +448,7 @@
   min-width: 0;
   max-width: 100%;
   width: 100%;
-  height: 25px;
+  height: 28px;
   background: var(--sess-bg);
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
@@ -532,6 +468,21 @@
   box-shadow: var(--chrome-shadow);
 }
 
+/* One pill marks the active chat: on a project's guide, or in the outer
+   gutter for pinned chats. It slides between rows by transform alone
+   (active-indicator.ts); the row's own fill only cross-fades. */
+.sessrow__indicator {
+  position: absolute;
+  z-index: 1;
+  top: 7px;
+  left: var(--sess-indicator-x);
+  width: 3px;
+  height: 14px;
+  border-radius: var(--r-pill);
+  background: var(--text-2);
+  pointer-events: none;
+}
+
 .sessrow.is-reorderable .sess {
   cursor: grab;
 }
@@ -544,14 +495,14 @@
   cursor: grabbing;
 }
 
-/* ::after, not ::before: the active-session accent tick is a ::before on the
-   same element and is declared later, so it won the cascade and the drop line
-   vanished — dragging onto the row you are already in showed nothing. */
+/* ::after: the active row's accent tick is a later ::before and would hide
+   the drop line on the row you are already in. */
 .sessrow[data-drop-position]::after {
   content: '';
   position: absolute;
   z-index: 2;
-  left: 26px;
+  /* Starts where the title does. */
+  left: calc(var(--sess-indent) + 19px);
   right: 6px;
   height: 2px;
   border-radius: var(--r-pill);
@@ -572,7 +523,7 @@
   pointer-events: auto;
 }
 
-.sessrow:focus-within .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+.sessrow:focus-within .sess__meta {
   opacity: 0;
 }
 
@@ -583,8 +534,12 @@
     pointer-events: auto;
   }
 
-  .sessrow:hover .sess__source :is(.source-identity__label, .source-identity__qualifier) {
+  .sessrow:hover .sess__meta {
     opacity: 0;
+  }
+
+  .sessrow:hover .sess__provider {
+    color: var(--text-2);
   }
 
   .sess:hover {
@@ -670,7 +625,7 @@
   overflow-y: auto;
   background: var(--bg-rail);
   border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-dialog);
   box-shadow: var(--shadow-modal);
 }
 
@@ -727,8 +682,8 @@
 
 .switch {
   position: relative;
-  width: 30px;
-  height: 18px;
+  width: 36px;
+  height: 22px;
   flex: none;
   padding: 0;
   background: var(--surface-3);
@@ -754,10 +709,11 @@
 
 .switch__thumb {
   position: absolute;
-  top: 2px;
+  top: 50%;
   left: 2px;
-  width: 12px;
-  height: 12px;
+  width: 16px;
+  height: 16px;
+  translate: 0 -50%;
   background: var(--text-2);
   border-radius: var(--r-circle);
   transition:
@@ -767,7 +723,7 @@
 
 .switch.is-on .switch__thumb {
   background: var(--on-light);
-  transform: translateX(12px);
+  transform: translateX(14px);
 }
 
 .section {
@@ -795,7 +751,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
@@ -817,7 +773,7 @@
 
 .proj {
   position: relative;
-  margin-bottom: 7px;
+  margin-bottom: 4px;
 }
 
 .proj[draggable='true'] > .proj__head {
@@ -852,9 +808,9 @@
   display: flex;
   align-items: center;
   gap: 1px;
-  height: 26px;
-  min-height: 26px;
-  padding-right: 6px;
+  height: 28px;
+  min-height: 28px;
+  padding-right: 4px;
   border-radius: var(--r-md);
   transition: background var(--dur-fast) var(--ease-out);
 }
@@ -864,9 +820,8 @@
 }
 
 .proj__head > .icon-btn {
-  width: 22px;
-  height: 22px;
-  margin-right: 3px;
+  width: 28px;
+  height: 28px;
 }
 
 .proj__toggle {
@@ -884,8 +839,8 @@
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
-  height: 26px;
-  min-height: 26px;
+  height: 28px;
+  min-height: 28px;
   padding: 2px 7px;
   text-align: left;
 }
@@ -904,6 +859,8 @@
 
 .proj__name {
   flex: 1;
+  /* Parents carry the weight; their chats read lighter beneath them. */
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -933,15 +890,36 @@
 }
 
 .proj__drawer > .proj__sessions {
+  /* A project's chats indent past the guide under its folder mark. */
+  --sess-indent: 22px;
+  --sess-indicator-x: 12px;
   min-height: 0;
 }
 
+/* The guide runs from under the folder mark (centre 13.5px) to the middle of
+   the last row. It hangs on the project so the drawer's clip cannot cut it,
+   and paints nothing once the drawer is shorter than the offsets. */
+.proj::after {
+  content: '';
+  position: absolute;
+  top: 24px;
+  bottom: 22px;
+  left: 13px;
+  width: 1px;
+  border-radius: var(--r-pill);
+  background: var(--rail-guide);
+  pointer-events: none;
+}
+
 .proj__sessions {
+  /* Pinned chats have no parent, so they keep the outer gutter. */
+  --sess-indent: 7px;
+  --sess-indicator-x: 1px;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   row-gap: 2px;
   list-style: none;
-  margin: 2px 0 9px;
+  margin: 2px 0 8px;
   padding: 0;
   /* Let the grid item shrink so long titles reach their ellipsis boundary. */
   min-width: 0;
@@ -974,8 +952,8 @@
 .proj__sessions-toggle {
   width: 100%;
   max-width: 100%;
-  height: 25px;
-  padding: 0 28px;
+  height: 28px;
+  padding: 0 8px 0 calc(var(--sess-indent) + 21px);
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -1000,10 +978,10 @@
 .sess {
   flex: 1;
   width: 100%;
-  height: 25px;
+  height: 28px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   background: none;
   border: 0;
   border-radius: var(--r-md);
@@ -1016,7 +994,7 @@
   /* No standing reservation for the hover actions: they overlay the right
      edge with their own fade, so the title keeps the full row width and the
      rail stays honest at any size. */
-  padding: 0 12px 0 28px;
+  padding: 0 8px 0 var(--sess-indent);
   text-align: left;
   min-width: 0;
   transition: color var(--dur-fast) var(--ease-out);
@@ -1034,24 +1012,25 @@
 }
 
 .sessrow > .rename--session {
-  height: 25px;
-  padding: 0 12px 0 28px;
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  /* The text starts where the title did: indent + mark + gap. */
+  margin: 0 4px 0 calc(var(--sess-indent) + 14px);
+  padding: 0 6px;
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
 }
 
+/* Pinned chats keep the same 28px title indent as project chats, so every
+   chat title in the rail starts on one line under the project names. */
 .pinned-sessions {
   margin: 0 0 10px;
 }
 
-.sessrow.is-pinned .sess {
-  padding-left: 7px;
-}
-
-.sessrow.is-pinned > .rename--session {
-  padding-left: 7px;
+.proj__sessions > .rail__hint {
+  padding-left: calc(var(--sess-indent) + 21px);
 }
 
 .sess__title {
@@ -1062,12 +1041,47 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12.5px;
-  font-weight: 500;
 }
 
 :root[data-theme='dark'] .sess__title {
   color: color-mix(in srgb, var(--rail-text) 78%, transparent);
+}
+
+.sessrow:is(.is-active, .is-unread) .sess__title {
+  color: var(--rail-text);
+}
+
+.sessrow.is-unread .sess__title {
+  font-weight: 560;
+}
+
+.sess__provider {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-3);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.sessrow.is-active .sess__provider {
+  color: var(--text-2);
+}
+
+.sess__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.sess__time {
+  color: color-mix(in srgb, var(--text-2) 50%, var(--text-3));
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
 }
 
 .sess__unread-dot {
@@ -1078,20 +1092,14 @@
   flex: none;
 }
 
-.sess__source {
-  max-width: 78px;
-  flex: none;
-  color: var(--text-3);
-  font-size: 10px;
-}
-
 .sess__actions {
   position: absolute;
-  right: 6px;
+  right: 0;
   display: flex;
   align-items: center;
-  gap: 1px;
+  gap: 0;
   padding-left: 12px;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
   background: linear-gradient(90deg, transparent, var(--sess-bg) 10px);
   opacity: 0;
   pointer-events: none;
@@ -1101,10 +1109,13 @@
 .sess__action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  padding: 0;
+  /* A 28px target with a 24px face: the hover fill stays inside the row. */
+  width: 28px;
+  height: 28px;
+  padding: 2px;
   background: none;
+  /* After the shorthand, which would reset it. */
+  background-clip: content-box;
   border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
@@ -1116,7 +1127,7 @@
 
 .sess__action:hover,
 .sess__action:focus-visible {
-  background: var(--surface-3);
+  background-color: var(--surface-3);
   color: var(--text);
 }
 
@@ -1152,6 +1163,15 @@
 }
 
 /* ---------- stage ---------- */
+
+/* The right panel width is written inline on .workspace-layout on every frame
+   of a resize drag, and only that grid reads it. Left inheritable, each write
+   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
+   to a long chat); not inherited, it restyles one element. */
+@property --workspace-panel-w {
+  syntax: '*';
+  inherits: false;
+}
 
 .workspace-layout {
   position: relative;
@@ -1252,6 +1272,16 @@
   bottom: 0;
   left: 0;
   z-index: 2;
+  pointer-events: none;
+}
+
+/* Hide the transcript under the floating composer; keep the scrollbar clear. */
+.stage__conversation:not(.is-new-session) > .composer::before {
+  position: absolute;
+  inset: 0 10px 0 0;
+  z-index: -1;
+  background: linear-gradient(to bottom, transparent, var(--bg) 12px);
+  content: '';
   pointer-events: none;
 }
 
@@ -1376,37 +1406,17 @@
   white-space: nowrap;
 }
 
+/* The field's text starts where the title did: border + padding = 8px. */
 .stagehead__rename {
   width: auto;
   min-width: 6ch;
   max-width: min(320px, 45vw);
-  height: 28px;
-  padding: 0;
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 7px;
   field-sizing: content;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  outline: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--t-sm);
+  color: var(--text);
   font-weight: 550;
-}
-
-.rename--chat,
-.stagehead__rename {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
-  caret-color: AccentColor;
-}
-
-.rename--chat::selection,
-.stagehead__rename::selection {
-  background: AccentColor;
-  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .stagehead__menu-trigger,
@@ -1454,6 +1464,16 @@
 
 .panel-toggles.is-workspace-open {
   right: 44px;
+}
+
+/* The fixed toggles float over the header's right edge while the workspace
+   panel is closed: reserve their width so a long title truncates first. */
+.shell:has(> .panel-toggles:not(.is-workspace-open)) .stagehead {
+  padding-right: 44px;
+}
+
+.shell:has(> .panel-toggles:not(.is-workspace-open) > .panel-toggles__terminal) .stagehead {
+  padding-right: 80px;
 }
 
 .zoom-hud {
@@ -1627,7 +1647,7 @@
   min-width: 0;
   max-width: var(--chat-w);
   margin: 0 auto;
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   /* Archiving replaces the thread in the same commit as this FLIP. Keep the
      bounded visual box promoted so that work cannot delay layer creation. */
   will-change: transform;
@@ -1638,7 +1658,7 @@
   z-index: 1;
   background: var(--bg-prompt);
   border: 1px solid var(--line);
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   box-shadow: var(--composer-shadow);
   transition: border-color var(--dur-fast) var(--ease-out);
 }
@@ -1667,16 +1687,16 @@
   margin: 0;
   padding: 1px 10px;
   background: var(--bg-shelf);
-  border-radius: var(--r-card) var(--r-card) 0 0;
+  border-radius: var(--r-composer) var(--r-composer) 0 0;
   box-shadow: inset 0 -1px color-mix(in srgb, var(--line) 70%, transparent);
 }
 
 .composer__shelf::after {
   position: absolute;
   right: 0;
-  bottom: -18px;
+  bottom: calc(-1 * var(--r-composer));
   left: 0;
-  height: 20px;
+  height: calc(var(--r-composer) + 2px);
   background: var(--bg-shelf);
   content: '';
   pointer-events: none;
@@ -1708,7 +1728,7 @@
   background: var(--bg-queue);
   border: 1px solid var(--queue-line);
   border-bottom: 0;
-  border-radius: var(--r-card) var(--r-card) 0 0;
+  border-radius: var(--r-composer) var(--r-composer) 0 0;
   animation: composer-queue-panel-in var(--dur-slow) var(--ease-rail) both;
 }
 
@@ -1810,7 +1830,7 @@
   place-items: center;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--queue-action);
   cursor: grab;
 }
@@ -1852,11 +1872,6 @@
 .queue-row__media:disabled {
   opacity: 1;
   cursor: default;
-}
-
-.queue-row__media:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
 }
 
 .queue-row__media-fallback {
@@ -2001,11 +2016,6 @@
   color: var(--text);
 }
 
-.shelf-control:focus-visible {
-  outline: 1px solid var(--text-3);
-  outline-offset: 1px;
-}
-
 .shelf-control__content {
   display: flex;
   align-items: center;
@@ -2118,7 +2128,7 @@
   padding: 3px 8px 3px 7px;
   max-width: 100%;
   background: var(--surface-2);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-2);
   font-size: var(--t-sm);
 }
@@ -2180,7 +2190,7 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  border-radius: calc(var(--r-lg) - 1px);
+  border-radius: calc(var(--r-xl) - 1px);
 }
 
 .attachment-preview img[hidden] {
@@ -2198,15 +2208,10 @@
   overflow: hidden;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-xl);
   box-shadow: var(--chrome-inset-shadow);
   color: var(--text-3);
   cursor: pointer;
-}
-
-.attachment-preview__open:focus-visible {
-  outline: 2px solid var(--text-2);
-  outline-offset: 2px;
 }
 
 .attachment-preview__open:disabled {
@@ -2291,7 +2296,7 @@
   flex: none;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
   transition: color var(--dur-fast) var(--ease-out);
@@ -2317,6 +2322,19 @@
   min-width: 0;
 }
 
+/* In a narrow composer only the model name gives way. */
+.tools > .composer__add,
+.tools > .composer__dictation-options:not([data-hidden]),
+.model-selector__trigger-model > svg {
+  flex-shrink: 0;
+}
+
+@container chat-stage (max-width: 420px) {
+  .model-selector__trigger-level + .model-selector__trigger-effort {
+    display: none;
+  }
+}
+
 .tool span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2336,80 +2354,6 @@
 
 .tools__spacer {
   flex: 1;
-}
-
-.context-usage {
-  position: relative;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  place-items: center;
-  border-radius: var(--r-circle);
-  outline: none;
-}
-
-.context-usage svg {
-  width: 24px;
-  height: 24px;
-  overflow: visible;
-  transform: rotate(-90deg);
-}
-
-.context-usage circle {
-  fill: none;
-  stroke-width: 2.25;
-}
-
-.context-usage__track {
-  stroke: var(--line-strong);
-}
-
-.context-usage__fill {
-  stroke: var(--text-2);
-  stroke-linecap: round;
-  stroke-dasharray: var(--context-used) 100;
-  /* --dur-med does not exist: the ring used to snap between percentages. */
-  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
-}
-
-.context-usage__tooltip {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  z-index: 40;
-  display: grid;
-  width: max-content;
-  max-width: 190px;
-  gap: 1px;
-  padding: 5px 8px;
-  background: var(--surface-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-flyout);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 90ms var(--ease-out);
-}
-
-.context-usage__tooltip strong {
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 550;
-}
-
-.context-usage:focus-visible .context-usage__tooltip {
-  opacity: 1;
-  transition: none;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .context-usage:hover .context-usage__tooltip {
-    opacity: 1;
-    transition-duration: 140ms;
-  }
 }
 
 .tool {
@@ -2467,7 +2411,7 @@
 .composer__design-beam {
   display: block;
   width: 100%;
-  border-radius: var(--r-card);
+  border-radius: var(--r-composer);
   --beam-stroke-opacity: var(--composer-design-beam-stroke-strength);
   --beam-inner-opacity: var(--composer-design-beam-inner-strength);
   --beam-bloom-opacity: var(--composer-design-beam-bloom-strength);
@@ -2487,7 +2431,7 @@
 .composer__design-button-beam {
   display: flex;
   flex: none;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 /* Scoped like the hover rule below: the later generic .menutrigger
@@ -2531,13 +2475,13 @@
   height: 32px;
   justify-content: center;
   padding: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .tools :is(.composer__permission, .composer__design) {
   min-height: 32px;
   padding: 4px 11px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .tools .composer__permission .tool,
@@ -2548,7 +2492,7 @@
 .tools .menutrigger--model-selector {
   min-height: 32px;
   padding: 4px 12px;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .composer-voice-button {
@@ -2580,16 +2524,6 @@
   background-size: 200% 100%;
   color: transparent;
   animation: design-label-shimmer 2.4s linear infinite;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .composer__design:hover > span {
-    background: linear-gradient(90deg, #b9a7ff, #87c7d8, #e2a6bc, #b9a7ff);
-    background-clip: text;
-    background-size: 200% 100%;
-    color: transparent;
-    animation: design-label-shimmer 2.4s linear infinite;
-  }
 }
 
 @keyframes design-label-shimmer {
@@ -2653,10 +2587,10 @@
 }
 
 .menu--settings {
-  /* Stay close to the account trigger without letting a wide rail turn this
-     small status surface into a large sheet. */
+  /* Flush with the account trigger, whose width Menu publishes; the fallback
+     covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
-  width: min(224px, calc(100vw - 16px));
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
   display: flex;
   flex-direction: column;
@@ -2720,45 +2654,6 @@
   color: var(--error);
 }
 
-.sidebar-confirm {
-  display: flex;
-  flex-direction: column;
-  width: min(520px, calc(100vw - 32px));
-}
-
-.sidebar-confirm .sheet__head {
-  padding: 12px 12px 9px;
-}
-
-.sidebar-confirm .sheet__section {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 10px 12px 12px;
-}
-
-.sidebar-confirm .sheet__section > p {
-  margin: 0;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-}
-
-.sidebar-confirm__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  white-space: nowrap;
-}
-
-@media (max-width: 520px) {
-  .sidebar-confirm .sheet__section {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-}
-
 .menu__rule {
   height: 1px;
   background: var(--menu-line);
@@ -2798,9 +2693,9 @@
 
 .menu__item:not(:disabled):focus-visible {
   background: var(--menu-hover);
-  border-color: var(--text-2);
   box-shadow: none;
-  outline: 0;
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
 }
 
 .menu__item:disabled {
@@ -2905,7 +2800,6 @@
 .app-select.is-open .app-select__trigger {
   border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
   color: var(--text);
-  outline: 0;
 }
 
 .app-select__trigger:disabled {
@@ -2946,53 +2840,69 @@
     0 6px 18px -14px rgb(0 0 0 / 35%);
 }
 
-.app-select__search {
-  position: sticky;
+/* A searchable picker is typed into where its value stands: while open, a
+   field takes the value's place in the trigger, and the panel below holds only
+   the options, at one size while it filters. */
+.app-select.is-searching .app-select__value {
+  visibility: hidden;
+}
+
+.app-select__query {
+  position: absolute;
   z-index: 1;
-  top: 0;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  margin-bottom: 3px;
-  padding: 5px 7px;
-  background: var(--chrome-recessed);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-popup-item);
-  box-shadow: var(--chrome-inset-shadow);
-  color: var(--text-3);
-}
-
-.app-select__search:focus-within {
-  border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
-  color: var(--text-2);
-}
-
-.app-select__search svg {
-  flex: none;
-}
-
-.app-select__search input {
+  inset: 0;
   width: 100%;
   min-width: 0;
-  padding: 0;
+  padding: 0 28px 0 8px;
   background: none;
   border: 0;
   color: var(--text);
   font: inherit;
+  letter-spacing: inherit;
   outline: 0;
+  appearance: none;
 }
 
-.app-select__search input::placeholder {
+.app-select__query::placeholder {
   color: var(--text-3);
+  opacity: 1;
 }
 
-.app-select__search input::-webkit-search-cancel-button {
-  opacity: 0.65;
+.app-select__query::-webkit-search-cancel-button,
+.app-select__query::-webkit-search-decoration {
+  display: none;
+  appearance: none;
+}
+
+.app-select__listbox--search {
+  width: max(var(--app-select-trigger-w, 0px), 264px);
+  max-width: calc(100vw - 16px);
+  max-height: none;
+  overflow: hidden;
+  padding: 0;
 }
 
 .app-select__options {
   display: grid;
+  align-content: start;
+}
+
+.app-select__listbox--search .app-select__options {
+  flex: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px;
+  scroll-padding-block: 4px;
+}
+
+.app-select__group {
+  display: flex;
+  align-items: flex-end;
+  height: 26px;
+  padding: 0 8px 4px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 500;
 }
 
 .app-select__empty {
@@ -3001,6 +2911,15 @@
   color: var(--text-3);
   font-size: var(--t-xs);
   text-align: center;
+}
+
+.app-select__listbox--search .app-select__options:has(> .app-select__empty) {
+  align-content: center;
+}
+
+.app-select__listbox--search .app-select__empty {
+  padding: 8px;
+  font-size: var(--t-sm);
 }
 
 .app-select__option {
@@ -3031,7 +2950,8 @@
   white-space: nowrap;
 }
 
-.app-select__option:not([aria-disabled='true']):is(.is-active, :hover) {
+/* One highlight: the pointer moves the active option, so hover needs no style of its own. */
+.app-select__option:not([aria-disabled='true']).is-active {
   background: var(--control-hover);
   color: var(--text);
 }
@@ -3048,6 +2968,53 @@
 .app-select__option[aria-disabled='true'] {
   cursor: default;
   opacity: 0.45;
+}
+
+.app-select__listbox--search .app-select__option {
+  align-items: baseline;
+  height: 28px;
+  min-height: 0;
+  padding: 0 8px;
+  line-height: 28px;
+  transition: none;
+}
+
+.app-select__listbox--search .app-select__option > svg {
+  align-self: center;
+}
+
+/* A font option carries a sample of itself, set in that font, before the check. */
+.app-select__option[data-sample]::after {
+  order: 1;
+  flex: none;
+  margin-left: auto;
+  color: var(--text-3);
+  content: 'Ag';
+  font-family: var(--app-select-sample);
+  font-size: 15px;
+}
+
+.app-select__option[data-sample] > span {
+  flex: 1;
+}
+
+.app-select__option[data-sample] > svg {
+  order: 2;
+}
+
+.app-select__option[data-sample]:not(.is-selected) {
+  padding-right: 31px;
+}
+
+.app-select__option[data-sample].is-active::after {
+  color: var(--text-2);
+}
+
+/* Offscreen rows skip layout and painting, so a long font list opens without
+   loading every face at once. */
+.app-select__listbox--search .app-select__option[data-sample] {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 28px;
 }
 
 /* ---------- buttons ---------- */
@@ -3078,7 +3045,7 @@
   font: inherit;
   font-size: var(--t-sm);
   padding: 4px 8px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
 }
 
 .ghost:hover {
@@ -3147,8 +3114,10 @@
     box-shadow: var(--composer-action-shadow-hover);
   }
 
-  .tools .composer__design:hover:not(:disabled) {
-    border-color: var(--composer-design-border-hover);
+  /* Hover inks the label like every other chip instead of fading it. */
+  .tools .composer__design:hover:not(:disabled),
+  .tools .composer__design:hover:not(:disabled) svg {
+    color: var(--text);
   }
 
   .tools .composer__design.is-active:hover:not(:disabled) {
@@ -3321,7 +3290,8 @@
     width: 100%;
   }
 
-  .composer__permission .tool > span,
+  /* The permission icon is an IconMorph span, so only the label goes. */
+  .composer__permission .tool > span:not(.icon-morph),
   .composer__design > span {
     display: none;
   }
@@ -3364,13 +3334,23 @@
   text-align: center;
 }
 
+.empty__detail {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  margin: -6px 0 0;
+  max-width: min(46ch, 100%);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .notice {
   position: fixed;
   /* Above every modal surface (settings 60, palette 70, image viewer 100) —
      an error raised while one of them is open must still be visible. */
   z-index: 110;
-  bottom: 18px;
-  right: 18px;
+  /* Set while a composer is docked (NoticePresence). */
+  bottom: var(--notice-bottom, 18px);
+  right: var(--notice-right, 18px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3435,8 +3415,8 @@
 
 @media (max-width: 700px) {
   .notice {
-    right: 12px;
-    bottom: 12px;
+    right: var(--notice-right, 12px);
+    bottom: var(--notice-bottom, 12px);
     max-width: calc(100vw - 24px);
   }
 
@@ -3452,166 +3432,6 @@
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-}
-
-.notice--provider-update {
-  display: block;
-  width: 360px;
-  max-height: min(520px, calc(100dvh - 36px));
-  overflow-y: auto;
-  padding: 4px;
-  background: var(--menu-bg);
-  border-color: var(--menu-line);
-  border-radius: var(--r-popup);
-  box-shadow: var(--shadow-flyout);
-  color: var(--text-2);
-}
-
-.provider-toast__header,
-.provider-toast__header > span {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.provider-toast__header {
-  justify-content: space-between;
-  min-height: 30px;
-  padding: 0 4px 0 8px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.provider-toast__header .icon-button {
-  width: 24px;
-  height: 24px;
-  padding: 4px;
-}
-
-.provider-toast__item {
-  padding: 10px 8px;
-}
-
-.provider-toast__item + .provider-toast__item {
-  border-top: 1px solid var(--line);
-}
-
-.provider-toast__row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 34px;
-}
-
-.provider-toast__mark {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  background: var(--surface);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-}
-
-.provider-toast__copy {
-  flex: 1;
-  min-width: 0;
-}
-
-.provider-toast__name {
-  display: block;
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 500;
-}
-
-.provider-toast__status {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 3px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  font-variant-numeric: tabular-nums;
-  overflow-wrap: anywhere;
-}
-
-.provider-toast__status svg {
-  flex: none;
-}
-
-.provider-toast__action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  flex: none;
-  min-height: 28px;
-  padding: 4px 9px;
-  background: var(--control-hover);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font-size: var(--t-xs);
-  font-weight: 500;
-  line-height: 1.25;
-  text-decoration: none;
-}
-
-.provider-toast__action:hover:not(:disabled) {
-  background: var(--surface-3);
-  color: var(--text);
-}
-
-.provider-toast__error {
-  margin: 8px 0 0 42px;
-  color: var(--error);
-  font-size: var(--t-xs);
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-
-.provider-toast__details {
-  margin: 4px 0 -4px 38px;
-  padding: 4px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.provider-toast__terminal {
-  height: 156px;
-  margin: 10px 0 0 42px;
-  overflow: hidden;
-  background: var(--menu-bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-}
-
-.provider-toast__terminal .install-terminal {
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  padding: 8px;
-  overflow: hidden;
-  background: var(--menu-bg);
-  border: 0;
-  border-radius: 0;
-}
-
-.provider-toast__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider {
-  box-sizing: border-box;
-  border: 1px solid transparent;
-  border-radius: var(--r-pill);
-  background: var(--text-3);
-  background-clip: padding-box;
-  opacity: 0.45;
-}
-
-.provider-toast__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider:hover,
-.provider-toast__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider.active {
-  opacity: 0.75;
 }
 
 .provider-update-spinner {
@@ -3760,10 +3580,6 @@
     padding-right: 56px;
   }
 
-  .sess__source {
-    max-width: 68px;
-  }
-
   .sessrow .sess__actions,
   .proj__head .dots {
     opacity: 1;
@@ -3779,7 +3595,7 @@
   /* Below this width the pill labels cannot sit next to the model picker
      and still fit one line. Keep the icons (their aria-labels stay intact)
      so the whole rail reads left to right at any phone width. */
-  .tools .composer__permission .tool > span,
+  .tools .composer__permission .tool > span:not(.icon-morph),
   .tools .composer__design > span {
     display: none;
   }

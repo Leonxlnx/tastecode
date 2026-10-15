@@ -1,7 +1,11 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { PullRequestListResult } from '@harness/contracts'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import type {
+  PullRequestDetail,
+  PullRequestListItem,
+  PullRequestListResult,
+} from '@harness/contracts'
 import { resetInstalls } from '../../provider-install.js'
 import { TestTransport } from '../../test-transport.js'
 import { PullRequestsView } from './PullRequestsView.js'
@@ -100,6 +104,20 @@ function pullRequestTransport(): TestTransport {
   })
 }
 
+/** Lists that answer in order: an Error entry rejects, anything else resolves. */
+function scriptedListTransport(...replies: Array<PullRequestListResult | Error>): TestTransport {
+  return new TestTransport(async (method) => {
+    if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+    const reply = replies.shift() ?? result
+    if (reply instanceof Error) throw reply
+    return reply
+  })
+}
+
+// The detail pane beside the list makes its own requests and has its own
+// alerts; these tests are about the list.
+const listPane = () => within(document.querySelector<HTMLElement>('.pr-list-pane')!)
+
 describe('PullRequestsView', () => {
   it('shows authored and reviewing work, then filters without another request', async () => {
     const transport = pullRequestTransport()
@@ -196,6 +214,234 @@ describe('PullRequestsView', () => {
     )
   })
 
+  it('keeps stale pull requests visible and offers a retry when a refresh fails', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'), result)
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(listPane().queryByRole('alert')).toBeNull())
+    expect(listPane().getByText('Authored change')).toBeTruthy()
+    expect(transport.requests.filter(({ method }) => method === 'pullRequests.list')).toHaveLength(
+      3,
+    )
+  })
+
+  it('dismisses a failed refresh notice without discarding the stale list', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Needs my review')).toBeTruthy()
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    fireEvent.click(
+      within(await listPane().findByRole('alert')).getByRole('button', { name: 'Dismiss' }),
+    )
+
+    expect(listPane().queryByRole('alert')).toBeNull()
+    expect(listPane().getByText('Needs my review')).toBeTruthy()
+  })
+
+  it('still surfaces a failed refresh when the current search matches nothing', async () => {
+    const transport = scriptedListTransport(result, new Error('GitHub is unreachable'))
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    fireEvent.change(listPane().getByRole('textbox', { name: 'Search pull requests' }), {
+      target: { value: 'no-match' },
+    })
+
+    fireEvent.click(listPane().getByRole('button', { name: 'Refresh pull requests' }))
+
+    expect((await listPane().findByRole('alert')).textContent).toContain('GitHub is unreachable')
+    expect(listPane().getByText('No matching pull requests')).toBeTruthy()
+  })
+
+  it('announces the first load, then its failure, and recovers on retry', async () => {
+    let failFirst!: (cause: Error) => void
+    let listRequests = 0
+    const transport = new TestTransport(async (method) => {
+      if (method !== 'pullRequests.list') throw new Error(`Unexpected request: ${method}`)
+      listRequests += 1
+      if (listRequests > 1) return result
+      return new Promise<PullRequestListResult>((_resolve, reject) => {
+        failFirst = reject
+      })
+    })
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(listPane().getByRole('status', { name: 'Loading pull requests' })).toBeTruthy()
+    await waitFor(() => expect(failFirst).toBeDefined())
+    failFirst(new Error('GitHub is unreachable'))
+
+    const alert = await listPane().findByRole('alert')
+    expect(alert.textContent).toContain("Couldn't load pull requests")
+    expect(alert.textContent).toContain('GitHub is unreachable')
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listPane().queryByRole('alert')).toBeNull()
+  })
+
+  it('refreshes once a GitHub setup finishes, not on every later visit', async () => {
+    const transport = pullRequestTransport()
+    const listRefreshes = () =>
+      transport.requests.flatMap(({ method, params }) =>
+        method === 'pullRequests.list' ? [(params as { refresh: boolean }).refresh] : [],
+      )
+    const view = (setupRefreshRevision: number) => (
+      <PullRequestsView
+        transport={transport}
+        onOpenChat={vi.fn()}
+        onSetupTerminalOpen={vi.fn()}
+        setupRefreshRevision={setupRefreshRevision}
+      />
+    )
+
+    const first = render(view(1))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false])
+
+    first.rerender(view(2))
+    await waitFor(() => expect(listRefreshes()).toEqual([false, true]))
+
+    first.unmount()
+    render(view(2))
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    expect(listRefreshes()).toEqual([false, true, false])
+  })
+
+  it('keeps a pull request the viewer authored and reviewed on Reviewing after its detail refreshes', async () => {
+    const both: PullRequestListItem = {
+      ...result.items[0]!,
+      title: 'My PR I also replied on',
+      updatedAt: '2026-08-09T14:00:00Z',
+      relationship: 'both',
+    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return { ...result, items: [both, result.items[1]!] }
+      // The server derives a detail's relationship from authorship alone.
+      if (method === 'pullRequests.detail') return detailOf({ ...both, relationship: 'authored' })
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const detailRequests = () =>
+      transport.requests.filter((entry) => entry.method === 'pullRequests.detail').length
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(await listPane().findByText('My PR I also replied on')).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: 'Reviewing 2' }))
+    await waitFor(() => expect(detailRequests()).toBe(1))
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() => expect(detailRequests()).toBeGreaterThan(1))
+
+    expect(screen.getByRole('tab', { name: /^Reviewing/ }).textContent).toBe('Reviewing2')
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'My PR I also replied on',
+    )
+    expect(detailRequests()).toBe(2)
+  })
+
+  it('keeps a merged pull request open under the Open filter until the view changes', async () => {
+    let merged = false
+    const transport = new TestTransport(async (method, params) => {
+      if (method === 'pullRequests.list') return result
+      if (method === 'pullRequests.detail') {
+        const { number } = params as { number: number }
+        const item = result.items.find((entry) => entry.number === number)!
+        return detailOf(merged && number === 7 ? { ...item, state: 'MERGED' } : item)
+      }
+      if (method === 'pullRequests.action') {
+        merged = true
+        return { message: 'Pull request merged' }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    const detailHeading = () =>
+      document.querySelector('.pr-detail-pane h2')?.textContent ?? undefined
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+    expect(await listPane().findByText('Authored change')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Filter pull requests: no active filters' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /State All states/ }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /^Open/ }))
+    fireEvent.click(listPane().getByText('Authored change'))
+    await waitFor(() => expect(detailHeading()).toBe('Authored change'))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge pull request' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Squash and merge' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Merge pull request' }),
+    )
+
+    expect((await screen.findByRole('status')).textContent).toContain('Pull request merged')
+    await waitFor(() =>
+      expect(
+        transport.requests.filter(({ method }) => method === 'pullRequests.detail'),
+      ).toHaveLength(2),
+    )
+    expect(detailHeading()).toBe('Authored change')
+    expect(screen.getByRole('status').textContent).toContain('Pull request merged')
+    expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+      'Authored change',
+    )
+
+    fireEvent.change(listPane().getByRole('textbox', { name: 'Search pull requests' }), {
+      target: { value: 'review' },
+    })
+    await waitFor(() => expect(detailHeading()).toBe('Needs my review'))
+    expect(listPane().queryByText('Authored change')).toBeNull()
+  })
+
+  it('adds an authored pull request that only the reviewed search returned to Authored', async () => {
+    const reviewedOnly: PullRequestListItem = {
+      ...result.items[0]!,
+      title: 'My older PR I replied on',
+      relationship: 'reviewing',
+    }
+    const transport = new TestTransport(async (method) => {
+      if (method === 'pullRequests.list') return { ...result, items: [reviewedOnly] }
+      if (method === 'pullRequests.detail')
+        return detailOf({ ...reviewedOnly, relationship: 'authored' })
+      throw new Error(`Unexpected request: ${method}`)
+    })
+
+    render(
+      <PullRequestsView transport={transport} onOpenChat={vi.fn()} onSetupTerminalOpen={vi.fn()} />,
+    )
+
+    expect(await listPane().findByText('My older PR I replied on')).toBeTruthy()
+    expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored0')
+    await waitFor(() =>
+      expect(transport.requests.some((entry) => entry.method === 'pullRequests.detail')).toBe(true),
+    )
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'))
+    })
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: /^Authored/ }).textContent).toBe('Authored1'),
+    )
+    expect(screen.getByRole('tab', { name: /^Reviewing/ }).textContent).toBe('Reviewing1')
+  })
+
   it.each([
     {
       account: { available: false, authenticated: false, error: 'GitHub CLI is not installed' },
@@ -248,3 +494,27 @@ describe('PullRequestsView', () => {
     })
   })
 })
+
+function detailOf(item: PullRequestListItem): PullRequestDetail {
+  return {
+    ...item,
+    body: '',
+    createdAt: item.updatedAt,
+    headRefOid: 'head-oid',
+    baseRefOid: 'base-oid',
+    changedFiles: 1,
+    mergeable: 'MERGEABLE',
+    maintainerCanModify: true,
+    reviewers: [],
+    requestedReviewers: [],
+    assignees: [],
+    labels: [],
+    checks: [],
+    comments: [],
+    reviews: [],
+    reviewThreads: [],
+    reviewThreadsTruncated: false,
+    permissions: { canPush: true, canAdmin: false },
+    mergeMethods: { merge: true, rebase: true, squash: true, deleteBranchOnMerge: false },
+  }
+}

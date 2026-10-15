@@ -1,9 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { Model } from '@harness/contracts'
 import { useState, type ReactNode } from 'react'
-import type { ModelChoice } from '../model-catalog.js'
+import { providerMark, type ModelChoice } from '../model-catalog.js'
 
 const haptics = vi.hoisted(() => ({
   performAppHaptic: vi.fn(),
@@ -177,11 +177,62 @@ describe('ModelSelector', () => {
     renderSelector()
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
 
-    expect(trigger.textContent).toContain('5.6 Sol')
+    expect(trigger.querySelector('.model-selector__trigger-name')?.textContent).toBe('GPT-5.6 Sol')
     expect(trigger.textContent).toContain('Extra High')
     expect(trigger.querySelector('.model-selector__trigger-fast')).toBeNull()
-    expect(getCompactModelName('GPT-5.6 Sol')).toBe('5.6 Sol')
+    expect(getCompactModelName('GPT-5.6 Sol')).toBe('GPT-5.6 Sol')
     expect(getFriendlyEffortLabel('xhigh')).toBe('Extra High')
+    // The top levels Codex (ultra) and Claude Code (ultracode) advertise.
+    expect(getFriendlyEffortLabel('ultra')).toBe('Ultra')
+    expect(getFriendlyEffortLabel('ultracode')).toBe('Ultracode')
+  })
+
+  it('keeps the GPT family on Codex names and leaves Claude and Grok names whole', () => {
+    // Names as Codex 0.154, Claude Code 2.1 and the Grok adapter report them.
+    const names: Array<[string, string]> = [
+      ['GPT-6-Astra', 'GPT-6 Astra'],
+      ['GPT-5.6-Sol', 'GPT-5.6 Sol'],
+      ['GPT-5.6-Terra', 'GPT-5.6 Terra'],
+      ['GPT-5.5', 'GPT-5.5'],
+      ['GPT-5.3-Codex-Spark', 'GPT-5.3 Codex Spark'],
+      ['gpt-5.4-mini', 'GPT-5.4 mini'],
+      ['gpt-oss-120b', 'GPT oss 120b'],
+      ['Fable 5.1', 'Fable 5.1'],
+      ['Sonnet 5.5', 'Sonnet 5.5'],
+      ['Opus 5', 'Opus 5'],
+      ['Grok 4.5', 'Grok 4.5'],
+      ['Grok Code Fast 1', 'Grok Code Fast 1'],
+    ]
+    for (const [name, compact] of names) expect(getCompactModelName(name)).toBe(compact)
+    expect(getCompactModelName(undefined)).toBe('Model')
+    expect(getCompactModelName('  ')).toBe('Model')
+  })
+
+  it('names the choice its owner resolved, even when the list would fall back elsewhere', async () => {
+    const placeholder: ModelChoice = {
+      key: 'claude-code:',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: providerMark('claude-code'),
+      model: {
+        id: '',
+        displayName: 'Provider default',
+        description: 'The model this provider is configured to use',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    const { onModelChange } = renderSelector({ modelId: placeholder.key, choice: placeholder })
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(trigger.textContent).toContain('Provider default')
+    expect(trigger.textContent).not.toContain('5.6 Sol')
+
+    // The list default is not the current choice, so picking it must commit.
+    await openSelector()
+    fireEvent.click(await screen.findByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-sol')
   })
 
   it('shows active fast mode in the compact trigger', async () => {
@@ -291,9 +342,11 @@ describe('ModelSelector', () => {
       'Effort: Extra High',
     )
     expect(onEffortChange).not.toHaveBeenCalled()
-    expect(slider.querySelectorAll('canvas')).toHaveLength(2)
-    expect(slider.querySelectorAll('.model-selector__slider-stop')).toHaveLength(4)
-    expect(slider.querySelector('.model-selector__slider-thumb')).toBeNull()
+    expect(slider.querySelectorAll('canvas')).toHaveLength(0)
+    // One dim and one lit dot per level, and a single thumb.
+    expect(slider.querySelectorAll('.model-selector__slider-dot')).toHaveLength(8)
+    expect(slider.querySelectorAll('.model-selector__slider-thumb')).toHaveLength(1)
+    expect(slider.style.getPropertyValue('--effort-p')).toBe('1')
     expect(haptics.prepareAppHaptics).toHaveBeenCalled()
     expect(haptics.performAppHaptic).toHaveBeenCalledTimes(2)
     expect(haptics.performAppHaptic).toHaveBeenNthCalledWith(1, 'alignment')
@@ -301,6 +354,34 @@ describe('ModelSelector', () => {
 
     fireEvent.pointerUp(slider, { clientX: 350, pointerId: 4 })
     expect(onEffortChange).toHaveBeenCalledWith('xhigh')
+  })
+
+  it('takes focus on pointer down so keys after a click move the effort, not the search', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'medium' })
+
+    await openSelector()
+    const search = screen.getByRole('searchbox', { name: 'Search models' })
+    search.focus()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 44,
+      right: 380,
+      bottom: 64,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.pointerDown(slider, { clientX: 200, pointerId: 7 })
+    fireEvent.pointerUp(slider, { clientX: 200, pointerId: 7 })
+    expect(document.activeElement).toBe(slider)
+
+    fireEvent.keyDown(document.activeElement!, { key: 'End' })
+    expect(onEffortChange).toHaveBeenLastCalledWith('xhigh')
+    expect((search as HTMLInputElement).value).toBe('')
   })
 
   it('supports arrow and Home/End keyboard movement on the discrete slider', async () => {
@@ -316,6 +397,93 @@ describe('ModelSelector', () => {
     expect(onEffortChange).toHaveBeenNthCalledWith(1, 'high')
     expect(onEffortChange).toHaveBeenNthCalledWith(2, 'xhigh')
     expect(onEffortChange).toHaveBeenNthCalledWith(3, 'low')
+  })
+
+  it('previews a hovered level with a ring and names the default', async () => {
+    const { onEffortChange } = renderSelector({ effort: 'high' })
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(
+      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
+        mark.classList.contains('is-filled'),
+      ),
+    ).toEqual([true, true, true, false])
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    vi.spyOn(slider, 'getBoundingClientRect').mockReturnValue({
+      x: 0,
+      y: 0,
+      left: 100,
+      top: 20,
+      width: 280,
+      height: 30,
+      right: 380,
+      bottom: 50,
+      toJSON: () => ({}),
+    })
+    const preview = () => document.querySelector('.model-selector__effort-preview')?.textContent
+    // Medium is the model's default: its dot is the ring in both the dim and the lit row.
+    const defaults = slider.querySelectorAll('.model-selector__slider-dot.is-default')
+    expect(defaults).toHaveLength(2)
+
+    fireEvent.pointerMove(slider, { clientX: 185, pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(true)
+    expect(slider.style.getPropertyValue('--effort-hover-p')).toBe(String(1 / 3))
+    expect(preview()).toBe('Medium· default')
+    // Hovering is not a value change.
+    expect(slider.getAttribute('aria-valuetext')).toBe('High')
+    expect(slider.style.getPropertyValue('--effort-p')).toBe(String(2 / 3))
+
+    fireEvent.pointerMove(slider, { clientX: 270, pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(false)
+    expect(preview()).toBeUndefined()
+
+    fireEvent.pointerMove(slider, { clientX: 370, pointerId: 1, pointerType: 'mouse' })
+    expect(preview()).toBe('Extra High')
+    fireEvent.pointerLeave(slider, { pointerId: 1, pointerType: 'mouse' })
+    expect(slider.classList.contains('is-previewing')).toBe(false)
+    expect(preview()).toBeUndefined()
+    // The ring keeps its last place while it fades.
+    expect(slider.style.getPropertyValue('--effort-hover-p')).toBe('1')
+    expect(onEffortChange).not.toHaveBeenCalled()
+  })
+
+  it('lays out one dot per level the model offers', async () => {
+    const sixLevels = {
+      ...MODELS[0]!,
+      model: {
+        ...MODELS[0]!.model,
+        reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra'],
+      },
+    }
+    const onEffortChange = vi.fn()
+    render(
+      <ModelSelector
+        models={[sixLevels]}
+        modelId={sixLevels.key}
+        effort="ultra"
+        serviceTier={undefined}
+        disabled={false}
+        onModelChange={vi.fn()}
+        onEffortChange={onEffortChange}
+        onServiceTierChange={vi.fn()}
+      />,
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    const marks = () =>
+      Array.from(trigger.querySelectorAll('.model-selector__trigger-dot')).map((mark) =>
+        mark.classList.contains('is-filled'),
+      )
+    expect(marks()).toEqual([true, true, true, true, true, true])
+    expect(trigger.textContent).toContain('Ultra')
+
+    await openSelector()
+    const slider = screen.getByRole('slider', { name: 'Reasoning effort' })
+    expect(slider.getAttribute('aria-valuemax')).toBe('5')
+    expect(slider.querySelectorAll('.model-selector__slider-dots.is-lit > *')).toHaveLength(6)
+    fireEvent.keyDown(slider, { key: 'ArrowLeft' })
+    expect(onEffortChange).toHaveBeenCalledWith('xhigh')
   })
 
   it('shows compact models immediately and leaves effort and tier to the owner', async () => {
@@ -444,14 +612,19 @@ describe('ModelSelector', () => {
     }
 
     expect(groupModelsBySource([...MODELS, claudeModel]).map((group) => group.name)).toEqual([
-      'Codex',
       'Claude Code',
+      'Codex',
     ])
 
     const { onModelChange } = renderSelector({ models: [...MODELS, claudeModel] })
     await openSelector()
 
     expect(screen.getByRole('group', { name: 'Providers' })).toBeTruthy()
+    expect(
+      within(screen.getByRole('group', { name: 'Providers' }))
+        .getAllByRole('button')
+        .map((button) => button.getAttribute('title')),
+    ).toEqual(['Claude Code', 'Codex'])
     expect(
       screen.getByRole('button', { name: 'Show Codex models' }).getAttribute('aria-pressed'),
     ).toBe('true')
@@ -480,13 +653,13 @@ describe('ModelSelector', () => {
     expect(onModelChange).not.toHaveBeenCalled()
   })
 
-  it('keeps ACP sources distinct by stable agent identity', async () => {
-    const acpModels: ModelChoice[] = ['gemini', 'qwen'].map((agentId) => ({
+  it('keeps custom harness sources distinct by stable agent identity', async () => {
+    const harnessModels: ModelChoice[] = ['work-codex', 'home-codex'].map((agentId) => ({
       ...MODELS[0]!,
-      key: `acp:${agentId}:default`,
-      provider: 'acp',
+      key: `codex:${agentId}:default`,
+      provider: 'codex',
       sourceName: 'Workspace agent',
-      mark: 'acp',
+      mark: 'openai',
       agent: { id: agentId, name: 'Workspace agent' },
       model: {
         ...MODELS[0]!.model,
@@ -497,9 +670,46 @@ describe('ModelSelector', () => {
       },
     }))
 
-    expect(groupModelsBySource(acpModels).map((group) => group.key)).toEqual([
-      'acp:gemini',
-      'acp:qwen',
+    expect(groupModelsBySource(harnessModels).map((group) => group.key)).toEqual([
+      'codex:work-codex',
+      'codex:home-codex',
+    ])
+  })
+
+  it('keeps providers in one order however discovery settles', () => {
+    const source = (
+      provider: ModelChoice['provider'],
+      sourceName: string,
+      agentId?: string,
+    ): ModelChoice => ({
+      ...MODELS[0]!,
+      key: `${agentId ? `${provider}:${agentId}` : provider}:default`,
+      provider,
+      sourceName,
+      mark: providerMark(provider),
+      ...(agentId ? { agent: { id: agentId, name: sourceName } } : {}),
+    })
+    const claude = source('claude-code', 'Claude Code')
+    const codex = source('codex', 'Codex')
+    const grok = source('grok', 'Grok')
+    const work = source('codex', 'Work agent', 'work')
+    const home = source('claude-code', 'Home agent', 'home')
+    const names = (models: ModelChoice[]) => groupModelsBySource(models).map((group) => group.name)
+
+    // Stock providers take their fixed place; custom harnesses follow as they arrived.
+    expect(names([work, grok, home, codex, claude])).toEqual([
+      'Claude Code',
+      'Codex',
+      'Grok',
+      'Work agent',
+      'Home agent',
+    ])
+    expect(names([home, codex, work, grok, claude])).toEqual([
+      'Claude Code',
+      'Codex',
+      'Grok',
+      'Home agent',
+      'Work agent',
     ])
   })
 
@@ -546,6 +756,7 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('dialog', { name: 'Model and reasoning' })).toBeTruthy()
   })
 
+  // The thumb travels between 3 + 12 and width - 15: the first and last stops.
   it('maps pointer positions onto discrete effort stops', async () => {
     expect(
       getEffortIndexFromPointer({
@@ -571,6 +782,26 @@ describe('ModelSelector', () => {
         left: 100,
         width: 280,
       }),
-    ).toBeCloseTo(0.405, 3)
+    ).toBeCloseTo(0.5, 3)
+  })
+
+  it('switches only in the final quarter of a drag in either direction', () => {
+    // Inset 3 + half a 24px thumb puts the first stop at 15; 330 wide leaves 300 of travel.
+    const at = (position: number, currentIndex: number) =>
+      getEffortIndexFromPointer({
+        clientX: 15 + position * 100,
+        left: 0,
+        width: 330,
+        stopCount: 4,
+        currentIndex,
+      })
+    expect(at(1.26, 2)).toBe(2)
+    expect(at(1.25, 2)).toBe(1)
+    expect(at(1.74, 1)).toBe(1)
+    expect(at(1.75, 1)).toBe(2)
+    expect(at(1.5, 2)).toBe(2)
+    expect(at(1.5, 1)).toBe(1)
+    expect(at(-1, 2)).toBe(0)
+    expect(at(4, 1)).toBe(3)
   })
 })

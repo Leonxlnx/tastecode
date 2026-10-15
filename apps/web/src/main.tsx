@@ -1,6 +1,7 @@
 import { StrictMode, useLayoutEffect } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from './App.js'
+import { RendererErrorBoundary } from './RendererErrorBoundary.js'
 import {
   isDesktop,
   isStartupBenchmark,
@@ -25,11 +26,12 @@ import './styles/app.css'
 const root = document.getElementById('root')
 if (!root) throw new Error('missing #root')
 
-const backdrop = readBackdropPreference()
-applyTheme(backdropColorScheme(backdrop) ?? resolveTheme(readThemePreference()))
+const appearanceMode = resolveTheme(readThemePreference())
+const backdrop = readBackdropPreference(appearanceMode)
+applyTheme(backdropColorScheme(backdrop) ?? appearanceMode)
 applyBackdropPreference(backdrop)
-applyFontPreference(readFontPreference())
-applyAccentPreference(readAccentPreference())
+applyFontPreference(readFontPreference(appearanceMode))
+applyAccentPreference(readAccentPreference(appearanceMode))
 
 // The stylesheet needs to know whether an OS blur material exists behind the
 // window (Electron acrylic/vibrancy) — that is what the sidebar glass shows.
@@ -51,7 +53,9 @@ function StartupProbe() {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
-    {isStartupBenchmark ? <StartupProbe /> : null}
+    <RendererErrorBoundary>
+      <App />
+      {isStartupBenchmark ? <StartupProbe /> : null}
+    </RendererErrorBoundary>
   </StrictMode>,
 )

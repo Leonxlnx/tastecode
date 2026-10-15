@@ -1,8 +1,16 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { installLocalSkill } from './skill-install.js'
+import { insideSkillFolder, installLocalSkill, sameSkillFolder } from './skill-install.js'
 
 const roots: string[] = []
 
@@ -50,5 +58,24 @@ describe('local skill installation', () => {
     expect(() =>
       readFileSync(path.join(project, '.agents', 'skills', 'unsafe-skill', 'SKILL.md')),
     ).toThrow()
+  })
+})
+
+describe('installed skill folder identity', () => {
+  it('matches another spelling of the same folder without matching a sibling', () => {
+    const root = temporary('identity')
+    const installed = path.join(root, 'installed')
+    const sibling = path.join(root, 'installed-copy')
+    mkdirSync(installed)
+    mkdirSync(sibling)
+    const alias = path.join(root, 'alias')
+    symlinkSync(installed, alias, process.platform === 'win32' ? 'junction' : 'dir')
+
+    expect(sameSkillFolder(alias, installed)).toBe(true)
+    expect(sameSkillFolder(sibling, installed)).toBe(false)
+    expect(insideSkillFolder(path.join(alias, 'nested', 'SKILL.md'), installed)).toBe(true)
+    expect(insideSkillFolder(path.join(sibling, 'SKILL.md'), installed)).toBe(false)
+    const recased = installed.toUpperCase()
+    if (existsSync(recased)) expect(sameSkillFolder(recased, installed)).toBe(true)
   })
 })

@@ -1,8 +1,9 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import {
   methods,
+  type PullRequestComment,
   type PullRequestDetail,
   type PullRequestMetadataOptions,
 } from '@harness/contracts'
@@ -82,6 +83,14 @@ function setup(detailValue: PullRequestDetail = detail) {
   const request = vi.fn<TestRequestResolver>(async (method) => {
     if (method === 'pullRequests.detail') return detailValue
     if (method === 'pullRequests.metadataOptions') return metadataOptions
+    if (method === 'pullRequests.files')
+      return {
+        headRefOid: detailValue.headRefOid,
+        baseRefOid: detailValue.baseRefOid,
+        files: [],
+        page: 1,
+        hasMore: false,
+      }
     if (method === 'pullRequests.action') {
       return { message: 'Pull request updated' }
     }
@@ -97,6 +106,32 @@ function setup(detailValue: PullRequestDetail = detail) {
     />,
   )
   return { request, onChanged, container: view.container }
+}
+
+/** Detail replies in order: an Error rejects, anything else resolves; then `detail`. */
+function renderScriptedDetail(
+  ...replies: Array<PullRequestDetail | Promise<PullRequestDetail> | Error>
+) {
+  let count = 0
+  const request = vi.fn<TestRequestResolver>(async (method) => {
+    if (method === 'pullRequests.detail') {
+      count += 1
+      const reply = replies.shift() ?? detail
+      if (reply instanceof Error) throw reply
+      return reply
+    }
+    if (method === 'pullRequests.metadataOptions') return metadataOptions
+    throw new Error(`Unexpected request: ${method}`)
+  })
+  render(
+    <PullRequestDetailPane
+      item={detail}
+      transport={new TestTransport(request)}
+      onOpenChat={vi.fn()}
+      onChanged={vi.fn()}
+    />,
+  )
+  return { detailRequests: () => count }
 }
 
 function deferred<T>() {
@@ -144,31 +179,47 @@ describe('PullRequestDetailPane inline editing', () => {
     )
   })
 
-  it('surfaces a failed refresh as a notice without replacing the loaded detail', async () => {
-    let detailRequests = 0
-    const request = vi.fn<TestRequestResolver>(async (method) => {
-      if (method === 'pullRequests.detail') {
-        detailRequests += 1
-        if (detailRequests > 1) throw new Error('GitHub is unreachable')
-        return detail
-      }
-      if (method === 'pullRequests.metadataOptions') return metadataOptions
-      throw new Error(`Unexpected request: ${method}`)
-    })
-    render(
-      <PullRequestDetailPane
-        item={detail}
-        transport={new TestTransport(request)}
-        onOpenChat={vi.fn()}
-        onChanged={vi.fn()}
-      />,
-    )
+  it('surfaces a failed refresh as a retryable alert without replacing the loaded detail', async () => {
+    const { detailRequests } = renderScriptedDetail(detail, new Error('GitHub is unreachable'))
 
     await screen.findByText('Editable pull request')
     fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
 
-    expect((await screen.findByRole('status')).textContent).toContain('GitHub is unreachable')
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('GitHub is unreachable')
     expect(screen.getByText('Editable pull request')).toBeTruthy()
+
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+    expect(detailRequests()).toBe(3)
+    expect(screen.getByText('Editable pull request')).toBeTruthy()
+  })
+
+  it('dismisses a failed refresh alert and keeps the loaded detail', async () => {
+    renderScriptedDetail(detail, new Error('GitHub is unreachable'))
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+
+    fireEvent.click(
+      within(await screen.findByRole('alert')).getByRole('button', { name: 'Dismiss' }),
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByText('Editable pull request')).toBeTruthy()
+  })
+
+  it('announces the first load and its failure, then recovers on retry', async () => {
+    const first = deferred<PullRequestDetail>()
+    renderScriptedDetail(first.promise, detail)
+
+    expect(screen.getByRole('status', { name: 'Loading pull request' })).toBeTruthy()
+    first.reject(new Error('GitHub is unreachable'))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain("Couldn't open this pull request")
+    fireEvent.click(within(alert).getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Editable pull request')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('keeps empty label and milestone triggers at their readable width', async () => {
@@ -210,6 +261,20 @@ describe('PullRequestDetailPane inline editing', () => {
         action: { type: 'edit', title: 'Updated inline title' },
       }),
     )
+  })
+
+  it('keeps the title editor open for the Enter that confirms an IME conversion', async () => {
+    setup()
+
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Edit title' }))
+    const input = screen.getByRole('textbox', { name: 'Pull request title' })
+    input.focus()
+    fireEvent.change(input, { target: { value: 'にほんご' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(document.activeElement).toBe(input)
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(document.activeElement).not.toBe(input)
   })
 
   it('edits the description inside its section without opening a dialog', async () => {
@@ -283,6 +348,32 @@ describe('PullRequestDetailPane metadata controls', () => {
     expect(onChanged).toHaveBeenCalledTimes(1)
   })
 
+  it('asks GitHub again when a failed metadata option list is retried', async () => {
+    const { request } = setup()
+    const resolve = request.getMockImplementation()!
+    let optionRequests = 0
+    request.mockImplementation(async (method, params) => {
+      if (method === 'pullRequests.metadataOptions' && ++optionRequests === 1) {
+        throw new Error('GitHub is unreachable')
+      }
+      return resolve(method, params)
+    })
+
+    expect(await screen.findByText('Editable pull request')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Manage labels' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'GitHub is unreachable · Retry' }))
+
+    await waitFor(() => {
+      const optionRequests = request.mock.calls
+        .filter(([method]) => method === 'pullRequests.metadataOptions')
+        .map(([, params]) => methods['pullRequests.metadataOptions'].params.parse(params))
+      expect(optionRequests).toEqual([
+        { repository: 'Blueemi/harness' },
+        { repository: 'Blueemi/harness', refresh: true },
+      ])
+    })
+  })
+
   it('keeps mutation progress beside the selected metadata row and revalidates silently', async () => {
     const action = deferred<{ message: string }>()
     const revalidation = deferred<PullRequestDetail>()
@@ -350,6 +441,46 @@ describe('PullRequestDetailPane metadata controls', () => {
       }),
     )
     await waitFor(() => expect(onChanged).toHaveBeenCalledTimes(2))
+  })
+
+  it('ignores a refresh that started before a successful change', async () => {
+    const staleRefresh = deferred<PullRequestDetail>()
+    let detailRequests = 0
+    const request = vi.fn<TestRequestResolver>(async (method) => {
+      if (method === 'pullRequests.detail') {
+        detailRequests += 1
+        if (detailRequests === 1) return detail
+        if (detailRequests === 2) return staleRefresh.promise
+        return { ...detail, isDraft: false }
+      }
+      if (method === 'pullRequests.metadataOptions') return metadataOptions
+      if (method === 'pullRequests.action') return { message: 'Marked ready for review' }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    render(
+      <PullRequestDetailPane
+        item={detail}
+        transport={new TestTransport(request)}
+        onOpenChat={vi.fn()}
+        onChanged={vi.fn()}
+      />,
+    )
+    await screen.findByText('Editable pull request')
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+    await waitFor(() => expect(detailRequests).toBe(2))
+    fireEvent.click(screen.getByRole('button', { name: 'Change pull request status' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Ready for review' }))
+    await screen.findByText('Marked ready for review')
+    expect(
+      screen.getByRole('button', { name: 'Refresh pull request' }).querySelector('.is-spinning'),
+    ).toBeNull()
+    // The server retires the pre-change read instead of returning old data.
+    await act(async () =>
+      staleRefresh.reject(new Error('Pull request changed while loading. Refresh and try again.')),
+    )
+    await waitFor(() => expect(detailRequests).toBe(3))
+    expect(screen.queryByText(/changed while loading/)).toBeNull()
+    expect(screen.getByText('Marked ready for review')).toBeTruthy()
   })
 
   it.each([
@@ -459,5 +590,284 @@ describe('PullRequestDetailPane metadata controls', () => {
         .map(([, params]) => methods['pullRequests.action'].params.parse(params).action)
       expect(actions).toEqual([{ type: 'reopen' }, { type: 'set_draft', draft: false }])
     })
+  })
+})
+
+describe('PullRequestDetailPane review safety', () => {
+  it('pins a merge confirmation to its original head and refreshes after rejection', async () => {
+    const initial = { ...detail, isDraft: false }
+    const { request, onChanged } = setup(initial)
+    await screen.findByText(initial.title)
+    fireEvent.click(screen.getByRole('button', { name: 'Merge pull request' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Squash and merge' }))
+
+    request.mockImplementation(async (method) => {
+      if (method === 'pullRequests.detail') return { ...initial, headRefOid: 'new-head' }
+      if (method === 'pullRequests.action') {
+        throw new Error(
+          'The pull request head changed since you reviewed it. Review the latest commits before merging.',
+        )
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('pullRequests.detail', {
+        repository: detail.repository,
+        number: detail.number,
+        refresh: true,
+      }),
+    )
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Merge pull request' }))
+
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('pullRequests.action', {
+        repository: detail.repository,
+        number: detail.number,
+        action: {
+          type: 'merge',
+          method: 'squash',
+          expectedHeadOid: 'head-oid',
+          deleteBranch: false,
+        },
+      }),
+    )
+    expect((await screen.findByRole('alert')).textContent).toContain('Review the latest commits')
+    await waitFor(() =>
+      expect(onChanged).toHaveBeenCalledWith(expect.objectContaining({ headRefOid: 'new-head' })),
+    )
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('sends the inspected head when enabling auto-merge', async () => {
+    const { request } = setup({ ...detail, isDraft: false })
+    await screen.findByText(detail.title)
+    fireEvent.click(screen.getByRole('button', { name: 'Auto-merge options' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Enable with Squash and merge' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('pullRequests.action', {
+        repository: detail.repository,
+        number: detail.number,
+        action: { type: 'enable_auto_merge', method: 'squash', expectedHeadOid: detail.headRefOid },
+      }),
+    )
+  })
+
+  it('binds approval to the inspected commit', async () => {
+    const { request } = setup({ ...detail, relationship: 'reviewing' })
+    await screen.findByRole('textbox', { name: 'Pull request comment' })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Submission type' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Approve' }))
+    fireEvent.click(screen.getByRole('button', { name: 'approved these changes' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('pullRequests.action', {
+        repository: detail.repository,
+        number: detail.number,
+        action: { type: 'review', verdict: 'approve', body: '', commitId: detail.headRefOid },
+      }),
+    )
+  })
+
+  it('refreshes on focus and coalesces repeated focus notifications', async () => {
+    const { request, onChanged } = setup()
+    await screen.findByText(detail.title)
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(onChanged).toHaveBeenCalledOnce())
+    fireEvent(window, new Event('focus'))
+    expect(request.mock.calls.filter(([method]) => method === 'pullRequests.detail')).toHaveLength(
+      2,
+    )
+    expect(request).toHaveBeenCalledWith('pullRequests.detail', {
+      repository: detail.repository,
+      number: detail.number,
+      refresh: true,
+    })
+  })
+
+  it('keeps a new draft typed while an earlier comment is being sent', async () => {
+    const pending = deferred<{ message: string }>()
+    const { request } = setup()
+    const composer = await screen.findByRole('textbox', { name: 'Pull request comment' })
+    request.mockImplementation(async (method) => {
+      if (method === 'pullRequests.detail') return detail
+      if (method === 'pullRequests.action') return pending.promise
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    fireEvent.change(composer, { target: { value: 'First note' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Send comment' }))
+    fireEvent.change(composer, { target: { value: 'Next unsent note' } })
+    await act(async () => pending.resolve({ message: 'Comment added' }))
+    expect((composer as HTMLTextAreaElement).value).toBe('Next unsent note')
+  })
+
+  it('keeps review text and mode when Files unmounts the composer', async () => {
+    setup({ ...detail, relationship: 'reviewing' })
+    const composer = await screen.findByRole('textbox', { name: 'Pull request comment' })
+    fireEvent.click(screen.getByRole('combobox', { name: 'Submission type' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Request changes' }))
+    fireEvent.change(composer, { target: { value: 'Please check this edge case.' } })
+    fireEvent.click(screen.getByRole('tab', { name: /Files/ }))
+    expect(screen.queryByRole('textbox', { name: 'Pull request comment' })).toBeNull()
+    fireEvent.click(screen.getByRole('tab', { name: 'Summary' }))
+    expect(
+      (screen.getByRole('textbox', { name: 'Pull request comment' }) as HTMLTextAreaElement).value,
+    ).toBe('Please check this edge case.')
+    expect(screen.getByRole('combobox', { name: 'Submission type' }).textContent).toBe(
+      'Request changes',
+    )
+  })
+
+  it('reloads visible files on explicit refresh even when the comparison SHAs stay the same', async () => {
+    const { request } = setup()
+    await screen.findByText(detail.title)
+    fireEvent.click(screen.getByRole('tab', { name: /Files/ }))
+    await waitFor(() =>
+      expect(request.mock.calls.filter(([method]) => method === 'pullRequests.files')).toHaveLength(
+        1,
+      ),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh pull request' }))
+    await waitFor(() =>
+      expect(request.mock.calls.filter(([method]) => method === 'pullRequests.files')).toHaveLength(
+        2,
+      ),
+    )
+    expect(request).toHaveBeenCalledWith('pullRequests.files', {
+      repository: detail.repository,
+      number: detail.number,
+      expectedHeadOid: detail.headRefOid,
+      expectedBaseOid: detail.baseRefOid,
+      page: 1,
+      refresh: true,
+    })
+  })
+
+  it('refreshes detail and reloads Files with the new comparison after a moved-head rejection', async () => {
+    const { request } = setup()
+    await screen.findByText(detail.title)
+    let fileRequests = 0
+    request.mockImplementation(async (method) => {
+      if (method === 'pullRequests.detail') return { ...detail, headRefOid: 'new-head' }
+      if (method === 'pullRequests.files') {
+        fileRequests += 1
+        if (fileRequests === 1)
+          throw new Error(
+            'Pull request comparison changed. Refresh the pull request before reviewing files.',
+          )
+        return {
+          headRefOid: 'new-head',
+          baseRefOid: detail.baseRefOid,
+          files: [],
+          page: 1,
+          hasMore: false,
+        }
+      }
+      throw new Error(`Unexpected request: ${method}`)
+    })
+    fireEvent.click(screen.getByRole('tab', { name: /Files/ }))
+    await waitFor(() => expect(fileRequests).toBe(2))
+    expect(request).toHaveBeenCalledWith('pullRequests.detail', {
+      repository: detail.repository,
+      number: detail.number,
+      refresh: true,
+    })
+    expect(request).toHaveBeenLastCalledWith('pullRequests.files', {
+      repository: detail.repository,
+      number: detail.number,
+      expectedHeadOid: 'new-head',
+      expectedBaseOid: detail.baseRefOid,
+      page: 1,
+      refresh: true,
+    })
+  })
+
+  it.each([
+    {
+      kind: 'conversation comment',
+      menu: 'Comment actions',
+      withComment: (comment: PullRequestComment): Partial<PullRequestDetail> => ({
+        comments: [comment],
+      }),
+    },
+    {
+      kind: 'review thread comment',
+      menu: 'Review comment actions',
+      withComment: (comment: PullRequestComment): Partial<PullRequestDetail> => ({
+        reviewThreads: [
+          {
+            id: 'thread',
+            path: 'src/example.ts',
+            resolved: false,
+            outdated: false,
+            comments: [comment],
+          },
+        ],
+      }),
+    },
+  ])('opens the $kind editor with the text a refresh brought in', async (scenario) => {
+    const comment = (body: string): PullRequestComment => ({
+      id: 'comment',
+      databaseId: 11,
+      author: detail.author,
+      body,
+      createdAt: detail.createdAt,
+      url: `${detail.url}#issuecomment-11`,
+      viewerDidAuthor: true,
+    })
+    renderScriptedDetail(
+      { ...detail, ...scenario.withComment(comment('first version')) },
+      { ...detail, ...scenario.withComment(comment('edited on GitHub')) },
+    )
+    await screen.findByText('first version')
+    fireEvent(window, new Event('focus'))
+    await screen.findByText('edited on GitHub')
+
+    fireEvent.click(screen.getByRole('button', { name: scenario.menu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit comment' }))
+    const editor = screen.getByDisplayValue('edited on GitHub')
+
+    // Choosing Edit again while the editor is open keeps the draft.
+    fireEvent.change(editor, { target: { value: 'my draft' } })
+    fireEvent.click(screen.getByRole('button', { name: scenario.menu }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit comment' }))
+    expect(screen.getByDisplayValue('my draft')).toBe(editor)
+  })
+
+  it('replies to the root review comment, not an existing reply', async () => {
+    const comment = {
+      id: 'root',
+      databaseId: 10,
+      author: detail.author,
+      body: 'Root note',
+      createdAt: detail.createdAt,
+      url: detail.url,
+      viewerDidAuthor: false,
+    }
+    const { request } = setup({
+      ...detail,
+      reviewThreads: [
+        {
+          id: 'thread',
+          path: 'src/example.ts',
+          resolved: false,
+          outdated: false,
+          comments: [comment, { ...comment, id: 'reply', databaseId: 20, body: 'Existing reply' }],
+        },
+      ],
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Reply' }))
+    const editor = screen
+      .getAllByRole('textbox')
+      .find((element) => !element.getAttribute('aria-label'))!
+    fireEvent.change(editor, { target: { value: 'Another reply' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }))
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith('pullRequests.action', {
+        repository: detail.repository,
+        number: detail.number,
+        action: { type: 'reply_to_review', commentId: 10, body: 'Another reply' },
+      }),
+    )
   })
 })

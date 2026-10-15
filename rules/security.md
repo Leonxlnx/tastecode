@@ -27,8 +27,13 @@ Everything the UI can do — enumerate projects, start a thread with `full` appr
 terminal — it could do too.
 
 The gate is the `Origin` header. Allowed: absent (non-browser clients — the CLI and tests),
-`file://` (the packaged renderer), and loopback origins (the dev server and our own web UI).
-Anything else is refused with 1008.
+`file://` (the packaged renderer), and exactly one HTTP renderer origin: the dev renderer
+`http://127.0.0.1:5183` by default, or the value of `HARNESS_RENDERER_ORIGIN` when set.
+Desktop-owned servers set it to `file://` so a packaged app trusts no HTTP page at all.
+Anything else is refused with 1008, **including other loopback ports**: the Design preview,
+the user's own dev server and any site an agent builds all run on loopback, and none of
+them may reach the control socket. Only a connection carrying the configured access token
+may come from another HTTP origin.
 
 **`null` is not allowed, and must never be added back.** A page cannot forge an arbitrary
 origin, but it can always mint the _opaque_ one — `<iframe sandbox="allow-scripts" srcdoc=…>`

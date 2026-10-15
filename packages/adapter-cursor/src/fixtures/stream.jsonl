@@ -1,7 +1,0 @@
-{"type":"system","subtype":"init","apiKeySource":"login","cwd":"C:\\repo","session_id":"session-1","model":"Cursor Model","permissionMode":"default"}
-{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Update README"}]},"session_id":"session-1"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"I'll update "}]},"session_id":"session-1"}
-{"type":"tool_call","subtype":"started","call_id":"call-1","tool_call":{"writeToolCall":{"args":{"path":"README.md","fileText":"Updated"}}},"session_id":"session-1"}
-{"type":"tool_call","subtype":"completed","call_id":"call-1","tool_call":{"writeToolCall":{"args":{"path":"README.md","fileText":"Updated"},"result":{"success":{"path":"C:\\repo\\README.md","linesCreated":1,"fileSize":7}}}},"session_id":"session-1"}
-{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"README."}]},"session_id":"session-1"}
-{"type":"result","subtype":"success","duration_ms":25,"duration_api_ms":20,"is_error":false,"result":"I'll update README.","session_id":"session-1"}

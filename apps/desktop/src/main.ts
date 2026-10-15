@@ -1,20 +1,21 @@
-import { randomBytes, randomUUID } from 'node:crypto'
-import { createReadStream } from 'node:fs'
-import { mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { createReadStream, readFileSync } from 'node:fs'
+import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import { createRequire } from 'node:module'
+import os from 'node:os'
 import path from 'node:path'
 import {
   app,
   BrowserWindow,
   clipboard,
-  crashReporter,
   dialog,
   ipcMain,
   Menu,
   nativeImage,
   nativeTheme,
+  powerMonitor,
   protocol,
   screen,
   session,
@@ -42,23 +43,34 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
+import { forwardBrowserShortcuts } from './browser-shortcuts.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
-import { LocalDiagnostics } from './local-diagnostics.js'
-import { allowsMicrophoneRequest, isOwnRendererPermission } from './media-permissions.js'
+import { localDiagnosticsDirectory, LocalDiagnostics } from './local-diagnostics.js'
+import {
+  allowsMicrophoneRequest,
+  allowsOwnRendererRequest,
+  isOwnRendererPermission,
+} from './media-permissions.js'
 import {
   parseNativeMenuShortcuts,
   type NativeMenuAction,
+  type NativeMenuActionSource,
   type NativeMenuShortcuts,
 } from './menu-contract.js'
-import { allowsPreviewNavigation } from './preview-navigation.js'
-import { pastedFile } from './pasted-file.js'
+import { NativeMenuDispatch } from './native-menu-dispatch.js'
+import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
+import { configurePreviewNavigation } from './preview-navigation.js'
+import { savePastedFile } from './pasted-file.js'
+import { ownedServerEnvironment } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
+import { configureRendererLifecycle } from './renderer-lifecycle.js'
 import { ServerSupervisor, type SupervisedServerProcess } from './server-supervisor.js'
 import { startupSettleDelay, summarizeAppMetrics } from './startup-metrics.js'
+import { StartupIdleGate } from './startup-idle.js'
 import { restoreMainWindowPresence } from './window-presence.js'
 import { startVisibilityWatchdog } from './window-visibility-watchdog.js'
 import {
@@ -68,7 +80,14 @@ import {
   saveMainWindowState,
   type MainWindowStatePersistence,
 } from './window-state.js'
-import { windowThemeOptions, windowThemeSource } from './window-theme.js'
+import {
+  loadWindowChrome,
+  parseWindowChrome,
+  saveWindowChrome,
+  windowChromeOptions,
+  windowThemeOptions,
+  windowThemeSource,
+} from './window-theme.js'
 import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
@@ -76,7 +95,7 @@ import {
   type ZoomAction,
   zoomShortcut,
 } from './zoom-shortcuts.js'
-import { viewedImagePath } from './viewed-image-path.js'
+import { PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
 
 applyDesktopPath()
 
@@ -99,6 +118,9 @@ const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
   ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
   : path.join(app.getPath('appData'), 'TasteCode')
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
+const windowChromePath = path.join(productDataPath, 'window-chrome.json')
+/** What window-chrome.json holds, so an unchanged report does not rewrite it. */
+let savedWindowChrome: string | undefined
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -143,6 +165,22 @@ let startupRendererReady = false
 let startupHydratedReady = false
 let startupCatalogReady = false
 let startupExitScheduled = false
+const startupIdleGate = new StartupIdleGate(startupSettledMetricsDelayMs ?? 0, () => {
+  const metrics = app.getAppMetrics()
+  void import('./performance-memory.js')
+    .then(async ({ collectSettledBenchmarkMemory }) => {
+      const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
+      if (startupIdleGate.interrupted) memory.stable = false
+      console.log(
+        '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
+      )
+      app.quit()
+    })
+    .catch((error: unknown) => {
+      console.error('[startup] memory measurement failed', error)
+      app.exit(1)
+    })
+})
 
 function finishStartupBenchmarkIfReady(): void {
   if (
@@ -165,24 +203,12 @@ function finishStartupBenchmarkIfReady(): void {
   // The first read establishes the CPU and wakeup interval. Electron reports
   // both values since the previous read; memory is sampled at the end.
   app.getAppMetrics()
-  setTimeout(() => {
-    const metrics = app.getAppMetrics()
-    void import('./performance-memory.js')
-      .then(async ({ collectSettledBenchmarkMemory }) => {
-        const memory = await collectSettledBenchmarkMemory(() => app.getAppMetrics())
-        console.log(
-          '[startup] settled ' + JSON.stringify({ ...summarizeAppMetrics(metrics), memory }),
-        )
-        app.quit()
-      })
-      .catch((error: unknown) => {
-        console.error('[startup] memory measurement failed', error)
-        app.exit(1)
-      })
-  }, startupSettledMetricsDelayMs)
+  startupIdleGate.ready()
 }
 
 const attachmentPreviewSecret = randomBytes(32)
+const pickedImagePaths = new PickedImagePaths()
+const nativeMenuDispatch = new NativeMenuDispatch<Electron.WebContents>()
 const attachmentThumbnailCache = new Map<string, Promise<Buffer | undefined>>()
 const MAX_ATTACHMENT_THUMBNAILS = 64
 /** Hidden capture windows are real BrowserWindows; lifecycle checks that count
@@ -222,17 +248,46 @@ let mainWindow: BrowserWindow | undefined
 let tray: Tray | undefined
 let appIsQuitting = false
 let serverSupervisor: ServerSupervisor | undefined
+let serverFailureNoticeOpen = false
+
+function showServerFailureNotice(): void {
+  const window = mainWindow
+  if (!serverSupervisor?.gaveUp || serverFailureNoticeOpen || !window || window.isDestroyed())
+    return
+  serverFailureNoticeOpen = true
+  void dialog
+    .showMessageBox(window, {
+      type: 'error',
+      title: nativeAppName,
+      message: 'The core server keeps crashing.',
+      detail: 'Restart the server to try again. If this keeps happening, reinstall the app.',
+      buttons: ['Restart server', 'Not now'],
+      defaultId: 0,
+      cancelId: 1,
+    })
+    .then(({ response }) => {
+      if (response === 0 && !appIsQuitting) serverSupervisor?.restart()
+    })
+    .catch(() => {})
+    .finally(() => {
+      serverFailureNoticeOpen = false
+    })
+}
 let diagnostics: LocalDiagnostics | undefined
 let appUpdater: AppUpdateController | undefined
+let waitingForUpdateCleanup = false
+let waitingForServerShutdown = false
 let mainWindowStatePersistence: MainWindowStatePersistence | undefined
 
 if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
-  ipcMain.on('harness:startupPreloadReady', (_event, elapsed: unknown) => {
+  ipcMain.on('harness:startupPreloadReady', (event, elapsed: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (typeof elapsed === 'number' && Number.isFinite(elapsed) && elapsed >= 0) {
       console.log(`[startup] preload-ready ${Math.round(elapsed)}ms`)
     }
   })
-  ipcMain.on('harness:startupRendererMilestone', (_event, name: unknown) => {
+  ipcMain.on('harness:startupRendererMilestone', (event, name: unknown) => {
+    if (!isOwnRenderer(event.sender)) return
     if (
       name !== 'module-loaded' &&
       name !== 'react-commit' &&
@@ -243,11 +298,21 @@ if (Number.isFinite(startupStartedAt) && startupStartedAt > 0) {
       name !== 'projects-received' &&
       name !== 'projects-reconciled' &&
       name !== 'projects-ready' &&
-      name !== 'catalog-ready'
+      name !== 'catalog-ready' &&
+      name !== 'requests-busy' &&
+      name !== 'requests-idle' &&
+      name !== 'notice-open' &&
+      name !== 'notice-closed'
     ) {
       return
     }
     logStartupMilestone(name)
+    if (name === 'requests-busy' || name === 'requests-idle') {
+      startupIdleGate.setIdle(name === 'requests-idle')
+    }
+    if (name === 'notice-open' || name === 'notice-closed') {
+      startupIdleGate.setNoticeVisible(name === 'notice-open')
+    }
     if (name === 'first-frame') {
       startupRendererReady = true
       finishStartupBenchmarkIfReady()
@@ -287,8 +352,22 @@ if (!ownsSingleInstance) {
  * isolated without paying for a second full app executable launch. The legacy
  * Node-mode child remains available as a field fallback.
  */
-function startOwnedServer(): void {
-  if (devServer || serverSupervisor) return
+function startOwnedServer(): boolean {
+  if (devServer || serverSupervisor) return true
+  let serverEnv: NodeJS.ProcessEnv
+  try {
+    serverEnv = ownedServerEnvironment(
+      process.env,
+      app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+    )
+  } catch (error) {
+    dialog.showErrorBox(nativeAppName, error instanceof Error ? error.message : String(error))
+    app.quit()
+    return false
+  }
+  if (process.env['HARNESS_PORT'] && process.env['HARNESS_PORT'] !== serverEnv['HARNESS_PORT']) {
+    console.warn('[desktop] ignoring HARNESS_PORT; using the packaged renderer endpoint')
+  }
   const serverEntry = app.isPackaged
     ? require.resolve('@harness/server')
     : path.join(here, '../../server/dist/main.js')
@@ -301,36 +380,40 @@ function startOwnedServer(): void {
         finishStartupBenchmarkIfReady()
       }
     },
-    onGaveUp: () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        void dialog.showMessageBox(mainWindow, {
-          type: 'error',
-          title: nativeAppName,
-          message: 'The core server keeps crashing.',
-          detail: 'Restart the app. If this keeps happening, reinstall it.',
-        })
-      }
-    },
+    onGaveUp: showServerFailureNotice,
   }
   serverSupervisor =
     process.env['HARNESS_LEGACY_SERVER_PROCESS'] === '1'
       ? new ServerSupervisor({
           command: process.execPath,
           args: [serverEntry],
-          env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', PATH: desktopPath() },
+          cwd: productDataPath,
+          env: {
+            ...serverEnv,
+            PWD: productDataPath,
+            ELECTRON_RUN_AS_NODE: '1',
+            PATH: desktopPath(),
+          },
           ...supervisorCallbacks,
         })
       : new ServerSupervisor({
-          launch: () => launchUtilityServer(serverEntry),
+          launch: () => launchUtilityServer(serverEntry, serverEnv),
           ...supervisorCallbacks,
         })
   serverSupervisor.start()
   logStartupMilestone('server-spawned')
+  return true
 }
 
-function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
+function launchUtilityServer(
+  serverEntry: string,
+  serverEnv: NodeJS.ProcessEnv,
+): SupervisedServerProcess {
   const child = utilityProcess.fork(serverEntry, [], {
-    env: { ...process.env },
+    // Finder/terminal launches may inherit a DMG or external-drive directory.
+    // Background provider probes must start in app storage, not that directory.
+    cwd: productDataPath,
+    env: { ...serverEnv, PWD: productDataPath },
     serviceName: 'Taste Code Core Server',
     stdio: 'pipe',
   })
@@ -342,6 +425,7 @@ function launchUtilityServer(serverEntry: string): SupervisedServerProcess {
       return child.stderr
     },
     kill: () => child.kill(),
+    requestShutdown: () => child.postMessage({ type: 'harness:shutdown' }),
     onError: (listener) => {
       child.on('error', (type, location) => listener(new Error(`${type} at ${location}`)))
     },
@@ -357,7 +441,11 @@ function createWindow(): void {
     return
   }
 
-  const initialTheme = windowThemeOptions('dark')
+  // The last colours the renderer reported, so a light app does not open as a
+  // dark window and caption strip for the first frames. Dark until it has.
+  const lastChrome = loadWindowChrome(windowChromePath)
+  savedWindowChrome = lastChrome ? JSON.stringify(lastChrome) : undefined
+  const initialTheme = lastChrome ? windowChromeOptions(lastChrome) : windowThemeOptions('dark')
   const savedWindowState = loadMainWindowState(mainWindowStatePath)
   const restoredWindowState = restoreMainWindowState(
     savedWindowState,
@@ -415,10 +503,12 @@ function createWindow(): void {
   window.webContents.once('did-finish-load', () =>
     window.webContents.setZoomFactor(DEFAULT_ZOOM_FACTOR),
   )
+  window.webContents.on('render-process-gone', () => nativeMenuDispatch.reset(window.webContents))
   configureEmbeddedBrowser(window.webContents)
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
     configureImageContextMenu(guest, window)
+    forwardBrowserShortcuts(guest, window.webContents)
   })
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
@@ -462,6 +552,36 @@ function createWindow(): void {
     )
     void diagnostics?.record('renderer crash', `${details.reason} (code ${details.exitCode})`)
   })
+  let recoveryPromptOpen = false
+  configureRendererLifecycle(window.webContents, {
+    cancelCaptures: () => previewCaptures.cancelAll(),
+    onPageReplaced: () => {
+      nativeMenuDispatch.reset(window.webContents)
+      // A reload during shortcut recording must not leave accelerators off.
+      window.webContents.setIgnoreMenuShortcuts(false)
+    },
+    isQuitting: () => appIsQuitting,
+    onRepeatedCrash: () => {
+      if (recoveryPromptOpen) return
+      recoveryPromptOpen = true
+      void dialog
+        .showMessageBox(window, {
+          type: 'error',
+          title: nativeAppName,
+          message: 'The window stopped unexpectedly.',
+          detail: 'Your core server is still running. Reload the window to reconnect.',
+          buttons: ['Reload', 'Not now'],
+          cancelId: 1,
+        })
+        .then(({ response }) => {
+          if (response === 0 && !appIsQuitting && !window.isDestroyed()) window.webContents.reload()
+        })
+        .catch(() => {})
+        .finally(() => {
+          recoveryPromptOpen = false
+        })
+    },
+  })
 
   // Avoid the white flash before React paints.
   window.once('ready-to-show', () => {
@@ -473,6 +593,8 @@ function createWindow(): void {
       return
     }
     showMainWindow()
+    // The server may have given up while no window existed (macOS keeps running).
+    showServerFailureNotice()
   })
 
   // Nothing in this app should ever open a second window, and any external
@@ -484,15 +606,18 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  window.webContents.on('will-navigate', (event, url) => {
+  const restrictWindowNavigation = (event: ElectronEvent, url: string) => {
     // Origin comparison, not a prefix check — "http://localhost:5173.evil.example"
-    // starts with the dev server string but is not it.
+    // starts with the dev server string but is not it. will-navigate does not
+    // fire for server-side redirects, so will-redirect applies the same policy.
     const allowed = devServer !== undefined && sameOrigin(url, devServer)
     if (!allowed) {
       event.preventDefault()
       if (isWebUrl(url)) void shell.openExternal(url)
     }
-  })
+  }
+  window.webContents.on('will-navigate', restrictWindowNavigation)
+  window.webContents.on('will-redirect', restrictWindowNavigation)
 
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') return
@@ -513,13 +638,17 @@ function createWindow(): void {
   if (devServer) {
     void window.loadURL(devServer)
   } else {
-    void window.loadFile(
-      startupRendererPath ??
-        (app.isPackaged
-          ? path.join(process.resourcesPath, 'web', 'index.html')
-          : path.join(here, '../../web/dist/index.html')),
-    )
+    void window.loadURL(rendererFileUrl(rendererIndexPath()))
   }
+}
+
+function rendererIndexPath(): string {
+  return (
+    startupRendererPath ??
+    (app.isPackaged
+      ? path.join(process.resourcesPath, 'web', 'index.html')
+      : path.join(here, '../../web/dist/index.html'))
+  )
 }
 
 function appWindows(): BrowserWindow[] {
@@ -572,18 +701,22 @@ function installApplicationMenu(): void {
   )
 }
 
-function sendNativeMenuAction(action: NativeMenuAction): void {
-  const window = mainWindow
-  if (!window || window.isDestroyed()) {
-    createWindow()
-    mainWindow?.webContents.once('did-finish-load', () =>
-      mainWindow?.webContents.send('harness:menuAction', action),
-    )
-    return
-  }
+function sendNativeMenuAction(action: NativeMenuAction, source: NativeMenuActionSource): void {
   showMainWindow()
-  window.webContents.send('harness:menuAction', action)
+  const window = mainWindow
+  if (window && !window.isDestroyed())
+    nativeMenuDispatch.send(window.webContents, { action, source })
 }
+
+ipcMain.on('harness:menuReady', (event) => {
+  if (!isOwnRenderer(event.sender)) return
+  nativeMenuDispatch.markReady(event.sender)
+})
+
+ipcMain.on('harness:suspendMenuShortcuts', (event, suspended: unknown) => {
+  if (!isOwnRenderer(event.sender) || typeof suspended !== 'boolean') return
+  event.sender.setIgnoreMenuShortcuts(suspended)
+})
 
 ipcMain.handle('harness:setZoom', (event, action: unknown) => {
   requireOwnRenderer(event.sender)
@@ -609,6 +742,31 @@ ipcMain.handle('harness:openDiagnostics', async (event) => {
   return openDiagnosticsDirectory()
 })
 
+ipcMain.handle('harness:crashAgents', async (event) => {
+  requireOwnRenderer(event.sender)
+  return (await import('./crash-agent.js')).crashAgentAvailability()
+})
+
+// The renderer names only an agent from a fixed list; the command line, the
+// prompt and the launcher are all built here. Crash details only reach a file.
+ipcMain.handle('harness:launchCrashAgent', async (event, agent: unknown, details: unknown) => {
+  requireOwnRenderer(event.sender)
+  const { isCrashAgentId, launchCrashAgent, parseCrashDetails } = await import('./crash-agent.js')
+  if (!isCrashAgentId(agent)) throw new Error('Unknown crash agent')
+  await launchCrashAgent(agent, parseCrashDetails(details), {
+    appVersion: app.getVersion(),
+    electronVersion: process.versions.electron ?? '',
+    chromeVersion: process.versions.chrome ?? '',
+    platform: process.platform,
+    osRelease: os.release(),
+    arch: process.arch,
+    time: new Date().toISOString(),
+    diagnosticsLog: diagnostics?.isEnabled()
+      ? path.join(diagnostics.directory, 'errors.log')
+      : undefined,
+  })
+})
+
 ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
   if (!isOwnRenderer(event.sender)) return
   const shortcuts = parseNativeMenuShortcuts(value)
@@ -618,7 +776,7 @@ ipcMain.on('harness:setMenuShortcuts', (event, value: unknown) => {
 })
 
 ipcMain.on('harness:reportRendererError', (event, value: unknown) => {
-  if (!isOwnRenderer(event.sender) || typeof value !== 'string') return
+  if (!isOwnRenderer(event.sender) || typeof value !== 'string' || value.length > 8_192) return
   void diagnostics?.record('renderer', value)
 })
 
@@ -644,11 +802,20 @@ ipcMain.handle('harness:installUpdate', (event) => {
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
-  const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window) throw new Error('No window for theme change')
   nativeTheme.themeSource = windowThemeSource(preference)
-  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  const options = windowThemeOptions(theme)
+})
+
+// The renderer reports the colours it actually paints where the native chrome
+// meets it after every theme, backdrop or surface change. Deriving them from
+// nativeTheme put a black caption strip on a light app whenever the two
+// disagreed (an emulated colour scheme), and a lighter box on tinted rails and
+// on the Settings title bar.
+ipcMain.handle('harness:setWindowChrome', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) throw new Error('No window for chrome change')
+  const chrome = parseWindowChrome(value)
+  const options = windowChromeOptions(chrome)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns
   // the window background and only the caption colours follow the theme.
@@ -657,6 +824,14 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   }
   if (process.platform === 'win32' || process.platform === 'linux') {
     window.setTitleBarOverlay(options.titleBarOverlay)
+  }
+  const serialized = JSON.stringify(chrome)
+  if (serialized === savedWindowChrome) return
+  savedWindowChrome = serialized
+  try {
+    saveWindowChrome(windowChromePath, chrome)
+  } catch {
+    // Only the next launch's first frames depend on it.
   }
 })
 
@@ -727,6 +902,8 @@ function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
       webSecurity: true,
       spellcheck: false,
       backgroundThrottling: false,
+      // Full-document captures must paint while this private window stays hidden.
+      offscreen: true,
       // The capture owner serializes access and refuses reuse after failed cleanup.
       // Per-request partitions would retain an unbounded number of sessions.
       partition: 'preview-capture',
@@ -738,28 +915,32 @@ function createPreviewWindow(request: PreviewCaptureRequest): BrowserWindow {
   previewSession.setPermissionCheckHandler(() => false)
   previewSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
   preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-  const restrictNavigation = (event: ElectronEvent, url: string) => {
-    if (!allowsPreviewNavigation(request.url, url)) event.preventDefault()
-  }
-  preview.webContents.on('will-navigate', restrictNavigation)
-  preview.webContents.on('will-redirect', restrictNavigation)
+  configurePreviewNavigation(preview.webContents, request.url)
 
   return preview
 }
 
-/** Screenshot directories older than a day have no consumer left — the design
- *  flow reads them within seconds of the capture. */
+const CAPTURE_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+/** Screenshot directories older than a day have no live consumer: the design
+ *  flow reads them within minutes, and a restored run recaptures missing ones. */
 async function sweepStaleCaptures(): Promise<void> {
   const root = path.join(app.getPath('temp'), 'TasteCode', 'preview-captures')
   const dayAgo = Date.now() - 24 * 60 * 60 * 1000
+  let entries: string[]
   try {
-    for (const entry of await readdir(root)) {
-      const target = path.join(root, entry)
+    entries = await readdir(root)
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const target = path.join(root, entry)
+    try {
       const info = await stat(target)
       if (info.mtimeMs < dayAgo) await rm(target, { recursive: true, force: true })
+    } catch {
+      // A file in use stays for the next sweep; the others still go.
     }
-  } catch {
-    // Missing directory or a file in use — nothing worth failing startup over.
   }
 }
 
@@ -786,6 +967,8 @@ function parseDroppedFolderPaths(value: unknown): Promise<string[]> {
   return droppedFolderPathsSchema.then((schema) => schema.parse(value))
 }
 
+// The schema bounds shape, not provenance: the channel cannot tell a real OS
+// drop from a fabricated list, so it stays a bounded directory-existence oracle.
 ipcMain.handle('harness:droppedFolderPaths', async (event, value: unknown) => {
   requireOwnRenderer(event.sender)
   return droppedFolderPaths(await parseDroppedFolderPaths(value))
@@ -808,14 +991,24 @@ ipcMain.handle('harness:pickFiles', async (event) => {
   })
   return result.canceled
     ? []
-    : result.filePaths.map((filePath) => pickedAttachment(filePath, attachmentPreviewSecret))
+    : Promise.all(
+        result.filePaths.map(async (filePath) => {
+          const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
+          if (attachment.mediaType) await pickedImagePaths.authorize(filePath)
+          return attachment
+        }),
+      )
 })
 
 ipcMain.handle('harness:previewViewedImage', async (event, reference: unknown) => {
   requireOwnRenderer(event.sender)
   const filePath = await viewedImagePath(
     reference,
-    path.join(app.getPath('temp'), 'TasteCode', 'pasted-files'),
+    [
+      path.join(productDataPath, 'pasted-files'),
+      path.join(app.getPath('temp'), 'TasteCode', 'pasted-files'),
+    ],
+    pickedImagePaths,
   )
   if (!filePath) return undefined
   const attachment = pickedAttachment(filePath, attachmentPreviewSecret)
@@ -827,24 +1020,63 @@ ipcMain.handle('harness:revealPath', (event, value: unknown) => {
   shell.showItemInFolder(revealablePath(value))
 })
 
-ipcMain.handle('harness:revealProjectFile', (event, value: unknown, projectRootValue: unknown) => {
-  requireOwnRenderer(event.sender)
-  shell.showItemInFolder(projectFilePath(value, projectRootValue))
-})
+ipcMain.handle(
+  'harness:revealProjectFile',
+  async (event, value: unknown, projectRootValue: unknown) => {
+    requireOwnRenderer(event.sender)
+    shell.showItemInFolder(await projectFilePath(value, projectRootValue))
+  },
+)
 
 ipcMain.handle('harness:savePastedFile', async (event, payload: unknown) => {
   requireOwnRenderer(event.sender)
-  const file = pastedFile(payload)
-  const directory = path.join(app.getPath('temp'), 'TasteCode', 'pasted-files')
-  await mkdir(directory, { recursive: true, mode: 0o700 })
-  const destination = path.join(directory, `${randomUUID()}-${file.name}`)
-  await writeFile(destination, file.bytes, { flag: 'wx', mode: 0o600 })
+  const destination = await savePastedFile(productDataPath, payload)
   return pickedAttachment(destination, attachmentPreviewSecret)
 })
 
 if (ownsSingleInstance) {
   app.on('second-instance', showMainWindow)
-  app.on('before-quit', () => {
+  app.on('before-quit', (event) => {
+    if (waitingForUpdateCleanup || waitingForServerShutdown) {
+      event.preventDefault()
+      return
+    }
+    const updater = appUpdater
+    const updateStatus = updater?.state().status
+    if (
+      updater &&
+      !appIsQuitting &&
+      (updateStatus === 'downloading' || updateStatus === 'preparing')
+    ) {
+      waitingForUpdateCleanup = true
+      event.preventDefault()
+      // Finish detaching a mounted update DMG before the process exits.
+      const finishQuit = () => {
+        waitingForUpdateCleanup = false
+        appIsQuitting = true
+        app.quit()
+      }
+      void Promise.resolve()
+        .then(() => updater.dispose())
+        .then(finishQuit, finishQuit)
+      return
+    }
+    if (serverSupervisor) {
+      event.preventDefault()
+      waitingForServerShutdown = true
+      appIsQuitting = true
+      previewCaptures.cancelAll()
+      const supervisor = serverSupervisor
+      serverSupervisor = undefined
+      const finishQuit = () => {
+        waitingForServerShutdown = false
+        app.quit()
+      }
+      void Promise.resolve()
+        .then(() => supervisor.stop())
+        .then(finishQuit, finishQuit)
+      return
+    }
     appIsQuitting = true
     previewCaptures.cancelAll()
     mainWindowStatePersistence?.saveAndStop()
@@ -853,7 +1085,7 @@ if (ownsSingleInstance) {
     appUpdater?.dispose()
     appUpdater = undefined
     macOSHaptics.stop()
-    serverSupervisor?.stop()
+    void serverSupervisor?.stop()
     serverSupervisor = undefined
     tray?.destroy()
     tray = undefined
@@ -861,36 +1093,38 @@ if (ownsSingleInstance) {
 
   void app.whenReady().then(async () => {
     logStartupMilestone('app-ready')
-    const diagnosticsDirectory = path.join(app.getPath('userData'), 'diagnostics')
-    diagnostics = new LocalDiagnostics(diagnosticsDirectory, () => {
-      app.setPath('crashDumps', diagnosticsDirectory)
-      crashReporter.start({
-        productName: nativeAppName,
-        companyName: 'TasteCode',
-        submitURL: 'https://tastecode.dev/crash-reports-disabled',
-        uploadToServer: false,
-        compress: true,
-      })
-    })
-    process.on('uncaughtExceptionMonitor', (error) => void diagnostics?.record('main crash', error))
+    await mkdir(productDataPath, { recursive: true, mode: 0o700 })
+    diagnostics = new LocalDiagnostics(localDiagnosticsDirectory(app.getPath('userData')))
+    process.on('uncaughtExceptionMonitor', (error) =>
+      diagnostics?.recordSync('main crash', error.stack ?? String(error)),
+    )
     process.on('unhandledRejection', (error) => void diagnostics?.record('main rejection', error))
     await diagnostics.initialize()
     logStartupMilestone('diagnostics-ready')
 
     appUpdater = createAppUpdateController({
-      loadUpdater: async () => (await import('electron-updater')).default.autoUpdater,
+      loadUpdater: async () =>
+        (await import('./release-updater.js')).createReleaseUpdater({
+          // electron-updater's own uncached session: the system proxy applies and
+          // no browsing cookies ride along to GitHub.
+          fetch: (url, init) =>
+            session.fromPartition('electron-updater', { cache: false }).fetch(url, init),
+        }),
       currentVersion: app.getVersion(),
-      enabled: app.isPackaged && !devServer,
+      enabled: app.isPackaged && !devServer && ['darwin', 'win32'].includes(process.platform),
+      onError: (cause) => void diagnostics?.record('updater', cause),
     })
     appUpdater.subscribe((state) => {
       const window = mainWindow
       if (window && !window.isDestroyed()) window.webContents.send('harness:updateState', state)
     })
     appUpdater.start()
-    startOwnedServer()
+    powerMonitor.on('resume', () => appUpdater?.resume())
+    if (!startOwnedServer()) return
     configureAttachmentPreviews()
     configureRendererPermissions()
     void sweepStaleCaptures()
+    setInterval(() => void sweepStaleCaptures(), CAPTURE_SWEEP_INTERVAL_MS).unref()
     createWindow()
     logStartupMilestone('window-created')
     installApplicationMenu()
@@ -1024,22 +1258,34 @@ async function createAttachmentThumbnail(
   return bytes.byteLength > 0 ? bytes : undefined
 }
 
-/** Allow this app's own renderer to request audio and enumerate installed fonts. */
+/** Allow this app's own renderer audio, installed fonts and element fullscreen. */
 function configureRendererPermissions(): void {
   // Chromium's synchronous check path (navigator.permissions.query, device
   // enumeration) never consults the request handler below and defaults to
   // permissive, so it needs its own answer.
   session.defaultSession.setPermissionCheckHandler(
-    (webContents, permission) =>
-      isOwnRendererPermission(permission) && webContents !== null && isOwnRenderer(webContents),
+    (webContents, permission, _origin, details) =>
+      webContents !== null &&
+      webContents === mainWindow?.webContents &&
+      isOwnRenderer(webContents) &&
+      details?.isMainFrame === true &&
+      isOwnRendererPermission(permission, details.mediaType),
   )
   session.defaultSession.setPermissionRequestHandler(
     (webContents, permission, callback, details) => {
-      if (permission !== 'media') {
-        callback(isOwnRendererPermission(permission) && isOwnRenderer(webContents))
+      if (
+        webContents !== mainWindow?.webContents ||
+        !isOwnRenderer(webContents) ||
+        details?.isMainFrame !== true
+      ) {
+        callback(false)
         return
       }
-      if (!isOwnRenderer(webContents) || !allowsMicrophoneRequest(details)) {
+      if (permission !== 'media') {
+        callback(allowsOwnRendererRequest(permission))
+        return
+      }
+      if (!allowsMicrophoneRequest(details)) {
         callback(false)
         return
       }
@@ -1068,7 +1314,14 @@ function requireOwnRenderer(webContents: WebContents): void {
 
 function isOwnRenderer(webContents: WebContents): boolean {
   const url = webContents.getURL()
-  return devServer ? sameOrigin(url, devServer) : url.startsWith('file:')
+  if (devServer) return sameOrigin(url, devServer)
+  // Only the file the app itself loaded is our renderer — a bare scheme check
+  // would trust any file: page that ever reaches this session.
+  try {
+    return isRendererFileUrl(url, rendererIndexPath())
+  } catch {
+    return false
+  }
 }
 
 app.on('window-all-closed', () => {

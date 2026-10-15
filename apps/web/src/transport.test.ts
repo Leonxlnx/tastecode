@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import * as bridge from './bridge.js'
 import {
   IndeterminateRequestError,
   parseIncomingFrame,
@@ -61,6 +62,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
@@ -79,6 +81,32 @@ const completedThreadEvent = (turnId: string) => ({
 })
 
 describe('Transport', () => {
+  it('reports idle only after all startup responses finish validation', async () => {
+    const milestone = vi.spyOn(bridge, 'reportStartupMilestone')
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const first = transport.request('projects.list', {})
+    const second = transport.request('projects.list', {})
+    const frames = userFrames(socket).map((frame) => RequestFrameSchema.parse(JSON.parse(frame)))
+    expect(milestone).toHaveBeenCalledWith('requests-busy')
+    socket.onmessage?.({ data: JSON.stringify({ id: frames[0]!.id, result: { projects: [] } }) })
+    await first
+    expect(milestone).not.toHaveBeenCalledWith('requests-idle')
+    socket.onmessage?.({ data: JSON.stringify({ id: frames[1]!.id, result: { projects: [] } }) })
+    await second
+    expect(milestone).not.toHaveBeenCalledWith('requests-idle')
+    const handshake = RequestFrameSchema.parse(JSON.parse(socket.sent[0]!))
+    socket.onmessage?.({ data: JSON.stringify({ id: handshake.id, result: {} }) })
+    await vi.waitFor(() => expect(milestone).toHaveBeenLastCalledWith('requests-idle'))
+    const followup = transport.request('projects.list', {}).catch(() => undefined)
+    expect(milestone).toHaveBeenLastCalledWith('requests-busy')
+    transport.close()
+    await followup
+    expect(milestone).toHaveBeenLastCalledWith('requests-busy')
+  })
+
   it('bounds disconnected requests and expires them without sending on reconnect', async () => {
     const transport = new Transport('ws://127.0.0.1:4311')
     transport.connect()
@@ -200,6 +228,63 @@ describe('Transport', () => {
     transport.close()
     for (const result of await Promise.all(calls)) {
       expect(result).toBeInstanceOf(IndeterminateRequestError)
+    }
+  })
+
+  it('rejects a schema-invalid reply with a protocol error and keeps serving', async () => {
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+    const reply = (result: unknown) => {
+      const { id } = RequestFrameSchema.parse(JSON.parse(userFrames(socket).at(-1)!))
+      socket.onmessage?.({ data: JSON.stringify({ id, result }) })
+    }
+
+    // The first reply arrives before the validators have loaded, the second
+    // after; neither may leave its owner loading forever.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const invalid = transport.request('thread.history', { threadId: 'thread' })
+      reply({ events: 'not-a-list', running: false })
+      await expect(invalid).rejects.toThrow('The server sent an invalid reply to thread.history.')
+    }
+
+    const valid = transport.request('thread.history', { threadId: 'thread' })
+    reply({ events: [], running: false })
+    await expect(valid).resolves.toEqual({ events: [], running: false })
+    expect(transport.state).toBe('open')
+    transport.close()
+  })
+
+  it('keeps invalid mutation replies uncertain before and after validators load', async () => {
+    const parse = vi.spyOn(await import('./transport-validation.js'), 'parseMethodResult')
+    const transport = new Transport('ws://127.0.0.1:4311')
+    transport.connect()
+    const socket = FakeSocket.instances.at(-1)!
+    socket.open()
+
+    try {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        parse.mockClear()
+        const invalid = transport.request('thread.sendTurn', {
+          threadId: 'thread',
+          text: 'Do this once.',
+        })
+        const { id } = RequestFrameSchema.parse(JSON.parse(userFrames(socket).at(-1)!))
+        socket.onmessage?.({ data: JSON.stringify({ id, result: null }) })
+
+        // The first reply waits for the lazy validator; the second parses immediately.
+        expect(parse).toHaveBeenCalledTimes(attempt)
+        await expect(invalid).rejects.toBeInstanceOf(IndeterminateRequestError)
+        await expect(invalid).rejects.toThrow(
+          'The server sent an invalid reply to thread.sendTurn. Restart TasteCode if this keeps happening.',
+        )
+        expect(parse).toHaveBeenCalledOnce()
+      }
+      expect(transport.state).toBe('open')
+      expect(userFrames(socket)).toHaveLength(2)
+    } finally {
+      transport.close()
     }
   })
 
@@ -624,6 +709,105 @@ describe('Transport', () => {
 
     expect(gap).toHaveBeenCalledOnce()
     expect(gap).toHaveBeenCalledWith(2, 3)
+  })
+
+  it('keeps delivering pushes and buffered replies when a listener throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const throwing = vi.fn(() => {
+      throw new Error('listener failed')
+    })
+    const listener = vi.fn()
+    transport.on('thread.event', throwing)
+    transport.on('thread.event', listener)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+    const checkpoints = transport.request('thread.checkpoints', { threadId: 'thread-1' })
+    const frame = RequestFrameSchema.parse(JSON.parse(userFrames(socket)[0]!))
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 1,
+        data: completedThreadEvent('first'),
+      }),
+    })
+    socket.onmessage?.({ data: JSON.stringify({ id: frame.id, result: { checkpoints: [] } }) })
+
+    await expect(checkpoints).resolves.toEqual({ checkpoints: [] })
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ event: expect.objectContaining({ turnId: 'first' }) }),
+    )
+
+    socket.onmessage?.({
+      data: JSON.stringify({
+        channel: 'thread.event',
+        sequence: 2,
+        data: completedThreadEvent('second'),
+      }),
+    })
+    expect(listener).toHaveBeenLastCalledWith(
+      expect.objectContaining({ event: expect.objectContaining({ turnId: 'second' }) }),
+    )
+    expect(throwing).toHaveBeenCalledTimes(2)
+    expect(error).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports a sequence gap to every owner when one of them throws', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const gap = vi.fn()
+    transport.onSequenceGap(() => {
+      throw new Error('resync failed')
+    })
+    transport.onSequenceGap(gap)
+    transport.connect()
+    const socket = FakeSocket.instances[0]!
+    socket.open()
+
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'server.welcome', sequence: 1, data: {} }),
+    })
+    socket.onmessage?.({
+      data: JSON.stringify({ channel: 'thread.event', sequence: 3, data: {} }),
+    })
+
+    expect(gap).toHaveBeenCalledWith(2, 3)
+    expect(error).toHaveBeenCalledOnce()
+  })
+
+  it('keeps connecting and notifying other owners when a state listener throws', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const transport = new Transport('ws://test')
+    const states: string[] = []
+    transport.onState(() => {
+      throw new Error('state listener failed')
+    })
+    transport.onState((state) => states.push(state))
+
+    transport.connect()
+    const first = FakeSocket.instances[0]!
+    first.open()
+    // The open handshake runs after the state announcement.
+    expect(first.sent.some((frame) => frame.includes('client.capabilities'))).toBe(true)
+
+    // Reconnect scheduling announces 'reconnecting' before it sets its timer.
+    first.close()
+    vi.advanceTimersByTime(0)
+    const second = FakeSocket.instances[1]
+    expect(second).toBeDefined()
+    second!.open()
+
+    expect(states).toEqual(['connecting', 'open', 'reconnecting', 'open'])
+    expect(transport.state).toBe('open')
+    expect(error).toHaveBeenCalledTimes(4)
+    expect(error).toHaveBeenCalledWith(
+      '[transport] connection state listener failed',
+      expect.any(Error),
+    )
+    transport.close()
   })
 
   it('ignores pushes from a socket replaced by a failed health check', async () => {

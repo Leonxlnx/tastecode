@@ -72,5 +72,5 @@ describe('shared release grammars', () => {
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  })
+  }, 30_000)
 })

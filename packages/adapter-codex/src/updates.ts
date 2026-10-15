@@ -7,6 +7,17 @@ import {
   type CliUpdateSource,
 } from '@harness/proc/updates'
 
+/** Official standalone installers work on fresh desktops without Node or npm.
+ * https://developers.openai.com/codex/cli */
+export function codexInstallCommand(platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') {
+    const script = `$ErrorActionPreference = 'Stop'; $env:CODEX_NON_INTERACTIVE = '1'; Invoke-RestMethod 'https://chatgpt.com/codex/install.ps1' | Invoke-Expression`
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`
+  }
+  // Fetch completely before executing; curl failure must not look like a successful install.
+  return `/bin/sh -c 'installer=$(curl -fsSL --connect-timeout 15 --max-time 60 https://chatgpt.com/codex/install.sh) && printf "%s" "$installer" | CODEX_NON_INTERACTIVE=1 /bin/sh'`
+}
+
 export const CODEX_UPDATES: CliUpdateSource = {
   command: 'codex',
   url: 'https://developers.openai.com/codex/cli',

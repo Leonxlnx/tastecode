@@ -5,7 +5,11 @@ export type PushSocket = Pick<WebSocket, 'OPEN' | 'readyState' | 'send' | 'termi
   Partial<Pick<WebSocket, 'bufferedAmount'>>
 export const MAX_PUSH_BUFFER_BYTES = 8 * 1024 * 1024
 export const MAX_REPLY_FRAME_BYTES = 128 * 1024 * 1024
-type PushSocketState = { sequence: number; onSend: (error?: Error) => void }
+type PushSocketState = {
+  sequence: number
+  pushBytes: number
+  replyBytes: number
+}
 type RecordedEventChannel = 'thread.event' | 'sideChat.event'
 
 const framePrefixes: Partial<Record<ChannelName, string>> = Object.create(null) as Partial<
@@ -39,12 +43,8 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     if (this.#sockets.has(socket)) return
     const state: PushSocketState = {
       sequence: 0,
-      onSend: (error) => {
-        if (error) {
-          this.remove(socket)
-          socket.terminate()
-        }
-      },
+      pushBytes: 0,
+      replyBytes: 0,
     }
     this.#sockets.set(socket, state)
     if (this.#sockets.size === 1) {
@@ -97,21 +97,38 @@ export class PushBus<Socket extends PushSocket = WebSocket> {
     frame: string,
     frameLimit = MAX_PUSH_BUFFER_BYTES,
   ): void {
-    // A failed write closes the connection rather than quietly unsubscribing
-    // it. Dropping it from the map left the socket OPEN and silent: the
-    // client's onclose never fired, its gap detector only fires on a frame it
-    // does receive, and the thread simply froze with no warning.
-    try {
-      const queued = socket.bufferedAmount ?? 0
-      if (queued >= MAX_PUSH_BUFFER_BYTES || queued + Buffer.byteLength(frame) > frameLimit) {
-        this.remove(socket)
-        socket.terminate()
-        return
-      }
-      socket.send(frame, state.onSend)
-    } catch {
+    const bytes = Buffer.byteLength(frame)
+    const reply = frameLimit === MAX_REPLY_FRAME_BYTES
+    const pendingBytes = reply ? state.replyBytes : state.pushBytes
+    // A large history reply is allowed to drain while normal pushes continue.
+    // ws already preserves write order; keep its reply and push budgets separate.
+    const queuedPushBytes = Math.max(
+      state.pushBytes,
+      (socket.bufferedAmount ?? 0) - state.replyBytes,
+    )
+    if (
+      pendingBytes + bytes > frameLimit ||
+      queuedPushBytes >= MAX_PUSH_BUFFER_BYTES ||
+      (!reply && queuedPushBytes + bytes > MAX_PUSH_BUFFER_BYTES)
+    ) {
       this.remove(socket)
       socket.terminate()
+      return
+    }
+    if (reply) state.replyBytes += bytes
+    else state.pushBytes += bytes
+    const complete = (error?: Error) => {
+      if (reply) state.replyBytes -= bytes
+      else state.pushBytes -= bytes
+      if (error && this.#sockets.get(socket) === state) {
+        this.remove(socket)
+        socket.terminate()
+      }
+    }
+    try {
+      socket.send(frame, complete)
+    } catch (error) {
+      complete(error instanceof Error ? error : new Error('Socket write failed'))
     }
   }
 

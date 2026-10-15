@@ -14,6 +14,7 @@ import {
   IconSearch as Search,
   IconSparkles as Sparkles,
 } from '@tabler/icons-react'
+import { writeClipboardText } from '../../bridge.js'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
@@ -22,9 +23,11 @@ import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   buildReviewTree,
   flattenReviewTree,
+  reviewTreeNodeKey,
   type ReviewTreeNode,
   type ReviewTreeRow,
 } from './review-file-tree.js'
+import { useWorkspaceRefresh } from './useWorkspaceRefresh.js'
 import {
   workspaceDiffCollection,
   workspaceDiffItemId,
@@ -106,6 +109,9 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   branch?: string | undefined
   theme: 'light' | 'dark'
 }) {
+  // The server does not know a chat's provisional id while its first message
+  // creates it; stay in the project checkout until the real id arrives.
+  const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
   const [diff, setDiff] = useState<SessionDiff>()
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
@@ -115,57 +121,72 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [generatingCommit, setGeneratingCommit] = useState(false)
   const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
+  const draftGeneration = useRef(0)
+  const diffVersion = useRef<string>(undefined)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
-  const refresh = useCallback(async () => {
-    if (!props.projectPath) return
-    const mine = ++generation.current
-    setLoading(true)
-    setError(undefined)
+  const clearCommitDraft = useCallback(() => {
+    draftGeneration.current += 1
     setCommitMessage(undefined)
     setCommitError(undefined)
     setGeneratingCommit(false)
     setCopiedCommit(false)
-    try {
-      const result = await props.transport.request('workspace.diff', {
-        projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
-      })
-      if (generation.current === mine) setDiff(result)
-    } catch (cause) {
-      if (generation.current === mine) {
-        setError(cause instanceof Error ? cause.message : String(cause))
+  }, [])
+
+  const refresh = useCallback(
+    async (keepDraft = false) => {
+      if (!props.projectPath) return
+      const mine = ++generation.current
+      setLoading(true)
+      setError(undefined)
+      if (!keepDraft) clearCommitDraft()
+      try {
+        const result = await props.transport.request('workspace.diff', {
+          projectPath: props.projectPath,
+          ...(threadId ? { threadId } : {}),
+        })
+        if (generation.current === mine) {
+          // The version names the changes, so a draft survives a refresh that found the same ones.
+          if (result.version !== diffVersion.current) clearCommitDraft()
+          diffVersion.current = result.version
+          setDiff(result)
+        }
+      } catch (cause) {
+        if (generation.current === mine) {
+          setError(cause instanceof Error ? cause.message : String(cause))
+        }
+      } finally {
+        if (generation.current === mine) setLoading(false)
       }
-    } finally {
-      if (generation.current === mine) setLoading(false)
-    }
-  }, [props.projectPath, props.threadId, props.transport])
+    },
+    [clearCommitDraft, props.projectPath, threadId, props.transport],
+  )
 
   const generateCommitMessage = useCallback(async () => {
     if (!props.projectPath) return
-    const mine = generation.current
+    const mine = draftGeneration.current
     setGeneratingCommit(true)
     setCommitError(undefined)
     setCopiedCommit(false)
     try {
       const result = await props.transport.request('backgroundModel.generateCommitMessage', {
         projectPath: props.projectPath,
-        ...(props.threadId ? { threadId: props.threadId } : {}),
+        ...(threadId ? { threadId } : {}),
       })
-      if (generation.current === mine) setCommitMessage(result.message)
+      if (draftGeneration.current === mine) setCommitMessage(result.message)
     } catch (cause) {
-      if (generation.current === mine) {
+      if (draftGeneration.current === mine) {
         setCommitError(cause instanceof Error ? cause.message : String(cause))
       }
     } finally {
-      if (generation.current === mine) setGeneratingCommit(false)
+      if (draftGeneration.current === mine) setGeneratingCommit(false)
     }
-  }, [props.projectPath, props.threadId, props.transport])
+  }, [props.projectPath, threadId, props.transport])
 
   const copyCommitMessage = useCallback(async () => {
     if (!commitMessage) return
     try {
-      await navigator.clipboard.writeText(commitMessage)
+      await writeClipboardText(commitMessage)
       setCopiedCommit(true)
     } catch {
       setCommitError('Could not copy the commit message.')
@@ -174,15 +195,17 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
 
   useEffect(() => {
     setDiff(undefined)
-    setCommitMessage(undefined)
-    setCommitError(undefined)
-    setGeneratingCommit(false)
-    setCopiedCommit(false)
+    diffVersion.current = undefined
+    clearCommitDraft()
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
+      draftGeneration.current += 1
     }
-  }, [props.projectPath, props.threadId, refresh])
+  }, [clearCommitDraft, props.projectPath, threadId, refresh])
+
+  const refreshAfterChange = useCallback(() => void refresh(true), [refresh])
+  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange)
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
@@ -260,7 +283,7 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       <header className="workspace-review__toolbar">
         <span className="workspace-review__branch">
           <GitBranch size={14} aria-hidden />
-          <strong>{props.branch ?? 'Workspace'}</strong>
+          <strong title={props.branch}>{props.branch ?? 'Workspace'}</strong>
         </span>
         <span className="workspace-review__stats" aria-label="Diff statistics">
           <span className="is-add">+{stats.added.toLocaleString()}</span>
@@ -424,7 +447,7 @@ export const ReviewTree = memo(function ReviewTree({
   return (
     <div className="workspace-review__tree-list">
       {tree.map((node) => (
-        <ReviewTreeNode key={node.path} node={node} depth={0} onSelect={onSelect} />
+        <ReviewTreeNode key={reviewTreeNodeKey(node)} node={node} depth={0} onSelect={onSelect} />
       ))}
     </div>
   )
@@ -444,7 +467,10 @@ function VirtualReviewTree({
   )
   const scroller = useRef<HTMLDivElement>(null)
   const getItemKey = useCallback(
-    (index: number) => rows[index]?.node.path ?? `missing-review-row-${index}`,
+    (index: number) => {
+      const row = rows[index]
+      return row ? reviewTreeNodeKey(row.node) : `missing-review-row-${index}`
+    },
     [rows],
   )
   const virtualizer = useVirtualizer({
@@ -580,7 +606,12 @@ function ReviewTreeNode({
       </button>
       {open
         ? node.children.map((child) => (
-            <ReviewTreeNode key={child.path} node={child} depth={depth + 1} onSelect={onSelect} />
+            <ReviewTreeNode
+              key={reviewTreeNodeKey(child)}
+              node={child}
+              depth={depth + 1}
+              onSelect={onSelect}
+            />
           ))
         : null}
     </div>

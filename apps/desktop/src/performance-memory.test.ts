@@ -85,8 +85,27 @@ describe('whole-app benchmark memory', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('keeps slow OS reads inside the sampling interval without changing the deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
+    const starts: number[] = []
+    const result = sampleSettledMemory(async () => {
+      starts.push(performance.now())
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      return measured(starts.length < 7 ? 600_000_000 - starts.length * 10_000_000 : 300_000_000)
+    })
+    await vi.advanceTimersByTimeAsync(10_000)
+    const memory = await result
+    expect(memory.stable).toBe(true)
+    expect(starts).toEqual(Array.from({ length: 10 }, (_, index) => index * 1_000))
+    expect(memory.stableWindow.map((entry) => entry.elapsedMs)).toEqual([
+      6_000, 7_000, 8_000, 9_000,
+    ])
+    expect(memory.peakBytes).toBe(590_000_000)
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('fails a drift across the complete window even if adjacent changes are below 2 percent', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     let index = 0
     const result = sampleSettledMemory(async () => measured(100_000_000 + index++ * 1_500_000))
     await vi.advanceTimersByTimeAsync(10_000)
@@ -96,7 +115,7 @@ describe('whole-app benchmark memory', () => {
   })
 
   it('never reports stability while owned processes are being replaced', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     let pid = 1
     const result = sampleSettledMemory(async () => measured(100_000_000, pid++))
     await vi.advanceTimersByTimeAsync(10_000)
@@ -104,7 +123,7 @@ describe('whole-app benchmark memory', () => {
   })
 
   it('cancels a hung measurement at the ten-second deadline', async () => {
-    vi.useFakeTimers()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] })
     let signal: AbortSignal | undefined
     const result = sampleSettledMemory((captureSignal) => {
       signal = captureSignal

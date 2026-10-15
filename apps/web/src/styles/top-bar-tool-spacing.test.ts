@@ -45,6 +45,20 @@ describe('top-bar tool spacing', () => {
     expect(rule(css, '.panel-toggles.is-workspace-open')).toContain('right: 44px;')
   })
 
+  it('keeps long chat titles clear of the floating panel toggles', () => {
+    // 8px inset + one 28px toggle + 8px gap; the terminal toggle adds 28px + 8px.
+    expect(rule(css, '.shell:has(> .panel-toggles:not(.is-workspace-open)) .stagehead')).toContain(
+      'padding-right: 44px;',
+    )
+    expect(
+      rule(
+        css,
+        '.shell:has(> .panel-toggles:not(.is-workspace-open) > .panel-toggles__terminal) .stagehead',
+      ),
+    ).toContain('padding-right: 80px;')
+    expect(rule(css, '.stagehead__title')).toContain('text-overflow: ellipsis;')
+  })
+
   it('keeps the top-bar options menu dense without visible scrollbar chrome', () => {
     const menu = rule(css, '.menu.stagehead__options-menu')
 

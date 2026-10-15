@@ -21,7 +21,7 @@ describe('optionFor', () => {
       { optionId: 'yes', kind: 'allow_once' },
       { optionId: 'never', kind: 'reject_always' },
     ]
-    expect(optionFor(noRejectOnce, 'deny')).toBe('never')
+    expect(optionFor(noRejectOnce, 'deny')).toBeUndefined()
   })
 
   it('never turns an approval into a refusal when the exact option is absent', () => {
@@ -46,5 +46,9 @@ describe('optionFor', () => {
 
   it('returns nothing for an empty option list', () => {
     expect(optionFor([], 'approve')).toBeUndefined()
+  })
+
+  it('never expands Allow once into a lasting grant', () => {
+    expect(optionFor([{ optionId: 'always', kind: 'allow_always' }], 'approve')).toBeUndefined()
   })
 })

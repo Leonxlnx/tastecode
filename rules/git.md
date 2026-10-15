@@ -4,8 +4,9 @@ Two people, two operating systems, one trunk.
 
 ## Branches
 
-Trunk is `main`. Protected: PR required, explicit approval from the human responsible for
-the work, rebase-merge only, no force-push.
+Trunk is `main`. Protected: PR required, server-side rebase-merge only, no direct or
+force-push. Branch, PR, CI and merge authorization follows [AGENTS.md](../AGENTS.md);
+applicable approval already given in chat remains valid.
 
 ```
 <type>/<area>-<short-description>
@@ -20,8 +21,9 @@ design/thread-visual-pass
 
 Types: `feat` `fix` `docs` `chore` `refactor` `perf` `test` `spike` `design`
 
-**Short-lived — under two days.** Longer than three means it's too big; split it. Rebase on
-`main` daily. `spike/` branches are throwaway and never merged; extract the learning into
+**Short-lived — under two days.** Longer than three means it's too big; split it. Merge
+the target branch as it advances; never rebase or force-push a working branch. `spike/`
+branches are throwaway and never merged; extract the learning into
 [ARCHITECTURE.md](../docs/ARCHITECTURE.md) and delete the branch.
 
 ## Commits — small and frequent
@@ -56,9 +58,10 @@ own branch while working — clean them up before marking the PR ready, since th
 - **Draft early** — open it when the branch exists, not when the work is finished. Cheapest
   way to keep the other person oriented.
 - Body says _why_ and _how it was verified_. Screenshots or a clip for anything visual.
-- **Approval from the human responsible for the work** in chat or on GitHub is sufficient.
-  Approval from the other human is optional. The agent opens and updates PRs; it never
-  self-approves.
+- **Follow the merge authorization in [AGENTS.md](../AGENTS.md).** Applicable human
+  approval in chat or on GitHub remains valid; do not request it again. Required contracts,
+  security and ownership review still applies. An agent never submits a GitHub review
+  approving its own PR.
 - **Rebase-merge, never squash.** Every commit on the branch lands on `main` individually
   and keeps its own message. This is why commits have to be clean and self-contained: on
   `main` they are the permanent record, not scratch work that gets collapsed away.
@@ -72,9 +75,9 @@ Agreed 2026-07-28.
 
 |                 |                                                                                                                          |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **Approval**    | The human responsible for the work approves it. Approval from the other human is optional.                               |
+| **Approval**    | Follow AGENTS.md; existing applicable authorization remains valid and does not waive verification or required review.    |
 | **Visibility**  | Claude opens a **draft PR from the first commit** — not when the work is finished. Redirect early; that's what it's for. |
-| **Merging**     | Claude merges once approved. Nothing lands without a human sign-off anyway.                                              |
+| **Merging**     | Merge when authorized under AGENTS.md and all required gates pass; do not ask again for an already authorized merge.     |
 | **Merge style** | **Rebase, never squash.** Squash is disabled in the branch ruleset.                                                      |
 | **Pushing**     | After every commit, not batched at the end. Work that is not pushed is invisible.                                        |
 
@@ -90,8 +93,9 @@ the bypass after the human responsible for the work has explicitly approved it.
 Run locally before merge: typecheck · lint + format · unit tests · desktop build.
 Record the commands and results in the PR body.
 
-GitHub Actions are manual to preserve included minutes. Do not start the Windows/macOS
-matrix unless Leon explicitly asks for it.
+GitHub Actions remain manual. Necessary verification runs for explicitly assigned work
+are authorized under [AGENTS.md](../AGENTS.md), without repeated permission requests.
+Automatic or recurring CI triggers still require an explicit request.
 
 Platform-specific code must be run locally on the affected OS before release, not merely
 reviewed.

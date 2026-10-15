@@ -5,12 +5,24 @@
   position: relative;
 }
 
+.reply--notice {
+  color: var(--text-3);
+}
+
 .reply > .md {
+  margin-inline: 0;
+  padding-inline: 0;
+  text-align: start;
   font-family: var(--font-ui);
   font-size: var(--t-md);
   font-weight: 400;
   line-height: 1.52;
   max-width: 72ch;
+}
+
+.reply--notice > .md > p:first-child {
+  /* Hang the opening D's side bearing on the reply's visible text edge. */
+  text-indent: -0.075em;
 }
 
 .reply > .md :is(strong, b) {
@@ -40,6 +52,10 @@
 }
 
 .md > *:last-child {
+  margin-bottom: 0;
+}
+
+.reply--notice > .md > :last-child {
   margin-bottom: 0;
 }
 
@@ -111,7 +127,7 @@
 /* Inline code sits inside a line of prose, so it must not change line height. */
 .md :not(pre) > code {
   background: var(--surface-2);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   font-family: var(--font-mono);
   font-size: 0.9em;
   padding: 1px 5px;
@@ -196,8 +212,22 @@
   position: relative;
 }
 
-.md [data-streamdown='code-block'] button,
-.md [data-streamdown='table-wrapper'] button {
+/* Streamdown sets `content-visibility: auto` and a 200px intrinsic size inline
+   on every code block. The transcript is already a virtual list, and this
+   second layer of skipped rendering puts each block at 200px in the frame it
+   mounts in: the row is measured at the wrong height and everything below it
+   jumps when the block renders a frame later. `!important` is the only way
+   past an inline style. The containment also gave the block its own
+   formatting context, which keeps the inner margin inside it; flow-root keeps
+   that, so the space below a code block stays the same. */
+.md [data-streamdown='code-block'] {
+  display: flow-root;
+  content-visibility: visible !important;
+  contain-intrinsic-size: none !important;
+}
+
+.md [data-streamdown='code-block'] button {
+  position: relative;
   display: grid;
   place-items: center;
   width: 24px;
@@ -215,26 +245,33 @@
 }
 
 .md [data-streamdown='code-block']:hover button,
-.md [data-streamdown='table-wrapper']:hover button,
-.md [data-streamdown='code-block'] button:focus-visible,
-.md [data-streamdown='table-wrapper'] button:focus-visible {
+.md [data-streamdown='code-block'] button:focus-visible {
   opacity: 1;
 }
 
-.md [data-streamdown='code-block'] button:hover,
-.md [data-streamdown='table-wrapper'] button:hover {
+.md [data-streamdown='code-block'] button:hover {
   color: var(--text);
 }
 
-.md [data-streamdown='code-block'] button svg,
-.md [data-streamdown='table-wrapper'] button svg {
+.md [data-streamdown='code-block'] button[aria-pressed='true'] {
+  background: var(--control-pressed);
+  color: var(--text);
+}
+
+.md [data-streamdown='code-block'] button svg {
   width: 13px;
   height: 13px;
 }
 
-/* Language label and controls share one row directly above the block. Without
-   this they stack as separate blocks and leave a hole the height of the hidden
-   buttons. */
+/* Block controls stay 24px to sit on the label row; the hit area reaches 2px
+   further on every side so each target is 28px. */
+.md [data-streamdown='code-block'] button::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+}
+
+/* Language label and controls share one row directly above the block. */
 .md [data-streamdown='code-block-header'] {
   display: flex;
   align-items: center;
@@ -247,10 +284,120 @@
   font-size: var(--t-xs);
 }
 
+/* Streamdown renders the controls in their own wrapper between the header and
+   the body. Left in flow, that wrapper keeps the height of the hidden buttons
+   and opens a hole under the language label, so it is lifted onto the header
+   row instead (26px row, 24px buttons: 1px from the top centres them). */
+.md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
+  position: absolute;
+  top: 1px;
+  right: 2px;
+  z-index: 1;
+}
+
 .md [data-streamdown='code-block-actions'] {
   display: flex;
   align-items: center;
   gap: 3px;
+}
+
+/* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
+   app does not load. Keep controls in one row and menus out of document flow. */
+.md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  min-height: 26px;
+  padding: 0 2px 2px;
+
+  > div {
+    position: relative;
+  }
+
+  button {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    flex: none;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    color: var(--text-3);
+    cursor: pointer;
+
+    &:hover,
+    &:focus-visible {
+      color: var(--text);
+    }
+
+    svg {
+      width: 13px;
+      height: 13px;
+    }
+  }
+
+  > button,
+  > div > button {
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out);
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+    }
+  }
+
+  > div > div {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    z-index: 2;
+    min-width: 120px;
+    padding: 3px;
+    border: 1px solid var(--menu-line);
+    border-radius: var(--r-md);
+    background: var(--menu-bg);
+    box-shadow: var(--shadow-flyout);
+
+    button {
+      display: block;
+      width: 100%;
+      height: auto;
+      padding: 5px 8px;
+      border: 0;
+      background: transparent;
+      color: var(--text-2);
+      font-size: var(--t-sm);
+      text-align: left;
+
+      &:hover,
+      &:focus-visible {
+        background: var(--menu-hover);
+        color: var(--text);
+      }
+    }
+  }
+}
+
+.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child {
+  > button,
+  > div > button {
+    opacity: 1;
+  }
+}
+
+.md [data-streamdown='table-wrapper'] > div:last-child {
+  overflow-x: auto;
+  margin-bottom: 14px;
+
+  > table {
+    display: table;
+    margin: 0;
+  }
 }
 
 .md pre {
@@ -278,6 +425,24 @@
    custom property. Without the second, highlighting runs correctly and every
    token still renders in the inherited foreground. */
 .md pre code > span {
+  display: block;
+  min-height: 1lh;
+}
+
+/* The Wrap toggle on a code block soft-wraps long lines in every block,
+   streaming ones too. Only white-space changes, so toggling never renders or
+   highlights a block again. */
+:root[data-code-wrap='on'] .md pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Block chunks keep late token layout local while retaining normal selection and overflow. */
+.md pre code > .md-code-chunk {
+  display: block;
+}
+
+.md .md-code-line {
   display: block;
   min-height: 1lh;
 }

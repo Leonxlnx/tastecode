@@ -391,6 +391,27 @@ describe('durable queued turns', () => {
     expect(store.hasQueuedSubmission('thread-1', 'submission-1')).toBe(false)
   })
 
+  it('persists the queued channel and reads rows written before it existed', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
+    store.enqueueQueuedTurn({ ...queued('submission-side'), channel: 'side' })
+    store.enqueueQueuedTurn(queued('submission-legacy'))
+
+    const replayed = store.queuedTurns('thread-1')
+    expect(replayed.find(({ id }) => id === 'submission-side')).toMatchObject({ channel: 'side' })
+    expect(replayed.find(({ id }) => id === 'submission-legacy')).not.toHaveProperty('channel')
+
+    expect(store.claimQueuedTurn('thread-1', 'submission-side', 'steer')).toMatchObject({
+      channel: 'side',
+      intent: 'steer',
+    })
+    expect(store.restoreQueuedTurn('thread-1', 'submission-side')).toBe(true)
+    expect(store.queuedTurns('thread-1').find(({ id }) => id === 'submission-side')).toMatchObject({
+      channel: 'side',
+      intent: 'normal',
+    })
+  })
+
   it('cleans queued state for closed and deleted threads', () => {
     store.addProject('/repo')
     for (const threadId of ['closed', 'deleted']) {
@@ -509,7 +530,7 @@ describe('recovering interrupted turns', () => {
 
     const raw = new DatabaseSync(file)
     raw.exec(`DELETE FROM recovery_lifecycles; DELETE FROM recovery_errors`)
-    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v1')
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('recovery_lifecycles_v2')
     raw.close()
 
     const restarted = new Store(file)
@@ -545,6 +566,31 @@ describe('recovering interrupted turns', () => {
     store.saveRestoreUndo('thread-1', startedSeq, 'before-completion')
 
     expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+  })
+
+  it('settles a request asked again under an id that was already answered', () => {
+    store.addProject('/repo')
+    seedThread(store, 'thread-1')
+    const approval: DomainEvent = {
+      type: 'approval.requested',
+      request: { id: 'item-1', kind: 'command', createdAt: 2 },
+    }
+    store.append('thread-1', approval)
+    store.append('thread-1', { type: 'approval.resolved', id: 'item-1' })
+    store.append('thread-1', userInput('input-1', 'thread-1-turn'))
+    store.append('thread-1', { type: 'user_input.resolved', id: 'input-1' })
+    // A retried command reuses its id for a new approval.
+    store.append('thread-1', approval)
+    store.append('thread-1', userInput('input-1', 'thread-1-turn'))
+
+    expect(store.recoverInterruptedThreads()).toEqual(['thread-1'])
+
+    const events = store.history('thread-1').map(({ event }) => event)
+    expect(events.filter((event) => event.type === 'approval.resolved')).toHaveLength(2)
+    expect(events.filter((event) => event.type === 'user_input.resolved')).toHaveLength(2)
+    const inbox = store.inboxProjections().get('thread-1')
+    expect(inbox?.approvals).toBeUndefined()
+    expect(inbox?.inputs).toBeUndefined()
   })
 
   it('rolls back the whole recovery when one terminal event cannot be written', () => {
@@ -598,6 +644,311 @@ describe('recovering interrupted turns', () => {
     expect(performance.now() - startedAt).toBeLessThan(1_500)
     expect(parse).toHaveBeenCalledTimes(1)
     parse.mockRestore()
+  })
+})
+
+describe('a database written by a newer build', () => {
+  it('skips stored events this build cannot read instead of denying the log', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-events-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'good', projectPath: '/repo', provider: 'codex', title: 'Good' })
+    seeded.append('good', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'good', status: 'running', createdAt: 1 },
+    })
+    seeded.addThread({ id: 'mixed', projectPath: '/repo', provider: 'codex', title: 'Mixed' })
+    seeded.append('mixed', message('before the unknown rows'))
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    // An event type this build does not know, and a row that is not JSON at
+    // all — both plausible once a newer build wrote to the same database.
+    const badSeq = Number(
+      raw
+        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+        .run('mixed', 2, '{"type":"session.compacted","summary":"nightly"}').lastInsertRowid,
+    )
+    raw
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+      .run('mixed', 3, 'not json at all')
+    // An open recovery lifecycle whose stored start payload is unreadable.
+    raw
+      .prepare(
+        `INSERT INTO recovery_lifecycles
+           (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
+         VALUES ('good', 'turn:unreadable', 'turn.started', ?, NULL, ?)`,
+      )
+      .run(badSeq, '{"type":"turn.started","turn":{"bogus":true}}')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.history('mixed').map(({ event }) => event)).toEqual([
+        message('before the unknown rows'),
+      ])
+      expect(reopened.localHistory('mixed')).toEqual(reopened.history('mixed'))
+      // The unreadable row is skipped; the readable open turn still recovers.
+      expect(reopened.recoverInterruptedThreads()).toEqual(['good'])
+      // The tombstoned rows stay stored for a build that can read them.
+      expect(reopened.lastSeq('mixed')).toBe(4)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('finishes a derived-index rebuild when one stored event fails to parse', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-rebuild-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+    seeded.append('one', message('needle that must stay searchable'))
+    seeded.append('one', {
+      type: 'turn.started',
+      turn: { id: 'open-turn', threadId: 'one', status: 'running', createdAt: 1 },
+    })
+    seeded.append('one', {
+      type: 'approval.requested',
+      request: { id: 'approval-1', kind: 'command', createdAt: 2 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    // A selected event type carrying a shape this build rejects: the SQL
+    // prefilter sees 'item.started', then the schema refuses the payload.
+    raw
+      .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+      .run('one', 3, '{broken')
+    raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`).run(
+      'one',
+      3,
+      JSON.stringify({
+        type: 'item.started',
+        item: {
+          id: 'x',
+          turnId: 'open-turn',
+          type: 'hologram',
+          status: 'started',
+          createdAt: 3,
+        },
+      }),
+    )
+    raw.exec(`
+      DELETE FROM session_search;
+      DELETE FROM usage_events;
+      DELETE FROM inbox_events;
+      DELETE FROM user_submission_items;
+      DELETE FROM turn_diff_events;
+      DELETE FROM recovery_lifecycles;
+      DELETE FROM recovery_errors;
+      DELETE FROM schema_migrations;
+    `)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      // The constructor rebuilt every derived index past the unreadable row.
+      expect(reopened.searchSessions({ query: 'needle' }).results).toHaveLength(1)
+      expect(reopened.inboxProjections().get('one')?.approvals).toEqual(new Set(['approval-1']))
+      expect(reopened.recoverInterruptedThreads()).toEqual(['one'])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps lists and search usable when a thread row has an unknown provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-provider-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'normal', projectPath: '/repo', provider: 'codex', title: 'Normal' })
+    seeded.addThread({ id: 'alien', projectPath: '/repo', provider: 'codex', title: 'Alien' })
+    seeded.append('normal', message('shared needle'))
+    seeded.append('alien', message('shared needle'))
+    seeded.append('alien', {
+      type: 'turn.started',
+      turn: { id: 'alien-turn', threadId: 'alien', status: 'running', createdAt: 1 },
+    })
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw
+      .prepare(`UPDATE threads SET provider = ? WHERE id = ?`)
+      .run('provider-from-nightly', 'alien')
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.threads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.sidebarThreads().map((thread) => thread.id)).toEqual(['normal'])
+      expect(reopened.thread('alien')).toBeUndefined()
+      const results = reopened.searchSessions({ query: 'needle' }).results
+      expect(results.map((result) => result.threadId)).toEqual(['normal'])
+      expect(reopened.recoverInterruptedThreads()).toEqual([])
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('degrades rows a schema-divergent build could leave behind', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-forward-schema-'))
+    const file = path.join(dir, 'harness.db')
+    // The shape a newer build could leave: same columns, wider CHECK lists.
+    const raw = new DatabaseSync(file)
+    raw.exec(`
+      CREATE TABLE threads (
+        id           TEXT PRIMARY KEY,
+        project_path TEXT NOT NULL,
+        provider     TEXT NOT NULL,
+        agent        TEXT,
+        provider_session_id TEXT,
+        title        TEXT NOT NULL,
+        pinned       INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL,
+        closed_at    INTEGER,
+        worktree_path   TEXT,
+        worktree_branch TEXT,
+        lifecycle_state  TEXT NOT NULL DEFAULT 'active'
+          CHECK (lifecycle_state IN ('active', 'settled', 'snoozed', 'dormant')),
+        lifecycle_at     INTEGER,
+        lifecycle_reason TEXT,
+        wake_at          INTEGER,
+        keep_active      INTEGER NOT NULL DEFAULT 0,
+        woke_at          INTEGER,
+        unread           INTEGER NOT NULL DEFAULT 0,
+        last_active_at   INTEGER NOT NULL,
+        ephemeral        INTEGER NOT NULL DEFAULT 0,
+        parent_thread_id TEXT
+      );
+      CREATE TABLE queued_turns (
+        thread_id            TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+        queue_id             TEXT NOT NULL,
+        client_submission_id TEXT,
+        position             INTEGER NOT NULL,
+        state                TEXT NOT NULL CHECK (state IN ('queued', 'dispatching')),
+        intent               TEXT NOT NULL,
+        payload              TEXT NOT NULL,
+        created_at           INTEGER NOT NULL,
+        PRIMARY KEY (thread_id, queue_id)
+      );
+      CREATE TABLE diff_decisions (
+        thread_id TEXT NOT NULL,
+        target_id TEXT NOT NULL,
+        decision  TEXT NOT NULL,
+        PRIMARY KEY (thread_id, target_id)
+      );
+    `)
+    raw.close()
+
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    seeded.addThread({ id: 'weird', projectPath: '/repo', provider: 'codex', title: 'Weird' })
+    seeded.close()
+
+    const divergent = new DatabaseSync(file)
+    divergent.prepare(`UPDATE threads SET lifecycle_state = 'dormant' WHERE id = 'weird'`).run()
+    divergent
+      .prepare(
+        `INSERT INTO queued_turns
+           (thread_id, queue_id, position, state, intent, payload, created_at)
+         VALUES ('weird', 'q1', 0, 'queued', 'steer-v2', ?, 1)`,
+      )
+      .run(JSON.stringify({ text: 'queued prompt', attachments: [], options: {} }))
+    divergent
+      .prepare(
+        `INSERT INTO queued_turns
+           (thread_id, queue_id, position, state, intent, payload, created_at)
+         VALUES ('weird', 'q2', 1, 'queued', 'normal', ?, 2)`,
+      )
+      .run('{"prompt":"a shape this build does not know"}')
+    divergent
+      .prepare(`INSERT INTO diff_decisions (thread_id, target_id, decision) VALUES (?, ?, ?)`)
+      .run('weird', 'hunk:1', 'partial')
+    divergent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.thread('weird')?.lifecycle).toEqual({ state: 'active', keepActive: false })
+      expect(reopened.sidebarThreads()[0]?.lifecycle).toEqual({
+        state: 'active',
+        keepActive: false,
+      })
+      expect(reopened.queuedTurns('weird').map((turn) => turn.intent)).toEqual(['normal'])
+      // The unreadable prompt is a tombstone: never listed, never claimed,
+      // still stored for a build that understands it.
+      expect(reopened.claimQueuedTurn('weird', 'q2', 'normal')).toBeUndefined()
+      expect(reopened.diffDecision('weird', 'hunk:1')).toBeUndefined()
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not keep cache writes a rolled-back recovery made', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-recovery-cache-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    seeded.addProject('/repo')
+    for (const [id, turnId] of [
+      ['first', 'turn-first'],
+      ['second', 'turn-second'],
+    ] as const) {
+      seeded.addThread({ id, projectPath: '/repo', provider: 'codex', title: id })
+      seeded.append(id, {
+        type: 'turn.started',
+        turn: { id: turnId, threadId: id, status: 'running', createdAt: 1 },
+      })
+    }
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    raw.exec(`CREATE TRIGGER fail_second BEFORE INSERT ON events
+      WHEN json_extract(NEW.payload, '$.turnId') = 'turn-second'
+      BEGIN SELECT RAISE(ABORT, 'injected recovery failure'); END`)
+    raw.close()
+
+    const reopened = new Store(file)
+    try {
+      // Warm both caches so the failure lands on populated in-memory state.
+      expect(reopened.thread('first')?.unread).toBe(false)
+      expect(reopened.sidebarThreads().every((thread) => !thread.unread)).toBe(true)
+      expect(() => reopened.recoverInterruptedThreads()).toThrow('injected recovery failure')
+      // First's recovery appended and touched, then rolled back: the caches
+      // must agree with the database, not with the lost writes.
+      expect(reopened.thread('first')?.unread).toBe(false)
+      expect(reopened.sidebarThreads().find((thread) => thread.id === 'first')?.unread).toBe(false)
+      expect(reopened.history('first')).toHaveLength(1)
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('leaves a closed thread untouched by lifecycle writes', () => {
+    store.addProject('/repo')
+    store.addThread({ id: 'closed', projectPath: '/repo', provider: 'codex', title: 'Closed' })
+    store.touchThread('closed', true, 10)
+    store.closeThread('closed')
+
+    expect(() => store.settleThread('closed', 'manual')).toThrow('thread not found')
+    expect(() => store.snoozeThread('closed', 100)).toThrow('thread not found')
+    // Reading closed history marks it read: a no-op, not an error.
+    expect(() => store.markThreadRead('closed')).not.toThrow()
+    // An event still landing after close must not resurrect the thread.
+    expect(store.touchThread('closed', false, 20)).toEqual({ state: 'active', keepActive: false })
+
+    expect(store.thread('closed')).toMatchObject({
+      lifecycle: { state: 'active', keepActive: false },
+      unread: true,
+      lastActiveAt: 10,
+    })
+    expect(store.thread('closed')?.closedAt).toBeTypeOf('number')
+    expect(() => store.markThreadRead('missing')).toThrow('thread not found')
   })
 })
 
@@ -776,15 +1127,15 @@ describe('threads', () => {
     store.addProject('/repo')
   })
 
-  it('keeps the ACP agent, because the provider alone cannot start the session', () => {
+  it('keeps the custom harness id, because the provider alone cannot start the session', () => {
     store.addThread({
       id: 't1',
       projectPath: '/repo',
-      provider: 'acp',
-      agent: 'gemini',
+      provider: 'codex',
+      agent: 'codex-fork',
       title: 'One',
     })
-    expect(store.thread('t1')?.agent).toBe('gemini')
+    expect(store.thread('t1')?.agent).toBe('codex-fork')
   })
 
   it('leaves the agent unset for providers that are a single engine', () => {
@@ -1039,6 +1390,55 @@ describe('threads', () => {
     expect(Object.isFrozen(manual)).toBe(true)
     expect(manual.mode === 'manual' && Object.isFrozen(manual.target)).toBe(true)
   })
+
+  it('keeps provider context settings across a restart and forgets a cleared provider', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    const persistent = new Store(file)
+    expect(persistent.providerContextSettings()).toEqual({})
+    persistent.updateProviderContextSettings('claude-code', { window: 1_000_000, compactAt: 'off' })
+    const saved = persistent.updateProviderContextSettings('grok', { compactAt: 70 })
+    expect(Object.isFrozen(saved)).toBe(true)
+    expect(persistent.providerContextSettings()).toBe(saved)
+    persistent.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+        grok: { compactAt: 70 },
+      })
+      expect(reopened.updateProviderContextSettings('grok', {})).toEqual({
+        'claude-code': { window: 1_000_000, compactAt: 'off' },
+      })
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to engine defaults when stored context settings are unreadable', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-context-'))
+    const file = path.join(dir, 'context.db')
+    new Store(file).close()
+    const db = new DatabaseSync(file)
+    db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(
+      'provider-context',
+      JSON.stringify({ codex: { compactAt: 4 } }),
+    )
+    db.close()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.providerContextSettings()).toEqual({})
+      expect(warn).toHaveBeenCalledOnce()
+    } finally {
+      reopened.close()
+      warn.mockRestore()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('events', () => {
@@ -1077,6 +1477,122 @@ describe('events', () => {
     store.saveReplaySnapshot('t1', 1, snapshot)
     store.applyRestoreUndo('t1', token)
     expect(store.replaySnapshotBase('t1')).toBeUndefined()
+  })
+
+  it('marks cursors that saw events a restore removed', () => {
+    const kept = store.append('t1', message('one'))
+    store.append('t1', message('two'))
+    const removed = store.append('t1', message('three'))
+    store.saveRestoreUndo('t1', kept, 'before-two')
+    const next = store.append('t1', message('after restore'))
+
+    expect(store.historyRewrittenAfter('t1', removed)).toBe(true)
+    expect(store.historyRewrittenAfter('t1', kept)).toBe(false)
+    expect(store.historyRewrittenAfter('t1', next)).toBe(false)
+    expect(store.historyRewrittenAfter('t1', Number.MAX_SAFE_INTEGER)).toBe(false)
+  })
+
+  it('keeps cursors that saw an earlier restore marked after a later one', () => {
+    const first = store.append('t1', message('one'))
+    const stale = store.append('t1', message('two'))
+    store.saveRestoreUndo('t1', first, 'before-two')
+    const second = store.append('t1', message('three'))
+    store.append('t1', message('four'))
+    store.saveRestoreUndo('t1', second, 'before-four')
+
+    expect(store.historyRewrittenAfter('t1', stale)).toBe(true)
+  })
+
+  it('keeps a cached replay for its own sequence after newer events land', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-at-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('one'))
+      const snapshot = [{ seq, event: message('cached') }]
+      seeded.saveReplaySnapshot('t1', seq, snapshot)
+      seeded.append('t1', message('two'))
+
+      // Still the same replay object: no reread or parse of the saved row.
+      expect(seeded.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      expect(seeded.replaySnapshotBase('t1')?.entries).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq)).toBe(snapshot)
+      expect(seeded.replaySnapshotAt('t1', seq + 1)).toBeUndefined()
+      seeded.close()
+
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotAt('t1', seq)).toEqual(snapshot)
+      expect(reopened.tailReplaySnapshotForResponse('t1')).toBeUndefined()
+      reopened.saveRestoreUndo('t1', seq, 'commit')
+      expect(reopened.replaySnapshotAt('t1', seq)).toBeUndefined()
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops replay snapshots saved before chronological replay once, keeping raw history', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-chronological-'))
+    const file = path.join(dir, 'replay.db')
+    try {
+      const seeded = new Store(file)
+      seeded.addProject('/repo', 'Repo')
+      seeded.addThread({ id: 't1', projectPath: '/repo', provider: 'codex', title: 'T' })
+      const seq = seeded.append('t1', message('kept'))
+      seeded.saveReplaySnapshot('t1', seq, [{ seq, event: message('stale order') }])
+      seeded.close()
+      const raw = new DatabaseSync(file)
+      raw
+        .prepare('DELETE FROM schema_migrations WHERE name = ?')
+        .run('chronological_replay_snapshots_v1')
+      raw.close()
+
+      const migrated = new Store(file)
+      expect(migrated.replaySnapshotBase('t1')).toBeUndefined()
+      expect(migrated.history('t1')).toHaveLength(1)
+      migrated.saveReplaySnapshot('t1', seq, [{ seq, event: message('kept') }])
+      migrated.close()
+      const reopened = new Store(file)
+      expect(reopened.replaySnapshotBase('t1')?.seq).toBe(seq)
+      reopened.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('drops the saved replay of a closed thread and keeps only recent replays on disk', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-replay-bound-'))
+    const file = path.join(dir, 'replay.db')
+    const seeded = new Store(file)
+    const save = (threadId: string) => {
+      const seq = seeded.append(threadId, message(`thread-${threadId}`))
+      seeded.saveReplaySnapshot(threadId, seq, [{ seq, event: message(`snapshot-${threadId}`) }])
+    }
+    seeded.addProject('/repo', 'Repo')
+    for (let index = 0; index <= 65; index += 1) {
+      seeded.addThread({ id: `r${index}`, projectPath: '/repo', provider: 'codex', title: 'R' })
+      save(`r${index}`)
+    }
+    seeded.closeThread('r65')
+    expect(seeded.replaySnapshotBase('r65')).toBeUndefined()
+    save('r0')
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    const saved = raw
+      .prepare(`SELECT thread_id FROM thread_replay_snapshots ORDER BY rowid`)
+      .all() as Array<{ thread_id: string }>
+    raw.close()
+    try {
+      expect(saved).toHaveLength(64)
+      expect(saved.at(-1)?.thread_id).toBe('r0')
+      expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r1')
+      expect(saved.map(({ thread_id }) => thread_id)).not.toContain('r65')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('bounds parsed replay snapshots and retains the most recently used threads', () => {
@@ -1530,7 +2046,7 @@ describe('cross-session search', () => {
     seeded.close()
 
     const raw = new DatabaseSync(file)
-    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v1')
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v2')
     raw.close()
 
     const rebuilt = new Store(file)
@@ -1538,6 +2054,70 @@ describe('cross-session search', () => {
       const after = rebuilt.searchSessions({ query: 'identity' }).results[0]?.resultId
       expect(before).toBeDefined()
       expect(after).toBe(before)
+    } finally {
+      rebuilt.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('indexes the start and end of long tool output and shrinks rows from older builds', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-search-bound-'))
+    const file = path.join(dir, 'bound.db')
+    const output = [
+      'openingmarker',
+      'filler '.repeat(4_000),
+      'middlemarker',
+      'filler '.repeat(4_000),
+      'closingmarker',
+    ].join('\n')
+    const command = (id: string): DomainEvent => ({
+      type: 'item.completed',
+      item: {
+        id,
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        text: output,
+        createdAt: 1,
+      },
+    })
+    const seeded = new Store(file)
+    seeded.addProject('/repo', 'Repo')
+    seeded.addThread({ id: 't-long', projectPath: '/repo', provider: 'codex', title: 'Long' })
+    seeded.append('t-long', command('fresh'))
+    seeded.append('t-long', message(`longmessage ${'words '.repeat(4_000)} messageend`))
+    expect(seeded.searchSessions({ query: 'openingmarker' }).results).toHaveLength(1)
+    expect(seeded.searchSessions({ query: 'closingmarker' }).results).toHaveLength(1)
+    expect(seeded.searchSessions({ query: 'middlemarker' }).results).toEqual([])
+    expect(seeded.searchSessions({ query: 'messageend' }).results).toHaveLength(1)
+    seeded.close()
+
+    const raw = new DatabaseSync(file)
+    const legacySeq = Number(
+      raw
+        .prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`)
+        .run('t-long', 1, JSON.stringify(command('legacy'))).lastInsertRowid,
+    )
+    raw
+      .prepare(
+        `INSERT INTO session_search (rowid, thread_id, event_seq, turn_id, created_at, text)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(legacySeq, 't-long', legacySeq, 'turn-1', 1, `pnpm test\n${output}`)
+    raw.prepare(`DELETE FROM schema_migrations WHERE name = ?`).run('session_search_v2')
+    raw.close()
+
+    const rebuilt = new Store(file)
+    try {
+      expect(rebuilt.searchSessions({ query: 'middlemarker' }).results).toEqual([])
+      expect(rebuilt.searchSessions({ query: 'closingmarker' }).results).toHaveLength(2)
+      const check = new DatabaseSync(file)
+      const longest = check
+        .prepare(`SELECT MAX(length(text)) AS length FROM session_search WHERE text LIKE 'pnpm%'`)
+        .get() as { length: number }
+      check.close()
+      expect(longest.length).toBeLessThan(17 * 1024)
     } finally {
       rebuilt.close()
       rmSync(dir, { recursive: true, force: true })

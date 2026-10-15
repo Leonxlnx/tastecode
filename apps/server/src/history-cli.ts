@@ -4,6 +4,7 @@ import { Store } from './store.js'
 import { storeLocation } from './data-location.js'
 import { checkpointRepository, clearSnapshotRefs, syncCheckpointRefs } from './checkpoint.js'
 import { acquireDataLease } from './data-lease.js'
+import { resolveWorkspacePath } from './orchestrator.js'
 
 export const HISTORY_HELP = `History commands:
   harness history stats
@@ -16,7 +17,8 @@ Prune previews eligible closed tasks by default. Applying it first saves their
 history to a new archive. Active tasks and tasks with private checkouts stay.
 Close TasteCode and its core server before using history commands.
 Archives contain conversation records, not a backup of workspace files.
-Compact reclaims free database pages. HARNESS_DATA_DIR selects the data folder.
+Compact removes streamed text fragments that completed messages already contain,
+then reclaims free database pages. HARNESS_DATA_DIR selects the data folder.
 `
 
 export async function runHistoryCli(
@@ -75,8 +77,9 @@ export async function runHistoryCli(
       return
     }
     if (command === 'compact') {
+      const foldedDeltaEvents = store.foldCompletedItemDeltas()
       store.reclaimHistorySpace()
-      output(JSON.stringify(store.historyStorage(), null, 2))
+      output(JSON.stringify({ foldedDeltaEvents, ...store.historyStorage() }, null, 2))
       return
     }
     const date = flags.get('--before')
@@ -101,33 +104,47 @@ export async function runHistoryCli(
     if (typeof archive !== 'string')
       throw new Error('Prune --apply requires --archive <new-file.ndjson>')
     const priorRefs = store.checkpointReferences()
-    const roots = new Map<string, string>()
+    // A recorded directory can stop being a Git repository; that must not block every prune.
+    const roots = new Map<string, string | undefined>()
     const rootFor = async (directory: string) => {
-      let root = roots.get(directory)
-      if (!root) {
-        root = await checkpointRepository(directory)
-        roots.set(directory, root)
-      }
-      return root
+      if (!roots.has(directory))
+        roots.set(directory, await checkpointRepository(directory).catch(() => undefined))
+      return roots.get(directory)
     }
     const entryPath = (entry: (typeof priorRefs)[number]) =>
-      entry.worktreePath && existsSync(entry.worktreePath) ? entry.worktreePath : entry.projectPath
+      entry.worktreePath && existsSync(entry.worktreePath)
+        ? entry.worktreePath
+        : resolveWorkspacePath(entry.projectPath)
     const commitsByRepo = new Map<string, Set<string>>()
     // Resolve groups before deleting anything. One shared ref namespace is
     // synchronized once, with the union of every retained worktree's commits.
     for (const directory of [...store.checkpointRepositories(), ...priorRefs.map(entryPath)]) {
-      if (existsSync(directory)) commitsByRepo.set(await rootFor(directory), new Set())
+      const root = existsSync(directory) ? await rootFor(directory) : undefined
+      if (root) commitsByRepo.set(root, new Set())
     }
     const count = store.pruneHistory(before, path.resolve(archive))
+    const unlocated: string[] = []
     for (const entry of store.checkpointReferences()) {
       const directory = entryPath(entry)
       if (!existsSync(directory)) continue
       const repo = await rootFor(directory)
+      if (!repo) {
+        unlocated.push(directory)
+        continue
+      }
       const commits = commitsByRepo.get(repo) ?? new Set<string>()
       for (const commit of entry.commits) commits.add(commit)
       commitsByRepo.set(repo, commits)
     }
     const cleanupErrors: unknown[] = []
+    // A retained checkout that cannot be located may share a repository's refs; syncing
+    // without its commits would delete checkpoints that task still needs.
+    if (unlocated.length) {
+      cleanupErrors.push(
+        new Error(`Could not locate Git checkpoint storage for ${unlocated.join(', ')}`),
+      )
+      commitsByRepo.clear()
+    }
     for (const [repo, commits] of commitsByRepo) {
       if (!existsSync(repo)) continue
       try {

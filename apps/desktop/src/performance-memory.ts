@@ -49,8 +49,9 @@ export async function sampleSettledMemory(
   })
   try {
     while (!controller.signal.aborted) {
+      const sampledAt = performance.now()
       const memory = await Promise.race([sample(controller.signal), deadline])
-      samples.push({ ...memory, elapsedMs: performance.now() - started })
+      samples.push({ ...memory, elapsedMs: sampledAt - started })
       const window = samples.slice(-4)
       if (window.length === 4) {
         const identities = window.map((entry) =>
@@ -74,7 +75,8 @@ export async function sampleSettledMemory(
       }
       await Promise.race([
         new Promise<void>((resolve) => {
-          pause = setTimeout(resolve, 1_000)
+          // Space capture starts by one second; OS read time is part of that interval.
+          pause = setTimeout(resolve, Math.max(0, 1_000 - (performance.now() - sampledAt)))
         }),
         deadline,
       ])

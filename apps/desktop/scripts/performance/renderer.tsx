@@ -6,6 +6,7 @@ import { Thread } from '../../../web/src/ui/Thread.js'
 import { makeFixtureThread } from '../../../web/src/ui/fixture.js'
 import { ThreadFrameStore } from '../../../web/src/thread-frame-store.js'
 import { emptyThread, reduce, threadItemAt } from '../../../web/src/thread-store.js'
+import type { LargeActivityStep } from './large-activity.js'
 import '../../../web/src/styles/tokens.css'
 import '../../../web/src/styles/app.css'
 import './style.css'
@@ -214,16 +215,24 @@ async function settleIdle() {
 }
 
 async function run() {
+  console.log('[performance] thread fixture entered')
   await document.fonts.ready
+  console.log('[performance] thread fonts ready')
   await paint()
+  console.log('[performance] thread initial frames ready')
   const firstPaintMs = await switchTo(0)
+  console.log('[performance] thread first paint complete')
   const initiallyVisible = visibleRows().length
   const scroll = await scrollAll()
+  console.log('[performance] thread scroll complete')
   const streaming = await stream()
+  console.log('[performance] thread streaming complete')
   const switches = []
   for (let index = 1; index < 5; index += 1) switches.push(await switchTo(index))
   switches.push(await switchTo(0))
+  console.log('[performance] thread switches complete')
   await settleIdle()
+  console.log('[performance] thread idle complete')
   if (stores.some((store) => store.getSnapshot().running))
     throw new Error('Idle fixture still has an active turn')
   return {
@@ -239,4 +248,10 @@ async function run() {
 }
 
 createRoot(document.getElementById('root')!).render(<Fixture />)
-Object.assign(window, { runPerformanceFixture: run })
+Object.assign(window, {
+  runPerformanceFixture: run,
+  runHighlightingFixture: () =>
+    import('./highlighting.js').then(({ runHighlightingFixture }) => runHighlightingFixture()),
+  runLargeActivityStep: (step: LargeActivityStep) =>
+    import('./large-activity.js').then(({ runLargeActivityStep }) => runLargeActivityStep(step)),
+})

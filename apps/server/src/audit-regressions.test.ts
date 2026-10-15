@@ -2,14 +2,13 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import type { AgentSession, ProviderRuntime } from './adapters.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 import { McpConfigStore } from './mcp-config.js'
-import { ModelConnectionStore } from './model-connections.js'
 import { CustomHarnessStore } from './custom-harnesses.js'
-import { retainCheckpoint, takeSnapshot } from './checkpoint.js'
+import { checkpointRepository, retainCheckpoint, takeSnapshot } from './checkpoint.js'
 import { runHistoryCli } from './history-cli.js'
 
 const roots: string[] = []
@@ -80,17 +79,20 @@ function harness(
   options: { start?: ReturnType<typeof gate>; resume?: ReturnType<typeof gate> } = {},
 ) {
   const sessions: Session[] = []
+  const sessionCreated = gate()
   const runtime: ProviderRuntime = {
     listModels: async () => [],
     start: async (workspacePath) => {
       const session = new Session()
       const id = `task-${sessions.push(session)}`
+      sessionCreated.release()
       await options.start?.promise
       return { thread: { id, provider: 'codex', workspacePath, createdAt: Date.now() }, session }
     },
     resume: async (id, workspacePath) => {
       const session = new Session()
       sessions.push(session)
+      sessionCreated.release()
       await options.resume?.promise
       return { thread: { id, provider: 'codex', workspacePath, createdAt: Date.now() }, session }
     },
@@ -103,11 +105,10 @@ function harness(
     runtimeFor: () => runtime,
     worktreeRoot: path.join(root, 'worktrees'),
     mcpConfig: new McpConfigStore(path.join(root, 'mcp.json')),
-    modelConnections: new ModelConnectionStore(path.join(root, 'models.json')),
     customHarnesses: new CustomHarnessStore(path.join(root, 'harnesses.json')),
   })
   active.push({ orchestrator, store })
-  return { orchestrator, store, sessions }
+  return { orchestrator, store, sessions, sessionCreated: sessionCreated.promise }
 }
 afterEach(async () => {
   for (const entry of active.splice(0)) {
@@ -135,7 +136,7 @@ describe('audit integration regressions', () => {
     ).toBe('other\n')
     expect(git(repo, 'branch', '--show-current')).toBe('main')
     await expect(orchestrator.startThread('codex', repo, { baseRef: 'other' })).rejects.toThrow(
-      /running turns/,
+      /Chats are still working/,
     )
   })
 
@@ -150,10 +151,14 @@ describe('audit integration regressions', () => {
     session.stopError = new Error('process still alive')
     const closing = orchestrator.close(task.id)
     const refused = expect(closing).rejects.toThrow(/process still alive/)
-    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(/running turns/)
+    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(
+      /Chats are still working/,
+    )
     stop.release()
     await refused
-    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(/running turns/)
+    await expect(orchestrator.switchBranch(repo, 'other')).rejects.toThrow(
+      /Chats are still working/,
+    )
     session.stopError = undefined
     await orchestrator.close(task.id)
     await expect(orchestrator.switchBranch(repo, 'other')).resolves.toMatchObject({
@@ -166,10 +171,10 @@ describe('audit integration regressions', () => {
     async (options) => {
       const { root, repo } = fixture()
       const start = gate()
-      const { orchestrator, sessions, store } = harness(root, { start })
+      const { orchestrator, sessions, store, sessionCreated } = harness(root, { start })
       const starting = orchestrator.startThread('codex', repo, options)
       const rejected = expect(starting).rejects.toThrow(/cancelled by shutdown/)
-      await vi.waitFor(() => expect(sessions).toHaveLength(1))
+      await sessionCreated
       await orchestrator.disposeAll()
       start.release()
       await rejected
@@ -183,7 +188,7 @@ describe('audit integration regressions', () => {
   it('cancels a submitted prompt across a cold resume and panic stop', async () => {
     const { root, repo } = fixture()
     const resume = gate()
-    const { orchestrator, sessions, store } = harness(root, { resume })
+    const { orchestrator, sessions, store, sessionCreated } = harness(root, { resume })
     store.addProject(repo)
     store.addThread({
       id: 'saved',
@@ -194,7 +199,7 @@ describe('audit integration regressions', () => {
     })
     const submitting = orchestrator.submitTurn('saved', 'must not run after panic')
     const rejected = expect(submitting).rejects.toThrow(/panic stop/)
-    await vi.waitFor(() => expect(sessions).toHaveLength(1))
+    await sessionCreated
     await orchestrator.panicStop()
     resume.release()
     await rejected
@@ -208,6 +213,7 @@ describe('audit integration regressions', () => {
     const isolated = path.join(root, 'isolated')
     const data = path.join(root, 'data')
     git(repo, 'worktree', 'add', '--detach', isolated)
+    expect(await checkpointRepository(repo)).toBe(await checkpointRepository(isolated))
     const store = new Store(path.join(data, 'tastecode.db'))
     let closed = false
     try {

@@ -62,10 +62,111 @@ describe('StageHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
     const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    // The shared .rename field box makes editing visible; the title text is selected.
+    expect(rename.classList.contains('rename')).toBe(true)
     expect(rename.classList.contains('rename--chat')).toBe(true)
     fireEvent.change(rename, { target: { value: 'Polished landing page' } })
+    fireEvent.keyDown(rename, { key: 'Enter', isComposing: true })
+    expect(stage.onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(rename, { key: 'Enter' })
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
+  })
+
+  it('returns focus to the chat menu when Enter or Escape ends a rename', () => {
+    const stage = props()
+    render(<StageHeader {...stage} />)
+    const menu = screen.getByRole('button', { name: 'Options for Build the landing page' })
+
+    for (const key of ['Escape', 'Enter']) {
+      fireEvent.click(menu)
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+      const rename = screen.getByRole('textbox', { name: 'Rename chat' }) as HTMLInputElement
+      // happy-dom runs the closing menu's focus return after the field took
+      // focus; a browser leaves the field focused. The title is selected either way.
+      rename.focus()
+      expect(rename.selectionStart).toBe(0)
+      expect(rename.selectionEnd).toBe('Build the landing page'.length)
+      fireEvent.change(rename, { target: { value: `Renamed with ${key}` } })
+      // A cancelled key is not followed by a keypress that would open the menu again.
+      expect(fireEvent.keyDown(rename, { key })).toBe(false)
+      expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
+      expect(document.activeElement).toBe(menu)
+    }
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Renamed with Enter')
+  })
+
+  it('leaves focus where the user went when a rename ends on blur', () => {
+    const stage = props()
+    render(
+      <>
+        <StageHeader {...stage} />
+        <button type="button">Elsewhere</button>
+      </>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    fireEvent.change(rename, { target: { value: 'Saved on blur' } })
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' })
+    elsewhere.focus()
+    fireEvent.blur(rename)
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Saved on blur')
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
+  it('saves a rename to the chat it was typed for when a shortcut switches chats', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="thread-a" title="Chat A" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Chat A' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename chat' }), {
+      target: { value: 'Draft typed for A' },
+    })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-b" title="Chat B" />)
+
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-a', 'Draft typed for A')
+    expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
+    expect(screen.getByText('Chat B')).toBeTruthy()
+  })
+
+  it('keeps renaming a new chat when its thread starts', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="pending:new" title="New chat" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for New chat' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    fireEvent.change(rename, { target: { value: 'Landing' } })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-started" title="New chat" />)
+
+    expect(stage.onRenameSession).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Rename chat' })).toBe(rename)
+    fireEvent.change(rename, { target: { value: 'Landing page' } })
+    fireEvent.keyDown(rename, { key: 'Enter' })
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-started', 'Landing page')
+  })
+
+  it('saves a new chat rename there when a shortcut switches away before it starts', () => {
+    const stage = props()
+    const view = render(<StageHeader {...stage} sessionId="pending:new" title="Fix login" />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Fix login' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    fireEvent.change(screen.getByRole('textbox', { name: 'Rename chat' }), {
+      target: { value: 'Login fix' },
+    })
+
+    view.rerender(<StageHeader {...stage} sessionId="thread-b" title="Chat B" />)
+
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('pending:new', 'Login fix')
+    expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
   })
 
   it('keeps useful app options available on New chat', () => {
@@ -116,6 +217,7 @@ describe('PanelToggles', () => {
     fireEvent.pointerEnter(terminal)
     expect(panels.onPrepareTerminal).toHaveBeenCalledOnce()
     expect(terminal.querySelector('.tabler-icon-layout-bottombar')).not.toBeNull()
+    expect(terminal.classList).toContain('panel-toggles__terminal')
     expect(workspace.querySelector('.tabler-icon-layout-sidebar-right-expand')).not.toBeNull()
     const workspaceLayers = workspace.querySelectorAll('.icon-morph__layer')
     expect(workspaceLayers).toHaveLength(2)

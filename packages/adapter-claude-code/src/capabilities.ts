@@ -30,4 +30,14 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   userInput: true,
   autoReview: true,
   images: true,
+  // Claude Code compacts about 13K tokens short of a 200K window by default,
+  // and ignores an override later than that. 1M applies only where the model
+  // offers it.
+  context: {
+    windows: [200_000, 1_000_000],
+    compaction: true,
+    compactionOff: true,
+    defaultCompactAt: 93,
+    latestCompactAt: 93,
+  },
 }

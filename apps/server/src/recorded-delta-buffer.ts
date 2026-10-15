@@ -3,6 +3,7 @@ import type { DomainEvent } from '@harness/contracts'
 const DEFAULT_DELAY_MS = 4
 const DEFAULT_MAXIMUM_TEXT_LENGTH = 64 * 1024
 const DEFAULT_MAXIMUM_EVENT_COUNT = 256
+const RETRY_DELAY_MS = 1_000
 
 export type ItemDeltaEvent = Extract<DomainEvent, { type: 'item.delta' }>
 export type RecordedDelta = { threadId: string; event: ItemDeltaEvent }
@@ -11,6 +12,7 @@ type RecordedDeltaBufferOptions = {
   delayMs?: number
   maximumTextLength?: number
   maximumEventCount?: number
+  /** Must commit atomically: a failed batch stays buffered for retry. */
   commitBatch?: (records: RecordedDelta[]) => void
 }
 
@@ -32,7 +34,7 @@ export class RecordedDeltaBuffer {
   readonly #delayMs: number
   readonly #maximumTextLength: number
   readonly #maximumEventCount: number
-  readonly #commitBatch: (records: RecordedDelta[]) => void
+  readonly #commitBatch: ((records: RecordedDelta[]) => void) | undefined
 
   constructor(
     private readonly commit: (threadId: string, event: ItemDeltaEvent) => void,
@@ -41,9 +43,7 @@ export class RecordedDeltaBuffer {
     this.#delayMs = options.delayMs ?? DEFAULT_DELAY_MS
     this.#maximumTextLength = options.maximumTextLength ?? DEFAULT_MAXIMUM_TEXT_LENGTH
     this.#maximumEventCount = options.maximumEventCount ?? DEFAULT_MAXIMUM_EVENT_COUNT
-    this.#commitBatch =
-      options.commitBatch ??
-      ((records) => records.forEach(({ threadId, event }) => commit(threadId, event)))
+    this.#commitBatch = options.commitBatch
   }
 
   push(threadId: string, event: ItemDeltaEvent): void {
@@ -78,16 +78,19 @@ export class RecordedDeltaBuffer {
   flush(threadId: string): void {
     const pending = this.#pending.get(threadId)
     if (!pending) return
+    this.#commit(threadId, pending)
     this.#pending.delete(threadId)
     if (this.#pending.size === 0) this.#clearTimer()
-    this.#commit(threadId, pending)
   }
 
   flushAll(): void {
     this.#clearTimer()
-    const pending = this.#pending
-    this.#pending = new Map()
-    this.#commitPending(pending)
+    try {
+      this.#commitPending()
+    } catch (error) {
+      this.#schedule(RETRY_DELAY_MS)
+      throw error
+    }
   }
 
   discard(threadId: string): void {
@@ -100,15 +103,18 @@ export class RecordedDeltaBuffer {
     this.#clearTimer()
   }
 
-  #schedule(): void {
-    this.#timer ??= setTimeout(() => this.#flushWindow(), this.#delayMs)
+  #schedule(delay = this.#delayMs): void {
+    this.#timer ??= setTimeout(() => this.#flushWindow(), delay)
   }
 
   #flushWindow(): void {
     this.#timer = undefined
-    const pending = this.#pending
-    this.#pending = new Map()
-    this.#commitPending(pending)
+    try {
+      this.#commitPending()
+    } catch (error) {
+      console.error('Could not save streamed text; buffered changes will be retried.', error)
+      this.#schedule(RETRY_DELAY_MS)
+    }
   }
 
   #commit(threadId: string, pending: PendingDelta): void {
@@ -120,11 +126,11 @@ export class RecordedDeltaBuffer {
     })
   }
 
-  #commitPending(pending: ReadonlyMap<string, PendingDelta>): void {
+  #commitPending(): void {
+    const pending = this.#pending
     if (pending.size === 0) return
-    if (pending.size === 1) {
-      const entry = pending.entries().next().value
-      if (entry) this.#commit(entry[0], entry[1])
+    if (pending.size === 1 || !this.#commitBatch) {
+      for (const [threadId] of pending) this.flush(threadId)
       return
     }
     const records: RecordedDelta[] = []
@@ -140,6 +146,7 @@ export class RecordedDeltaBuffer {
       })
     }
     this.#commitBatch(records)
+    pending.clear()
   }
 
   #clearTimer(): void {

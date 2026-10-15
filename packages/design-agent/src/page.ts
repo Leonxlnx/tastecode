@@ -97,6 +97,7 @@ export interface PageBlueprint {
     dependencies: string[]
     evidence: string[]
     copy: {
+      eyebrow?: string
       heading: string
       body: string[]
       callsToAction: PageLink[]
@@ -128,9 +129,6 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
   const sections = array(blueprint.sections, 'sections').map((value, index) => {
     const section = record(value, `sections[${index}]`)
     const copy = record(section.copy, `sections[${index}].copy`)
-    if (copy.eyebrow !== undefined) {
-      throw new Error(`sections[${index}].copy.eyebrow is forbidden`)
-    }
     return {
       id: string(section.id, `sections[${index}].id`),
       ...(!(section.layoutFamily === undefined)
@@ -186,6 +184,9 @@ export function parsePageBlueprint(value: unknown): PageBlueprint {
           ? []
           : strings(section.evidence, `sections[${index}].evidence`),
       copy: {
+        ...(copy.eyebrow === undefined
+          ? {}
+          : { eyebrow: string(copy.eyebrow, `sections[${index}].copy.eyebrow`) }),
         heading: string(copy.heading, `sections[${index}].copy.heading`),
         body: strings(copy.body, `sections[${index}].copy.body`),
         callsToAction: links(copy.callsToAction, `sections[${index}].copy.callsToAction`),

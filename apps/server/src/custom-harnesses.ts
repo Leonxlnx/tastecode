@@ -5,11 +5,16 @@ import { CustomHarnessSchema, type CustomHarness } from '@harness/contracts'
 import { z } from 'zod'
 import { configFile } from './product-paths.js'
 
-type ConfigFile = { version: 1; harnesses: CustomHarness[] }
-const EMPTY_CONFIG: ConfigFile = { version: 1, harnesses: [] }
+/**
+ * `unsupported` holds entries this build cannot run, such as a harness on a
+ * provider that ships only on the nightly branch. Both builds share this file,
+ * so those entries stay in it untouched instead of failing every read.
+ */
+type ConfigFile = { version: 1; harnesses: CustomHarness[]; unsupported: unknown[] }
+const EMPTY_CONFIG: ConfigFile = { version: 1, harnesses: [], unsupported: [] }
 const ConfigFileSchema = z.object({
   version: z.literal(1),
-  harnesses: z.array(CustomHarnessSchema),
+  harnesses: z.array(z.unknown()),
 })
 
 function defaultLocation(): string {
@@ -21,7 +26,18 @@ function parseConfig(raw: string): ConfigFile {
   if (!value.success) {
     throw new Error('invalid custom harness config: expected a version 1 harness list')
   }
-  return value.data
+  const harnesses: CustomHarness[] = []
+  const unsupported: unknown[] = []
+  for (const entry of value.data.harnesses) {
+    const harness = CustomHarnessSchema.safeParse(entry)
+    if (harness.success) harnesses.push(harness.data)
+    else unsupported.push(entry)
+  }
+  return { version: 1, harnesses, unsupported }
+}
+
+function entryId(entry: unknown): unknown {
+  return typeof entry === 'object' && entry !== null && 'id' in entry ? entry.id : undefined
 }
 
 /** Human-readable launch configuration. It deliberately has no credential fields. */
@@ -45,6 +61,7 @@ export class CustomHarnessStore {
   upsert(input: CustomHarness): CustomHarness {
     const harness = CustomHarnessSchema.parse(input)
     const file = this.#read()
+    file.unsupported = file.unsupported.filter((entry) => entryId(entry) !== harness.id)
     const index = file.harnesses.findIndex((entry) => entry.id === harness.id)
     if (index < 0) file.harnesses.push(harness)
     else file.harnesses[index] = harness
@@ -69,7 +86,8 @@ export class CustomHarnessStore {
   #write(file: ConfigFile): void {
     mkdirSync(path.dirname(this.location), { recursive: true })
     const temporary = `${this.location}.${randomUUID()}.tmp`
-    writeFileSync(temporary, `${JSON.stringify(file, null, 2)}\n`, {
+    const stored = { version: file.version, harnesses: [...file.harnesses, ...file.unsupported] }
+    writeFileSync(temporary, `${JSON.stringify(stored, null, 2)}\n`, {
       encoding: 'utf8',
       mode: 0o600,
     })

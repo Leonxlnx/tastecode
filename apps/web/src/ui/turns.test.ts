@@ -72,7 +72,7 @@ describe('turn boundaries', () => {
     expect(neighbourTurn(turns, 3, 'prev')).toBe(1)
   })
 
-  it('keeps reasoning visible and groups the following tool activity', () => {
+  it('folds reasoning and tool activity into one completed work summary', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
       {
@@ -91,12 +91,84 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentationsOf(items).get('t1')).toMatchObject({
-      activityGroups: [{ items: [items[2]], firstIndex: 2 }],
+      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1 }],
       responseText: 'Done.',
       firstResponseIndex: 1,
       finalAnswerIndex: 3,
       elapsedMs: 6_500,
       complete: true,
+    })
+  })
+
+  it('settles a stopped turn like a finished one, around the text it reached', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
+      {
+        ...item('note', 't1'),
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'started',
+        text: 'Reading the handler first.',
+        createdAt: 1_500,
+      },
+      { ...item('command', 't1'), type: 'command', status: 'started', createdAt: 2_000 },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'started',
+        text: 'The handler charges before it',
+        createdAt: 3_000,
+      },
+    ]
+    const timing = { t1: { startedAt: 1_000, completedAt: 5_000, interrupted: true as const } }
+
+    expect(presentationsOf(items, timing).get('t1')).toMatchObject({
+      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1, lastIndex: 2 }],
+      responseText: 'The handler charges before it',
+      finalAnswerIndex: 3,
+      elapsedMs: 4_000,
+      complete: true,
+      stopped: true,
+      endIndex: 3,
+      lastIndex: 3,
+    })
+    // While it still runs, the same items stay live and unfolded.
+    expect(
+      projectThreadItems(items, { t1: { startedAt: 1_000 } }, 't1').presentations.get('t1'),
+    ).toMatchObject({ complete: false, stopped: false, finalAnswerIndex: undefined })
+  })
+
+  it('ends a stopped turn at its work or its prompt when no answer came', () => {
+    const timing = { t1: { startedAt: 1_000, completedAt: 3_000, interrupted: true as const } }
+    const working: Item[] = [
+      { ...item('user', 't1'), role: 'user' },
+      {
+        ...item('update', 't1'),
+        role: 'assistant',
+        status: 'started',
+        text: 'Checking the tests.',
+      },
+      { ...item('command', 't1'), type: 'command', status: 'started' },
+    ]
+    // Narration before an interrupted tool call is work, not the answer.
+    expect(presentationsOf(working, timing).get('t1')).toMatchObject({
+      activityGroups: [{ items: [working[1], working[2]], firstIndex: 1 }],
+      finalAnswerIndex: undefined,
+      complete: true,
+      endIndex: 1,
+    })
+
+    const silent: Item[] = [
+      { ...item('user', 't1'), role: 'user' },
+      { ...item('thinking', 't1'), type: 'reasoning', status: 'started' },
+    ]
+    expect(presentationsOf(silent, timing).get('t1')).toMatchObject({
+      activityGroups: [],
+      complete: true,
+      stopped: true,
+      endIndex: 0,
+      lastIndex: 1,
     })
   })
 
@@ -128,6 +200,26 @@ describe('turn boundaries', () => {
     ]
 
     expect(presentationsOf(items).get('t1')?.complete).toBe(false)
+  })
+
+  it('keeps the active turn in live batches between tool calls', () => {
+    // Unphased narration reads as a legacy final answer once no tool is running.
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Build it.' },
+      { ...item('command-1', 't1'), type: 'command', command: 'ls' },
+      { ...item('update', 't1'), role: 'assistant', text: 'Reading the blueprint.' },
+      { ...item('command-2', 't1'), type: 'command', command: 'cat blueprint.md' },
+    ]
+
+    expect(projectThreadItems(items, {}, 't1').presentations.get('t1')).toMatchObject({
+      activityGroups: [
+        { items: [items[1]], firstIndex: 1, lastIndex: 1 },
+        { items: [items[3]], firstIndex: 3, lastIndex: 3 },
+      ],
+      finalAnswerIndex: 2,
+      complete: false,
+    })
+    expect(presentationsOf(items).get('t1')?.complete).toBe(true)
   })
 
   it('only compacts repeated settled reasoning when no answer exists', () => {
@@ -181,9 +273,9 @@ describe('turn boundaries', () => {
 
     expect(presentationsOf(items).get('t1')?.activityGroups).toMatchObject([
       {
-        items: [items[1], items[3], items[5]],
+        items: [items[1], items[3], items[5], items[6]],
         firstIndex: 1,
-        lastIndex: 5,
+        lastIndex: 6,
       },
     ])
   })
@@ -431,5 +523,34 @@ describe('turn boundaries', () => {
     })
     expect(completed).not.toBe(initial)
     expect(completed.presentations.get('active')?.elapsedMs).toBe(30)
+  })
+
+  it('compacts a turn once it is no longer active', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('command', 't1'), type: 'command', command: 'pnpm test' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Done.' },
+    ]
+    const timing = { t1: { startedAt: 0 } }
+    const project = createThreadProjector()
+    const running = project(items, timing, 't1')
+    const finished = project(items, timing)
+    const reopened = createThreadProjector()(items, timing)
+
+    expect(running.presentations.get('t1')?.complete).toBe(false)
+    expect(finished).toEqual(projectThreadItems(items, timing))
+    expect(finished.presentations.get('t1')?.complete).toBe(true)
+    expect(reopened.presentations.get('t1')?.complete).toBe(true)
+  })
+
+  it('reuses the layout when the active turn has no items yet', () => {
+    const project = createThreadProjector()
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', text: 'Question' },
+      { ...item('answer', 't1'), role: 'assistant', text: 'Answer' },
+    ]
+    const idle = project(items)
+
+    expect(project(items, undefined, 'local-turn:1')).toBe(idle)
   })
 })

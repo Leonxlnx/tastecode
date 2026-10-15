@@ -20,6 +20,7 @@ export class LifecycleScheduler {
     private readonly now: () => number = Date.now,
   ) {}
 
+  /** Direct calls report errors; timer callbacks retry them in the background. */
   refreshNow(): void {
     if (this.#disposed || this.#refreshing) return
     this.#clearTimer()
@@ -75,7 +76,16 @@ export class LifecycleScheduler {
 
   #schedule(overdueDelay: number): void {
     const now = this.now()
-    const nextAt = this.nextAt()
+    let nextAt: number | undefined
+    try {
+      nextAt = this.nextAt()
+    } catch (error) {
+      // Without a timer nothing wakes lifecycle work again. Retry later
+      // without another read, then report the failure to the caller.
+      this.#scheduleKnown = false
+      if (!this.#disposed) this.#scheduleAt(now + BLOCKED_RETRY_MS, BLOCKED_RETRY_MS, now)
+      throw error
+    }
     this.#scheduleKnown = true
     this.#scheduleAt(nextAt, overdueDelay, now)
   }
@@ -99,7 +109,17 @@ export class LifecycleScheduler {
     this.#timer = setTimeout(() => {
       this.#timer = undefined
       this.#scheduledRefreshAt = undefined
-      this.refreshNow()
+      try {
+        this.refreshNow()
+      } catch {
+        // The refresh or its next-deadline read can fail. Retry without
+        // another persistence read, replacing any timer refreshNow installed.
+        this.#clearTimer()
+        this.#scheduleKnown = false
+        if (this.#disposed) return
+        const now = this.now()
+        this.#scheduleAt(now + BLOCKED_RETRY_MS, BLOCKED_RETRY_MS, now)
+      }
     }, delay)
     this.#timer.unref?.()
   }

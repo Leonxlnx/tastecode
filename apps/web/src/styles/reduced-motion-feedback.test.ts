@@ -37,7 +37,7 @@ describe('reduced-motion feedback', () => {
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.sheet__panel,[\s\S]*?\.pr-dialog \{[\s\S]*?transform: none;[\s\S]*?transition: opacity 100ms var\(--ease-out\) !important;/s,
     )
     expect(settingsCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.profile-page,[\s\S]*?\.settings__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
+      /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.settings__panel \{[\s\S]*?animation: fade-in var\(--dur-fast\) var\(--ease-out\) both !important;/s,
     )
     expect(appCss).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.notice \{[\s\S]*?transform: none !important;[\s\S]*?transition: opacity var\(--dur-fast\) var\(--ease-out\) !important;/s,

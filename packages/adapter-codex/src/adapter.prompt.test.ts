@@ -41,6 +41,36 @@ function promptAdapter() {
 }
 
 describe('Codex prompt transport', () => {
+  it.each(['ask', 'auto'] as const)(
+    'resumes and sends with %s access scoped to the selected project',
+    async (approval) => {
+      const { adapter, rpc } = promptAdapter()
+      try {
+        await adapter.start()
+        const thread = await adapter.resumeThread('thread-1', 'C:\\parent\\project', { approval })
+        await expect(adapter.sendTurn(thread.id, 'Hello')).resolves.toBe('turn-1')
+
+        expect(rpc.calls.find((call) => call.method === 'thread/resume')?.params).toEqual({
+          threadId: 'thread-1',
+          cwd: 'C:\\parent\\project',
+          excludeTurns: true,
+          approvalPolicy: approval === 'ask' ? 'untrusted' : 'on-request',
+          approvalsReviewer: 'user',
+          sandbox: approval === 'ask' ? 'read-only' : 'workspace-write',
+        })
+        expect(rpc.calls.find((call) => call.method === 'turn/start')?.params).toMatchObject({
+          approvalPolicy: approval === 'ask' ? 'untrusted' : 'on-request',
+          sandboxPolicy:
+            approval === 'ask'
+              ? { type: 'readOnly', networkAccess: false }
+              : { type: 'workspaceWrite', writableRoots: [], networkAccess: false },
+        })
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
   it('keeps product-internal work out of provider history when requested', async () => {
     const { adapter, rpc } = promptAdapter()
     await adapter.start()
@@ -148,5 +178,31 @@ describe('Codex prompt transport', () => {
       sandboxPolicy: { type: 'readOnly', networkAccess: false },
     })
     adapter.dispose()
+  })
+})
+
+describe('Codex live reasoning', () => {
+  it('separates summary parts the way the completed item joins them', async () => {
+    const { adapter, rpc } = promptAdapter()
+    const deltas: string[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'item.delta') deltas.push(event.textDelta)
+    })
+    adapter.on('log', (line) => logs.push(line))
+    const ids = { threadId: 'thread-1', turnId: 'turn-1', itemId: 'reasoning-1' }
+    try {
+      await adapter.start()
+      for (const [summaryIndex, delta] of ['**Plan**', '**Check**'].entries()) {
+        rpc.emitNotification('item/reasoning/summaryPartAdded', { ...ids, summaryIndex })
+        rpc.emitNotification('item/reasoning/summaryTextDelta', { ...ids, delta, summaryIndex })
+      }
+      rpc.emitNotification('item/plan/delta', { ...ids, itemId: 'plan-1', delta: '1. Read' })
+
+      expect(deltas.join('')).toBe('**Plan**\n\n**Check**')
+      expect(logs).toEqual([])
+    } finally {
+      await adapter.dispose()
+    }
   })
 })

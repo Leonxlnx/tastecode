@@ -1,7 +1,14 @@
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
-import { ErrorCode, methods, PROTOCOL_VERSION, type MethodName } from '@harness/contracts'
+import {
+  ErrorCode,
+  methods,
+  PROTOCOL_VERSION,
+  type MethodName,
+  type ProviderHistorySource,
+  type ProviderId,
+} from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
@@ -17,13 +24,20 @@ import { createProjectListProjector, type ProjectListState } from './project-lis
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
-import { listWorkspaceDirectory, readWorkspaceTextFile } from './workspace-files.js'
+import {
+  listWorkspaceDirectory,
+  readWorkspaceTextFile,
+  searchWorkspaceFiles,
+} from './workspace-files.js'
 import { LifecycleScheduler } from './lifecycle-scheduler.js'
 import { parseFrequentMethodParams, parseRequestEnvelope } from './request-envelope.js'
 import { createHistoryResponseProjector } from './history-response.js'
+import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
+import { ProviderHistory } from './provider-history.js'
 
 const SERVER_VERSION = '0.0.0'
+const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -49,11 +63,14 @@ export function startServer(
     port?: number
     host?: string
     accessToken?: string | undefined
+    rendererOrigin?: string
   } = {},
 ) {
   applyDesktopPath()
   const port = options.port ?? DEFAULT_PORT
   const host = options.host ?? '127.0.0.1'
+  const rendererOrigin =
+    options.rendererOrigin ?? process.env['HARNESS_RENDERER_ORIGIN'] ?? DEFAULT_RENDERER_ORIGIN
   assertSafeBind(host, options.accessToken)
   const databasePath = storeLocation()
   const releaseDataLease = acquireDataLease(databasePath)
@@ -145,10 +162,13 @@ export function startServer(
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
     onTerminalExit: (terminalId, exitCode) =>
       push.broadcast('terminal.exit', { terminalId, exitCode }),
-    capturePreview: (url, viewports) =>
+    capturePreview: (url, viewports, signal) =>
       previewCapture.available
-        ? previewCapture.capture(url, viewports)
+        ? previewCapture.capture(url, viewports, signal)
         : Promise.resolve(undefined),
+    // A preview on the control port or the trusted renderer's port would pass
+    // the Origin check whenever nothing else holds that port.
+    reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
@@ -174,13 +194,127 @@ export function startServer(
     else lifecycleScheduler.changed()
   }
   lifecycleScheduler.refreshNow()
+  let historyClosing = false
+  let historySessionStarts = 0
+  // Each provider's saved chats load on their own: an adapter that cannot be
+  // loaded must not keep local chats, or another provider's, from opening.
+  const historySources = [
+    {
+      provider: 'codex',
+      load: async () => (await import('@harness/adapter-codex')).createCodexHistorySource(),
+    },
+    {
+      provider: 'claude-code',
+      load: async () => (await import('@harness/adapter-claude-code')).createClaudeHistorySource(),
+    },
+    {
+      provider: 'grok',
+      load: async () => (await import('@harness/adapter-grok')).createGrokHistorySource(),
+    },
+  ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
+  /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
+  const unavailableHistory = new Map<string, unknown>()
+  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
+    (results) =>
+      new ProviderHistory(
+        store,
+        historySources.flatMap(({ provider }, index) => {
+          const result = results[index]!
+          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+          unavailableHistory.set(`external:${provider}:`, result.reason)
+          console.log(`[history] ${provider} history could not be loaded`)
+          return []
+        }),
+        {
+          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+          canImport: () => historySessionStarts === 0,
+          changed: (threadIds) => {
+            if (!historyClosing) {
+              lifecycleScheduler.changed()
+              push.broadcast('providerHistory.changed', { threadIds })
+            }
+          },
+          log: (message) => console.log(`[history] ${message}`),
+        },
+      ),
+  )
+  const refreshProviderHistory = () => {
+    if (!historyClosing)
+      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
+  }
+  const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
+  providerHistoryTimer.unref()
+  // Opening a task during startup must not replay an obsolete imported transcript
+  // before adapter revisions and ownership have been refreshed.
+  const initialProviderHistory = providerHistory.then(async (history) => {
+    await history.refresh()
+    return history
+  })
+  // That first scan reads every saved provider session and can take seconds
+  // (about 10 s on a large ~/.claude). A native chat's transcript is already
+  // in the store, so reading it does not wait: the import a read would have
+  // run is queued here, runs once the scan is done, and announces a changed
+  // chat so open clients reload it.
+  let initialProviderHistorySettled = false
+  const importsAfterInitialScan = new Set<string>()
+  void initialProviderHistory
+    .then(async (history) => {
+      initialProviderHistorySettled = true
+      const changed: string[] = []
+      for (const threadId of importsAfterInitialScan) {
+        importsAfterInitialScan.delete(threadId)
+        try {
+          if (await history.load(threadId)) {
+            orchestrator.invalidateImportedHistory(threadId)
+            changed.push(threadId)
+          }
+        } catch {
+          // The chat's next read or turn retries the import.
+        }
+      }
+      if (changed.length && !historyClosing) {
+        lifecycleScheduler.changed()
+        push.broadcast('providerHistory.changed', { threadIds: changed })
+      }
+    })
+    .catch(() => {
+      initialProviderHistorySettled = true
+      importsAfterInitialScan.clear()
+    })
+
+  /** Import outside changes before a history read, without holding a native chat on the first scan. */
+  async function loadProviderHistoryForRead(threadId: string): Promise<void> {
+    if (!initialProviderHistorySettled && !threadId.startsWith('external:')) {
+      importsAfterInitialScan.add(threadId)
+      return
+    }
+    await loadProviderHistory(threadId)
+  }
+
+  async function loadProviderHistory(threadId: string): Promise<void> {
+    let history: ProviderHistory
+    try {
+      history = await initialProviderHistory
+    } catch (error) {
+      // Only an imported chat depends on the history service for its transcript.
+      if (threadId.startsWith('external:')) throw error
+      return
+    }
+    for (const [prefix, reason] of unavailableHistory) {
+      if (threadId.startsWith(prefix)) throw reason
+    }
+    if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
+  }
   // A previous run killed mid-session leaves git believing in checkouts that
   // are gone. Clearing that up at startup means the next session on that path
   // starts instead of failing with a message about our own leftovers.
   void orchestrator.recoverWorktrees().catch(() => undefined)
 
   wss.on('connection', (socket, request) => {
-    if (!allowedOrigin(request.headers.origin, options.accessToken)) {
+    // Rejected sockets remain live until their close handshake ends. Handle
+    // protocol errors before either access check so they cannot crash the server.
+    socket.on('error', () => socket.terminate())
+    if (!allowedOrigin(request.headers.origin, options.accessToken, rendererOrigin)) {
       socket.close(1008, 'Origin not allowed')
       return
     }
@@ -210,8 +344,6 @@ export function startServer(
       push.remove(socket)
     }
     socket.on('close', removeSocket)
-    // Without a handler, a client resetting its connection emits 'error' on a
-    // bare EventEmitter and crashes the whole server.
     socket.on('error', removeSocket)
   }
 
@@ -238,6 +370,8 @@ export function startServer(
       respondError(socket, id, ErrorCode.BAD_REQUEST, `unknown method: ${method}`)
       return
     }
+    const createsSession = method === 'thread.start' || method === 'sideChat.start'
+    if (createsSession) historySessionStarts += 1
     try {
       const result = await route(socket, method, params)
       if (socket.readyState === socket.OPEN) {
@@ -249,12 +383,18 @@ export function startServer(
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
         return
       }
+      if (error instanceof InvalidHistoryCursorError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
+        return
+      }
       respondError(
         socket,
         id,
         error instanceof StaleDiffSnapshotError ? ErrorCode.STALE_SNAPSHOT : ErrorCode.INTERNAL,
         clientErrorMessage(error),
       )
+    } finally {
+      if (createsSession) historySessionStarts -= 1
     }
   }
 
@@ -319,6 +459,7 @@ export function startServer(
         return (await pullRequestService()).files(
           p.repository,
           p.number,
+          { headRefOid: p.expectedHeadOid, baseRefOid: p.expectedBaseOid },
           p.page ?? 1,
           p.refresh ?? false,
         )
@@ -339,6 +480,14 @@ export function startServer(
 
       case 'providers.list':
         return { providers: await (await providerService).detectProviders() }
+
+      case 'providers.contextSettings':
+        return orchestrator.contextSettings()
+
+      case 'providers.updateContextSettings': {
+        const p = parseParams(method, params)
+        return orchestrator.updateContextSettings(p.provider, p.settings)
+      }
 
       case 'providers.updates':
         return {
@@ -382,44 +531,19 @@ export function startServer(
       case 'providers.install': {
         const p = parseParams(method, params)
         const { installCommandFor } = await import('./providers.js')
-        const command = await installCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
-        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+        const command = await installCommandFor(p.provider)
+        return {
+          terminalId: orchestrator.installProvider(p.provider, command, p.columns, p.rows),
+        }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
         const { launchCommandFor } = await import('./providers.js')
-        const command = await launchCommandFor(p.provider, p.agent)
-        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        const command = await launchCommandFor(p.provider)
         return {
-          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          terminalId: orchestrator.launchProviderLogin(p.provider, command, p.columns, p.rows),
         }
-      }
-
-      case 'connections.list':
-        return { connections: orchestrator.listModelConnections() }
-
-      case 'connections.upsert':
-        return {
-          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
-        }
-
-      case 'connections.setCredential': {
-        const p = parseParams(method, params)
-        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
-        return { credentialConfigured: true }
-      }
-
-      case 'connections.remove': {
-        const p = parseParams(method, params)
-        orchestrator.removeModelConnection(p.connectionId)
-        return {}
-      }
-
-      case 'connections.models': {
-        const p = parseParams(method, params)
-        return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
@@ -537,6 +661,11 @@ export function startServer(
         return listWorkspaceDirectory(workspaceForRequest(store, p), p.directory)
       }
 
+      case 'workspace.searchFiles': {
+        const p = parseParams(method, params)
+        return searchWorkspaceFiles(workspaceForRequest(store, p), p.query, p.limit)
+      }
+
       case 'workspace.readFile': {
         const p = parseParams(method, params)
         return readWorkspaceTextFile(workspaceForRequest(store, p), p.path)
@@ -578,21 +707,6 @@ export function startServer(
         return {}
       }
 
-      case 'acp.agents': {
-        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
-        return {
-          agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
-            id,
-            name,
-            installed,
-            verified,
-            setup,
-            ...(!(install === undefined) ? { install } : {}),
-            ...(!(problem === undefined) ? { problem } : {}),
-          })),
-        }
-      }
-
       case 'projects.list': {
         reportStartupMilestone('server-projects-requested')
         lifecycleScheduler.refreshIfDue()
@@ -609,7 +723,9 @@ export function startServer(
 
       case 'projects.add': {
         const p = parseParams(method, params)
-        return store.addProject(p.path, p.name)
+        const project = store.addProject(p.path, p.name)
+        refreshProviderHistory()
+        return project
       }
 
       case 'projects.pin': {
@@ -639,8 +755,10 @@ export function startServer(
           )
         }
         // The sidebar entry can disappear while its history remains available
-        // when the project is added again. Running processes still need an owner.
-        await Promise.all(store.threads(p.path).map((thread) => orchestrator.close(thread.id)))
+        // when the project is added again. Running processes still need an
+        // owner, so stop them — but do not archive the chats, or none of them
+        // could be continued after the project is added back.
+        await Promise.all(store.threads(p.path).map((thread) => orchestrator.stopThread(thread.id)))
         orchestrator.forgetProject(p.path)
         store.removeProject(p.path)
         return {}
@@ -742,11 +860,33 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        const history = await orchestrator.historyForResponse(p.threadId, p.afterSeq ?? 0)
+        await loadProviderHistoryForRead(p.threadId)
+        if (p.page) {
+          const history = await orchestrator.historyPage(p.threadId, p.page)
+          const running = orchestrator.isTurnRunning(p.threadId)
+          const approval = store.threadApproval(p.threadId) ?? 'ask'
+          if (p.page.before === undefined) orchestrator.markThreadRead(p.threadId)
+          return {
+            events: history.events,
+            running,
+            approval,
+            ...(history.reset ? { reset: true } : {}),
+            page: history.page,
+          }
+        }
+        const reset =
+          p.afterSeq !== undefined &&
+          (store.providerHistoryChangedAfter(p.threadId, p.afterSeq) ||
+            store.historyRewrittenAfter(p.threadId, p.afterSeq))
+        const history = await orchestrator.historyForResponse(
+          p.threadId,
+          reset ? 0 : (p.afterSeq ?? 0),
+        )
         const running = orchestrator.isTurnRunning(p.threadId)
         const approval = store.threadApproval(p.threadId) ?? 'ask'
         const result = historyResponse(history.events, running, approval)
         orchestrator.markThreadRead(p.threadId)
+        if (reset) return { ...result, reset: true }
         return serializeHistory(
           result,
           history.serializedEvents === undefined
@@ -835,7 +975,6 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
-          connectionId: p.connectionId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }
@@ -860,12 +999,16 @@ export function startServer(
 
       case 'thread.restore': {
         const p = parseParams(method, params)
-        return orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
+        const restored = await orchestrator.restoreCheckpoint(p.threadId, p.checkpointId)
+        // Other clients still show the removed turns. Have them reload the chat.
+        push.broadcast('providerHistory.changed', { threadIds: [p.threadId] })
+        return restored
       }
 
       case 'thread.undoRestore': {
         const p = parseParams(method, params)
         await orchestrator.undoRestore(p.threadId, p.undo)
+        push.broadcast('providerHistory.changed', { threadIds: [p.threadId] })
         return {}
       }
 
@@ -886,6 +1029,7 @@ export function startServer(
 
       case 'thread.sendTurn': {
         const p = parseParams(method, params)
+        await loadProviderHistory(p.threadId)
         return {
           ...(await orchestrator.submitTurn(
             p.threadId,
@@ -992,6 +1136,12 @@ export function startServer(
   return {
     port,
     close: async () => {
+      historyClosing = true
+      clearInterval(providerHistoryTimer)
+      // Terminal jobs get a fixed shutdown budget; waiting on provider history
+      // first would spend it. disposeAll below waits for the same close.
+      void orchestrator.closeAllTerminals().catch(() => undefined)
+      await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
@@ -1022,8 +1172,13 @@ export function startServer(
  * approval, or open a terminal.
  *
  * Allowed: no Origin at all (non-browser clients such as the CLI and tests),
- * `file://` (the packaged Electron renderer), and loopback origins (the dev
- * server and our own web UI).
+ * `file://` (the packaged Electron renderer), and the exact renderer origin.
+ * Browsers always send Origin on an upgrade; an empty or opaque one is not
+ * equivalent to the missing header of a non-browser client.
+ *
+ * The dev renderer defaults to http://127.0.0.1:5183. HARNESS_RENDERER_ORIGIN
+ * replaces it for a custom renderer port; desktop-owned servers set file://
+ * so a packaged app does not trust an unrelated HTTP server on the dev port.
  *
  * `null` is NOT allowed, and must never be added back. It is the opaque
  * origin, and any page can mint one on demand — `<iframe sandbox=
@@ -1037,22 +1192,25 @@ export function startServer(
  * any origin may attempt the handshake, but only a connection carrying the
  * token is admitted.
  */
-export function allowedOrigin(origin: string | undefined, accessToken?: string): boolean {
-  if (!origin || origin === 'file://') return true
+export function allowedOrigin(
+  origin: string | undefined,
+  accessToken?: string,
+  rendererOrigin = DEFAULT_RENDERER_ORIGIN,
+): boolean {
+  if (origin === undefined || origin === 'file://') return true
   if (origin === 'null') return false
-  let hostname: string
   try {
-    ;({ hostname } = new URL(origin))
+    const parsed = new URL(origin)
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) return false
   } catch {
     return false
   }
-  if (accessToken) return true
-  return (
-    hostname === 'localhost' ||
-    hostname === '::1' ||
-    hostname === '[::1]' ||
-    (isIPv4(hostname) && hostname.startsWith('127.'))
-  )
+  return Boolean(accessToken) || origin === rendererOrigin
+}
+
+function httpOriginPort(origin: string): number[] {
+  const url = URL.parse(origin)
+  return url?.protocol === 'http:' ? [Number(url.port || 80)] : []
 }
 
 function workspaceForRequest(
@@ -1112,6 +1270,15 @@ function errorCode(error: unknown): string | undefined {
 
 export function clientErrorMessage(error: unknown): string {
   if (errorCode(error) === 'ENOENT') {
+    if (
+      typeof error === 'object' &&
+      error !== null &&
+      'syscall' in error &&
+      typeof error.syscall === 'string' &&
+      error.syscall.startsWith('spawn ')
+    ) {
+      return 'A required program could not be started. Check the provider installation and executable search path.'
+    }
     return 'This project folder or workspace item is unavailable. Choose another project or add the folder again.'
   }
   return messageOf(error)
@@ -1119,7 +1286,12 @@ export function clientErrorMessage(error: unknown): string {
 
 export function hasAccess(requestUrl: string | undefined, expected: string | undefined): boolean {
   if (!expected) return true
-  const supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  let supplied: string | null
+  try {
+    supplied = new URL(requestUrl ?? '/', 'ws://harness.local').searchParams.get('token')
+  } catch {
+    return false
+  }
   if (!supplied) return false
 
   const expectedBytes = Buffer.from(expected)

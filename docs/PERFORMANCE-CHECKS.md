@@ -22,16 +22,61 @@ measurement uses the OS physical footprint for every process and retains summed 
 Other platforms use working-set bytes. A missing footprint falls back to the larger
 working-set accounting for that process; missing or zero data fails the gate.
 
+The cold-start clock still measures the first usable screen. Idle memory starts only
+once its startup RPCs (including model loading and update checks) have completed, temporary startup notices have finished their exits, and
+the two-second quiet delay has elapsed. New requests restart that delay; a request
+during capture fails the sample. The outer process timeout includes the existing
+15-second startup allowance, the quiet delay, and the separate ten-second memory
+capture deadline. It does not retry a failed capture.
+
 GPU resources can retire several seconds after the final paint. Idle measurement waits
-for four samples at least one second apart with the same process identities and at most
+for four samples whose capture starts are at least one second apart with the same process identities and at most
 2% variation across the whole window. Every sample in that window must be below
 500,000,000 bytes. The wait ends after ten seconds and fails if memory does not settle.
-The report retains every sample and the transient peak. It does not force garbage
+OS read time is included in the sampling interval, so a slow read does not add another
+full second of delay. The report retains every sample and the transient peak. It does not force garbage
 collection, unload the page, purge caches, or change GPU flags.
+
+After the idle capture, a fresh window mounts one finished turn with 300 tool calls and
+37.5 MiB of plain, command and JSON output, collapsed, over a store that already holds that
+text. The main process reads the heap through Chromium's debugger after three forced
+garbage collections between steps. The collapsed activity must stay below 200 elements and
+add less than 8 MiB of heap; opening it must mount 300 rows and exactly the one output that
+was opened. One open and close warms up first-open costs such as lazily loaded code; after
+a second close no row or output may remain and the heap must stay less than 2 MiB above the
+reading taken before that second open. On Linux with Electron 43 the collapsed activity added
+1.4 MiB; mounting every output while collapsed, as before
+[#1013](https://github.com/Leonxlnx/tastecode/issues/1013), added 29 MiB and 4,707 elements.
+The fixture opens its own window, so the memory figures above stay unchanged.
 
 Keep the machine otherwise quiet during measurement. A failure is a failed check; inspect
 the full report before drawing a conclusion. Run this on each release OS. Unit tests
 cover the accounting and thresholds; they do not replace real Electron measurements.
+
+The same command first renders two identical 700-line TypeScript fences through the
+production `CompletedMarkdown` component and native syntax worker. It requires one
+highlight request, colored tokens, no additional request on remount or light/dark changes,
+and distinct computed token colors in both themes. It waits for every token batch and verifies
+both complete 700-line sources and nonzero line layout after bringing each fence into view.
+Foreground inheritance can reduce
+the number of colored DOM spans without dropping source tokens or changing their colors.
+The fixture observes the native
+worker's `postMessage` calls; it does not replace worker execution or synthesize tokens.
+It opens a fresh sandboxed window before the existing thread gate to avoid warming that
+gate's caches and avoid intermittent animation-frame stalls after reloading the traced page.
+
+Each `renderer-N.json` includes highlighting frame samples and observed long-task durations;
+both must stay below the existing 32 ms frame budget. Chromium's long-task observer only
+reports tasks of at least 50 ms, so the runner also fails any main-thread trace task at or
+above 32 ms overlapping the measured highlighting interval, including tasks that begin just
+before the first mark. Missing renderer, worker or mark evidence fails the gate.
+Inspect the accompanying `renderer-N.json.highlighting-trace.json` in Chromium's
+trace viewer to verify renderer/worker attribution and tasks around the
+`highlight-cold-*` and `highlight-remount-*` marks. Traces are captured with Electron's
+[contentTracing API](https://www.electronjs.org/docs/latest/api/content-tracing).
+Record the tested commit, OS, architecture and all three reports with acceptance evidence.
+Compilation and threshold unit tests are not a passing production trace. Do not disable
+the browser sandbox to run this gate.
 
 To verify trusted preview height limits, capture cancellation, and storage cleanup using
 real Electron windows and the real preload bridge:
@@ -68,8 +113,11 @@ node apps/desktop/scripts/run-native-binding-proof.js <app-or-exe>
 ```
 
 Keep the platform's terminal prebuilds: pruning by architecture also changes the inputs
-to universal Mac packaging. Keep Electron's GPU fallback, media, locale data and startup
-files. Installer compression changes download size, not installed size.
+to universal Mac packaging. Windows packages leave out node-pty's ConPTY copies that the
+prebuilt module never loads: the install-time `third_party` sources and the post-install
+copy in `build/Release/conpty`. Each prebuild keeps its own `conpty` folder. Keep
+Electron's GPU fallback, media, locale data and startup files. Installer compression
+changes download size, not installed size.
 ZIP files use maximum compression; DMGs keep the existing UDZO format so the size setting
 does not switch disk-image opening to bzip2 decompression.
 

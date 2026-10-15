@@ -4,13 +4,13 @@ import { IconLoader2 as LoaderCircle, IconSearch as Search, IconX as X } from '@
 import '../styles/command-palette.css'
 import '../styles/session-search.css'
 import {
-  agentPresentation,
   providerDisplayName,
-  sourcePresentation,
+  providerPresentation,
   type ProviderPresentation,
 } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import { AppSelect } from './AppSelect.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import {
@@ -25,17 +25,7 @@ const SEARCH_TOKEN = /[\p{L}\p{N}][\p{L}\p{N}\p{M}_]*/gu
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]):not([tabindex="-1"]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const PROVIDERS: ProviderId[] = [
-  'codex',
-  'claude-code',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'pi',
-  'acp',
-  'api',
-]
+const PROVIDERS: ProviderId[] = ['claude-code', 'codex', 'grok']
 
 type DisplaySearchResult = {
   key: string
@@ -44,7 +34,6 @@ type DisplaySearchResult = {
   threadId: string
   threadTitle: string
   provider: ProviderId
-  source?: ProviderPresentation | undefined
   createdAt: number
   turnId: string | undefined
   titleParts: SearchSnippetPart[]
@@ -108,16 +97,6 @@ function SessionSearchComponent(props: {
     }))
   }, [titleIndex])
 
-  const sources = useMemo(() => {
-    const presentations = new Map<string, ProviderPresentation>()
-    for (const entry of titleIndex) {
-      if (entry.provider === 'acp' && entry.agent) {
-        presentations.set(`${entry.projectPath}\0${entry.threadId}`, agentPresentation(entry.agent))
-      }
-    }
-    return presentations
-  }, [titleIndex])
-
   const titleResults = useMemo<DisplaySearchResult[]>(() => {
     if (!searchable) return []
     return searchSessionTitles(titleIndex, terms, {
@@ -131,13 +110,12 @@ function SessionSearchComponent(props: {
       threadId: entry.threadId,
       threadTitle: entry.threadTitle,
       provider: entry.provider,
-      source: sources.get(`${entry.projectPath}\0${entry.threadId}`),
       createdAt: entry.createdAt,
       turnId: undefined,
       titleParts: highlightText(entry.threadTitle, terms),
       snippet: undefined,
     }))
-  }, [projectPath, provider, searchable, sources, terms, titleIndex])
+  }, [projectPath, provider, searchable, terms, titleIndex])
 
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
     const legacyOccurrences = new Map<string, number>()
@@ -150,14 +128,13 @@ function SessionSearchComponent(props: {
         threadId: result.threadId,
         threadTitle: result.threadTitle,
         provider: result.provider,
-        source: sources.get(`${result.projectPath}\0${result.threadId}`),
         createdAt: result.createdAt,
         turnId: result.turnId,
         titleParts: [{ text: result.threadTitle, highlighted: false }],
         snippet: result.snippet,
       })),
     ]
-  }, [results, sources, titleResults])
+  }, [results, titleResults])
   const selected = useMemo(() => {
     if (displayResults.length === 0) return -1
     const index = displayResults.findIndex((result) => result.key === selectedKey)
@@ -196,8 +173,10 @@ function SessionSearchComponent(props: {
           setNextCursor(page.nextCursor)
         })
         .catch((cause) => {
-          if (revision.current === current)
+          if (revision.current === current) {
+            setResults([])
             setError(cause instanceof Error ? cause.message : String(cause))
+          }
         })
         .finally(() => {
           if (revision.current === current) setSearching(false)
@@ -258,6 +237,7 @@ function SessionSearchComponent(props: {
       aria-modal="true"
       aria-label="Search all chats"
       onKeyDown={(event) => {
+        if (isComposingKey(event)) return
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopPropagation()
@@ -290,6 +270,7 @@ function SessionSearchComponent(props: {
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={(event) => {
+              if (isComposingKey(event)) return
               if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault()
                 if (displayResults.length === 0) return
@@ -302,7 +283,7 @@ function SessionSearchComponent(props: {
               } else if (event.key === 'End' && displayResults.length > 0) {
                 event.preventDefault()
                 setSelectedKey(displayResults.at(-1)?.key)
-              } else if (event.key === 'Enter') {
+              } else if (isConfirmEnter(event)) {
                 event.preventDefault()
                 choose(displayResults[selected])
               }
@@ -497,10 +478,7 @@ function contentResultKey(
 }
 
 function resultSourcePresentation(result: DisplaySearchResult): ProviderPresentation {
-  if (result.source) return result.source
-  return sourcePresentation({
-    provider: result.provider,
-  })
+  return providerPresentation(result.provider)
 }
 
 function resultProviderLabel(result: DisplaySearchResult): string {
@@ -511,16 +489,48 @@ function searchTerms(query: string): string[] {
   return [...new Set(query.normalize('NFKC').toLowerCase().match(SEARCH_TOKEN) ?? [])]
 }
 
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+
+/**
+ * Folds `text` the way the title index does and maps each folded code unit
+ * back to the grapheme it came from. Folding can change the length ("İ"
+ * lowercases to two code units, fullwidth letters fold to ASCII), so folded
+ * offsets cannot slice the original title directly.
+ */
+function foldWithSourceOffsets(text: string) {
+  let folded = ''
+  const starts: number[] = []
+  const ends: number[] = []
+  for (const { segment, index } of GRAPHEMES.segment(text)) {
+    const piece = segment.normalize('NFKC').toLowerCase()
+    folded += piece
+    for (let offset = 0; offset < piece.length; offset += 1) {
+      starts.push(index)
+      ends.push(index + segment.length)
+    }
+  }
+  return { folded: matchEitherSigma(folded), starts, ends }
+}
+
+/**
+ * Lowercasing one grapheme at a time cannot see where a word ends, so "Σ"
+ * always becomes "σ" where the whole title would give final "ς".
+ */
+function matchEitherSigma(value: string): string {
+  return value.replaceAll('ς', 'σ')
+}
+
 function highlightText(text: string, terms: string[]): SearchSnippetPart[] {
-  const normalized = text.toLowerCase()
+  const { folded, starts, ends } = foldWithSourceOffsets(text)
   const ranges: Array<{ start: number; end: number }> = []
   for (const term of terms) {
+    const needle = matchEitherSigma(term)
     let from = 0
     for (;;) {
-      const start = normalized.indexOf(term, from)
+      const start = folded.indexOf(needle, from)
       if (start < 0) break
-      ranges.push({ start, end: start + term.length })
-      from = start + term.length
+      ranges.push({ start: starts[start]!, end: ends[start + needle.length - 1]! })
+      from = start + needle.length
     }
   }
   if (ranges.length === 0) return [{ text, highlighted: false }]

@@ -10,6 +10,10 @@ It is not a live ownership tracker. Before changing code, read `AGENTS.md`, the 
 
 ## Product goal
 
+The v0.5 implementation and local catalog configuration are documented in
+[Design references](./DESIGN-REFERENCES.md). This reference-first workflow supersedes the
+bundled direction selection described below for new runs; older persisted runs remain compatible.
+
 Design Mode should turn a useful but incomplete website request into a distinctive, implemented,
 visually reviewed result without forcing the user to become a creative director or fill out a
 long specification first.
@@ -17,8 +21,8 @@ long specification first.
 The intended experience is:
 
 1. The user selects Design in the normal composer and writes a request.
-2. TasteCode extracts everything it can and asks only questions whose answers materially affect
-   the result. It asks as many questions as necessary.
+2. TasteCode extracts the request, chooses defaults for missing details, and records assumptions.
+   Design briefing never asks questions or waits for a confirmation.
 3. TasteCode records a validated brief before any website implementation begins.
 4. The internal Design Agent makes explicit brand, copy, layout, asset, and motion decisions.
 5. The normal selected agent implements those decisions in the user's existing project.
@@ -49,7 +53,7 @@ output.
 | TasteCode runtime owns                         | Internal design-agent package owns                    |
 | ---------------------------------------------- | ----------------------------------------------------- |
 | Design Mode entry and provider sessions        | Brief, Brand, Page, Asset, Build, and Review prompts  |
-| Question transport and briefing UI             | Artifact contracts and trust-boundary parsers         |
+| Autonomous briefing and progress               | Artifact contracts and trust-boundary parsers         |
 | Durable `.taste` writes and flow recovery      | Creative direction and visual thesis rules            |
 | Provider-neutral orchestration and permissions | Copy, layout, component, image, and motion judgment   |
 | Safe project tools and command boundaries      | Deterministic palette and objective quality checks    |
@@ -73,10 +77,7 @@ Qualify request
         v
 Extract brief facts
         |
-        +-- material gaps --> structured questions --> re-evaluate
-        |
-        v
-Final optional note
+        +-- missing details --> recorded assumptions
         |
         v
 .taste/brief.json
@@ -143,7 +144,7 @@ Implemented mechanics:
 
 - Design entry through the existing composer;
 - fast request qualification and brief extraction;
-- adaptive structured questions and a final optional note;
+- autonomous brief extraction with recorded assumptions and no questions;
 - validated brief, brand, page, asset, preview, and review outputs;
 - automatic phase turns in the same provider session;
 - hidden machine-readable phase responses instead of raw JSON in chat;
@@ -181,11 +182,18 @@ the workspace, browse, invoke skills or MCP, edit files, or build anything. This
 response fast and prevents project contents from influencing whether the user's request is a
 design task.
 
-If the provider returns `not_design`, TasteCode clears the flow and shows:
+If the provider returns `not_design`, TasteCode turns off the Design toggle and shows a muted
+grey note:
 
 ```text
 Design mode was turned off because this request is not a website design task.
 ```
+
+After the classification turn completes, the same session continues the original request as a
+normal task, with its attachments and the user's model, effort, and service tier. The continuation
+prompt explicitly ends the briefing restrictions. Its answer and tool events stream normally;
+internal prompts stay hidden, and queued requests wait until this response finishes. An interrupted
+or failed classification does not start the continuation.
 
 ## Briefing contract
 
@@ -215,60 +223,35 @@ and decisions that later phases must respect.
 All required string fields must be non-empty. All list fields must be string arrays. Unknown model
 keys are stripped rather than persisted and later injected into Build instructions.
 
-### Question behavior
+### Autonomous briefing
 
-The provider first infers everything reasonably supported by the request. If material information
-is missing, it returns every currently useful question in one structured response. TasteCode shows
-the questions one at a time and returns the collected answers together.
+Design runs never present briefing questions. The provider completes the brief using the request,
+existing project evidence, and recorded assumptions. An unexpected question response receives one
+internal correction. Provider-originated input requests receive an instruction to choose defaults;
+permission approvals remain on the normal approval path. No credentials or authorization are invented.
 
-Each question contains:
+Landing pages normally receive at least eight substantive sections, excluding navigation and
+footer. Explicit smaller scopes, focused edits, and simpler pages take precedence. Section topics
+follow the request; every section's desktop and mobile composition comes from a reference image.
 
-- a stable snake-case ID;
-- a short header retained in the shared protocol;
-- one concise question;
-- one or more selectable answers;
-- a recommended default where appropriate;
-- `Decide for me` when a safe assumption is possible;
-- an optional custom text answer.
+Missing material for a new design must not become an invented requirement for real clients,
+artists, releases, or product photographs. The shared content guidance allows original concept
+studies and illustrative catalogs, preserves requested counts, and requires concise visible
+identification so they cannot masquerade as commissioned work or real releases. Explicit requests
+for real subjects and existing project facts remain binding. All phases preserve this distinction;
+Page replanning may replace unsupported assumptions introduced by an earlier phase. Image files,
+provenance, and resolution still have to pass acquisition validation before Build.
 
-After the answers return, the provider re-evaluates all core fields. Vague or contradictory
-answers produce the smallest useful set of follow-up questions. Resolved questions are not asked
-again. Once the provider returns a complete candidate brief after any question round, TasteCode
-always asks the final optional note:
-
-```text
-Before I finalize your brief, is there anything else you'd like me to know?
-```
-
-Choosing the recommended no-more-details answer writes the pending candidate brief. A custom final
-note goes through one more briefing continuation so it can be incorporated and validated.
-
-### Briefing UI
-
-`UserInput` is a shared structured-input surface rendered through the normal thread store. For the
-briefing it portals into `.composer__box` and appears eight pixels above the composer.
-
-The current behavior includes:
-
-- one visible question at a time;
-- vertical single-line answer choices;
-- a radio selection for every option;
-- `Write your own answer` as a selectable row that becomes a text field;
-- Back and Next or Submit actions;
-- wheel-up to return and wheel-down to advance after a valid answer;
-- preserved answers when navigating backward;
-- disabled forward navigation until the visible question has an answer;
-- a compact submitting state;
-- reduced-motion handling;
-- tactile hover, press, selected, and focus states using the existing token system.
-
-The provider may return any necessary number of questions. The UI counter and local answer state
-handle the returned list without a product-level maximum.
+Older persisted final-note cards resolve against their validated candidate brief. Other saved
+briefing questions resume with autonomous decision instructions. The shared UserInput surface
+remains available to ordinary non-Design tasks.
 
 ## Artifact chain
 
 Artifacts are a chain of evidence and decisions, not copies of one growing object. A later phase
-may consume earlier artifacts but never silently rewrite them.
+may consume earlier artifacts but never silently rewrite them. If visual acquisition fails, the
+server permits one explicit Page revision before Build. New product interfaces use native
+components; photography still requires real files and provenance. Unresolved visuals never enter Build.
 
 | Artifact      | Owns                                                              | Consumes                                       |
 | ------------- | ----------------------------------------------------------------- | ---------------------------------------------- |
@@ -364,10 +347,11 @@ The Page phase writes actual concise copy before implementation. It must use the
 system and must not choose replacement colors, fonts, or sources.
 
 New Page-phase outputs must map every section to Hero, About, Feature, How It Works, Social Proof,
-Stats, FAQ, CTA, Pricing, Contact, or Footer and select the exact human-authored beta cases they
-apply. A custom-named section such as Showcase may reuse the compatible Feature family. Unknown,
-cross-family, missing, duplicated, and directly repeated compositions fail the Page phase before
-Build. The model must explicitly return every `referenceDirectionId`; TasteCode does not silently
+Stats, FAQ, CTA, Pricing, Contact, or Footer and select a reference from the persisted
+deck. New v0.5 runs record that reference ID in `layoutCases`; legacy runs retain the beta case
+validation. A custom-named section such as Showcase may reuse the compatible Feature family.
+Unknown, cross-family, and missing reference IDs fail the Page phase before Build.
+The model must explicitly return every `referenceDirectionId`; TasteCode does not silently
 fill an omitted choice, and a run with supplied user mockups must select at least one of them. Build
 treats the reference as the primary composition contract; family and cases classify and support
 it. Page, Build, and Review preserve its macro geometry, hierarchy, proportions, alignment,
@@ -419,9 +403,9 @@ image quality or license ownership. Supplied assets used in the page need a work
 the finished result does not depend on an upload path.
 
 The Asset phase is an acquisition step rather than a wish list. It keeps every Page asset and
-component ID and reuses suitable project or supplied files first. Licensed search comes next for
-factual, editorial, or professional photography; image generation is reserved for precise,
-brand-specific original needs. Generated output receives an exact creative brief, intended crop
+component ID and reuses suitable project or supplied files first. Missing original visuals use
+image generation when available, falling back to licensed image search if unavailable or
+unsuccessful. Explicit real subjects require matching verified images. Generated output receives an exact creative brief, intended crop
 inspection, and at most one defect-led regeneration. A generated or downloaded file must be saved
 inside the project before it is marked ready. SVG is allowed only for a functional icon, logo, or
 truthful data diagram. It cannot satisfy photography, product imagery, editorial art, interface
@@ -485,6 +469,13 @@ every reported command ran. This distinction matters for future verification wor
 The Preview phase returns an executable, argv array, workspace-relative working directory,
 explicit `http://127.0.0.1:<port>` URL, optional readiness text, and one to four unique viewports.
 
+Static and command previews choose a free loopback port when the requested port is occupied or
+claimed by another concurrent preview. Command previews update explicit `--port`, `--port=`, or
+`-p` arguments and set `PORT`; custom Node servers must honor that environment variable. Readiness,
+capture, and cleanup use the actual selected URL. A hardcoded server that ignores its assigned
+port still fails instead of attaching to an unrelated site. Existing processes are never stopped
+to make room for a new preview.
+
 The parser rejects:
 
 - remote or `localhost` URLs;
@@ -529,7 +520,7 @@ Persisted flow state includes:
 - original request;
 - selected model, service tier, and effort options;
 - current phase;
-- whether material questions and the final note were asked;
+- legacy briefing question state;
 - explicit briefing answers;
 - whether a malformed response is already being corrected;
 - pending candidate brief or next prompt;
@@ -542,18 +533,20 @@ Persisted flow state includes:
 On thread restoration, TasteCode:
 
 1. parses and rejects corrupt stored flow state;
-2. reconstructs unresolved structured questions from `user_input.requested` and
-   `user_input.resolved` events;
+2. resolves legacy unanswered briefing cards and continues autonomously;
 3. reattaches an open provider turn when one exists;
 4. finishes a persisted completion;
 5. otherwise rebuilds the next phase prompt from validated workspace artifacts;
 6. fails visibly and releases the queue if a required artifact was removed.
 
 The current phase prompts are internal provider turns. TasteCode creates a synthetic `tool_call`
-item such as `design:brand`, suppresses internal assistant JSON deltas, parses the completed
-assistant message, and only then advances. The visible activity labels are:
+item such as `design:brand`, suppresses internal final-result JSON deltas, parses the completed
+phase result, and only then advances. Ordinary assistant commentary streams into the normal chat
+alongside tool activity. Providers without commentary metadata expose plain-text updates when
+each message completes. Each phase requests concise updates about checks, changes, and validation;
+commentary alone does not count as a valid phase result. The visible activity labels are:
 
-- Preparing questions;
+- Understanding the request;
 - Creating brand direction;
 - Planning the page;
 - Gathering assets;
@@ -587,9 +580,8 @@ The current product surface is provider-neutral for briefing but capability-gate
 | Direct API runtime | Available         | Skipped                   | Workspace tools exist, but image attachments are not implemented.              |
 | ACP                | Available         | Available when negotiated | Sends ACP image blocks only when the agent advertised image prompt capability. |
 
-TasteCode-owned Design questions need only an ordinary text turn and do not depend on an adapter's
-provider-originated structured-input capability. Provider-originated questions still use the
-adapter's declared `userInput` support.
+Autonomous Design briefing uses ordinary text turns and does not require structured-input support.
+Provider-originated Design questions are answered through the adapter when it supports input responses.
 
 Image support remains truthful end to end. ACP derives its capability from initialization and
 serializes screenshot files as ACP image content blocks only when
@@ -723,9 +715,15 @@ them.
 ### Page gaps
 
 The blueprint records visitor questions, decision stages, information dependencies, final copy,
-selected beta layout cases, responsive behavior, interactions, acceptance criteria, and one
-purposeful motion decision per section. The current catalog combines the human-reviewed website
-section cases with 132 generated direction variants. It still needs scored evidence from varied
+selected reference IDs, responsive behavior, interactions, acceptance criteria, and one
+purposeful motion decision per section. New runs sample uniformly across the configured catalog
+and labeled complete generated candidates, with pending inspection recorded honestly. They require
+a visible hero entrance and distinct scroll reveals unless the user explicitly requests no animation.
+Build and Review receive the same motion requirements, including trigger and reduced-motion checks;
+still screenshots alone cannot validate playback. Ordinary follow-ups after Design ends clear the
+phase-only JSON instruction so preview requests execute as normal user work.
+New runs use the configured image library;
+the 132 legacy direction variants remain available only for older saved runs. It still needs evidence from varied
 real builds to show which cues improve results and which should be retired.
 
 ### Asset gaps
@@ -895,7 +893,7 @@ navigation and settle behavior, ACP image prompt blocks, and adapter capability 
 M4 is complete only when:
 
 - Design Mode works through every supported provider path that can perform ordinary text turns;
-- briefing asks only useful questions and produces a complete validated brief;
+- briefing produces a complete validated brief without user questions;
 - the internal design-agent contracts drive Brand, Page, Assets, Build, and Review across
   providers;
 - the artifact schemas carry every decision consumed by implementation and review without becoming

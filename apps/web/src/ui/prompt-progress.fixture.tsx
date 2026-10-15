@@ -156,7 +156,7 @@ function promptNode(rendered: RenderResult): Element {
 }
 
 function oneWorkingRail(rendered: RenderResult): Element {
-  const rails = rendered.container.querySelectorAll('.activity--working')
+  const rails = rendered.container.querySelectorAll('.activity--duration')
   if (rails.length !== 1) throw new Error(`Expected one Working rail, received ${rails.length}`)
   return rails[0]!
 }

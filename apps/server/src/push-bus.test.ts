@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { once } from 'node:events'
+import { WebSocket, WebSocketServer } from 'ws'
 import { z } from 'zod'
 import { MAX_PUSH_BUFFER_BYTES, PushBus, type PushSocket } from './push-bus.js'
 
@@ -41,6 +43,92 @@ const sequences = (client: FakeSocket): number[] =>
   client.sent.map((frame) => SequencedFrameSchema.parse(JSON.parse(frame)).sequence)
 
 describe('PushBus', () => {
+  it('delivers large chat history alongside live updates over a real loopback connection', async () => {
+    const server = new WebSocketServer({ host: '127.0.0.1', port: 0 })
+    await once(server, 'listening')
+    const address = server.address()
+    if (typeof address === 'string' || !address) throw new Error('Missing server address')
+    const connected = once(server, 'connection')
+    const client = new WebSocket(`ws://127.0.0.1:${address.port}`)
+    try {
+      await once(client, 'open')
+      const [peer] = await connected
+      const bus = new PushBus()
+      bus.add(peer)
+      const received = new Promise<string[]>((resolve, reject) => {
+        const frames: string[] = []
+        client.on('message', (data) => {
+          frames.push(data.toString())
+          if (frames.length === 3) resolve(frames)
+        })
+        client.once('close', () => reject(new Error('Disconnected while reopening chat')))
+        client.once('error', reject)
+      })
+      const history = JSON.stringify({ id: 'history', result: 'x'.repeat(10 * 1024 * 1024) })
+      bus.reply(peer, history)
+      bus.broadcast('usage.changed', { provider: 'codex' })
+      bus.reply(peer, '{"id":"queue","result":{}}')
+      const frames = await received
+      expect(frames[0]).toBe(history)
+      expect(JSON.parse(frames[1]!)).toMatchObject({ channel: 'usage.changed', sequence: 1 })
+      expect(JSON.parse(frames[2]!)).toEqual({ id: 'queue', result: {} })
+      expect(client.readyState).toBe(WebSocket.OPEN)
+    } finally {
+      client.terminate()
+      for (const peer of server.clients) peer.terminate()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
+
+  it('keeps the connection while history is draining and preserves subsequent frame order', () => {
+    const bus = new PushBus<FakeSocket>()
+    const client = socket()
+    const complete: Array<(error?: Error) => void> = []
+    client.send = (payload: string, callback?: (error?: Error) => void) => {
+      client.sent.push(payload)
+      client.bufferedAmount = (client.bufferedAmount ?? 0) + Buffer.byteLength(payload)
+      complete.push(callback!)
+    }
+    bus.add(client)
+    const history = 'x'.repeat(MAX_PUSH_BUFFER_BYTES + 1)
+    bus.reply(client, history)
+    bus.broadcast('usage.changed', { provider: 'codex' })
+    bus.reply(client, '{"id":2,"result":{}}')
+    bus.broadcast('usage.changed', { provider: 'codex' })
+    expect(client.terminated).toBe(0)
+    expect(client.sent[0]).toBe(history)
+    for (let index = 0; index < 4; index++) {
+      client.bufferedAmount = 0
+      complete[index]!()
+    }
+    expect(client.sent.slice(1).map((frame) => JSON.parse(frame))).toEqual([
+      { channel: 'usage.changed', sequence: 1, data: { provider: 'codex' } },
+      { id: 2, result: {} },
+      { channel: 'usage.changed', sequence: 2, data: { provider: 'codex' } },
+    ])
+    expect(client.terminated).toBe(0)
+  })
+
+  it('still bounds live output queued behind a stalled history reply', () => {
+    const bus = new PushBus<FakeSocket>()
+    const stalled = socket()
+    const healthy = socket()
+    stalled.send = () => {}
+    bus.add(stalled)
+    bus.add(healthy)
+    bus.reply(stalled, 'x'.repeat(MAX_PUSH_BUFFER_BYTES + 1))
+    for (let index = 0; index < 2; index++)
+      bus.broadcastRecordedEvent(
+        'thread.event',
+        'task',
+        'x'.repeat(MAX_PUSH_BUFFER_BYTES / 2),
+        index,
+      )
+    expect(stalled.terminated).toBe(1)
+    expect(healthy.terminated).toBe(0)
+    expect(healthy.sent).toHaveLength(2)
+  })
+
   it('allows a large history reply on a healthy socket without moving the push sequence', () => {
     const bus = new PushBus<FakeSocket>()
     const client = socket()

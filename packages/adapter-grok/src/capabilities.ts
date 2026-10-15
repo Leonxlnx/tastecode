@@ -9,4 +9,7 @@ export const GROK_CAPABILITIES: Capabilities = {
   reasoningItems: true,
   approvals: false,
   images: true,
+  // Every Grok model reports a 256K window and an 80% compaction point. The
+  // 500K variant is chosen only inside Grok's own TUI, so it is not offered here.
+  context: { windows: [256_000], compaction: true, compactionOff: false, defaultCompactAt: 80 },
 }

@@ -1,5 +1,12 @@
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import type { KeybindingId, Keybindings, Shortcut } from './shortcuts.js'
+import {
+  checkSimulatedAppUpdate,
+  onSimulatedAppUpdate,
+  simulatedAppUpdate,
+  startAppUpdateSimulation,
+  type AppUpdateSimulation,
+} from './app-update-simulation.js'
 
 /**
  * The native bridge, when one exists.
@@ -32,6 +39,7 @@ type Bridge = {
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
+  setWindowChrome?: (chrome: WindowChrome) => Promise<void>
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
@@ -41,12 +49,20 @@ type Bridge = {
   setDiagnosticsEnabled?: (enabled: boolean) => Promise<boolean>
   openDiagnostics?: () => Promise<boolean>
   reportRendererError?: (message: string) => void
+  crashAgents?: () => Promise<unknown>
+  launchCrashAgent?: (agent: CrashAgentId, details: CrashDetails) => Promise<void>
   getUpdateState?: () => Promise<AppUpdateState>
   checkForUpdates?: () => Promise<AppUpdateState>
   installUpdate?: () => Promise<boolean>
   setMenuShortcuts?: (shortcuts: NativeMenuShortcuts) => void
-  onMenuAction?: (listener: (action: NativeMenuAction) => void) => () => void
+  onMenuAction?: (
+    listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
+  ) => () => void
+  suspendMenuShortcuts?: (suspended: boolean) => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
+  onBrowserShortcut?: (
+    listener: (guestId: number, action: BrowserShortcutAction) => void,
+  ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   isDesktop: true
@@ -63,6 +79,10 @@ export type RendererStartupMilestone =
   | 'projects-reconciled'
   | 'projects-ready'
   | 'catalog-ready'
+  | 'requests-busy'
+  | 'requests-idle'
+  | 'notice-open'
+  | 'notice-closed'
 
 declare global {
   interface Window {
@@ -71,6 +91,8 @@ declare global {
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
+/** A Browser key pressed inside a Browser tab's page. Mirrors apps/desktop/src/browser-shortcuts.ts. */
+export type BrowserShortcutAction = 'back' | 'forward' | 'reload' | 'address' | 'close'
 type AppTheme = 'light' | 'dark' | 'codex'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
@@ -98,9 +120,19 @@ const NATIVE_MENU_ACTION_IDS = [
   'toggleIsolatedSession',
 ] as const satisfies readonly KeybindingId[]
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTION_IDS)[number]
+/** An accelerator is a key press and follows the renderer's shortcut guards; a click does not. */
+export type NativeMenuActionSource = 'menu' | 'accelerator'
 type NativeMenuShortcuts = Record<NativeMenuAction, Shortcut | null>
 export type AppUpdateState = {
-  status: 'unsupported' | 'idle' | 'checking' | 'downloading' | 'current' | 'ready' | 'error'
+  status:
+    | 'unsupported'
+    | 'idle'
+    | 'checking'
+    | 'downloading'
+    | 'preparing'
+    | 'current'
+    | 'ready'
+    | 'error'
   currentVersion: string
   version?: string
   progress?: number
@@ -128,6 +160,7 @@ export const isStartupBenchmark = bridge?.reportStartupMilestone !== undefined
 export const canCapturePreview = bridge?.capturePreview !== undefined
 export const canRevealProjectFile = bridge?.revealProjectFile !== undefined
 export const canDropProjectFolders = bridge?.droppedFolderPaths !== undefined
+export const canPreviewViewedImages = bridge?.previewViewedImage !== undefined
 
 export function reportStartupMilestone(name: RendererStartupMilestone): void {
   bridge?.reportStartupMilestone?.(name)
@@ -210,11 +243,22 @@ export function revealProjectFile(path: string, projectPath: string): Promise<vo
   return bridge?.revealProjectFile?.(path, projectPath) ?? Promise.resolve()
 }
 
+/**
+ * The preview an image already has without a native round trip: inline image
+ * data, or a preview resolved earlier in this session.
+ */
+export function knownViewedImagePreview(reference: string): PickedAttachment | undefined {
+  if (/^data:image\/(?:png|jpeg|gif|webp|avif);base64,[a-zA-Z0-9+/=\s]+$/.test(reference)) {
+    return { path: reference, name: 'Attached image', mediaType: 'image', previewUrl: reference }
+  }
+  return attachmentPreviews.get(reference)
+}
+
 export async function previewViewedImage(reference: string): Promise<PickedAttachment | undefined> {
-  const cached = attachmentPreviews.get(reference)
-  if (cached) {
-    rememberAttachmentPreview(reference, cached)
-    return cached
+  const known = knownViewedImagePreview(reference)
+  if (known) {
+    if (attachmentPreviews.has(reference)) rememberAttachmentPreview(reference, known)
+    return known
   }
   try {
     const direct = await bridge?.previewViewedImage?.(reference)
@@ -259,6 +303,22 @@ export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
   return bridge?.setTheme(preference) ?? Promise.resolve()
 }
 
+/**
+ * The colours the page paints where native window chrome meets it, as #rrggbb.
+ * The desktop shell colours the caption buttons with them and opens the next
+ * launch in them. Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
+ */
+export type WindowChrome = {
+  theme: 'light' | 'dark'
+  background: string
+  caption: string
+  symbol: string
+}
+
+export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {
+  return bridge?.setWindowChrome?.(chrome) ?? Promise.resolve()
+}
+
 export function prepareNativeHaptics(): void {
   bridge?.prepareHaptics?.()
 }
@@ -271,6 +331,30 @@ export function onAppZoomChange(listener: (factor: number) => void): () => void 
   return bridge?.onZoomChange(listener) ?? (() => undefined)
 }
 
+type BrowserShortcutListener = (guestId: number, action: BrowserShortcutAction) => void
+const browserShortcutListeners = new Set<BrowserShortcutListener>()
+let stopBrowserShortcuts: (() => void) | undefined
+
+/**
+ * Browser keys the desktop shell took from a focused Browser page. Every
+ * Browser tab listens, so one native subscription fans out to all of them
+ * instead of one IPC listener per tab.
+ */
+export function onBrowserShortcut(listener: BrowserShortcutListener): () => void {
+  const subscribe = bridge?.onBrowserShortcut
+  if (!subscribe) return () => undefined
+  browserShortcutListeners.add(listener)
+  stopBrowserShortcuts ??= subscribe((guestId, action) => {
+    for (const current of browserShortcutListeners) current(guestId, action)
+  })
+  return () => {
+    browserShortcutListeners.delete(listener)
+    if (browserShortcutListeners.size) return
+    stopBrowserShortcuts?.()
+    stopBrowserShortcuts = undefined
+  }
+}
+
 export function syncNativeMenuShortcuts(keybindings: Keybindings): void {
   const shortcuts = Object.fromEntries(
     NATIVE_MENU_ACTION_IDS.map((action) => [action, keybindings[action]]),
@@ -278,8 +362,15 @@ export function syncNativeMenuShortcuts(keybindings: Keybindings): void {
   bridge?.setMenuShortcuts?.(shortcuts)
 }
 
-export function onNativeMenuAction(listener: (action: NativeMenuAction) => void): () => void {
+export function onNativeMenuAction(
+  listener: (action: NativeMenuAction, source: NativeMenuActionSource) => void,
+): () => void {
   return bridge?.onMenuAction?.(listener) ?? (() => undefined)
+}
+
+/** Stops menu accelerators from firing while the page records a new shortcut. */
+export function suspendNativeMenuShortcuts(suspended: boolean): void {
+  bridge?.suspendMenuShortcuts?.(suspended)
 }
 
 export async function capturePreview(
@@ -320,6 +411,42 @@ export function openLocalDiagnostics(): Promise<boolean> {
   return bridge?.openDiagnostics?.() ?? Promise.resolve(false)
 }
 
+export const CRASH_AGENT_IDS = ['claude-code', 'codex', 'grok'] as const
+export type CrashAgentId = (typeof CRASH_AGENT_IDS)[number]
+export type CrashAgentAvailability = { id: CrashAgentId; installed: boolean }
+type CrashDetails = { name: string; message: string; stack: string; componentStack: string }
+
+export const canLaunchCrashAgent = bridge?.launchCrashAgent !== undefined
+
+/** Unknown or missing answers count as installed: the launch itself reports a real failure. */
+export async function crashAgents(): Promise<CrashAgentAvailability[]> {
+  const reported = await bridge?.crashAgents?.().catch(() => undefined)
+  const installed = new Map<unknown, unknown>(
+    Array.isArray(reported)
+      ? reported.map((entry: { id?: unknown; installed?: unknown }) => [
+          entry?.id,
+          entry?.installed,
+        ])
+      : [],
+  )
+  return CRASH_AGENT_IDS.map((id) => ({ id, installed: installed.get(id) !== false }))
+}
+
+export function launchCrashAgent(
+  agent: CrashAgentId,
+  cause: unknown,
+  componentStack: string,
+): Promise<void> {
+  if (!bridge?.launchCrashAgent) return Promise.reject(new Error('No desktop bridge'))
+  const error = cause instanceof Error ? cause : undefined
+  return bridge.launchCrashAgent(agent, {
+    name: error?.name ?? '',
+    message: error ? error.message : String(cause),
+    stack: error?.stack ?? '',
+    componentStack,
+  })
+}
+
 export function reportRendererError(cause: unknown): void {
   const message = cause instanceof Error ? cause.stack || cause.message : String(cause)
   bridge?.reportRendererError?.(message.slice(0, 4_000))
@@ -330,18 +457,55 @@ const unsupportedUpdate: AppUpdateState = {
   currentVersion: 'pre-release',
 }
 
-export function appUpdateState(): Promise<AppUpdateState> {
+function nativeAppUpdateState(): Promise<AppUpdateState> {
   return bridge?.getUpdateState?.() ?? Promise.resolve(unsupportedUpdate)
 }
 
+// A Debug simulation stands in for the native updater until it is stopped or
+// the window restarts, so every update surface follows the fake release.
+export function appUpdateState(): Promise<AppUpdateState> {
+  const simulated = simulatedAppUpdate()
+  return simulated ? Promise.resolve(simulated) : nativeAppUpdateState()
+}
+
 export function checkForAppUpdates(): Promise<AppUpdateState> {
+  if (simulatedAppUpdate()) return checkSimulatedAppUpdate()
   return bridge?.checkForUpdates?.() ?? Promise.resolve(unsupportedUpdate)
 }
 
 export function installAppUpdate(): Promise<boolean> {
+  const simulated = simulatedAppUpdate()
+  if (simulated) {
+    // A reload is the renderer's half of a restart; nothing was installed.
+    if (simulated.status === 'ready') window.location.reload()
+    return Promise.resolve(simulated.status === 'ready')
+  }
   return bridge?.installUpdate?.() ?? Promise.resolve(false)
 }
 
 export function onAppUpdateState(listener: (state: AppUpdateState) => void): () => void {
-  return bridge?.onUpdateState?.(listener) ?? (() => undefined)
+  const offNative =
+    bridge?.onUpdateState?.((state) => {
+      if (!simulatedAppUpdate()) listener(state)
+    }) ?? (() => undefined)
+  const offSimulated = onSimulatedAppUpdate((state) => {
+    if (state) {
+      listener(state)
+      return
+    }
+    void nativeAppUpdateState()
+      .then((native) => {
+        if (!simulatedAppUpdate()) listener(native)
+      })
+      .catch(() => {})
+  })
+  return () => {
+    offNative()
+    offSimulated()
+  }
+}
+
+export async function simulateAppUpdate(scenario: AppUpdateSimulation): Promise<AppUpdateState> {
+  const { currentVersion } = simulatedAppUpdate() ?? (await nativeAppUpdateState())
+  return startAppUpdateSimulation(scenario, currentVersion)
 }

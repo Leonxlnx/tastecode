@@ -1,12 +1,35 @@
 import { describe, expect, it } from 'vitest'
+import { methods } from './protocol.js'
 import {
   GitHubRepositoryNameSchema,
   PullRequestActionSchema,
+  PullRequestFilesResultSchema,
   PullRequestListResultSchema,
   PullRequestMetadataOptionsSchema,
 } from './pull-requests.js'
 
 describe('pull-request contracts', () => {
+  it('requires comparison identities for file requests and responses', () => {
+    const request = { repository: 'Blueemi/harness', number: 7 }
+    const result = { files: [], page: 1, hasMore: false }
+    expect(methods['pullRequests.files'].params.safeParse(request).success).toBe(false)
+    expect(
+      methods['pullRequests.files'].params.parse({
+        ...request,
+        expectedHeadOid: 'head',
+        expectedBaseOid: 'base',
+      }),
+    ).toMatchObject({ expectedHeadOid: 'head', expectedBaseOid: 'base' })
+    expect(PullRequestFilesResultSchema.safeParse(result).success).toBe(false)
+    expect(
+      PullRequestFilesResultSchema.parse({
+        ...result,
+        headRefOid: 'head',
+        baseRefOid: 'base',
+      }),
+    ).toMatchObject({ headRefOid: 'head', baseRefOid: 'base' })
+  })
+
   it('accepts a bounded authored pull-request result', () => {
     const result = {
       account: { available: true, authenticated: true, login: 'blueemi' },

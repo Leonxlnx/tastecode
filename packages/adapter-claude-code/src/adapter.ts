@@ -19,6 +19,7 @@ import type {
   Item,
   McpServerConfig,
   Model,
+  ProviderContextSettings,
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
@@ -27,7 +28,13 @@ import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
-import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import {
+  ClaudeEventSchema,
+  toDomainEvents,
+  toolUseItemFields,
+  toUsage,
+  type ClaudeEvent,
+} from './events.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -49,9 +56,28 @@ export { CLAUDE_CAPABILITIES } from './capabilities.js'
 const SUPPORTED = '2.1'
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell'])
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'NotebookEdit'])
+/**
+ * Captured from claude 2.1.296, which advertises `msg_lifecycle_v1` on system/init. The SDK's
+ * message union does not declare it: each uuid-stamped prompt is reported queued, started and
+ * then completed or cancelled, and a `result` can arrive before the terminal state.
+ */
+const CommandLifecycleSchema = z.object({
+  type: z.literal('command_lifecycle'),
+  command_uuid: z.string(),
+  state: z.string(),
+})
 const ToolLocationSchema = z.object({ cwd: z.string().optional() })
 const ToolInputSchema = z.record(z.string(), JsonRpcValueSchema)
-const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'])
+const ClaudeEffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
+/** Only the `applied` block is read; the rest of the answer carries the user's own settings. */
+const ClaudeAppliedSettingsSchema = z.object({
+  applied: z
+    .object({
+      ultracode: z.boolean().optional(),
+      ultracodeAvailable: z.boolean().optional(),
+    })
+    .optional(),
+})
 const TodoInputSchema = z.object({
   todos: z.array(
     z.object({
@@ -65,6 +91,7 @@ const UserInputSchema = z.object({
     z.object({
       question: z.coerce.string(),
       header: z.coerce.string().optional(),
+      multiSelect: z.boolean().optional(),
       options: z
         .array(
           z.object({
@@ -83,47 +110,45 @@ type ToolInput = z.infer<typeof ToolInputSchema>
  * Claude Code's versioned catalog. The SDK model control intentionally returns
  * the short interactive-picker list, including a synthetic `default` row, so
  * live discovery is merged with this catalog instead of replacing it.
+ *
+ * The current lineup comes first in tier order (Fable, Opus, Sonnet, Haiku).
+ * Older generations follow, newest generation first and in tier order within
+ * one generation.
  */
 const FULL_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-export const CLAUDE_MODELS: Model[] = [
-  claudeModel(
-    'claude-fable-5',
-    'Claude Fable 5',
-    'Most capable — flagship tier',
-    FULL_EFFORTS,
-    true,
-  ),
-  claudeModel('claude-opus-5', 'Claude Opus 5', 'Deep reasoning', FULL_EFFORTS),
-  claudeModel('claude-sonnet-5', 'Claude Sonnet 5', 'Balanced speed and capability', FULL_EFFORTS),
-  claudeModel('claude-haiku-4-5', 'Claude Haiku 4.5', 'Fastest and cheapest', []),
-  claudeModel('claude-opus-4-8', 'Claude Opus 4.8', 'Previous Opus generation', FULL_EFFORTS),
-  claudeModel(
-    'claude-opus-4-7',
-    'Claude Opus 4.7',
-    'Older Opus generation',
-    FULL_EFFORTS,
-    false,
-    'xhigh',
-  ),
-  claudeModel('claude-opus-4-6', 'Claude Opus 4.6', 'Older Opus generation', [
-    'low',
-    'medium',
-    'high',
-    'max',
-  ]),
-  claudeModel('claude-opus-4-5', 'Claude Opus 4.5', 'Older Opus generation', [
-    'low',
-    'medium',
-    'high',
-    'max',
-  ]),
-  claudeModel('claude-sonnet-4-6', 'Claude Sonnet 4.6', 'Previous Sonnet generation', [
-    'low',
-    'medium',
-    'high',
-    'max',
-  ]),
+const CURRENT_CLAUDE_MODELS: Model[] = [
+  claudeModel('claude-fable-5-1', 'Fable 5.1', 'Long-horizon reasoning and coding', FULL_EFFORTS),
+  claudeModel('claude-opus-5-5', 'Opus 5.5', 'Deep reasoning', FULL_EFFORTS, true),
+  claudeModel('claude-sonnet-5-5', 'Sonnet 5.5', 'Balanced speed and capability', FULL_EFFORTS),
+  claudeModel('claude-haiku-5-5', 'Haiku 5.5', 'Fastest and cheapest', FULL_EFFORTS),
 ]
+const OLDER_CLAUDE_MODELS: Model[] = [
+  claudeModel('claude-fable-5', 'Fable 5', 'Previous Fable generation', FULL_EFFORTS),
+  claudeModel('claude-opus-5', 'Opus 5', 'Previous Opus generation', FULL_EFFORTS),
+  claudeModel('claude-sonnet-5', 'Sonnet 5', 'Previous Sonnet generation', FULL_EFFORTS),
+  claudeModel('claude-opus-4-8', 'Opus 4.8', 'Older Opus generation', FULL_EFFORTS),
+  claudeModel('claude-opus-4-7', 'Opus 4.7', 'Older Opus generation', FULL_EFFORTS, false, 'xhigh'),
+  claudeModel('claude-opus-4-6', 'Opus 4.6', 'Older Opus generation', [
+    'low',
+    'medium',
+    'high',
+    'max',
+  ]),
+  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', [
+    'low',
+    'medium',
+    'high',
+    'max',
+  ]),
+  claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Older Sonnet generation', [
+    'low',
+    'medium',
+    'high',
+    'max',
+  ]),
+  claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Previous Haiku generation', []),
+]
+export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
 function claudeModel(
   id: string,
@@ -144,6 +169,43 @@ function claudeModel(
   }
 }
 
+/**
+ * Ultracode is the top level of Claude's effort control, but it is not an API
+ * effort. claude 2.1.296 reads it as the session-scoped `ultracode` flag setting:
+ * xhigh effort plus standing dynamic-workflow orchestration. That is what its
+ * own `--effort ultracode` alias resolves to, so this sends the same pair.
+ */
+export const CLAUDE_ULTRACODE_EFFORT = 'ultracode'
+
+export function claudeEffortOptions(
+  effort: string | undefined,
+): Pick<ClaudeQueryOptions, 'effort' | 'settings'> {
+  if (effort === undefined) return {}
+  const level = ClaudeEffortSchema.parse(effort)
+  return level === CLAUDE_ULTRACODE_EFFORT
+    ? { effort: 'xhigh', settings: { ultracode: true } }
+    : { effort: level }
+}
+
+/**
+ * Claude Code offers Ultracode only while dynamic workflows are enabled and the
+ * model supports xhigh effort. Discovery learns the first half from the
+ * runtime's `applied.ultracodeAvailable`; each model's effort list gives the second.
+ */
+function withUltracode(model: Model, ultracodeAvailable: boolean): Model {
+  if (!ultracodeAvailable || !model.reasoningEfforts.includes('xhigh')) return model
+  if (model.reasoningEfforts.includes(CLAUDE_ULTRACODE_EFFORT)) return model
+  return { ...model, reasoningEfforts: [...model.reasoningEfforts, CLAUDE_ULTRACODE_EFFORT] }
+}
+
+async function readClaudeAppliedSettings(
+  query: ClaudeQueryRuntime,
+): Promise<z.infer<typeof ClaudeAppliedSettingsSchema>['applied']> {
+  if (typeof query.getSettings !== 'function') return undefined
+  const parsed = ClaudeAppliedSettingsSchema.safeParse(await query.getSettings())
+  return parsed.success ? parsed.data.applied : undefined
+}
+
 const PERMISSION_MODE = {
   ask: 'default',
   auto: 'acceptEdits',
@@ -155,6 +217,7 @@ export type ClaudeAdapterEvents = {
   event: [DomainEvent]
   log: [string]
   usageChanged: []
+  disconnected: []
 }
 
 export type ClaudeStartOptions = {
@@ -165,6 +228,27 @@ export type ClaudeStartOptions = {
   ephemeral?: boolean | undefined
   mcpServers?: McpServerConfig[] | undefined
   mcpCredentials?: Record<string, string> | undefined
+  context?: ProviderContextSettings | undefined
+}
+
+/**
+ * Claude Code reads both settings from its environment: the window as a token
+ * budget it clamps to the model's own, the compaction point as a percent that
+ * can only bring compaction earlier. `DISABLE_AUTO_COMPACT` keeps a manual
+ * /compact working, unlike `DISABLE_COMPACT`.
+ */
+export function claudeContextEnvironment(context: ProviderContextSettings | undefined) {
+  if (!context) return {}
+  return {
+    ...(context.window !== undefined
+      ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(context.window) }
+      : {}),
+    ...(context.compactAt === 'off'
+      ? { DISABLE_AUTO_COMPACT: '1' }
+      : context.compactAt !== undefined
+        ? { CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String(context.compactAt) }
+        : {}),
+  }
 }
 
 export type ClaudeTurnOptions = Pick<ClaudeStartOptions, 'model' | 'effort'>
@@ -182,6 +266,13 @@ function applyClaudeTurnOptions(
     else merged[field] = value
   }
   return merged
+}
+
+/** claude 2.1.296 fails `--resume` of an id it has no transcript for with this result. */
+function isMissingClaudeConversation(error: unknown): boolean {
+  return /No conversation found with session ID/i.test(
+    error instanceof Error ? error.message : String(error),
+  )
 }
 
 type ImageMediaType = 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
@@ -301,6 +392,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #options: ClaudeStartOptions = {}
   #reportedModel: string | undefined
   #sessionId: string | undefined
+  #resumeOnRestart = false
   #query: ClaudeQueryRuntime | undefined
   #queryAbort: AbortController | undefined
   #bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
@@ -313,12 +405,29 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   readonly #processes = new Set<ReturnType<ClaudeSpawn>>()
   #activeTurnId: string | undefined
   #interruptRequested = false
+  /**
+   * Steers sent during the current turn, by uuid, and whether the CLI reported that their run
+   * started, so a stop receipt or a result can tell which of them still run.
+   */
+  readonly #turnSteers = new Map<string, boolean>()
+  /** The CLI reports each prompt's lifecycle (`msg_lifecycle_v1`). */
+  #messageLifecycle = false
+  /** A run ended while a steer of the turn waited to start; the status that run ended with. */
+  #heldTurnStatus: 'completed' | 'failed' | 'interrupted' | undefined
+  /** A stop left steers queued: the SDK runs them next, still inside the turn they steered. */
+  #steersOutliveRun = false
+  /** Settles once a stop receipt is read; the stopped run's result may overtake it. */
+  #stopReceipt: Promise<void> | undefined
+  /** The SDK's `total_cost_usd` is a running total for the current query. */
+  #queryCostUsd = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
   #streamMessageId: string | undefined
   readonly #streamBlocks = new Map<number, StreamBlock>()
   readonly #streamItems = new Map<string, Item>()
+  /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
+  readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
 
   constructor(
@@ -340,6 +449,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
   get capabilities(): Capabilities {
     return CLAUDE_CAPABILITIES
+  }
+
+  onDisconnected(listener: () => void): () => void {
+    this.on('disconnected', listener)
+    return () => this.off('disconnected', listener)
   }
 
   async startThread(workspacePath: string, options: ClaudeStartOptions = {}): Promise<Thread> {
@@ -399,14 +513,20 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#assertThread(threadId)
     this.#options = next
 
-    const queue = this.#requirePromptQueue()
-    const turnId = `${threadId}-turn-${crypto.randomUUID()}`
-    queue.push(claudeUserMessage(text, attachments, this.#sessionId))
+    this.#requirePromptQueue().push(claudeUserMessage(text, attachments, this.#sessionId))
+    return this.#startTurn()
+  }
+
+  #startTurn(): string {
+    const turnId = `${this.#threadId}-turn-${crypto.randomUUID()}`
     this.#activeTurnId = turnId
     this.#interruptRequested = false
+    this.#turnSteers.clear()
+    this.#steersOutliveRun = false
+    this.#heldTurnStatus = undefined
     this.emit('event', {
       type: 'turn.started',
-      turn: { id: turnId, threadId, status: 'running', createdAt: Date.now() },
+      turn: { id: turnId, threadId: this.#threadId, status: 'running', createdAt: Date.now() },
     })
     return turnId
   }
@@ -414,21 +534,42 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   async steer(threadId: string, text: string, attachments: string[] = []): Promise<void> {
     this.#assertThread(threadId)
     if (!this.#activeTurnId) throw new Error('there is no running Claude turn to steer')
-    this.#requirePromptQueue().push({
-      ...claudeUserMessage(text, attachments, this.#sessionId),
-      priority: 'now',
-    })
+    const message = claudeUserMessage(text, attachments, this.#sessionId)
+    this.#requirePromptQueue().push({ ...message, priority: 'now' })
+    this.#turnSteers.set(message.uuid!, false)
   }
 
   async interrupt(): Promise<void> {
-    if (!this.#activeTurnId || !this.#query) return
+    const turnId = this.#activeTurnId
+    if (!turnId || !this.#query) return
     const query = this.#query
     const redactor = this.#redactor
     this.#interruptRequested = true
+    // The SDK keeps queued async messages through an interrupt and lists them in its receipt.
+    const stopping = query.interrupt().then((receipt) => {
+      if (
+        this.#query === query &&
+        this.#activeTurnId === turnId &&
+        receipt?.still_queued.some((uuid) => this.#turnSteers.has(uuid))
+      )
+        this.#steersOutliveRun = true
+    })
+    const receipt =
+      this.#turnSteers.size > 0
+        ? stopping.then(
+            () => undefined,
+            () => undefined,
+          )
+        : undefined
+    if (receipt) this.#stopReceipt = receipt
     try {
-      await query.interrupt()
+      await stopping
     } catch (error) {
+      // The turn keeps running, so a later error result is real and must still surface.
+      if (this.#query === query) this.#interruptRequested = false
       throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    } finally {
+      if (receipt && this.#stopReceipt === receipt) this.#stopReceipt = undefined
     }
   }
 
@@ -497,17 +638,20 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ...(decision === 'abort' ? { interrupt: true } : {}),
       ...common,
     })
-    if (decision === 'abort') void this.interrupt()
+    if (decision === 'abort') {
+      void this.interrupt().catch((error: unknown) => {
+        this.#log(
+          `Could not stop Claude: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      })
+    }
   }
 
   respondToUserInput(requestId: string, answers: Record<string, string[]>): void {
     const pending = this.#pendingUserInputs.get(requestId)
     if (!pending) return
     const sdkAnswers = Object.fromEntries(
-      Object.entries(answers).map(([question, values]) => [
-        question,
-        values.length > 1 ? values : (values[0] ?? ''),
-      ]),
+      Object.entries(answers).map(([question, values]) => [question, values.join(', ')]),
     )
     pending.finish({
       behavior: 'allow',
@@ -534,10 +678,22 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       const models = await withTimeout(
         query.supportedModels(),
-        10_000,
+        30_000,
         'Claude model discovery timed out',
       )
-      return models.length > 0 ? mergeClaudeModels(models) : CLAUDE_MODELS
+      if (models.length === 0) return CLAUDE_MODELS
+      const ultracodeAvailable = await withTimeout(
+        readClaudeAppliedSettings(query),
+        10_000,
+        'Claude settings discovery timed out',
+      ).then(
+        (applied) => applied?.ultracodeAvailable === true,
+        (error: unknown) => {
+          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+          return false
+        },
+      )
+      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
     } catch (error) {
       this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
       return CLAUDE_MODELS
@@ -598,18 +754,32 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#sessionGeneration += 1
     this.#threadId = threadId
     this.#sessionId = sessionId
+    this.#resumeOnRestart = resume
     this.#workspacePath = workspacePath
     this.#options = options
     this.#reportedModel = options.model
-    const starting = this.#startQuery(resume ? sessionId : undefined).catch(
-      async (error: unknown) => {
+    const starting = this.#startQuery(resume ? sessionId : undefined)
+      .catch(async (error: unknown) => {
+        if (!resume || this.#disposed || !isMissingClaudeConversation(error)) throw error
+        // A session whose first prompt never reached the CLI has no transcript,
+        // so --resume can never succeed. Create it under the same id instead.
+        this.#log(`Claude session ${sessionId} has no transcript yet; creating it`)
+        // A new generation keeps the failed query's late end from reporting a disconnect.
+        this.#queryGeneration += 1
+        this.#promptQueue?.close()
+        this.#query?.close()
+        this.#promptQueue = undefined
+        this.#query = undefined
+        this.#resumeOnRestart = false
+        await this.#startQuery(undefined)
+      })
+      .catch(async (error: unknown) => {
         const message = this.#redactor.redact(
           error instanceof Error ? error.message : String(error),
         )
         await this.dispose()
         throw new Error(message)
-      },
-    )
+      })
     this.#starting = starting
     try {
       await starting
@@ -625,8 +795,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const promptQueue = new PromptQueue()
     const abort = new AbortController()
     this.#queryAbort = abort
-    const effort =
-      options.effort === undefined ? undefined : ClaudeEffortSchema.parse(options.effort)
+    const effortOptions = claudeEffortOptions(options.effort)
     let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
     let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
     try {
@@ -644,9 +813,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               {
                 cwd: this.#workspacePath,
                 abortController: abort,
+                env: { ...this.#environment, ...claudeContextEnvironment(options.context) },
                 ...(bootstrap ? { mcpServers: bootstrap.servers } : {}),
                 ...(options.model ? { model: options.model } : {}),
-                ...(effort ? { effort: effort } : {}),
+                ...effortOptions,
                 systemPrompt: {
                   type: 'preset',
                   preset: 'claude_code',
@@ -671,12 +841,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           const generation = ++this.#queryGeneration
           this.#promptQueue = promptQueue
           this.#query = query
+          this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
           if (bootstrap)
             await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
+          if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
         })(),
         this.#startupTimeoutMs,
         'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
@@ -727,9 +899,21 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
+  /** The runtime can still decline Ultracode, for example after dynamic workflows were turned off. */
+  #confirmUltracode(query: ClaudeQueryRuntime): void {
+    void readClaudeAppliedSettings(query).then(
+      (applied) => {
+        if (applied && applied.ultracode !== true) {
+          this.#log('Claude Code did not turn Ultracode on for this session')
+        }
+      },
+      () => undefined,
+    )
+  }
+
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
     if (this.#activeTurnId) throw new Error('Claude effort cannot change during a running turn')
-    this.#queryGeneration += 1
+    const generation = ++this.#queryGeneration
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
     this.#query?.close()
@@ -737,9 +921,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#query = undefined
     this.#clearStreamingState()
     try {
-      await this.#startQuery(this.#sessionId, options)
+      // An unused session has no transcript yet, so it must keep --session-id.
+      await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
     } catch (error) {
       const message = this.#redactor.redact(error instanceof Error ? error.message : String(error))
+      // dispose() drops every listener, so the owner must learn the session is gone first.
+      // #consume already announced it when the failed query ended on its own.
+      if (!this.#disposed && (this.#query || this.#queryGeneration === generation)) {
+        this.#settlePending('Claude session disconnected.')
+        this.emit('disconnected')
+      }
       await this.dispose()
       throw new Error(message)
     }
@@ -753,6 +944,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     try {
       for await (const message of query) {
         if (generation !== this.#queryGeneration || this.#disposed) return
+        if (message.type === 'result' && this.#stopReceipt) {
+          await this.#stopReceipt
+          if (generation !== this.#queryGeneration || this.#disposed) return
+        }
         this.#onMessage(message)
       }
       if (generation === this.#queryGeneration && !this.#disposed && this.#activeTurnId) {
@@ -764,7 +959,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     } finally {
       if (generation === this.#queryGeneration && this.#query === query) {
         this.#query = undefined
+        this.#promptQueue?.close()
         this.#promptQueue = undefined
+        this.#settlePending('Claude session disconnected.')
+        if (!this.#disposed) this.emit('disconnected')
       }
     }
   }
@@ -773,22 +971,28 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const sessionId = 'session_id' in message ? message.session_id : undefined
     if (sessionId) this.#sessionId = sessionId
 
+    if ((message as { type: string }).type === 'command_lifecycle') {
+      this.#onCommandLifecycle(message)
+      return
+    }
+
     if (message.type === 'stream_event') {
       this.#onStreamEvent(message)
       return
     }
 
     if (message.type === 'assistant') {
-      if (!this.#activeTurnId) {
-        this.emit('log', 'ignored Claude assistant replay outside an active turn')
-        return
-      }
+      // Subagent (Task) snapshots belong to the sidechain. Saved history leaves them out, so
+      // the live transcript must too, and they must not touch the main plan or model label.
+      if (message.parent_tool_use_id) return
       if (message.error) this.#log(`Claude assistant error: ${message.error}`)
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude assistant event: ${parsed.error.message}`)
         return
       }
+      // Output that no turn waits for, such as a steer that outlived its turn, gets its own.
+      const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
       this.#reportedModel = event.message?.model
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
@@ -804,26 +1008,32 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
               },
             }
           : event
-      this.#emitDomainEvents(toDomainEvents(filtered, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(filtered, turnId, this.#toolCalls))
       this.#emitTodoPlan(event)
       return
     }
 
     if (message.type === 'user') {
-      if (!this.#activeTurnId) return
+      if (!this.#activeTurnId || message.parent_tool_use_id) return
       const parsed = ClaudeEventSchema.safeParse(message)
       if (!parsed.success) {
         this.#log(`ignored malformed Claude user event: ${parsed.error.message}`)
         return
       }
-      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId))
+      this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId, this.#toolCalls))
       return
     }
 
     if (message.type === 'result') {
       const turnId = this.#activeTurnId
       if (!turnId) return
-      const usage = toUsage(message.usage, message.total_cost_usd)
+      this.#resumeOnRestart = true
+      // Usage tokens are per turn, but the cost is the query's running total: report only
+      // this turn's share so the store can sum turns. A drop means the SDK started over.
+      const total = message.total_cost_usd
+      const costUsd = total < this.#queryCostUsd ? total : total - this.#queryCostUsd
+      this.#queryCostUsd = total
+      const usage = toUsage(message.usage, costUsd)
       if (usage) {
         this.emit('event', {
           type: 'usage.updated',
@@ -834,11 +1044,11 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
-        this.emit('event', {
-          type: 'thread.error',
-          threadId: this.#threadId,
-          message: this.#redactor.redact(message.errors.join('\n')),
-        })
+        const errors = this.#redactor.redact(message.errors.join('\n'))
+        // A stopped turn ends as an error result carrying "[ede_diagnostic]" lines; that is
+        // the expected outcome of Stop, not something to show as an error.
+        if (this.#interruptRequested) this.#log(`Claude stopped turn: ${errors}`)
+        else this.emit('event', { type: 'thread.error', threadId: this.#threadId, message: errors })
       }
       const status = this.#interruptRequested
         ? 'interrupted'
@@ -846,12 +1056,25 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           ? 'failed'
           : 'completed'
       this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
-      this.emit('event', {
-        type: 'turn.completed',
-        turnId,
-        status,
-      })
-      this.#activeTurnId = undefined
+      // A steer cuts the run it steers short, and the CLI starts it as a run of its own, Stop
+      // or not. Until every steer has started, a result ends only one run of the turn.
+      const steerWaits =
+        this.#messageLifecycle && [...this.#turnSteers.values()].some((started) => !started)
+      // Only the stopped run ended. The steers it left queued run next, and their answer
+      // and result belong to the turn they steered, not to whichever prompt comes after.
+      if (steerWaits || this.#steersOutliveRun) {
+        // Without lifecycle reports the next result is the steers' own.
+        if (steerWaits) this.#heldTurnStatus = status
+        else this.#turnSteers.clear()
+        this.#steersOutliveRun = false
+      } else {
+        this.emit('event', {
+          type: 'turn.completed',
+          turnId,
+          status,
+        })
+        this.#activeTurnId = undefined
+      }
       this.#interruptRequested = false
       this.#settlePending('Claude turn ended before the request was answered.')
       this.#clearStreamingState()
@@ -876,6 +1099,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
 
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model
+      this.#messageLifecycle = message.capabilities?.includes('msg_lifecycle_v1') ?? false
       if (message.claude_code_version && !message.claude_code_version.startsWith(SUPPORTED)) {
         this.emit(
           'log',
@@ -885,11 +1109,35 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
+  #onCommandLifecycle(message: unknown): void {
+    const parsed = CommandLifecycleSchema.safeParse(message)
     const turnId = this.#activeTurnId
-    if (!turnId || message.parent_tool_use_id) return
+    if (!parsed.success || !turnId || !this.#turnSteers.has(parsed.data.command_uuid)) return
+    const { command_uuid: uuid, state } = parsed.data
+    if (state === 'started') {
+      this.#turnSteers.set(uuid, true)
+      this.#heldTurnStatus = undefined
+      return
+    }
+    if (state !== 'completed' && state !== 'cancelled') return
+    this.#turnSteers.delete(uuid)
+    // A held turn is between runs. A steer that ends without a run of its own, cancelled or
+    // folded into a run that already reported, may leave it nothing more to wait for.
+    const status = this.#heldTurnStatus
+    if (!status || [...this.#turnSteers.values()].some((started) => !started)) return
+    this.#heldTurnStatus = undefined
+    this.emit('event', { type: 'turn.completed', turnId, status })
+    this.#activeTurnId = undefined
+  }
+
+  #onStreamEvent(message: Extract<SDKMessage, { type: 'stream_event' }>): void {
+    if (message.parent_tool_use_id) return
     const event = message.event
     const type = event.type
+    const turnId =
+      this.#activeTurnId ??
+      (type === 'message_start' || type === 'content_block_start' ? this.#startTurn() : undefined)
+    if (!turnId) return
     if (type === 'message_start') {
       this.#streamMessageId = event.message.id
       return
@@ -906,7 +1154,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           id,
           turnId,
           status: 'started',
-          ...toolItemFields(raw.name, input),
+          ...toolUseItemFields(raw.name, input),
           createdAt: Date.now(),
         }
         this.#streamItems.set(id, item)
@@ -1157,6 +1405,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamMessageId = undefined
     this.#streamBlocks.clear()
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamedMessageIds.clear()
   }
 
@@ -1165,7 +1414,12 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const { text: _streamedText, ...started } = item
       this.emit('event', { type: 'item.completed', item: { ...started, status } })
     }
+    // A call whose result never came back ends with the turn, not as "running".
+    for (const call of this.#toolCalls.values()) {
+      this.emit('event', { type: 'item.completed', item: { ...call, status } })
+    }
     this.#streamItems.clear()
+    this.#toolCalls.clear()
     this.#streamBlocks.clear()
   }
 
@@ -1199,14 +1453,15 @@ function approvalRequest(
       ? ('file_change' as const)
       : ('permissions' as const)
   const pathValue = options.blockedPath ?? input['file_path'] ?? input['path']
+  const explanation = options.title ?? options.description ?? options.decisionReason
+  const reason =
+    kind === 'permissions'
+      ? [toolName, explanation, JSON.stringify(input)].filter(Boolean).join('\n').slice(0, 2_000)
+      : explanation
   return {
     id,
     kind,
-    ...(options.title || options.description || options.decisionReason
-      ? {
-          reason: options.title ?? options.description ?? options.decisionReason,
-        }
-      : {}),
+    ...(reason ? { reason } : {}),
     ...(kind === 'command'
       ? {
           command: String(input['command'] ?? toolName),
@@ -1216,22 +1471,6 @@ function approvalRequest(
     ...(pathValue ? { path: String(pathValue) } : {}),
     createdAt: Date.now(),
   }
-}
-
-function toolItemFields(
-  toolName: string,
-  input: ToolInput,
-):
-  | { type: 'command'; command: string }
-  | { type: 'file_change'; path: string }
-  | { type: 'tool_call'; text: string } {
-  if (SHELL_TOOLS.has(toolName)) {
-    return { type: 'command', command: String(input['command'] ?? toolName) }
-  }
-  if (EDIT_TOOLS.has(toolName)) {
-    return { type: 'file_change', path: String(input['file_path'] ?? '') }
-  }
-  return { type: 'tool_call', text: toolName }
 }
 
 function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {
@@ -1257,6 +1496,7 @@ function parseUserInputQuestions(input: ToolInput): UserInputQuestion[] {
         header: raw.header?.trim() || `Question ${index + 1}`,
         question,
         allowOther: true,
+        ...(raw.multiSelect ? { multiSelect: true } : {}),
         secret: false,
         options: options.length > 0 ? options : null,
       },
@@ -1288,24 +1528,36 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
     discovered.unshift(mapSdkModel(defaultEntry, defaultResolvedId))
   }
 
-  const merged: Model[] = []
+  // One row per model: an alias such as `sonnet` and its `[1m]` variant both
+  // resolve to the same family, and the standard-context row represents it.
   const used = new Set<DiscoveredClaudeModel>()
-  for (const catalogModel of CLAUDE_MODELS) {
-    const family = claudeModelFamily(catalogModel.id)
-    const matches = discovered.filter((entry) => claudeModelFamily(entry.resolvedId) === family)
-    const standard = matches.find((entry) => !entry.resolvedId.endsWith('[1m]'))
-    const selected = standard ?? matches[0]
+  const takeFamily = (family: string): DiscoveredClaudeModel | undefined => {
+    const matches = discovered.filter(
+      (entry) => !used.has(entry) && claudeModelFamily(entry.resolvedId) === family,
+    )
+    for (const entry of matches) used.add(entry)
+    return matches.find((entry) => !entry.resolvedId.endsWith('[1m]')) ?? matches[0]
+  }
+  // A live row keeps its catalog row's default flag, so an answer without a
+  // `default` row still selects the catalog default, not whichever row is first.
+  const fromCatalog = (catalog: Model[]): Model[] =>
+    catalog.map((catalogModel) => {
+      const selected = takeFamily(claudeModelFamily(catalogModel.id))
+      return selected ? { ...selected.model, isDefault: catalogModel.isDefault } : catalogModel
+    })
 
-    if (selected) {
-      merged.push(selected.model)
-      for (const entry of matches) used.add(entry)
-    } else {
-      merged.push(catalogModel)
-    }
-  }
+  const current = fromCatalog(CURRENT_CLAUDE_MODELS)
+  const older = fromCatalog(OLDER_CLAUDE_MODELS)
+  const unknown: DiscoveredClaudeModel[] = []
   for (const entry of discovered) {
-    if (!used.has(entry)) merged.push(entry.model)
+    if (used.has(entry)) continue
+    const selected = takeFamily(claudeModelFamily(entry.resolvedId))
+    if (selected) unknown.push(selected)
   }
+  // A model the catalog does not list yet is most likely a new release, so it
+  // follows the current lineup instead of sinking below older generations.
+  unknown.sort((left, right) => compareClaudeReleases(left.resolvedId, right.resolvedId))
+  const merged = [...current, ...unknown.map((entry) => entry.model), ...older]
 
   let defaultIndex = defaultResolvedId
     ? merged.findIndex(
@@ -1351,12 +1603,36 @@ function claudeModelFamily(id: string): string {
   return id.replace(/\[1m\]$/, '').replace(/-\d{8}$/, '')
 }
 
+const CLAUDE_VERSIONED_ID = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/
+const CLAUDE_TIERS = ['fable', 'opus', 'sonnet', 'haiku']
+
+/**
+ * Newest version first, then Fable, Opus, Sonnet and Haiku within one version.
+ * Ids without a recognizable version keep their order after the versioned ones.
+ */
+function compareClaudeReleases(leftId: string, rightId: string): number {
+  const left = claudeRelease(leftId)
+  const right = claudeRelease(rightId)
+  if (!left || !right) return (left ? 0 : 1) - (right ? 0 : 1)
+  return right.major - left.major || right.minor - left.minor || left.tier - right.tier
+}
+
+function claudeRelease(id: string): { tier: number; major: number; minor: number } | undefined {
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
+  if (!match) return undefined
+  return {
+    tier: CLAUDE_TIERS.indexOf(match[1]!),
+    major: Number(match[2]),
+    minor: Number(match[3] ?? 0),
+  }
+}
+
 function versionedClaudeModelName(id: string): string | undefined {
-  const match = claudeModelFamily(id).match(/^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/)
+  const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
   if (!match) return undefined
   const family = `${match[1]![0]!.toUpperCase()}${match[1]!.slice(1)}`
   const version = `${match[2]}${match[3] ? `.${match[3]}` : ''}`
-  return `Claude ${family} ${version}`
+  return `${family} ${version}`
 }
 
 async function withTimeout<T>(

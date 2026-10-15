@@ -6,10 +6,10 @@ const OPTIONS = { time: 1_200, warmupTime: 300 }
 const checkpoints = Array.from({ length: 10_000 }, (_, index) => ({
   id: index,
   label: 'Repeated prompt',
-  createdAt: index,
+  createdAt: index * 10 + 5,
 }))
 const prompt: Item = {
-  id: 'prompt',
+  id: 'local:prompt',
   turnId: 'turn',
   type: 'message',
   role: 'user',
@@ -18,15 +18,23 @@ const prompt: Item = {
   createdAt: 1,
 }
 const index = createCheckpointIndex(checkpoints)
+const items = checkpoints.map((checkpoint) => ({
+  ...prompt,
+  id: `local:${checkpoint.id}`,
+  turnId: `turn-${checkpoint.id}`,
+  createdAt: checkpoint.createdAt - 5,
+}))
+const target = items[9_999]!
+checkpointForItem(target, index, items)
 
 describe('long-thread checkpoint lookup', () => {
   bench(
-    'linear reverse scan',
+    'linear subsequent snapshot scan',
     () => {
       if (
-        !checkpoints.findLast(
+        !checkpoints.find(
           (checkpoint) =>
-            checkpoint.label === prompt.text && checkpoint.createdAt <= prompt.createdAt,
+            checkpoint.label === target.text && checkpoint.createdAt >= target.createdAt,
         )
       ) {
         throw new Error('checkpoint missing')
@@ -36,9 +44,9 @@ describe('long-thread checkpoint lookup', () => {
   )
 
   bench(
-    'indexed binary lookup',
+    'cached transcript association',
     () => {
-      if (!checkpointForItem(prompt, index)) throw new Error('checkpoint missing')
+      if (!checkpointForItem(target, index, items)) throw new Error('checkpoint missing')
     },
     OPTIONS,
   )

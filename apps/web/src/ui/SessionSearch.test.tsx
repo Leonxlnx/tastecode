@@ -38,10 +38,9 @@ const PROJECTS = [
         createdAt: 43,
       },
       {
-        id: 'gemini-thread',
-        title: 'Gemini roadmap',
-        provider: 'acp' as const,
-        agent: 'gemini',
+        id: 'claude-thread',
+        title: 'Claude roadmap',
+        provider: 'claude-code' as const,
         createdAt: 42,
       },
     ],
@@ -75,6 +74,91 @@ describe('cross-session search', () => {
     expect(document.activeElement).toBe(search)
   })
 
+  it('highlights title matches whose folded form changes length', () => {
+    const titles = ['İzmir deploy', 'ｄｅｐｌｏｙ checklist', 'Cafe\u0301 deploy']
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: titles.map((title, index) => ({
+              id: `thread-${index}`,
+              title,
+              provider: 'codex' as const,
+              createdAt: index,
+            })),
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+    const search = screen.getByRole('combobox', { name: 'Search every chat' })
+    const marks = () => Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)
+
+    fireEvent.change(search, { target: { value: 'deploy' } })
+    expect(marks().sort()).toEqual(['deploy', 'deploy', 'ｄｅｐｌｏｙ'])
+
+    fireEvent.change(search, { target: { value: 'café' } })
+    expect(marks()).toEqual(['Cafe\u0301'])
+  })
+
+  it('highlights a Greek title match that ends in a capital sigma', () => {
+    render(
+      <SessionSearch
+        transport={new TestTransport()}
+        projects={[
+          {
+            path: 'D:\\repo',
+            name: 'TasteCode',
+            sessions: [{ id: 'greek', title: 'ΟΔΟΣ plan', provider: 'codex', createdAt: 0 }],
+          },
+        ]}
+        onSelect={() => undefined}
+        onClose={() => undefined}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'οδος' },
+    })
+
+    expect(Array.from(document.querySelectorAll('mark'), (mark) => mark.textContent)).toEqual([
+      'ΟΔΟΣ',
+    ])
+  })
+
+  it('does not keep old content results when the next query fails', async () => {
+    vi.useFakeTimers()
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({ results: [RESULT], nextCursor: 'next' })
+      .mockRejectedValueOnce(new Error('Search unavailable'))
+    const onSelect = vi.fn()
+    render(
+      <SessionSearch
+        transport={new TestTransport((method, params) => request(method, params))}
+        projects={PROJECTS}
+        onSelect={onSelect}
+        onClose={() => undefined}
+      />,
+    )
+    const input = screen.getByLabelText('Search every chat')
+    fireEvent.change(input, { target: { value: 'regression' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByRole('option', { name: /Fix regression/ })).toBeTruthy()
+
+    fireEvent.change(input, { target: { value: 'unmatched query' } })
+    await act(() => vi.advanceTimersByTimeAsync(80))
+    expect(screen.getByText('Search unavailable')).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Fix regression/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Load more results' })).toBeNull()
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
   it('finds titles immediately, searches quickly, and supports keyboard navigation', async () => {
     vi.useFakeTimers()
     const request = vi
@@ -97,14 +181,19 @@ describe('cross-session search', () => {
     fireEvent.click(screen.getByRole('combobox', { name: 'Project' }))
     fireEvent.click(screen.getByRole('option', { name: 'TasteCode' }))
     fireEvent.click(screen.getByRole('combobox', { name: 'Agent' }))
-    expect(screen.getByRole('option', { name: 'Codex' })).toBeTruthy()
-    expect(screen.getByRole('option', { name: 'Grok' })).toBeTruthy()
+    expect(
+      screen
+        .getAllByRole('option', { name: /^(All agents|Claude Code|Codex|Grok)$/ })
+        .map((option) => option.textContent),
+    ).toEqual(['All agents', 'Claude Code', 'Codex', 'Grok'])
     expect(screen.queryByRole('option', { name: 'Cursor' })).toBeNull()
     fireEvent.click(screen.getByRole('option', { name: 'Codex' }))
     const search = screen.getByLabelText('Search every chat')
     fireEvent.change(search, { target: { value: 'regres' } })
 
     expect(screen.getByRole('option', { name: /Regression planning/ })).toBeTruthy()
+    fireEvent.keyDown(search, { key: 'Enter', isComposing: true })
+    expect(onSelect).not.toHaveBeenCalled()
     fireEvent.keyDown(search, { key: 'Enter' })
     expect(onSelect).toHaveBeenCalledWith('title-thread', undefined)
     onSelect.mockClear()
@@ -287,10 +376,15 @@ describe('cross-session search', () => {
     expect(screen.getByRole('option', { name: /Second result/ })).toBeTruthy()
   })
 
-  it('shows ACP title and content matches with their source product name', async () => {
+  it('shows title and content matches with their source product name', async () => {
     const transport = new TestTransport(async () => ({
       results: [
-        { ...RESULT, threadId: 'gemini-thread', threadTitle: 'Gemini roadmap', provider: 'acp' },
+        {
+          ...RESULT,
+          threadId: 'claude-thread',
+          threadTitle: 'Claude roadmap',
+          provider: 'claude-code',
+        },
       ],
       nextCursor: null,
     }))
@@ -303,15 +397,15 @@ describe('cross-session search', () => {
       />,
     )
 
-    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'gemini' } })
+    fireEvent.change(screen.getByLabelText('Search every chat'), { target: { value: 'roadmap' } })
     await waitFor(() => {
-      expect(screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })).toHaveLength(2)
+      expect(screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })).toHaveLength(2)
     })
-    for (const option of screen.getAllByRole('option', { name: /Gemini roadmap.*Gemini CLI/ })) {
+    for (const option of screen.getAllByRole('option', { name: /Claude roadmap.*Claude Code/ })) {
       const identity = option.querySelector('.source-identity')
-      expect(identity?.getAttribute('title')).toBe('Gemini CLI')
+      expect(identity?.getAttribute('title')).toBe('Claude Code')
       expect(identity?.querySelector('svg')?.getAttribute('width')).toBe('11')
-      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M11.04 19.32')
+      expect(identity?.querySelector('path')?.getAttribute('d')).toContain('M17.3041 3.541')
     }
   })
 

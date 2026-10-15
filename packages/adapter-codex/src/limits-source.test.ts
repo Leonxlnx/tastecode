@@ -67,7 +67,7 @@ describe('Codex rate-limit source', () => {
     const { adapter, rpc } = sourceAdapter({ failure: 'initialize' })
 
     await expect(adapter.start()).rejects.toThrow('initialize failed')
-    expect(rpc.calls[0]).toMatchObject({ method: 'initialize', timeoutMs: 10_000 })
+    expect(rpc.calls[0]).toMatchObject({ method: 'initialize', timeoutMs: 30_000 })
     expect(rpc.disposals).toBe(1)
   })
 

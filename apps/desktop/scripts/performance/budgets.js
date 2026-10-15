@@ -7,6 +7,10 @@ export const PERFORMANCE_BUDGETS = Object.freeze({
   startupInteractiveMs: 1_500,
   switchMs: 100,
   memoryBytes: 500_000_000,
+  // One collapsed activity of 300 calls with 37.5 MiB of output, over its store.
+  largeActivityElements: 200,
+  largeActivityHeapBytes: 8 * 1024 * 1024,
+  largeActivityRetainedBytes: 2 * 1024 * 1024,
 })
 
 function median(values) {
@@ -33,6 +37,43 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
     failures.push('At least three independent renderer and cold-start samples are required')
   for (const [index, sample] of samples.entries()) {
     const label = `renderer ${index + 1}`
+    const highlighting = sample.highlighting
+    if (
+      !highlighting ||
+      !Number.isFinite(highlighting.codeCharacters) ||
+      highlighting.codeCharacters < 32 * 1024 ||
+      highlighting.coldRequests !== 1 ||
+      highlighting.remountRequests !== 0 ||
+      highlighting.themeRequests !== 0 ||
+      !Number.isFinite(highlighting.coloredTokens) ||
+      highlighting.coloredTokens < 1 ||
+      !Array.isArray(highlighting.colors) ||
+      highlighting.colors.length !== 2 ||
+      highlighting.colors[0] === highlighting.colors[1] ||
+      !Array.isArray(highlighting.frames) ||
+      highlighting.frames.length < 6 ||
+      !Array.isArray(highlighting.longTasks)
+    ) {
+      failures.push(`${label}: missing real-worker highlighting or cache/theme coverage`)
+    } else {
+      below(
+        `${label} worst highlighting frame ms`,
+        Math.max(...highlighting.frames),
+        budgets.frameMs,
+      )
+      below(
+        `${label} worst highlighting long task ms`,
+        Math.max(0, ...highlighting.longTasks),
+        budgets.frameMs,
+      )
+      below(
+        `${label} worst highlighting trace task ms`,
+        highlighting.trace?.maxMainTaskMs,
+        budgets.frameMs,
+      )
+      if (!(highlighting.trace?.mainTaskCount > 0 && highlighting.trace?.workerThreads > 0))
+        failures.push(`${label}: missing renderer/worker trace coverage`)
+    }
     if (sample.initiallyVisible < 1 || sample.scroll.seenMessages !== 500 || sample.sessions !== 5)
       failures.push(`${label}: missing rendered fixture coverage`)
     if (
@@ -61,6 +102,41 @@ export function performanceFailures(samples, startups, budgets = PERFORMANCE_BUD
     )
     below(`${label} worst switch ms`, Math.max(...sample.switches), budgets.switchMs)
     checkMemory(label, sample.memory)
+    const activity = sample.largeActivity
+    if (
+      !activity ||
+      activity.toolCalls < 300 ||
+      activity.outputCharacters < 300 * 128 * 1024 ||
+      !activity.collapsed ||
+      !activity.closed ||
+      activity.opened?.toolRows !== activity.toolCalls
+    ) {
+      failures.push(`${label}: missing large activity coverage`)
+    } else {
+      below(
+        `${label} collapsed large activity elements`,
+        activity.collapsed.activityElements,
+        budgets.largeActivityElements,
+      )
+      below(
+        `${label} collapsed large activity heap bytes`,
+        activity.mountedHeapBytes,
+        budgets.largeActivityHeapBytes,
+      )
+      below(
+        `${label} large activity heap retained after closing bytes`,
+        activity.retainedAfterCloseBytes,
+        budgets.largeActivityRetainedBytes,
+      )
+      if (
+        activity.collapsed.toolRows !== 0 ||
+        activity.collapsed.openDetails !== 0 ||
+        activity.opened.openDetails !== 1 ||
+        activity.closed.toolRows !== 0 ||
+        activity.closed.openDetails !== 0
+      )
+        failures.push(`${label}: large activity mounted rows or output it was not showing`)
+    }
   }
   for (const [index, startup] of startups.entries()) {
     below(

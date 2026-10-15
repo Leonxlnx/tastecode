@@ -21,12 +21,13 @@ async function plistValue(plistPath, key) {
   return stdout.trim()
 }
 
-async function setPlistStrings(plistPath, values) {
+async function setPlistValues(plistPath, values) {
   for (const [key, value] of Object.entries(values)) {
+    const typed = typeof value === 'boolean' ? ['-bool', value ? 'YES' : 'NO'] : ['-string', value]
     try {
-      await execFileAsync('/usr/bin/plutil', ['-replace', key, '-string', value, plistPath])
+      await execFileAsync('/usr/bin/plutil', ['-replace', key, ...typed, plistPath])
     } catch {
-      await execFileAsync('/usr/bin/plutil', ['-insert', key, '-string', value, plistPath])
+      await execFileAsync('/usr/bin/plutil', ['-insert', key, ...typed, plistPath])
     }
   }
 }
@@ -71,7 +72,7 @@ async function rebrandMacBundle(sourceBundle) {
     const helperRole = helperSuffix.match(/\(([^)]+)\)/)?.[1]
     const helperIdentifier = `${appBundleIdentifier}.helper${helperRole ? `.${helperRole}` : ''}`
 
-    await setPlistStrings(helperPlist, {
+    await setPlistValues(helperPlist, {
       CFBundleDisplayName: helperName,
       CFBundleExecutable: helperName,
       CFBundleIdentifier: helperIdentifier,
@@ -84,11 +85,13 @@ async function rebrandMacBundle(sourceBundle) {
     await rename(helperBundle, path.join(frameworks, `${helperName}.app`))
   }
 
-  await setPlistStrings(appPlist, {
+  await setPlistValues(appPlist, {
     CFBundleDisplayName: appName,
     CFBundleExecutable: appName,
     CFBundleIdentifier: appBundleIdentifier,
     CFBundleName: appName,
+    NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac:
+      desktopPackage.build.mac.extendInfo.NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac,
   })
   await rename(
     path.join(contents, 'MacOS', originalExecutable),
@@ -105,7 +108,7 @@ export async function developmentElectronExecutable() {
   if (process.platform !== 'darwin') return electronExecutable
 
   const electronVersion = require('electron/package.json').version
-  const cacheKey = `${electronVersion}-${process.arch}-${appName.replaceAll(' ', '-')}-v2`
+  const cacheKey = `${electronVersion}-${process.arch}-${appName.replaceAll(' ', '-')}-v3`
   const cacheRoot = path.join(workspaceRoot, 'node_modules', '.cache', 'tastecode-electron')
   const cachedDirectory = path.join(cacheRoot, cacheKey)
   const cachedExecutable = path.join(

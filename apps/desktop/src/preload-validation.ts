@@ -1,11 +1,31 @@
 import type { AppUpdateState } from './app-updater.js'
 
+export function droppedFilePath(
+  file: File,
+  getPathForFile: (file: File) => string,
+): string | undefined {
+  try {
+    const value = getPathForFile(file)
+    // The native lookup verifies File identity. Do not trust a renderer's
+    // `path` property, and keep synthetic clipboard Files on the copy path.
+    return typeof value === 'string' &&
+      value.length > 0 &&
+      value.length <= 32_768 &&
+      !value.includes('\0')
+      ? value
+      : undefined
+  } catch {
+    return undefined
+  }
+}
+
 function isUpdateStatus(value: unknown): value is AppUpdateState['status'] {
   switch (value) {
     case 'unsupported':
     case 'idle':
     case 'checking':
     case 'downloading':
+    case 'preparing':
     case 'current':
     case 'ready':
     case 'error':

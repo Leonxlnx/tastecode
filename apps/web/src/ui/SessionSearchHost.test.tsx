@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { createRef, useRef, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
 import { SessionSearchHost, type SessionSearchHandle } from './SessionSearchHost.js'
 
@@ -42,6 +42,11 @@ function SearchHost(props: { onSelect?: () => void }) {
 }
 
 describe('SessionSearchHost focus restoration', () => {
+  // Exercise focus behavior without timing the first cold module transform.
+  beforeAll(async () => {
+    await import('./SessionSearch.js')
+  })
+
   afterEach(() => {
     cleanup()
     vi.clearAllMocks()

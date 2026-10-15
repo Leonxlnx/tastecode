@@ -52,6 +52,17 @@ describe('startup CSS budget', () => {
     expect(triggerCss.byteLength).toBeLessThanOrEqual(MODEL_SELECTOR_TRIGGER_CSS_BUDGET_BYTES)
   })
 
+  it('keeps the context ring and its styles behind a lazy boundary', () => {
+    const composer = readSource('../ui/Composer.tsx')
+    const contextUsage = readSource('../ui/ContextUsage.tsx')
+    const appCss = readSource('./app.css')
+
+    expect(composer).toContain("import('./ContextUsage.js')")
+    expect(composer).not.toMatch(/from ['"]\.\/ContextUsage\.js['"]/)
+    expect(contextUsage).toContain("import '../styles/context-usage.css'")
+    expect(appCss).not.toContain('.context-usage')
+  })
+
   it('reuses prepared terminal and workspace modules without eager runtime imports', () => {
     const app = readSource('../App.tsx')
     const workspaceTerminal = readSource('../ui/workspace/WorkspaceTerminal.tsx')
@@ -65,8 +76,10 @@ describe('startup CSS budget', () => {
     )
     expect(app).toContain('let resolvedWorkspacePanel: WorkspacePanelComponent')
     expect(app).toContain('resolvedWorkspacePanel = module.WorkspacePanel')
-    expect(app).toContain('const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel')
-    expect(app).toContain('<RenderedWorkspacePanel')
+    expect(app).toContain('rightPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel')
+    expect(app).toContain('bottomPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel')
+    expect(app).toContain('<RightWorkspacePanel')
+    expect(app).toContain('<BottomWorkspacePanel')
     expect(app).not.toMatch(
       /import \{[^}]*WorkspacePanel[^}]*\} from ['"]\.\/ui\/workspace\/WorkspacePanel\.js['"]/s,
     )
@@ -79,6 +92,15 @@ describe('startup CSS budget', () => {
     expect(sidebar).toContain("import('./InboxSidebar.js')")
     expect(sidebar).not.toContain('import { InboxSidebar')
     expect(inbox).toContain("import '../styles/inbox-sidebar.css'")
+  })
+
+  it('keeps the sidebar confirmation behind its project actions', () => {
+    const sidebar = readSource('../ui/Sidebar.tsx')
+    const dialog = readSource('../ui/SidebarConfirmDialog.tsx')
+
+    expect(sidebar).toContain("import('./SidebarConfirmDialog.js')")
+    expect(sidebar).not.toMatch(/from ['"]\.\/SidebarConfirmDialog\.js['"]/)
+    expect(dialog).toContain("import '../styles/sidebar-confirm.css'")
   })
 
   it('warms account limits at startup without adding them to the main bundle', () => {

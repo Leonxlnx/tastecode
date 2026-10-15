@@ -125,6 +125,7 @@ export const TRANSPORT_LIMITS = {
   validationFrames: 2_048,
   validationBytes: 16 * 1024 * 1024,
   responseValidationBytes: 128 * 1024 * 1024,
+  connectTimeoutMs: 10_000,
   requestTimeoutMs: 120_000,
 } as const
 
@@ -145,6 +146,7 @@ class WebSocketTransport implements Transport {
   #lastSequence = 0
   #state: ConnectionState = 'closed'
   #closedByUs = false
+  #connectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectTimer: ReturnType<typeof setTimeout> | undefined
   #reconnectDelayMs = 0
   #hasOpened = false
@@ -182,7 +184,10 @@ class WebSocketTransport implements Transport {
   close(): void {
     this.#closedByUs = true
     this.#clearReconnectTimer()
-    this.#socket?.close()
+    this.#clearConnectTimer()
+    const socket = this.#socket
+    this.#socket = undefined
+    socket?.close()
     this.#cancelCaptures()
     // This instance is being discarded; nothing will ever flush the queue or
     // answer in-flight calls. A request left pending here kept its caller's
@@ -306,7 +311,13 @@ class WebSocketTransport implements Transport {
             try {
               finish(validation.parseMethodResult(method, value))
             } catch (error) {
-              fail(asError(error))
+              // The schema issues are for a developer, not for a notice bar.
+              console.warn(`[transport] ${method} reply failed validation`, error)
+              fail(
+                new IndeterminateRequestError(
+                  `The server sent an invalid reply to ${method}. Restart TasteCode if this keeps happening.`,
+                ),
+              )
             }
             return
           }
@@ -318,6 +329,7 @@ class WebSocketTransport implements Transport {
         reject: fail,
       })
     })
+    if (this.#pending.size === 1) reportStartupMilestone('requests-busy')
     try {
       this.#send(JSON.stringify({ id, method, params }), id)
     } catch (error) {
@@ -335,6 +347,9 @@ class WebSocketTransport implements Transport {
     this.#responses.delete(id)
     this.#pending.delete(id)
     this.#inFlight.delete(id)
+    if (pending && this.#pending.size === 0 && this.#state === 'open') {
+      reportStartupMilestone('requests-idle')
+    }
     const index = this.#queue.findIndex((entry) => entry.id === id)
     if (index >= 0) {
       const [entry] = this.#queue.splice(index, 1)
@@ -368,6 +383,7 @@ class WebSocketTransport implements Transport {
   #open(state: ConnectionState): void {
     if (this.#closedByUs) return
     this.#clearReconnectTimer()
+    this.#clearConnectTimer()
     this.#setState(state)
     // Sequence numbers are per connection, so a new socket restarts at 1.
     // Carrying the old counter across a reconnect made the gap detector fire
@@ -376,11 +392,16 @@ class WebSocketTransport implements Transport {
     this.#lastSequence = 0
     const socket = new WebSocket(this.#url)
     this.#socket = socket
+    this.#connectTimer = setTimeout(() => {
+      if (this.#socket === socket && socket.readyState === WebSocket.CONNECTING)
+        this.#restartSocket(false)
+    }, TRANSPORT_LIMITS.connectTimeoutMs)
 
     socket.onopen = () => {
       // Same replaced-socket guard as onmessage/onclose: an orphan socket
       // must not flush the queue into a connection whose replies are dropped.
       if (this.#socket !== socket) return
+      this.#clearConnectTimer()
       this.#hasOpened = true
       const queued = this.#queue.splice(0)
       this.#queuedBytes = 0
@@ -418,6 +439,7 @@ class WebSocketTransport implements Transport {
 
     socket.onclose = () => {
       if (this.#socket !== socket) return
+      this.#clearConnectTimer()
       // Calls already transmitted on this socket can never be answered — the
       // server's reply died with the connection. Leaving them pending is how
       // a session got stuck at "starting" forever. Requests still queued
@@ -429,12 +451,13 @@ class WebSocketTransport implements Transport {
     }
   }
 
-  #restartSocket(): void {
+  #restartSocket(immediate = true): void {
+    this.#clearConnectTimer()
     const socket = this.#socket
     this.#socket = undefined
     if (socket && socket.readyState !== WebSocket.CLOSED) socket.close()
     this.#rejectInFlight()
-    if (!this.#closedByUs) this.#scheduleReconnect(true)
+    if (!this.#closedByUs) this.#scheduleReconnect(immediate)
   }
 
   #rejectInFlight(): void {
@@ -476,6 +499,11 @@ class WebSocketTransport implements Transport {
   #clearReconnectTimer(): void {
     clearTimeout(this.#reconnectTimer)
     this.#reconnectTimer = undefined
+  }
+
+  #clearConnectTimer(): void {
+    clearTimeout(this.#connectTimer)
+    this.#connectTimer = undefined
   }
 
   #receive(raw: string, source: WebSocket): void {
@@ -521,7 +549,13 @@ class WebSocketTransport implements Transport {
     // resync instead of only logging state divergence it cannot repair.
     if (this.#lastSequence !== 0 && sequence !== expected) {
       console.warn(`[transport] push gap: expected ${expected}, got ${sequence}`)
-      for (const listener of this.#sequenceGapListeners) listener(expected, sequence)
+      for (const listener of this.#sequenceGapListeners) {
+        try {
+          listener(expected, sequence)
+        } catch (error) {
+          console.error('[transport] sequence gap listener failed', error)
+        }
+      }
     }
     this.#lastSequence = sequence
 
@@ -591,7 +625,15 @@ class WebSocketTransport implements Transport {
     } catch {
       return
     }
-    for (const listener of listeners) listener(parsedData)
+    // One owner's bug must not starve the others, nor escape into the
+    // validator loader where it would fail every buffered reply.
+    for (const listener of listeners) {
+      try {
+        listener(parsedData)
+      } catch (error) {
+        console.error(`[transport] ${channel} listener failed`, error)
+      }
+    }
   }
 
   #loadValidation(): void {
@@ -614,17 +656,38 @@ class WebSocketTransport implements Transport {
         }
       })
       .catch((error: unknown) => {
+        console.warn('[transport] protocol validation failed to load', error)
         this.#validationLoad = undefined
+        const missedPushes = this.#validationQueue.length > 0
         this.#validationQueue = []
         this.#validationBytes = 0
-        for (const id of this.#responses.keys()) this.#pending.get(id)?.reject(asError(error))
+        for (const id of this.#responses.keys()) {
+          this.#pending
+            .get(id)
+            ?.reject(
+              new IndeterminateRequestError(
+                'The server reply could not be validated. The operation may have completed. Restart TasteCode before trying again.',
+              ),
+            )
+        }
+        if (missedPushes && !this.#closedByUs) this.#restartSocket(false)
       })
   }
 
   #setState(state: ConnectionState): void {
     if (this.#state === state) return
     this.#state = state
-    for (const listener of this.#stateListeners) listener(state)
+    if (state !== 'open') reportStartupMilestone('requests-busy')
+    // State changes are announced from inside connect, the open handshake and
+    // reconnect scheduling. One owner's bug must not starve the others or abort
+    // that work: an escaped throw would leave the app disconnected for good.
+    for (const listener of this.#stateListeners) {
+      try {
+        listener(state)
+      } catch (error) {
+        console.error('[transport] connection state listener failed', error)
+      }
+    }
   }
 }
 

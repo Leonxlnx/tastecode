@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import type { AppUpdateState } from './app-updater.js'
+import { isBrowserShortcutMessage, type BrowserShortcutAction } from './browser-shortcuts.js'
 import { clipboardText } from './clipboard-text.js'
-import { isNativeMenuAction } from './menu-contract.js'
-import { isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
+import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import type { WindowChrome } from './window-theme.js'
 
 type PickedAttachment = {
   path: string
@@ -42,6 +44,8 @@ const api = {
   },
   pickSkillFolder: (): Promise<string | undefined> => ipcRenderer.invoke('harness:pickSkillFolder'),
   pickFiles: (): Promise<PickedAttachment[]> => ipcRenderer.invoke('harness:pickFiles'),
+  droppedFilePath: (file: File): string | undefined =>
+    droppedFilePath(file, (value) => webUtils.getPathForFile(value)),
   previewViewedImage: (reference: string): Promise<PickedAttachment | undefined> =>
     ipcRenderer.invoke('harness:previewViewedImage', reference),
   revealPath: (path: string): Promise<void> => ipcRenderer.invoke('harness:revealPath', path),
@@ -58,6 +62,8 @@ const api = {
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
+  setWindowChrome: (chrome: WindowChrome): Promise<void> =>
+    ipcRenderer.invoke('harness:setWindowChrome', chrome),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
@@ -71,6 +77,9 @@ const api = {
   setDiagnosticsEnabled: (enabled: boolean): Promise<boolean> =>
     ipcRenderer.invoke('harness:setDiagnosticsEnabled', enabled),
   openDiagnostics: (): Promise<boolean> => ipcRenderer.invoke('harness:openDiagnostics'),
+  crashAgents: (): Promise<unknown> => ipcRenderer.invoke('harness:crashAgents'),
+  launchCrashAgent: (agent: string, details: unknown): Promise<void> =>
+    ipcRenderer.invoke('harness:launchCrashAgent', agent, details),
   reportRendererError: (message: string): void =>
     ipcRenderer.send('harness:reportRendererError', message.slice(0, 4_000)),
   getUpdateState: (): Promise<AppUpdateState> => ipcRenderer.invoke('harness:getUpdateState'),
@@ -78,19 +87,34 @@ const api = {
   installUpdate: (): Promise<boolean> => ipcRenderer.invoke('harness:installUpdate'),
   setMenuShortcuts: (shortcuts: unknown): void =>
     ipcRenderer.send('harness:setMenuShortcuts', shortcuts),
-  onMenuAction: (listener: (action: string) => void): (() => void) => {
-    const handler = (_event: IpcRendererEvent, action: unknown) => {
-      if (isNativeMenuAction(action)) listener(action)
+  onMenuAction: (
+    listener: (action: string, source: NativeMenuActionSource) => void,
+  ): (() => void) => {
+    const handler = (_event: IpcRendererEvent, message: unknown) => {
+      if (isNativeMenuActionMessage(message)) listener(message.action, message.source)
     }
     ipcRenderer.on('harness:menuAction', handler)
+    ipcRenderer.send('harness:menuReady')
     return () => ipcRenderer.removeListener('harness:menuAction', handler)
   },
+  suspendMenuShortcuts: (suspended: boolean): void =>
+    ipcRenderer.send('harness:suspendMenuShortcuts', suspended === true),
   onUpdateState: (listener: (state: AppUpdateState) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, state: unknown) => {
       if (isAppUpdateState(state)) listener(state)
     }
     ipcRenderer.on('harness:updateState', handler)
     return () => ipcRenderer.removeListener('harness:updateState', handler)
+  },
+  /** Browser keys pressed inside an in-app Browser page, with the guest they came from. */
+  onBrowserShortcut: (
+    listener: (guestId: number, action: BrowserShortcutAction) => void,
+  ): (() => void) => {
+    const handler = (_event: IpcRendererEvent, message: unknown) => {
+      if (isBrowserShortcutMessage(message)) listener(message.guestId, message.action)
+    }
+    ipcRenderer.on('harness:browserShortcut', handler)
+    return () => ipcRenderer.removeListener('harness:browserShortcut', handler)
   },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {

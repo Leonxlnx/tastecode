@@ -2,8 +2,13 @@ import {
   createBundledHighlighter,
   createSingletonShorthands,
   guessEmbeddedLanguages,
+  type RegexEngine,
 } from 'shiki/core'
-import { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
+import {
+  createJavaScriptRegexEngine as createShikiJavaScriptRegexEngine,
+  type JavaScriptRegexEngineOptions,
+} from 'shiki/engine/javascript'
+import { oneByteString } from './one-byte-string.js'
 import { bundledLanguages, type BundledLanguage } from './shiki-languages.js'
 
 /**
@@ -17,7 +22,6 @@ import { bundledLanguages, type BundledLanguage } from './shiki-languages.js'
  * could never run here anyway.
  */
 export * from 'shiki/core'
-export { createJavaScriptRegexEngine } from 'shiki/engine/javascript'
 export {
   bundledLanguages,
   languageAliases,
@@ -32,6 +36,20 @@ export const bundledThemes = {
 }
 
 export type BundledTheme = keyof typeof bundledThemes
+
+/**
+ * Shiki's JavaScript engine, scanning one-byte copies of Latin-1 lines. Shiki
+ * passes every line through `createString`, so this covers the chat worker and
+ * the diff views alike. Lines cut from a reply or patch that contains any wider
+ * character tokenized about twice as slowly in Electron 43 without the copy.
+ */
+export function createJavaScriptRegexEngine(options?: JavaScriptRegexEngineOptions): RegexEngine {
+  const engine = createShikiJavaScriptRegexEngine(options)
+  return {
+    createScanner: (patterns) => engine.createScanner(patterns),
+    createString: (text) => engine.createString(oneByteString(text)),
+  }
+}
 
 export const createHighlighter = createBundledHighlighter<BundledLanguage, BundledTheme>({
   langs: bundledLanguages,

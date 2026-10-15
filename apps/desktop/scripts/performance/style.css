@@ -17,3 +17,15 @@ body,
 .performance-fixture nav button {
   padding: 4px 12px;
 }
+.highlighting-fixture {
+  position: fixed;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg);
+}
+.large-activity-fixture {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  background: var(--bg);
+}

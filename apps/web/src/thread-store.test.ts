@@ -6,9 +6,12 @@ import {
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
+  lastSentPrompt,
+  prependOlderHistory,
   reduce,
   reduceDeltas,
   reduceEventLog,
+  removeOptimisticMessage,
   threadItemAt,
   threadItemById,
   threadItems,
@@ -322,6 +325,32 @@ describe('thread reducer', () => {
     expect(state.activeTurn?.id).toMatch(/^local-turn:/)
   })
 
+  it('streams into one row after a queued local echo leaves the live turn', () => {
+    const answered = apply([
+      { type: 'item.completed', item: item({ id: 'u0', role: 'user', status: 'completed' }) },
+    ])
+    const optimistic = beginOptimisticTurn(answered, 'queue this', 'submission-queued')
+    const running = reduce(optimistic, {
+      type: 'turn.started',
+      turn: { id: 't2', threadId: 'thread-1', status: 'running', createdAt: 1 },
+    })
+    const queued = removeOptimisticMessage(running, 'submission-queued')
+    const started = reduce(queued, {
+      type: 'item.started',
+      item: item({ id: 'a2', turnId: 't2', text: '' }),
+    })
+    const deltas = [
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: 'Hello' },
+      { type: 'item.delta', turnId: 't2', itemId: 'a2', textDelta: ' world' },
+    ] satisfies ItemDeltaEvent[]
+    const streamed = deltas.reduce(reduce, started)
+
+    expect(threadItems(streamed).map(({ id, text }) => [id, text])).toEqual([
+      ['u0', undefined],
+      ['a2', 'Hello world'],
+    ])
+  })
+
   it('reconciles a provisional local timer to the durable server boundary', () => {
     const optimistic = beginOptimisticTurn(emptyThread, 'resume this chat')
     const acceptedAt = Date.now() + 5_000
@@ -377,6 +406,40 @@ describe('thread reducer', () => {
     expect(completed.turnTiming).not.toBe(started.turnTiming)
     expect(completed.turnTiming.current).toEqual({ startedAt: 10, completedAt: 20 })
     expect(started.turnTiming.current).toEqual({ startedAt: 10 })
+  })
+
+  it('records a stopped turn on its lifecycle, live and after replay', () => {
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 1_000 },
+      },
+      { type: 'item.started', item: item({ id: 'a1', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'Half an ans' },
+      { type: 'turn.completed', turnId: 't1', status: 'interrupted', completedAt: 5_000 },
+      {
+        type: 'turn.started',
+        turn: { id: 't2', threadId: 'th1', status: 'running', createdAt: 6_000 },
+      },
+      { type: 'turn.completed', turnId: 't2', status: 'interrupted' },
+    ]
+
+    const live = apply(events)
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(live.turnTiming).toEqual({
+      t1: { startedAt: 1_000, completedAt: 5_000, interrupted: true },
+      t2: { startedAt: 6_000, interrupted: true },
+    })
+    expect(replayed.turnTiming).toEqual(live.turnTiming)
+    const completed = apply([
+      events[0]!,
+      { type: 'turn.completed', turnId: 't1', status: 'completed', completedAt: 5_000 },
+    ])
+    expect(completed.turnTiming.t1).toEqual({ startedAt: 1_000, completedAt: 5_000 })
   })
 
   it('projects the same elapsed time live and after replay', () => {
@@ -1055,6 +1118,67 @@ describe('overnight regression pins', () => {
   })
 })
 
+describe('older history pages', () => {
+  const usage = (totalTokens: number) => ({
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens,
+  })
+  const turnEvents = (turnId: string, at: number, items: Item[]): DomainEvent[] => [
+    {
+      type: 'turn.started',
+      turn: { id: turnId, threadId: 'thread', status: 'running', createdAt: at },
+    },
+    ...items.map((completed): DomainEvent => ({ type: 'item.completed', item: completed })),
+    { type: 'turn.completed', turnId, status: 'completed', completedAt: at + 1 },
+  ]
+  const entries = (events: DomainEvent[]) => events.map((event) => ({ event }))
+
+  it('puts older rows and timing above the loaded turns without taking their newer state', () => {
+    const newest = reduceEventLog(
+      emptyThread,
+      entries([
+        ...turnEvents('turn-2', 20, [item({ id: 'a2', turnId: 'turn-2', status: 'completed' })]),
+        { type: 'usage.updated', usage: usage(200) },
+        {
+          type: 'item.started',
+          item: item({ id: 'live', turnId: 'turn-3', status: 'started', text: 'Str' }),
+        },
+      ]),
+    )
+    const streaming = reduceDeltas({ ...newest, olderCursor: 'cursor' }, [
+      { type: 'item.delta', itemId: 'live', turnId: 'turn-3', textDelta: 'eaming' },
+    ])
+
+    const next = prependOlderHistory(
+      streaming,
+      entries([
+        ...turnEvents('turn-1', 10, [
+          item({ id: 'a1', turnId: 'turn-1', status: 'completed' }),
+          // A row the loaded page already has stays where it is.
+          item({ id: 'a2', turnId: 'turn-2', status: 'completed', text: 'stale' }),
+        ]),
+        { type: 'usage.updated', usage: usage(100) },
+      ]),
+      'older',
+    )
+
+    expect(next.items.map((row) => row.id)).toEqual(['a1', 'a2', 'live'])
+    expect(threadItemById(next, 'live')?.text).toBe('Streaming')
+    expect(threadItemById(next, 'a2')?.text).toBeUndefined()
+    expect(next.liveStart).toBe(streaming.liveStart + 1)
+    expect(next.turnTiming).toEqual({
+      'turn-1': { startedAt: 10, completedAt: 11 },
+      'turn-2': { startedAt: 20, completedAt: 21 },
+    })
+    expect(next.usage?.totalTokens).toBe(200)
+    expect(next.olderCursor).toBe('older')
+    expect('olderCursor' in prependOlderHistory(next, [], null)).toBe(false)
+  })
+})
+
 describe('composer error state', () => {
   it('keeps live and replayed errors equal and clears the error for a new turn', () => {
     const events: DomainEvent[] = [
@@ -1083,5 +1207,23 @@ describe('composer error state', () => {
     }
     expect(reduce(live, turn).error).toBeUndefined()
     expect(reduceEventLog(replay, [{ seq: 3, event: turn }]).error).toBeUndefined()
+  })
+})
+
+describe('last sent prompt', () => {
+  it('finds the newest user prompt with text and skips replies and image-only prompts', () => {
+    const state: ThreadState = {
+      ...emptyThread,
+      items: [
+        item({ id: 'u1', role: 'user', status: 'completed', text: 'Fix the build' }),
+        item({ id: 'a1', status: 'completed', text: 'Fixed.' }),
+        item({ id: 'u2', role: 'user', status: 'completed', text: 'Now add a test' }),
+        item({ id: 'u3', role: 'user', status: 'completed', attachments: ['shot.png'] }),
+        item({ id: 'a2', status: 'started', text: 'Working' }),
+      ],
+    }
+    expect(lastSentPrompt(state)).toBe('Now add a test')
+    expect(lastSentPrompt(emptyThread)).toBeUndefined()
+    expect(lastSentPrompt(appendUserMessage(emptyThread, 'Just sent'))).toBe('Just sent')
   })
 })

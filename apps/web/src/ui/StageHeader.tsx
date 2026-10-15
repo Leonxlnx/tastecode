@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react'
 import {
-  IconArchive as Archive,
+  IconTrash as Trash,
   IconCommand as Command,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
@@ -23,6 +23,8 @@ import {
 import { isDesktop, revealPath } from '../bridge.js'
 import {
   DEFAULT_KEYBINDINGS,
+  isComposingKey,
+  isConfirmEnter,
   shortcutAria,
   type KeybindingId,
   type Keybindings,
@@ -64,7 +66,7 @@ export const PanelToggles = memo(function PanelToggles(props: {
       {props.projectPath ? (
         <button
           type="button"
-          className={`stagehead__action${props.terminalOpen ? ' is-open' : ''}`}
+          className={`stagehead__action panel-toggles__terminal${props.terminalOpen ? ' is-open' : ''}`}
           aria-label={props.terminalOpen ? 'Hide bottom panel' : 'Show bottom panel'}
           aria-pressed={props.terminalOpen}
           aria-keyshortcuts={
@@ -105,6 +107,21 @@ function closeThenRun(close: () => void, action: () => void) {
   action()
 }
 
+type RenameTarget = { id: string; title: string | undefined }
+
+/**
+ * A new chat keeps a provisional id until its thread starts. The same chat
+ * then takes the real id with its title unchanged; another chat would not.
+ */
+function startedAs(target: RenameTarget, sessionId: string | undefined, title: string | undefined) {
+  return (
+    target.id.startsWith('pending:') &&
+    sessionId !== undefined &&
+    !sessionId.startsWith('pending:') &&
+    title === target.title
+  )
+}
+
 /** Chat identity and direct workspace actions above the thread. */
 function StageHeaderComponent(props: {
   sessionId: string | undefined
@@ -121,9 +138,15 @@ function StageHeaderComponent(props: {
   onArchiveSession: (id: string) => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const [renaming, setRenaming] = useState(false)
+  const [renameTarget, setRenameTarget] = useState<RenameTarget>()
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
+  const identity = useRef<HTMLDivElement>(null)
+  /** Set when Enter or Escape ends the rename, which unmounts the focused field. */
+  const returnFocus = useRef(false)
+  const renaming =
+    renameTarget !== undefined &&
+    (renameTarget.id === props.sessionId || startedAs(renameTarget, props.sessionId, props.title))
 
   useEffect(() => {
     if (!renaming) setDraft(props.title ?? '')
@@ -133,27 +156,56 @@ function StageHeaderComponent(props: {
     if (renaming) renameInput.current?.select()
   }, [renaming])
 
+  // Like a sidebar rename, a keyboard rename hands focus back to where it
+  // started (the chat's menu) instead of dropping it on the page. A rename
+  // that ends on blur leaves focus where the user went.
+  useEffect(() => {
+    if (renaming || !returnFocus.current) return
+    returnFocus.current = false
+    identity.current?.querySelector<HTMLButtonElement>('.stagehead__menu-trigger')?.focus()
+  }, [renaming])
+
   const commitRename = () => {
     const title = draft.trim()
-    if (title && props.sessionId) props.onRenameSession(props.sessionId, title)
-    setRenaming(false)
+    if (title && renameTarget) props.onRenameSession(renameTarget.id, title)
+    setRenameTarget(undefined)
   }
+
+  // Chat shortcuts still run while the field has focus. The draft belongs to
+  // the chat it was typed for, so a switch saves it there and closes the field.
+  useEffect(() => {
+    if (renameTarget === undefined || renameTarget.id === props.sessionId) return
+    if (startedAs(renameTarget, props.sessionId, props.title))
+      setRenameTarget({ id: props.sessionId!, title: props.title })
+    else commitRename()
+  }, [props.sessionId])
 
   return (
     <header className="stagehead">
       <span className="stagehead__drag-region" aria-hidden />
-      <div className="stagehead__identity">
+      <div className="stagehead__identity" ref={identity}>
         {renaming ? (
           <input
             ref={renameInput}
-            className="stagehead__rename rename--chat"
+            className="rename stagehead__rename rename--chat"
             value={draft}
             aria-label="Rename chat"
             onChange={(event) => setDraft(event.target.value)}
             onBlur={commitRename}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') commitRename()
-              if (event.key === 'Escape') setRenaming(false)
+              if (isComposingKey(event)) return
+              // Without preventDefault the Enter keypress that follows lands
+              // on the menu button focus just returned to, and opens it.
+              if (isConfirmEnter(event)) {
+                event.preventDefault()
+                returnFocus.current = true
+                commitRename()
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                returnFocus.current = true
+                setRenameTarget(undefined)
+              }
             }}
           />
         ) : (
@@ -260,14 +312,14 @@ function StageHeaderComponent(props: {
                     title="Rename chat"
                     icon={<Pencil size={14} aria-hidden />}
                     onClick={() => {
-                      setRenaming(true)
+                      setRenameTarget({ id: props.sessionId!, title: props.title })
                       close()
                     }}
                   />
                   <MenuItem
-                    title="Archive chat"
+                    title="Delete chat"
                     shortcutAria={shortcutAria(keybindings.archiveSession)}
-                    icon={<Archive size={14} aria-hidden />}
+                    icon={<Trash size={14} aria-hidden />}
                     onClick={() => {
                       props.onArchiveSession(props.sessionId!)
                       close()

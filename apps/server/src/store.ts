@@ -15,9 +15,9 @@ import {
   BackgroundModelPreferenceSchema,
   DiffDecisionSchema,
   DomainEventSchema,
+  ProviderContextSettingsMapSchema,
   ProviderIdSchema,
   SidebarSettingsSchema,
-  ThreadLifecycleSchema,
 } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -25,7 +25,9 @@ import type {
   DiffDecision,
   DomainEvent,
   JsonValue,
+  ProviderContextSettingsMap,
   ProviderId,
+  ProviderHistorySession,
   SidebarSettings,
   SessionSearchResult,
   ThreadLifecycle,
@@ -44,6 +46,7 @@ import {
 } from './inbox-projection.js'
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
+const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -87,7 +90,7 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Which ACP agent, when the provider is `acp`. */
+  /** Custom harness id, when the thread runs one instead of the provider CLI. */
   agent?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
@@ -148,6 +151,12 @@ export type StoredQueuedTurn = {
   options: TurnOptions
   createdAt: number
   intent: 'normal' | 'steer'
+  /**
+   * Push channel chosen when the item was queued. Rows written before the
+   * channel was persisted omit it; readers fall back to the thread's stored
+   * side-chat linkage instead of assuming the main channel.
+   */
+  channel?: 'main' | 'side' | undefined
 }
 
 export type SessionSearchOptions = {
@@ -198,12 +207,20 @@ type InterruptedThreadState = {
 const RESTART_INTERRUPTION_MESSAGE =
   'Turn interrupted: TasteCode restarted. Send a new message to continue.'
 
-const SEARCH_INDEX_VERSION = 'session_search_v1'
+// v2 bounds indexed tool output; the rebuild shrinks rows written before the bound.
+const SEARCH_INDEX_VERSION = 'session_search_v2'
+// A long command or tool result is found by its command, its opening output or
+// its final lines. Indexing a whole log duplicates it into the full-text index.
+const SEARCH_OUTPUT_HEAD_CHARACTERS = 12 * 1024
+const SEARCH_OUTPUT_TAIL_CHARACTERS = 4 * 1024
 const USAGE_INDEX_VERSION = 'usage_events_v1'
 const INBOX_INDEX_VERSION = 'inbox_events_v2'
 const USER_SUBMISSION_INDEX_VERSION = 'user_submission_items_v1'
 const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
-const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v1'
+// v2 reopens requests asked again after their answer; the rebuild settles them.
+const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
+const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
+const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
 // The renderer owns one active search. Keep a few recently used cursors for
@@ -249,6 +266,16 @@ CREATE INDEX IF NOT EXISTS threads_inactive
   WHERE closed_at IS NULL AND lifecycle_state = 'active' AND ephemeral = 0 AND keep_active = 0;
 `
 
+const SESSION_SEARCH_TABLE = `
+CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
+  thread_id UNINDEXED,
+  event_seq UNINDEXED,
+  turn_id UNINDEXED,
+  created_at UNINDEXED,
+  text,
+  tokenize = 'unicode61'
+);`
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS projects (
   path       TEXT PRIMARY KEY,
@@ -279,7 +306,10 @@ CREATE TABLE IF NOT EXISTS threads (
   unread           INTEGER NOT NULL DEFAULT 0,
   last_active_at   INTEGER NOT NULL,
   ephemeral        INTEGER NOT NULL DEFAULT 0,
-  parent_thread_id TEXT
+  parent_thread_id TEXT,
+  restore_context_pending INTEGER NOT NULL DEFAULT 0,
+  history_rewrite_after   INTEGER,
+  history_rewrite_through INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS sidebar_settings (
@@ -287,6 +317,24 @@ CREATE TABLE IF NOT EXISTS sidebar_settings (
   mode             TEXT NOT NULL CHECK (mode IN ('classic', 'inbox')),
   auto_settle_days INTEGER CHECK (auto_settle_days BETWEEN 1 AND 90)
 );
+
+CREATE TABLE IF NOT EXISTS provider_history (
+  provider TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL UNIQUE,
+  metadata TEXT NOT NULL,
+  loaded_revision TEXT,
+  PRIMARY KEY (provider, session_id)
+);
+
+CREATE TABLE IF NOT EXISTS provider_history_events (
+  thread_id TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  event_seq INTEGER NOT NULL REFERENCES events(seq) ON DELETE CASCADE,
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (thread_id, event_seq)
+);
+CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
 
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
@@ -403,14 +451,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
   name TEXT PRIMARY KEY
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS session_search USING fts5 (
-  thread_id UNINDEXED,
-  event_seq UNINDEXED,
-  turn_id UNINDEXED,
-  created_at UNINDEXED,
-  text,
-  tokenize = 'unicode61'
-);
+${SESSION_SEARCH_TABLE}
 
 CREATE TABLE IF NOT EXISTS diff_decisions (
   thread_id TEXT NOT NULL,
@@ -477,7 +518,10 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'last_active_at', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'ephemeral', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
+  { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
+  { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
 ]
 
 type SqliteInteger = number | bigint
@@ -555,6 +599,7 @@ const StoredQueuedTurnPayloadSchema = z.object({
   text: z.string(),
   attachments: z.array(z.string()),
   options: StoredTurnOptionsSchema,
+  channel: z.enum(['main', 'side']).optional(),
 })
 type QueuedTurnRow = {
   thread_id: string
@@ -590,7 +635,7 @@ type ThreadPayloadRow = { thread_id: string; payload: string }
 type SearchableEntry = { turnId: string; createdAt?: number | undefined; text: string }
 type ActiveLifecycleRow = { woke_at: SqliteInteger | null; keep_active: SqliteInteger }
 type RecoveryMutation =
-  | { kind: 'start'; eventType: string; lifecycleKey: string }
+  | { kind: 'start'; eventType: string; lifecycleKey: string; reopens?: true }
   | { kind: 'terminal'; lifecycleKey: string }
   | { kind: 'error' }
 type DerivedIndexRebuild = {
@@ -621,12 +666,21 @@ type MaxSequenceRow = { seq: SqliteInteger | null }
 type MinTimestampRow = { at: SqliteInteger | null }
 type ReplaySnapshotRow = { seq: SqliteInteger; payload: string }
 type ReplayEntry = { seq: number; event: DomainEvent }
+type CachedReplaySnapshot = {
+  seq: number
+  entries: ReplayEntry[]
+  characters: number
+  tail: boolean
+}
 
 /** Keep hot thread metadata without retaining every thread in a large workspace. */
 const THREAD_CACHE_LIMIT = 128
 // Count and bytes are separate: many short threads should not evict one another,
 // while the character budget still bounds the parsed replay payloads.
 const REPLAY_SNAPSHOT_CACHE_LIMIT = 64
+// Disk snapshots duplicate a thread's compacted replay. Recently written threads
+// keep one; an older or closed thread rebuilds its replay from the log when reopened.
+const REPLAY_SNAPSHOT_DISK_LIMIT = REPLAY_SNAPSHOT_CACHE_LIMIT
 const REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT = 16 * 1024 * 1024
 
 const StoredEventRowsSchema = z.array(
@@ -635,6 +689,8 @@ const StoredEventRowsSchema = z.array(
     thread_id: z.string(),
     at: z.number().safe().int(),
     payload: z.string(),
+    event_key: z.string().nullish(),
+    active: z.union([z.literal(0), z.literal(1)]).nullish(),
   }),
 )
 const StoredCheckpointRowsSchema = z.array(
@@ -674,6 +730,7 @@ export class Store {
   #settleRecoveryLifecycle: StatementSync
   #upsertRecoveryError: StatementSync
   #readInterruptedThreads: StatementSync
+  #readInterruptedThread: StatementSync
   #insertQueuedTurnEvent: StatementSync
   #listQueuedTurns: StatementSync
   #hasQueuedSubmission: StatementSync
@@ -717,6 +774,7 @@ export class Store {
   #readReplaySnapshotBase: StatementSync
   #readTailReplaySnapshot: StatementSync
   #writeReplaySnapshot: StatementSync
+  #pruneReplaySnapshots: StatementSync
   #deleteReplaySnapshot: StatementSync
   #lastSequence: StatementSync
   #selectSearchSnapshot = new Map<number, StatementSync>()
@@ -737,10 +795,12 @@ export class Store {
   #pendingSidebarThreads: StoredSidebarThread[] | undefined
   #sidebarSettingsCache: SidebarSettings | undefined
   #backgroundModelPreferenceCache: BackgroundModelPreference | undefined
-  #replaySnapshotCache = new Map<
-    string,
-    { seq: number; entries: ReplayEntry[]; characters: number }
-  >()
+  #providerContextSettingsCache: ProviderContextSettingsMap | undefined
+  /**
+   * Compact replays by thread. `tail` is false once an event lands after the
+   * snapshot: the entry still serves as a base and for older history pages.
+   */
+  #replaySnapshotCache = new Map<string, CachedReplaySnapshot>()
   #replaySnapshotCacheCharacters = 0
   /** Search cursors are process-local; retaining packed row IDs avoids a temp-table write per hit. */
   #searchSnapshots = new Map<string, SearchSnapshot>()
@@ -803,13 +863,14 @@ export class Store {
     this.#deleteInboxStatus = this.#db.prepare(
       `DELETE FROM inbox_events
        WHERE thread_id = ?
-         AND json_extract(payload, '$.type') IN ('thread.error', 'turn.completed')`,
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type')
+           IN ('thread.error', 'turn.completed')`,
     )
     this.#deleteInboxRequest = this.#db.prepare(
       `DELETE FROM inbox_events
        WHERE thread_id = ?
-         AND json_extract(payload, '$.type') = ?
-         AND json_extract(payload, '$.request.id') = ?`,
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') = ?
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.request.id') = ?`,
     )
     this.#deleteThreadInboxEvents = this.#db.prepare(`DELETE FROM inbox_events WHERE thread_id = ?`)
     this.#insertUserSubmission = this.#db.prepare(
@@ -837,8 +898,10 @@ export class Store {
        ON CONFLICT (thread_id, lifecycle_key) DO UPDATE SET
          event_type = excluded.event_type,
          started_seq = excluded.started_seq,
+         terminal_seq = NULL,
          payload = excluded.payload
-       WHERE recovery_lifecycles.terminal_seq IS NULL`,
+       WHERE recovery_lifecycles.terminal_seq IS NULL
+          OR (? AND recovery_lifecycles.terminal_seq < excluded.started_seq)`,
     )
     this.#settleRecoveryLifecycle = this.#db.prepare(
       `INSERT INTO recovery_lifecycles
@@ -854,13 +917,15 @@ export class Store {
       `INSERT INTO recovery_errors (thread_id, event_seq) VALUES (?, ?)
        ON CONFLICT (thread_id) DO UPDATE SET event_seq = excluded.event_seq`,
     )
-    this.#readInterruptedThreads = this.#db.prepare(
-      `SELECT recovery.thread_id, recovery.payload,
+    const openRecoveryLifecycles = `SELECT recovery.thread_id, recovery.payload,
               CASE WHEN recovery.event_type = 'user_input.requested'
                 AND EXISTS (
                   SELECT 1 FROM design_runs
                   WHERE design_runs.thread_id = recovery.thread_id
-                    AND json_extract(design_runs.payload, '$.phase') = 'brief'
+                    AND json_extract(
+                      CASE WHEN json_valid(design_runs.payload) THEN design_runs.payload END,
+                      '$.phase'
+                    ) = 'brief'
                 ) THEN 1 ELSE 0 END AS resumable
        FROM recovery_lifecycles AS recovery
        INNER JOIN threads ON threads.id = recovery.thread_id
@@ -870,8 +935,12 @@ export class Store {
          AND recovery.terminal_seq IS NULL
          AND recovery.payload IS NOT NULL
          AND (recovery.event_type <> 'turn.started' OR errors.event_seq IS NULL
-              OR errors.event_seq < recovery.started_seq)
-       ORDER BY recovery.started_seq`,
+              OR errors.event_seq < recovery.started_seq)`
+    this.#readInterruptedThreads = this.#db.prepare(
+      `${openRecoveryLifecycles} ORDER BY recovery.started_seq`,
+    )
+    this.#readInterruptedThread = this.#db.prepare(
+      `${openRecoveryLifecycles} AND recovery.thread_id = ? ORDER BY recovery.started_seq`,
     )
     this.#insertQueuedTurnEvent = this.#db.prepare(
       `INSERT INTO queued_turn_events (thread_id, queue_id, at, mutation, payload)
@@ -1017,7 +1086,9 @@ export class Store {
     )
     this.#findThread = this.#db.prepare(`SELECT * FROM threads WHERE id = ?`)
     this.#threadHistory = this.#db.prepare(
-      `SELECT seq, payload FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`,
+      `SELECT e.seq, e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq > ? AND (p.active IS NULL OR p.active = 1) ORDER BY e.seq`,
     )
     this.#threadInboxEvents = this.#db.prepare(
       `SELECT thread_id, payload FROM inbox_events ORDER BY event_seq`,
@@ -1030,7 +1101,7 @@ export class Store {
     )
     this.#settleThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?, lifecycle_reason = ?,
-       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ?`,
+       wake_at = NULL, keep_active = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`,
     )
     this.#settleInactiveThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'settled', lifecycle_at = ?,
@@ -1051,14 +1122,15 @@ export class Store {
          AND ephemeral = 0 AND wake_at <= ? RETURNING woke_at, keep_active`,
     )
     this.#touchActiveThreadStatement = this.#db.prepare(
-      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?) WHERE id = ?`,
+      `UPDATE threads SET last_active_at = ?, unread = MAX(unread, ?)
+       WHERE id = ? AND closed_at IS NULL`,
     )
     this.#touchThreadStatement = this.#db.prepare(
       `UPDATE threads SET lifecycle_state = 'active', lifecycle_at = NULL,
        lifecycle_reason = NULL, wake_at = NULL,
        woke_at = CASE WHEN lifecycle_state = 'active' THEN woke_at ELSE ? END,
        last_active_at = ?, unread = MAX(unread, ?)
-       WHERE id = ? RETURNING woke_at, keep_active`,
+       WHERE id = ? AND closed_at IS NULL RETURNING woke_at, keep_active`,
     )
     this.#dueSnoozedThreadIds = this.#db.prepare(
       `SELECT id FROM threads WHERE closed_at IS NULL AND lifecycle_state = 'snoozed'
@@ -1091,9 +1163,15 @@ export class Store {
            0
          )`,
     )
+    // REPLACE assigns a new rowid, so rowid order is write recency.
     this.#writeReplaySnapshot = this.#db.prepare(
-      `INSERT INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)
-       ON CONFLICT (thread_id) DO UPDATE SET seq = excluded.seq, payload = excluded.payload`,
+      `INSERT OR REPLACE INTO thread_replay_snapshots (thread_id, seq, payload) VALUES (?, ?, ?)`,
+    )
+    this.#pruneReplaySnapshots = this.#db.prepare(
+      `DELETE FROM thread_replay_snapshots
+       WHERE rowid <= (
+         SELECT rowid FROM thread_replay_snapshots ORDER BY rowid DESC LIMIT 1 OFFSET ?
+       )`,
     )
     this.#deleteReplaySnapshot = this.#db.prepare(
       `DELETE FROM thread_replay_snapshots WHERE thread_id = ?`,
@@ -1115,6 +1193,26 @@ export class Store {
       recovery: !completedMigrations.has(RECOVERY_STATE_VERSION),
     }
     if (Object.values(rebuild).some(Boolean)) this.#rebuildDerivedIndexes(rebuild)
+    if (!completedMigrations.has(CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION)) {
+      this.#transaction(() => {
+        this.#db.exec('DELETE FROM thread_replay_snapshots')
+        this.#db
+          .prepare('INSERT INTO schema_migrations (name) VALUES (?)')
+          .run(CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION)
+      })
+    }
+    if (!completedMigrations.has(BOUNDED_REPLAY_SNAPSHOTS_VERSION)) {
+      this.#transaction(() => {
+        this.#db.exec(
+          `DELETE FROM thread_replay_snapshots
+           WHERE thread_id IN (SELECT id FROM threads WHERE closed_at IS NOT NULL)`,
+        )
+        this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+        this.#db
+          .prepare(`INSERT OR REPLACE INTO schema_migrations (name) VALUES (?)`)
+          .run(BOUNDED_REPLAY_SNAPSHOTS_VERSION)
+      })
+    }
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -1301,6 +1399,27 @@ export class Store {
     })
   }
 
+  addProviderThread(
+    id: string,
+    provider: ProviderId,
+    session: ProviderHistorySession,
+    projectPath = session.workspacePath,
+  ): void {
+    const thread = this.addThread({
+      id,
+      provider,
+      providerSessionId: session.id,
+      projectPath,
+      title: session.title || 'Untitled chat',
+      createdAt: session.createdAt,
+    })
+    const closedAt = session.archived ? session.updatedAt : undefined
+    this.#db
+      .prepare('UPDATE threads SET closed_at = ?, last_active_at = ? WHERE id = ?')
+      .run(closedAt ?? null, session.updatedAt, id)
+    this.#cacheThread(id, { ...thread, closedAt, lastActiveAt: session.updatedAt })
+  }
+
   forgetWorktree(threadId: string): void {
     this.#db
       .prepare(`UPDATE threads SET worktree_path = NULL, worktree_branch = NULL WHERE id = ?`)
@@ -1331,18 +1450,24 @@ export class Store {
     const rows = projectPath
       ? sqliteRows<ThreadRow>(this.#listProjectThreads, projectPath)
       : sqliteRows<ThreadRow>(this.#listThreads)
-    return rows.map(toThread)
+    const threads: StoredThread[] = []
+    for (const row of rows) {
+      const thread = toThread(row)
+      if (thread !== undefined) threads.push(thread)
+    }
+    return threads
   }
 
   /** Compact metadata for the sidebar's all-thread refresh. */
   sidebarThreads(): StoredSidebarThread[] {
     if (!this.#sidebarThreadsCache) {
-      this.#sidebarThreadsCache = sqliteRows<SidebarThreadRow>(this.#listSidebarThreads).map(
-        toSidebarThread,
-      )
-      this.#sidebarThreadIndexes = new Map(
-        this.#sidebarThreadsCache.map((thread, index) => [thread.id, index]),
-      )
+      const threads: StoredSidebarThread[] = []
+      for (const row of sqliteRows<SidebarThreadRow>(this.#listSidebarThreads)) {
+        const thread = toSidebarThread(row)
+        if (thread !== undefined) threads.push(thread)
+      }
+      this.#sidebarThreadsCache = threads
+      this.#sidebarThreadIndexes = new Map(threads.map((thread, index) => [thread.id, index]))
     }
     this.#flushPendingSidebarThreads()
     return this.#sidebarThreadsCache
@@ -1364,6 +1489,8 @@ export class Store {
         return this.#transaction(operation)
       } catch (error) {
         this.#threadCache.clear()
+        this.#projectCache.clear()
+        this.#projectsCache = undefined
         this.#invalidateSidebarThreads()
         throw error
       }
@@ -1402,6 +1529,210 @@ export class Store {
     )
   }
 
+  providerHistories(): Array<{
+    provider: ProviderId
+    threadId: string
+    session: ProviderHistorySession
+    loadedRevision: string | null
+  }> {
+    return sqliteRows<{
+      provider: string
+      thread_id: string
+      metadata: string
+      loaded_revision: string | null
+    }>(this.#db.prepare('SELECT * FROM provider_history')).flatMap((row) => {
+      const provider = toProviderId(row.provider)
+      if (!provider) return []
+      return [
+        {
+          provider,
+          threadId: row.thread_id,
+          session: JSON.parse(row.metadata) as ProviderHistorySession,
+          loadedRevision: row.loaded_revision,
+        },
+      ]
+    })
+  }
+
+  /** Include temporary tasks so provider discovery cannot publish their internal prompts. */
+  nativeProviderThreads(provider: ProviderId): StoredThread[] {
+    return sqliteRows<ThreadRow>(
+      this.#db.prepare("SELECT * FROM threads WHERE provider = ? AND id NOT LIKE 'external:%'"),
+      provider,
+    ).flatMap((row) => {
+      const thread = toThread(row)
+      return thread ? [thread] : []
+    })
+  }
+
+  /** Whether a client whose cursor is `seq` may still show events a restore removed. */
+  historyRewrittenAfter(threadId: string, seq: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          `SELECT 1 FROM threads
+           WHERE id = ? AND history_rewrite_after < ? AND history_rewrite_through >= ?`,
+        )
+        .get(threadId, seq, seq) !== undefined
+    )
+  }
+
+  providerHistoryChangedAfter(threadId: string, seq: number): boolean {
+    return (
+      this.#db
+        .prepare(
+          'SELECT 1 FROM provider_history_events WHERE thread_id = ? AND event_seq > ? LIMIT 1',
+        )
+        .get(threadId, seq) !== undefined
+    )
+  }
+
+  saveProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#db
+      .prepare(
+        `INSERT INTO provider_history (provider, session_id, thread_id, metadata)
+      VALUES (?, ?, ?, ?) ON CONFLICT(provider, session_id) DO UPDATE SET
+        metadata = excluded.metadata,
+        loaded_revision = CASE WHEN provider_history.thread_id = excluded.thread_id
+          THEN provider_history.loaded_revision ELSE NULL END,
+        thread_id = excluded.thread_id`,
+      )
+      .run(provider, session.id, threadId, JSON.stringify(session))
+    const thread = this.thread(threadId)
+    if (thread && Number.isFinite(session.updatedAt) && session.updatedAt > thread.lastActiveAt) {
+      this.#db
+        .prepare('UPDATE threads SET last_active_at = ? WHERE id = ?')
+        .run(session.updatedAt, threadId)
+      this.#updateCachedThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+      this.#updateSidebarThread(threadId, (current) => ({
+        ...current,
+        lastActiveAt: session.updatedAt,
+      }))
+    }
+  }
+
+  /**
+   * Saves a provider session as the thread's only history row. A Side chat's
+   * tombstone is keyed by its TasteCode id until the provider reports its own
+   * session id, and `thread_id` is unique, so the new key replaces the old row.
+   */
+  replaceProviderHistory(
+    provider: ProviderId,
+    threadId: string,
+    session: ProviderHistorySession,
+  ): void {
+    this.#transaction(() => {
+      this.#db
+        .prepare(
+          `DELETE FROM provider_history
+           WHERE thread_id = ? AND NOT (provider = ? AND session_id = ?)`,
+        )
+        .run(threadId, provider, session.id)
+      this.saveProviderHistory(provider, threadId, session)
+    })
+  }
+
+  /** Only locally recorded events, used to identify provider echoes of our own turns. */
+  localHistory(threadId: string): Array<{ seq: number; event: DomainEvent }> {
+    return sqliteRows<HistoryRow>(
+      this.#db.prepare(`SELECT e.seq, e.payload FROM events e
+      LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+      WHERE e.thread_id = ? AND p.event_seq IS NULL ORDER BY e.seq`),
+      threadId,
+    ).flatMap((row) => {
+      const event = parseDomainEvent(row.payload, `local history for thread ${threadId}`)
+      return event === undefined ? [] : [{ seq: Number(row.seq), event }]
+    })
+  }
+
+  /** Keep stable log positions so imported updates cannot invalidate local checkpoints. */
+  mergeProviderHistory(
+    threadId: string,
+    revision: string,
+    entries: Array<{ key: string; event: DomainEvent }>,
+  ): boolean {
+    const previous = new Map(
+      sqliteRows<{ event_key: string; event_seq: number; payload: string; active: number }>(
+        this.#db
+          .prepare(`SELECT p.event_key, p.event_seq, p.active, e.payload FROM provider_history_events p
+        JOIN events e ON e.seq = p.event_seq WHERE p.thread_id = ? ORDER BY p.event_seq`),
+        threadId,
+      ).map((row) => [row.event_key, row]),
+    )
+    const link = this.#db.prepare(
+      'INSERT INTO provider_history_events (thread_id, event_key, event_seq) VALUES (?, ?, ?)',
+    )
+    let changed = false
+    this.#transaction(() => {
+      const keys = JSON.stringify(entries.map(({ key }) => key))
+      const retired = this.#db
+        .prepare(
+          `UPDATE provider_history_events SET active = 0
+        WHERE thread_id = ? AND active = 1 AND event_key NOT IN (SELECT value FROM json_each(?))`,
+        )
+        .run(threadId, keys).changes
+      if (retired) changed = true
+      let turnAt = this.thread(threadId)?.createdAt ?? 0
+      for (const { key, event } of entries) {
+        const payload = JSON.stringify(event)
+        const existing = previous.get(key)
+        if (event.type === 'turn.started') turnAt = event.turn.createdAt
+        if (
+          existing?.active &&
+          existing.payload === payload &&
+          !(retired && event.type === 'thread.started')
+        )
+          continue
+        if (existing)
+          this.#db
+            .prepare(
+              'UPDATE provider_history_events SET active = 0 WHERE thread_id = ? AND event_key = ?',
+            )
+            .run(threadId, key)
+        const at =
+          event.type === 'item.completed' || event.type === 'item.started'
+            ? event.item.createdAt
+            : event.type === 'turn.started'
+              ? event.turn.createdAt
+              : turnAt
+        const seq = this.#appendEventPayload(threadId, event, at, payload)
+        link.run(threadId, key, seq)
+        previous.set(key, { event_key: key, event_seq: seq, payload, active: 1 })
+        changed = true
+      }
+      this.#db
+        .prepare('UPDATE provider_history SET loaded_revision = ? WHERE thread_id = ?')
+        .run(revision, threadId)
+      if (changed) {
+        this.#db
+          .prepare(
+            `DELETE FROM session_search WHERE rowid IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#db
+          .prepare(
+            `DELETE FROM usage_events WHERE event_seq IN
+          (SELECT event_seq FROM provider_history_events WHERE thread_id = ? AND active = 0)`,
+          )
+          .run(threadId)
+        this.#searchRevision += 1
+        this.#deleteReplaySnapshot.run(threadId)
+        this.#deleteCachedReplaySnapshot(threadId)
+        this.#rebuildThreadInboxState(threadId)
+        this.#rebuildThreadRecoveryState(threadId)
+      }
+    })
+    return changed
+  }
+
   settleThread(
     id: string,
     reason: 'manual' | 'inactivity' | 'change_request',
@@ -1429,7 +1760,8 @@ export class Store {
     this.#updateThread(
       id,
       `UPDATE threads SET lifecycle_state = 'snoozed', lifecycle_at = ?,
-       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL WHERE id = ?`,
+       lifecycle_reason = NULL, wake_at = ?, keep_active = 0, woke_at = NULL
+       WHERE id = ? AND closed_at IS NULL`,
       (thread) => ({ ...thread, lifecycle }),
       at,
       wakeAt,
@@ -1471,9 +1803,14 @@ export class Store {
   }
 
   touchThread(id: string, unread = false, at = Date.now()): ThreadLifecycle {
-    const retained = this.#threadCache.get(id)
+    const retained = this.thread(id)
+    if (retained === undefined) throw new Error('thread not found')
+    // A closed thread is frozen history. An event still landing after close
+    // must not resurrect it, and must not fail the dispatch that already
+    // appended the event either.
+    if (retained.closedAt !== undefined) return retained.lifecycle
     let lifecycle: ThreadLifecycle
-    if (retained?.lifecycle.state === 'active') {
+    if (retained.lifecycle.state === 'active') {
       const result = this.#touchActiveThreadStatement.run(at, unread ? 1 : 0, id)
       if (Number(result.changes) === 0) throw new Error('thread not found')
       lifecycle = retained.lifecycle
@@ -1504,18 +1841,22 @@ export class Store {
   }
 
   markThreadRead(id: string): void {
-    this.#updateThread(
-      id,
-      `UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ?`,
-      (thread) => ({
-        ...thread,
-        lifecycle:
-          thread.lifecycle.state === 'active'
-            ? activeLifecycle(thread.lifecycle.keepActive, undefined)
-            : thread.lifecycle,
-        unread: false,
-      }),
-    )
+    const result = this.#db
+      .prepare(`UPDATE threads SET unread = 0, woke_at = NULL WHERE id = ? AND closed_at IS NULL`)
+      .run(id)
+    if (result.changes === 0) {
+      // Closed history is read-only; a missing id is still a caller error.
+      if (this.thread(id) === undefined) throw new Error('thread not found')
+      return
+    }
+    this.#updateCachedThread(id, (thread) => ({
+      ...thread,
+      lifecycle:
+        thread.lifecycle.state === 'active'
+          ? activeLifecycle(thread.lifecycle.keepActive, undefined)
+          : thread.lifecycle,
+      unread: false,
+    }))
     this.#updateSidebarThread(id, (thread) => {
       const lifecycle =
         thread.lifecycle.state === 'active'
@@ -1554,12 +1895,18 @@ export class Store {
   sidebarSettings(): SidebarSettings {
     if (this.#sidebarSettingsCache) return this.#sidebarSettingsCache
     const row = requiredSqliteRow<SidebarSettingsRow>(this.#readSidebarSettings)
+    const parsed = SidebarSettingsSchema.safeParse({
+      mode: row.mode,
+      autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
+    })
+    // The lifecycle scheduler reads this at startup; a row a newer build
+    // shaped differently must degrade, not keep the store from opening.
     this.#sidebarSettingsCache = Object.freeze(
-      SidebarSettingsSchema.parse({
-        mode: row.mode,
-        autoSettleDays: row.auto_settle_days === null ? null : Number(row.auto_settle_days),
-      }),
+      parsed.success ? parsed.data : { mode: 'classic', autoSettleDays: 3 },
     )
+    if (!parsed.success) {
+      console.warn('[store] unreadable sidebar settings, using defaults')
+    }
     return this.#sidebarSettingsCache
   }
 
@@ -1599,6 +1946,9 @@ export class Store {
         BackgroundModelPreferenceSchema.parse(JSON.parse(row.value)),
       )
     } catch {
+      // Same shared-table story as the event log: a value a newer build
+      // shaped differently degrades to the default, it does not brick reads.
+      console.warn('[store] unreadable background model preference, using the default')
       this.#backgroundModelPreferenceCache = AUTOMATIC_BACKGROUND_MODEL_PREFERENCE
     }
     return this.#backgroundModelPreferenceCache
@@ -1610,6 +1960,34 @@ export class Store {
     this.#writeAppSetting.run(BACKGROUND_MODEL_SETTING, JSON.stringify(preference))
     this.#backgroundModelPreferenceCache = freezeBackgroundModelPreference(preference)
     return this.#backgroundModelPreferenceCache
+  }
+
+  providerContextSettings(): ProviderContextSettingsMap {
+    if (this.#providerContextSettingsCache) return this.#providerContextSettingsCache
+    const row = sqliteRow<StringValueRow>(this.#readAppSetting, PROVIDER_CONTEXT_SETTING)
+    let settings: ProviderContextSettingsMap = {}
+    if (row) {
+      try {
+        settings = ProviderContextSettingsMapSchema.parse(JSON.parse(row.value))
+      } catch {
+        // A shape a newer build wrote leaves every engine on its own defaults.
+        console.warn('[store] unreadable provider context settings, using engine defaults')
+      }
+    }
+    this.#providerContextSettingsCache = Object.freeze(settings)
+    return this.#providerContextSettingsCache
+  }
+
+  updateProviderContextSettings(
+    provider: ProviderId,
+    settings: NonNullable<ProviderContextSettingsMap[ProviderId]>,
+  ): ProviderContextSettingsMap {
+    const next: ProviderContextSettingsMap = { ...this.providerContextSettings() }
+    if (settings.window === undefined && settings.compactAt === undefined) delete next[provider]
+    else next[provider] = Object.freeze({ ...settings })
+    this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
+    this.#providerContextSettingsCache = Object.freeze(next)
+    return this.#providerContextSettingsCache
   }
 
   #updateThread(
@@ -1680,9 +2058,18 @@ export class Store {
     this.#transaction(() => {
       this.#clearQueuedTurns(id)
       this.#db.prepare(`UPDATE threads SET closed_at = ? WHERE id = ?`).run(closedAt, id)
+      this.#deleteReplaySnapshot.run(id)
     })
+    this.#deleteCachedReplaySnapshot(id)
     this.#updateCachedThread(id, (thread) => ({ ...thread, closedAt }))
     this.#updateSidebarThread(id, (thread) => ({ ...thread, closedAt }))
+  }
+
+  /** Clears the closed mark of an imported chat its provider can resume again. */
+  reopenThread(id: string): void {
+    this.#db.prepare(`UPDATE threads SET closed_at = NULL WHERE id = ?`).run(id)
+    this.#updateCachedThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
+    this.#updateSidebarThread(id, ({ closedAt: _closedAt, ...thread }) => thread)
   }
 
   deleteThread(id: string): void {
@@ -1776,6 +2163,67 @@ export class Store {
     return ids.length
   }
 
+  /**
+   * Explicit maintenance: remove streamed text fragments that a later
+   * completed event of the same item already contains in full. Replay reads
+   * the completed text, so the transcript is unchanged. Delta-first recovery
+   * sequences and imported provider records stay exact.
+   */
+  foldCompletedItemDeltas(): number {
+    let removed = 0
+    // No derived table references a stream fragment, but every deleted event
+    // would still scan the child tables whose event columns have no index.
+    // The setting cannot change inside a transaction, so it wraps this one.
+    this.#db.exec('PRAGMA foreign_keys = OFF')
+    try {
+      this.#transaction(() => {
+        this.#db.exec(`
+          CREATE TEMP TABLE fold_item_events AS
+          SELECT seq, thread_id,
+                 json_extract(payload, '$.type') AS type,
+                 COALESCE(json_extract(payload, '$.item.id'), json_extract(payload, '$.itemId'))
+                   AS item_id,
+                 COALESCE(json_extract(payload, '$.item.text'), '') <> '' AS has_text
+          FROM (
+            SELECT seq, thread_id, CASE WHEN json_valid(payload) THEN payload END AS payload
+            FROM events
+          )
+          WHERE json_extract(payload, '$.type') IN ('item.started', 'item.completed', 'item.delta');
+          CREATE TEMP TABLE fold_item_bounds AS
+          SELECT thread_id, item_id,
+                 MIN(CASE WHEN type = 'item.started' THEN seq END) AS started_seq,
+                 MIN(CASE WHEN type = 'item.delta' THEN seq END) AS first_delta_seq,
+                 MAX(CASE WHEN type = 'item.completed' AND has_text THEN seq END) AS completed_seq
+          FROM fold_item_events
+          GROUP BY thread_id, item_id;
+          CREATE INDEX temp.fold_item_bounds_item ON fold_item_bounds (thread_id, item_id);
+        `)
+        const result = this.#db
+          .prepare(
+            `DELETE FROM events WHERE seq IN (
+               SELECT fragment.seq
+               FROM fold_item_events AS fragment
+               JOIN fold_item_bounds AS bounds
+                 ON bounds.thread_id = fragment.thread_id AND bounds.item_id = fragment.item_id
+               WHERE fragment.type = 'item.delta'
+                 AND bounds.started_seq < bounds.first_delta_seq
+                 AND fragment.seq < bounds.completed_seq
+                 AND NOT EXISTS (
+                   SELECT 1 FROM provider_history_events AS provider
+                   WHERE provider.event_seq = fragment.seq
+                 )
+             )`,
+          )
+          .run()
+        removed = Number(result.changes)
+        this.#db.exec('DROP TABLE temp.fold_item_events; DROP TABLE temp.fold_item_bounds')
+      })
+    } finally {
+      this.#db.exec('PRAGMA foreign_keys = ON')
+    }
+    return removed
+  }
+
   reclaimHistorySpace(): void {
     // Explicit maintenance only; VACUUM is never on the streaming path.
     this.#db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
@@ -1795,13 +2243,15 @@ export class Store {
       }
       write({
         format: 'tastecode-history',
-        version: 1,
+        version: 2,
         exportedAt: Date.now(),
         checkpointNamespace: this.checkpointNamespace,
       })
       const tables = [
         'threads',
         'events',
+        'provider_history',
+        'provider_history_events',
         'checkpoints',
         'restore_undos',
         'diff_decisions',
@@ -1850,7 +2300,12 @@ export class Store {
   // ---- queued turns -----------------------------------------------------
 
   queuedTurns(threadId: string): StoredQueuedTurn[] {
-    return sqliteRows<QueuedTurnRow>(this.#listQueuedTurns, threadId).map(toQueuedTurn)
+    const turns: StoredQueuedTurn[] = []
+    for (const row of sqliteRows<QueuedTurnRow>(this.#listQueuedTurns, threadId)) {
+      const turn = toQueuedTurn(row)
+      if (turn !== undefined) turns.push(turn)
+    }
+    return turns
   }
 
   queuedThreadIds(): Set<string> {
@@ -1869,6 +2324,7 @@ export class Store {
       text: turn.text,
       attachments: turn.attachments,
       options: turn.options,
+      ...(turn.channel ? { channel: turn.channel } : {}),
     })
     this.#transaction(() => {
       const open = this.#openThread.get(turn.threadId)
@@ -1931,9 +2387,13 @@ export class Store {
     const claimed = this.#transaction(() => {
       const row = sqliteRow<QueuedTurnRow>(this.#findQueuedTurn, threadId, queueId)
       if (!row) return undefined
+      const stored = toQueuedTurn(row)
+      // Cannot honestly dispatch a prompt this build cannot read; the row
+      // stays queued for a build that can.
+      if (stored === undefined) return undefined
       this.#appendQueuedTurnEvent(threadId, queueId, 'claim', { intent })
       this.#dispatchQueuedTurn.run(intent, threadId, queueId)
-      return { ...toQueuedTurn(row), intent }
+      return { ...stored, intent }
     })
     if (claimed) this.#queuedThreadIdsCache = undefined
     return claimed
@@ -2067,10 +2527,48 @@ export class Store {
       threadId,
       targetId,
     )
-    return row ? DiffDecisionSchema.parse(row.decision) : undefined
+    if (!row) return undefined
+    const parsed = DiffDecisionSchema.safeParse(row.decision)
+    if (parsed.success) return parsed.data
+    console.warn(`[store] unknown diff decision '${row.decision}', treating as undecided`)
+    return undefined
   }
 
   // ---- events ------------------------------------------------------------
+
+  #interruptedThreadStates(rows: InterruptedThreadRow[]): Map<string, InterruptedThreadState> {
+    const states = new Map<string, InterruptedThreadState>()
+    for (const row of rows) {
+      // Leave newer-provider histories intact; they must not abort recovery of other threads.
+      if (!this.thread(row.thread_id)) continue
+      const event = parseDomainEvent(
+        row.payload,
+        `recovery for interrupted thread ${row.thread_id}`,
+      )
+      if (event === undefined) continue
+      const state = states.get(row.thread_id) ?? {
+        openTurns: new Set<string>(),
+        activeItems: new Map(),
+        approvals: new Set<string>(),
+        userInputs: new Set<string>(),
+        reviews: new Map(),
+        hasResumableInput: false,
+      }
+      states.set(row.thread_id, state)
+
+      if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
+      if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
+      if (event.type === 'approval.requested') state.approvals.add(event.request.id)
+      if (event.type === 'user_input.requested') {
+        if (row.resumable) state.hasResumableInput = true
+        else state.userInputs.add(event.request.id)
+      }
+      if (event.type === 'approval.review.started') {
+        state.reviews.set(event.review.id, event.review)
+      }
+    }
+    return states
+  }
 
   /**
    * Close event lifecycles that cannot still be live in this server process.
@@ -2088,65 +2586,13 @@ export class Store {
       // long transcript therefore costs the same to recover as a short one.
       const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThreads)
 
-      const states = new Map<string, InterruptedThreadState>()
-      for (const row of rows) {
-        const event = DomainEventSchema.parse(JSON.parse(row.payload))
-        const state = states.get(row.thread_id) ?? {
-          openTurns: new Set<string>(),
-          activeItems: new Map(),
-          approvals: new Set<string>(),
-          userInputs: new Set<string>(),
-          reviews: new Map(),
-          hasResumableInput: false,
-        }
-        states.set(row.thread_id, state)
-
-        if (event.type === 'turn.started') state.openTurns.add(event.turn.id)
-        if (event.type === 'item.started') state.activeItems.set(event.item.id, event.item)
-        if (event.type === 'approval.requested') state.approvals.add(event.request.id)
-        if (event.type === 'user_input.requested') {
-          if (row.resumable) state.hasResumableInput = true
-          else state.userInputs.add(event.request.id)
-        }
-        if (event.type === 'approval.review.started') {
-          state.reviews.set(event.review.id, event.review)
-        }
-      }
-
       const recovered: string[] = []
       const at = Date.now()
-      for (const [threadId, state] of states) {
-        for (const item of state.activeItems.values()) {
-          // Omitting text preserves every persisted delta when the renderer
-          // folds this terminal item over the streamed version.
-          const { text: _streamedText, ...started } = item
-          this.#appendEvent(
-            threadId,
-            { type: 'item.completed', item: { ...started, status: 'failed' } },
-            at,
-          )
-        }
-        for (const id of state.approvals) {
-          this.#appendEvent(threadId, { type: 'approval.resolved', id }, at)
-        }
-        for (const id of state.userInputs) {
-          this.#appendEvent(threadId, { type: 'user_input.resolved', id }, at)
-        }
-        for (const review of state.reviews.values()) {
-          if (review.status !== 'in_progress') continue
-          this.#appendEvent(
-            threadId,
-            {
-              type: 'approval.review.completed',
-              review: { ...review, status: 'aborted', completedAt: at },
-            },
-            at,
-          )
+      for (const [threadId, state] of this.#interruptedThreadStates(rows)) {
+        for (const event of interruptedLifecycleEvents(state, at)) {
+          this.#appendEvent(threadId, event, at)
         }
         if (state.openTurns.size === 0) continue
-        for (const turnId of state.openTurns) {
-          this.#appendEvent(threadId, { type: 'turn.completed', turnId, status: 'interrupted' }, at)
-        }
         if (!state.hasResumableInput) {
           this.#appendEvent(
             threadId,
@@ -2161,8 +2607,26 @@ export class Store {
       return recovered
     } catch (error) {
       this.#db.exec('ROLLBACK')
+      // The append/touch calls above also wrote to in-memory caches and the
+      // search revision; a database rollback does not undo those.
+      this.#threadCache.clear()
+      this.#invalidateSidebarThreads()
+      this.#searchRevision += 1
       throw error
     }
+  }
+
+  /**
+   * The terminal events for every lifecycle one thread's runtime left open.
+   *
+   * Restart recovery settles these for a dead process; a runtime force-stopped
+   * while the server keeps running needs the same, or its turn and requests
+   * stay open in the log until the next restart. The caller records them.
+   */
+  interruptedLifecycleEvents(threadId: string): DomainEvent[] {
+    const rows = sqliteRows<InterruptedThreadRow>(this.#readInterruptedThread, threadId)
+    const state = this.#interruptedThreadStates(rows).get(threadId)
+    return state ? interruptedLifecycleEvents(state, Date.now()) : []
   }
 
   /** Returns the sequence number, which is what a client resumes from. */
@@ -2251,7 +2715,8 @@ export class Store {
   }
 
   #insertEventRow(threadId: string, at: number, payload: string): number {
-    if (this.#replaySnapshotCache.size > 0) this.#deleteCachedReplaySnapshot(threadId)
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) cached.tail = false
     return Number(this.#insertEvent.run(threadId, at, payload).lastInsertRowid)
   }
 
@@ -2280,9 +2745,13 @@ export class Store {
    * the thread fresh asks for all of it. Same call either way.
    */
   history(threadId: string, afterSeq = 0): Array<{ seq: number; event: DomainEvent }> {
-    return sqliteRows<HistoryRow>(this.#threadHistory, threadId, afterSeq).map((row) => {
-      return { seq: Number(row.seq), event: parseDomainEvent(row.payload) }
-    })
+    const entries: Array<{ seq: number; event: DomainEvent }> = []
+    for (const row of sqliteRows<HistoryRow>(this.#threadHistory, threadId, afterSeq)) {
+      const event = parseDomainEvent(row.payload, `history for thread ${threadId}`)
+      if (event === undefined) continue
+      entries.push({ seq: Number(row.seq), event })
+    }
+    return entries
   }
 
   /** Read the latest saved replay as an immutable base, even when a small tail is newer. */
@@ -2295,8 +2764,30 @@ export class Store {
     const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
     if (!row) return undefined
     const seq = Number(row.seq)
-    const entries = this.#cacheReplaySnapshot(threadId, seq, row.payload)
+    const entries = this.#cacheReplaySnapshot(
+      threadId,
+      seq,
+      row.payload,
+      seq === this.lastSeq(threadId),
+    )
     return entries ? { seq, entries } : undefined
+  }
+
+  /**
+   * The saved replay exactly as it stood at `seq`, even when newer events have
+   * landed since. Every rewrite of older history deletes the snapshot, so a
+   * replay still saved at that sequence describes the same older turns.
+   */
+  replaySnapshotAt(threadId: string, seq: number): ReplayEntry[] | undefined {
+    const cached = this.#replaySnapshotCache.get(threadId)
+    if (cached) {
+      if (cached.seq !== seq) return undefined
+      this.#promoteCachedReplaySnapshot(threadId, cached)
+      return cached.entries
+    }
+    const row = sqliteRow<ReplaySnapshotRow>(this.#readReplaySnapshotBase, threadId)
+    if (!row || Number(row.seq) !== seq) return undefined
+    return this.#cacheReplaySnapshot(threadId, seq, row.payload, seq === this.lastSeq(threadId))
   }
 
   /** Preserve SQLite's JSON for the first response after a process restart. */
@@ -2304,20 +2795,27 @@ export class Store {
     threadId: string,
   ): { entries: ReplayEntry[]; serializedEntries?: string | undefined } | undefined {
     const cached = this.#replaySnapshotCache.get(threadId)
+    // The saved row holds the same replay, so it is no tail either.
+    if (cached && !cached.tail) return undefined
     if (cached) {
       this.#promoteCachedReplaySnapshot(threadId, cached)
       return { entries: cached.entries }
     }
     const row = sqliteRow<ReplaySnapshotRow>(this.#readTailReplaySnapshot, threadId)
     if (!row) return undefined
-    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload)
+    const entries = this.#cacheReplaySnapshot(threadId, Number(row.seq), row.payload, true)
     return entries ? { entries, serializedEntries: row.payload } : undefined
   }
 
-  #cacheReplaySnapshot(threadId: string, seq: number, payload: string): ReplayEntry[] | undefined {
+  #cacheReplaySnapshot(
+    threadId: string,
+    seq: number,
+    payload: string,
+    tail: boolean,
+  ): ReplayEntry[] | undefined {
     try {
       const entries = ReplaySnapshotSchema.parse(JSON.parse(payload))
-      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length)
+      this.#rememberReplaySnapshot(threadId, seq, entries, payload.length, tail)
       return entries
     } catch {
       this.#deleteReplaySnapshot.run(threadId)
@@ -2326,10 +2824,7 @@ export class Store {
     }
   }
 
-  #promoteCachedReplaySnapshot(
-    threadId: string,
-    cached: { seq: number; entries: ReplayEntry[]; characters: number },
-  ): void {
+  #promoteCachedReplaySnapshot(threadId: string, cached: CachedReplaySnapshot): void {
     this.#replaySnapshotCache.delete(threadId)
     this.#replaySnapshotCache.set(threadId, cached)
   }
@@ -2339,6 +2834,7 @@ export class Store {
     seq: number,
     entries: ReplayEntry[],
     characters: number,
+    tail: boolean,
   ): void {
     this.#deleteCachedReplaySnapshot(threadId)
     if (characters > REPLAY_SNAPSHOT_CACHE_CHARACTER_LIMIT) return
@@ -2350,7 +2846,7 @@ export class Store {
       if (oldestThreadId === undefined) break
       this.#deleteCachedReplaySnapshot(oldestThreadId)
     }
-    this.#replaySnapshotCache.set(threadId, { seq, entries, characters })
+    this.#replaySnapshotCache.set(threadId, { seq, entries, characters, tail })
     this.#replaySnapshotCacheCharacters += characters
   }
 
@@ -2361,15 +2857,28 @@ export class Store {
     this.#replaySnapshotCacheCharacters -= cached.characters
   }
 
-  /** Cache only renderer-ready derived data; the event log remains authoritative. */
+  /**
+   * Cache only renderer-ready derived data; the event log remains authoritative.
+   * `readToEnd` marks a replay built from every stored row: it stays the latest
+   * even when `seq` names an older event because the newest rows are unreadable
+   * or retired.
+   */
   saveReplaySnapshot(
     threadId: string,
     seq: number,
     entries: ReadonlyArray<{ seq: number; event: DomainEvent }>,
+    options: { readToEnd?: boolean } = {},
   ): string {
     const payload = JSON.stringify(entries)
     this.#writeReplaySnapshot.run(threadId, seq, payload)
-    this.#rememberReplaySnapshot(threadId, seq, entries as ReplayEntry[], payload.length)
+    this.#pruneReplaySnapshots.run(REPLAY_SNAPSHOT_DISK_LIMIT)
+    this.#rememberReplaySnapshot(
+      threadId,
+      seq,
+      entries as ReplayEntry[],
+      payload.length,
+      options.readToEnd === true || seq === this.lastSeq(threadId),
+    )
     return payload
   }
 
@@ -2377,8 +2886,10 @@ export class Store {
   inboxProjections(): Map<string, InboxProjection> {
     const projections = new Map<string, InboxProjection>()
     for (const row of sqliteRows<ThreadEventRow>(this.#threadInboxEvents)) {
+      const event = parseDomainEvent(row.payload, `inbox projections for thread ${row.thread_id}`)
+      if (event === undefined) continue
       const projection = projections.get(row.thread_id) ?? emptyInboxProjection()
-      applyInboxProjectionEvent(projection, parseDomainEvent(row.payload))
+      applyInboxProjectionEvent(projection, event)
       if (isEmptyInboxProjection(projection)) projections.delete(row.thread_id)
       else projections.set(row.thread_id, projection)
     }
@@ -2389,8 +2900,8 @@ export class Store {
   turnDiff(threadId: string, turnId: string): string | undefined {
     const row = sqliteRow<PayloadRow>(this.#readTurnDiff, threadId, turnId)
     if (!row) return undefined
-    const event = DomainEventSchema.parse(JSON.parse(row.payload))
-    return event.type === 'diff.updated' ? event.diff : undefined
+    const event = parseDomainEvent(row.payload, `turn diff for thread ${threadId}`)
+    return event?.type === 'diff.updated' ? event.diff : undefined
   }
 
   searchSessions(options: SessionSearchOptions): SessionSearchPage {
@@ -2477,13 +2988,21 @@ export class Store {
       }
     }
 
-    const position = cursor?.position ?? 0
-    const pageRowIds = searchRowIdPage(snapshot.rowIds, position, position + limit + 1)
-    const rows = sqliteRows<SearchResultRow>(
-      this.#readSearchResults,
-      position,
-      JSON.stringify(pageRowIds),
-    )
+    let position = cursor?.position ?? 0
+    const rows: SearchResultRow[] = []
+    // A retained ranking may outlive a project, thread, or indexed event.
+    // Advance through its positions until there is a full visible page plus lookahead.
+    while (rows.length <= limit && position < snapshot.rowIds.length) {
+      const pageRowIds = searchRowIdPage(snapshot.rowIds, position, position + limit + 1)
+      rows.push(
+        ...sqliteRows<SearchResultRow>(
+          this.#readSearchResults,
+          position,
+          JSON.stringify(pageRowIds),
+        ).filter((row) => toProviderId(row.provider) !== undefined),
+      )
+      position += pageRowIds.length
+    }
 
     const page = rows.slice(0, limit)
     const comparableTerms = terms.map(comparableSearchToken)
@@ -2493,18 +3012,24 @@ export class Store {
     )
     const last = page.at(-1)
     const hasMore = rows.length > limit && last !== undefined
-    return {
-      results: page.map((row, index) => ({
+    const results: SessionSearchResult[] = []
+    for (const [index, row] of page.entries()) {
+      const provider = toProviderId(row.provider)
+      if (provider === undefined) continue
+      results.push({
         resultId: resultIds[index]!,
         projectPath: row.project_path,
         projectName: row.project_name,
         threadId: row.thread_id,
         threadTitle: row.thread_title,
         turnId: row.turn_id,
-        provider: ProviderIdSchema.parse(row.provider),
+        provider,
         createdAt: Number(row.created_at),
         snippet: createSearchSnippetWithComparableTerms(row.text, comparableTerms),
-      })),
+      })
+    }
+    return {
+      results,
       nextCursor: hasMore
         ? encodeCursor({
             snapshotId,
@@ -2611,6 +3136,7 @@ export class Store {
         mutation.eventType,
         seq,
         payload,
+        mutation.reopens ? 1 : 0,
       )
       return
     }
@@ -2660,7 +3186,9 @@ export class Store {
     const placeholders = types.map(() => '?').join(', ')
     const batch = this.#db.prepare(
       `SELECT seq, thread_id, at, payload FROM events
-       WHERE seq > ? AND json_extract(payload, '$.type') IN (${placeholders})
+       WHERE seq > ?
+         AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (${placeholders})
+         AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
        ORDER BY seq LIMIT 5000`,
     )
     const saveMigration = this.#db.prepare(
@@ -2668,7 +3196,9 @@ export class Store {
     )
     this.#db.exec('BEGIN IMMEDIATE')
     try {
-      if (rebuild.search) this.#db.exec(`DELETE FROM session_search`)
+      // Deleting every full-text row first tokenizes all of them again to
+      // record deletions. A new table starts with an empty index.
+      if (rebuild.search) this.#db.exec(`DROP TABLE session_search; ${SESSION_SEARCH_TABLE}`)
       if (rebuild.usage) this.#db.exec(`DELETE FROM usage_events`)
       if (rebuild.inbox) this.#db.exec(`DELETE FROM inbox_events`)
       if (rebuild.userSubmission) this.#db.exec(`DELETE FROM user_submission_items`)
@@ -2682,7 +3212,11 @@ export class Store {
         const rows = sqliteRows<EventRow>(batch, cursor, ...types)
         if (rows.length === 0) break
         for (const row of rows) {
-          const event = DomainEventSchema.parse(JSON.parse(row.payload))
+          const event = parseDomainEvent(
+            row.payload,
+            `derived index rebuild at event seq ${Number(row.seq)}`,
+          )
+          if (event === undefined) continue
           const seq = Number(row.seq)
           const at = Number(row.at)
           if (rebuild.search) this.#indexEvent(seq, row.thread_id, at, event)
@@ -2709,7 +3243,10 @@ export class Store {
         cursor = Number(rows.at(-1)?.seq ?? cursor)
       }
 
-      if (rebuild.search) saveMigration.run(SEARCH_INDEX_VERSION)
+      if (rebuild.search) {
+        this.#db.exec(`INSERT INTO session_search (session_search) VALUES ('optimize')`)
+        saveMigration.run(SEARCH_INDEX_VERSION)
+      }
       if (rebuild.usage) saveMigration.run(USAGE_INDEX_VERSION)
       if (rebuild.inbox) saveMigration.run(INBOX_INDEX_VERSION)
       if (rebuild.userSubmission) saveMigration.run(USER_SUBMISSION_INDEX_VERSION)
@@ -2730,7 +3267,8 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
-           AND json_extract(payload, '$.type') IN (
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'turn.started', 'turn.completed', 'thread.error',
              'item.started', 'item.completed',
              'approval.requested', 'approval.resolved',
@@ -2742,7 +3280,8 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseDomainEvent(row.payload, `recovery index rebuild for thread ${threadId}`)
+      if (event === undefined) continue
       const mutation = recoveryMutation(event)
       if (mutation) {
         this.#indexRecoveryMutation(Number(row.seq), row.thread_id, mutation, row.payload)
@@ -2757,7 +3296,8 @@ export class Store {
         `SELECT seq, thread_id, at, payload
          FROM events
          WHERE thread_id = ?
-           AND json_extract(payload, '$.type') IN (
+           AND seq NOT IN (SELECT event_seq FROM provider_history_events WHERE active = 0)
+           AND json_extract(CASE WHEN json_valid(payload) THEN payload END, '$.type') IN (
              'approval.requested', 'approval.resolved',
              'user_input.requested', 'user_input.resolved',
              'thread.error', 'turn.completed'
@@ -2767,7 +3307,8 @@ export class Store {
       threadId,
     )
     for (const row of rows) {
-      const event = DomainEventSchema.parse(JSON.parse(row.payload))
+      const event = parseDomainEvent(row.payload, `inbox index rebuild for thread ${threadId}`)
+      if (event === undefined) continue
       this.#indexInboxEvent(Number(row.seq), row.thread_id, event, row.payload)
     }
   }
@@ -2784,9 +3325,9 @@ export class Store {
     // Two bounded scans instead of one unbounded one: the session total only
     // needs this thread's rows, and "today" only needs rows since midnight —
     // across every provider, because the user's day is not provider-scoped.
-    const parseUsage = (payload: string): UsageSample | undefined => {
-      const event = DomainEventSchema.parse(JSON.parse(payload))
-      return event.type === 'usage.updated'
+    const parseUsage = (payload: string, owner: string): UsageSample | undefined => {
+      const event = parseDomainEvent(payload, `usage summary for thread ${owner}`)
+      return event?.type === 'usage.updated'
         ? { total: withoutContext(event.usage), cumulative: event.usage.cumulative === true }
         : undefined
     }
@@ -2796,13 +3337,13 @@ export class Store {
       const rows = sqliteRows<PayloadRow>(
         this.#db.prepare(
           `SELECT payload FROM usage_events
-           WHERE thread_id = ? ORDER BY event_seq`,
+           WHERE thread_id = ? ORDER BY at, event_seq`,
         ),
         threadId,
       )
       let previous: UsageTotal | undefined
       for (const row of rows) {
-        const sample = parseUsage(row.payload)
+        const sample = parseUsage(row.payload, threadId)
         if (!sample) continue
         const current = sample.total
         const increment = sample.cumulative ? usageIncrement(current, previous) : current
@@ -2819,16 +3360,16 @@ export class Store {
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
-          `SELECT u.thread_id, u.payload
-           FROM usage_events u
-           JOIN (SELECT thread_id, MAX(event_seq) AS event_seq FROM usage_events
-                 WHERE at < ? GROUP BY thread_id) last
-             ON u.thread_id = last.thread_id AND u.event_seq = last.event_seq`,
+          `SELECT thread_id, payload FROM (
+             SELECT thread_id, payload,
+               ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, event_seq DESC) AS position
+             FROM usage_events WHERE at < ?
+           ) WHERE position = 1`,
         ),
         since,
       )
       for (const seed of seeds) {
-        const usage = parseUsage(seed.payload)
+        const usage = parseUsage(seed.payload, seed.thread_id)
         if (usage?.cumulative) previous.set(seed.thread_id, usage.total)
       }
 
@@ -2837,12 +3378,12 @@ export class Store {
           `SELECT u.thread_id, u.payload, t.provider
            FROM usage_events u JOIN threads t ON t.id = u.thread_id
            WHERE u.at >= ?
-           ORDER BY u.thread_id, u.event_seq`,
+           ORDER BY u.thread_id, u.at, u.event_seq`,
         ),
         since,
       )
       for (const row of rows) {
-        const sample = parseUsage(row.payload)
+        const sample = parseUsage(row.payload, row.thread_id)
         if (!sample) continue
         const current = sample.total
         const increment = sample.cumulative
@@ -2880,14 +3421,17 @@ export class Store {
       { threadId: string; projectPath: string; worktreePath?: string; commits: Set<string> }
     >()
     const add = (threadId: string, commit: string) => {
-      const thread = this.thread(threadId)
-      if (!thread) return
       let entry = result.get(threadId)
       if (!entry) {
+        const thread = sqliteRow<Pick<ThreadRow, 'project_path' | 'worktree_path'>>(
+          this.#db.prepare('SELECT project_path, worktree_path FROM threads WHERE id = ?'),
+          threadId,
+        )
+        if (!thread) return
         entry = {
           threadId,
-          projectPath: thread.projectPath,
-          ...(thread.worktreePath ? { worktreePath: thread.worktreePath } : {}),
+          projectPath: thread.project_path,
+          ...(thread.worktree_path ? { worktreePath: thread.worktree_path } : {}),
           commits: new Set(),
         }
         result.set(threadId, entry)
@@ -2962,6 +3506,17 @@ export class Store {
   #truncateAfter(threadId: string, seq: number): void {
     this.#deleteReplaySnapshot.run(threadId)
     this.#deleteCachedReplaySnapshot(threadId)
+    // Sequence numbers are never reused, so a client that saw a removed event
+    // holds a cursor in (seq, through]. Widen the range across restores.
+    this.#db
+      .prepare(
+        `UPDATE threads SET
+           history_rewrite_after = MIN(COALESCE(history_rewrite_after, ?), ?),
+           history_rewrite_through = MAX(COALESCE(history_rewrite_through, 0), removed.through)
+         FROM (SELECT MAX(seq) AS through FROM events WHERE thread_id = ? AND seq > ?) AS removed
+         WHERE id = ? AND removed.through IS NOT NULL`,
+      )
+      .run(seq, seq, threadId, seq, threadId)
     this.#db
       .prepare(
         `DELETE FROM session_search
@@ -2979,11 +3534,29 @@ export class Store {
     this.#rebuildThreadRecoveryState(threadId)
   }
 
+  threadNeedsRestoreContext(threadId: string): boolean {
+    return (
+      this.#db
+        .prepare('SELECT 1 FROM threads WHERE id = ? AND restore_context_pending = 1')
+        .get(threadId) !== undefined
+    )
+  }
+
+  clearThreadRestoreContext(threadId: string): void {
+    this.#db.prepare('UPDATE threads SET restore_context_pending = 0 WHERE id = ?').run(threadId)
+  }
+
   /** Save and remove the conversation tail so a restore remains reversible. */
   saveRestoreUndo(threadId: string, seq: number, commit: string): string {
     const token = randomUUID()
-    const events = sqliteRows<EventRow>(
-      this.#db.prepare(`SELECT * FROM events WHERE thread_id = ? AND seq > ? ORDER BY seq`),
+    const events = sqliteRows<
+      EventRow & { event_key: string | null; active: SqliteInteger | null }
+    >(
+      this.#db.prepare(
+        `SELECT e.*, p.event_key, p.active FROM events e
+         LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+         WHERE e.thread_id = ? AND e.seq > ? ORDER BY e.seq`,
+      ),
       threadId,
       seq,
     )
@@ -3004,6 +3577,7 @@ export class Store {
         )
         .run(token, threadId, seq, commit, JSON.stringify(events), JSON.stringify(checkpoints))
       this.#truncateAfter(threadId, seq)
+      this.#db.prepare('UPDATE threads SET restore_context_pending = 1 WHERE id = ?').run(threadId)
       this.#db.exec('COMMIT')
       return token
     } catch (error) {
@@ -3046,9 +3620,23 @@ export class Store {
       const insertEvent = this.#db.prepare(
         `INSERT INTO events (seq, thread_id, at, payload) VALUES (?, ?, ?, ?)`,
       )
+      const insertProviderEvent = this.#db.prepare(
+        `INSERT INTO provider_history_events (thread_id, event_key, event_seq, active)
+         VALUES (?, ?, ?, ?)`,
+      )
       for (const event of events) {
         insertEvent.run(event.seq, event.thread_id, event.at, event.payload)
-        const parsed = DomainEventSchema.parse(JSON.parse(event.payload))
+        if (event.event_key != null) {
+          insertProviderEvent.run(event.thread_id, event.event_key, event.seq, event.active ?? 1)
+          if (event.active === 0) continue
+        }
+        // The row is restored verbatim even when this build cannot read it —
+        // the transcript is the user's; only derived indexing is skipped.
+        const parsed = parseDomainEvent(
+          event.payload,
+          `restored transcript for thread ${event.thread_id}`,
+        )
+        if (parsed === undefined) continue
         this.#indexEvent(event.seq, event.thread_id, event.at, parsed)
         if (parsed.type === 'usage.updated') {
           this.#indexUsageEvent(event.seq, event.thread_id, event.at, event.payload)
@@ -3083,6 +3671,7 @@ export class Store {
         )
       }
       this.#db.prepare(`DELETE FROM restore_undos WHERE token = ?`).run(token)
+      this.#db.prepare('UPDATE threads SET restore_context_pending = 1 WHERE id = ?').run(threadId)
       this.#db.exec('COMMIT')
     } catch (error) {
       this.#db.exec('ROLLBACK')
@@ -3109,7 +3698,24 @@ function searchableEntry(event: DomainEvent): SearchableEntry | undefined {
           ? item.text
           : undefined
   if (!text?.trim()) return undefined
-  return { turnId: item.turnId, createdAt: item.createdAt, text }
+  return {
+    turnId: item.turnId,
+    createdAt: item.createdAt,
+    text: item.type === 'message' ? text : boundedSearchText(text),
+  }
+}
+
+function boundedSearchText(text: string): string {
+  if (text.length <= SEARCH_OUTPUT_HEAD_CHARACTERS + SEARCH_OUTPUT_TAIL_CHARACTERS) return text
+  let headEnd = SEARCH_OUTPUT_HEAD_CHARACTERS
+  if (isHighSurrogate(text.charCodeAt(headEnd - 1))) headEnd -= 1
+  let tailStart = text.length - SEARCH_OUTPUT_TAIL_CHARACTERS
+  if (isHighSurrogate(text.charCodeAt(tailStart - 1))) tailStart += 1
+  return `${text.slice(0, headEnd)}\n…\n${text.slice(tailStart)}`
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff
 }
 
 function userSubmissionItemId(event: DomainEvent): string | undefined {
@@ -3135,11 +3741,15 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
       }
     case 'item.completed':
       return { kind: 'terminal', lifecycleKey: `item:${event.item.id}` }
+    // A request id asked again after its answer is a new question (a retried
+    // command reuses its id), not a late echo like an item started after it
+    // completed, so it reopens the lifecycle.
     case 'approval.requested':
       return {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `approval:${event.request.id}`,
+        reopens: true,
       }
     case 'approval.resolved':
       return { kind: 'terminal', lifecycleKey: `approval:${event.id}` }
@@ -3148,6 +3758,7 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
         kind: 'start',
         eventType: event.type,
         lifecycleKey: `input:${event.request.id}`,
+        reopens: true,
       }
     case 'user_input.resolved':
       return { kind: 'terminal', lifecycleKey: `input:${event.id}` }
@@ -3164,6 +3775,30 @@ function recoveryMutation(event: DomainEvent): RecoveryMutation | undefined {
     default:
       return undefined
   }
+}
+
+/** The terminal events that settle every lifecycle a dead runtime left open. */
+function interruptedLifecycleEvents(state: InterruptedThreadState, at: number): DomainEvent[] {
+  const events: DomainEvent[] = []
+  for (const item of state.activeItems.values()) {
+    // Omitting text preserves every persisted delta when the renderer
+    // folds this terminal item over the streamed version.
+    const { text: _streamedText, ...started } = item
+    events.push({ type: 'item.completed', item: { ...started, status: 'failed' } })
+  }
+  for (const id of state.approvals) events.push({ type: 'approval.resolved', id })
+  for (const id of state.userInputs) events.push({ type: 'user_input.resolved', id })
+  for (const review of state.reviews.values()) {
+    if (review.status !== 'in_progress') continue
+    events.push({
+      type: 'approval.review.completed',
+      review: { ...review, status: 'aborted', completedAt: at },
+    })
+  }
+  for (const turnId of state.openTurns) {
+    events.push({ type: 'turn.completed', turnId, status: 'interrupted' })
+  }
+  return events
 }
 
 function encodeSearchResultIds(key: Buffer, eventSeqs: number[]): string[] {
@@ -3543,8 +4178,23 @@ function toProject(row: ProjectRow): StoredProject {
   }
 }
 
-function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
-  const payload = StoredQueuedTurnPayloadSchema.parse(JSON.parse(row.payload))
+function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn | undefined {
+  let payload: z.infer<typeof StoredQueuedTurnPayloadSchema> | undefined
+  try {
+    const parsed = StoredQueuedTurnPayloadSchema.safeParse(JSON.parse(row.payload))
+    if (parsed.success) payload = parsed.data
+  } catch {
+    // Malformed JSON falls through to the same tombstone below.
+  }
+  if (payload === undefined) {
+    // A queued prompt only a newer build can read. There is no honest
+    // fallback for missing text, so the row becomes a tombstone: still
+    // stored, skipped by list reads, never dispatched half-read.
+    console.warn(
+      `[store] skipped a queued turn this build cannot read (thread ${row.thread_id}, queue ${row.queue_id})`,
+    )
+    return undefined
+  }
   return {
     id: row.queue_id,
     threadId: row.thread_id,
@@ -3554,11 +4204,25 @@ function toQueuedTurn(row: QueuedTurnRow): StoredQueuedTurn {
     options: payload.options,
     createdAt: Number(row.created_at),
     intent: queuedTurnIntent(row.intent),
+    ...(payload.channel ? { channel: payload.channel } : {}),
   }
 }
 
-function parseDomainEvent(serialized: string): DomainEvent {
-  const value: unknown = JSON.parse(serialized)
+/**
+ * Read one stored event without letting a row this build cannot interpret
+ * deny the rest of the log. The table is shared across builds: a payload a
+ * newer version wrote fails this schema, and the row becomes a tombstone —
+ * still stored, skipped by every reader.
+ */
+function parseDomainEvent(serialized: string, context: string): DomainEvent | undefined {
+  let value: unknown
+  try {
+    value = JSON.parse(serialized)
+  } catch {
+    console.warn(`[store] ${context}: skipped a stored event with malformed JSON`)
+    return undefined
+  }
+  // item.delta stays hand-checked: hundreds a second and zod never sees them.
   if (value !== null && typeof value === 'object') {
     const event = value as Record<string, unknown>
     if (
@@ -3575,23 +4239,32 @@ function parseDomainEvent(serialized: string): DomainEvent {
       }
     }
   }
-  return DomainEventSchema.parse(value)
+  const parsed = DomainEventSchema.safeParse(value)
+  if (parsed.success) return parsed.data
+  const type =
+    value !== null && typeof value === 'object' ? (value as { type?: unknown }).type : undefined
+  console.warn(
+    `[store] ${context}: skipped a stored event this build cannot read` +
+      (typeof type === 'string' ? ` (type '${type}')` : ''),
+  )
+  return undefined
 }
 
-function toProviderId(provider: string): ProviderId {
+function toProviderId(provider: string): ProviderId | undefined {
   switch (provider) {
     case 'codex':
     case 'claude-code':
     case 'grok':
-    case 'cursor':
-    case 'opencode':
-    case 'antigravity':
-    case 'pi':
-    case 'acp':
-    case 'api':
       return provider
-    default:
-      return ProviderIdSchema.parse(provider)
+    default: {
+      const parsed = ProviderIdSchema.safeParse(provider)
+      if (parsed.success) return parsed.data
+      // A provider this build does not ship: a newer build, or one that lives
+      // only on the nightly branch. The row stays stored; readers skip it
+      // rather than die on it.
+      console.warn(`[store] skipped a thread row with unknown provider '${provider}'`)
+      return undefined
+    }
   }
 }
 
@@ -3611,49 +4284,57 @@ function activeLifecycle(keepActive: boolean, wokeAt: number | undefined): Threa
   return { state: 'active', keepActive, wokeAt }
 }
 
+/** Corrupt stored timestamps normalize to 0 rather than fail the whole row. */
+function storedTimestamp(value: SqliteInteger): number {
+  const parsed = Number(value)
+  return isNonnegativeInteger(parsed) ? parsed : 0
+}
+
 function toActiveLifecycle(row: ActiveLifecycleRow): ThreadLifecycle {
   const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-  const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-  return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-    ? lifecycle
-    : ThreadLifecycleSchema.parse(lifecycle)
+  return activeLifecycle(
+    row.keep_active === 1,
+    wokeAt !== undefined && isNonnegativeInteger(wokeAt) ? wokeAt : undefined,
+  )
 }
 
 function toThreadLifecycle(row: ThreadLifecycleRow): ThreadLifecycle {
   if (row.lifecycle_state === 'settled') {
-    const settledAt = Number(row.lifecycle_at ?? row.created_at)
     const reason = row.lifecycle_reason ?? 'manual'
-    if (isNonnegativeInteger(settledAt) && isLifecycleReason(reason)) {
-      return { state: 'settled', settledAt, reason }
+    return {
+      state: 'settled',
+      settledAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      reason: isLifecycleReason(reason) ? reason : 'manual',
     }
-    return ThreadLifecycleSchema.parse({ state: 'settled', settledAt, reason })
   }
 
   if (row.lifecycle_state === 'snoozed') {
-    const snoozedAt = Number(row.lifecycle_at ?? row.created_at)
-    const wakeAt = Number(row.wake_at ?? row.created_at)
-    const lifecycle = { state: 'snoozed' as const, snoozedAt, wakeAt }
-    return isNonnegativeInteger(snoozedAt) && isNonnegativeInteger(wakeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return {
+      state: 'snoozed',
+      snoozedAt: storedTimestamp(row.lifecycle_at ?? row.created_at),
+      wakeAt: storedTimestamp(row.wake_at ?? row.created_at),
+    }
   }
 
   if (row.lifecycle_state === 'active') {
-    const wokeAt = row.woke_at === null ? undefined : Number(row.woke_at)
-    const lifecycle = activeLifecycle(row.keep_active === 1, wokeAt)
-    return wokeAt === undefined || isNonnegativeInteger(wokeAt)
-      ? lifecycle
-      : ThreadLifecycleSchema.parse(lifecycle)
+    return toActiveLifecycle(row)
   }
 
-  return ThreadLifecycleSchema.parse({ state: row.lifecycle_state })
+  // A lifecycle state only a newer build understands: report the thread as
+  // plainly active rather than hide it or fail every list it appears in.
+  console.warn(`[store] unknown lifecycle state '${row.lifecycle_state}', treating as active`)
+  return activeLifecycle(row.keep_active === 1, undefined)
 }
 
-function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
+function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined {
+  const provider = toProviderId(row.provider)
+  // A thread this build cannot attribute stays in the table; it just has no
+  // honest place in a sidebar rendered from the provider contract.
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     title: row.title,
     pinned: row.pinned === 1,
@@ -3665,14 +4346,16 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread {
   }
 }
 
-function toThread(row: ThreadRow): StoredThread {
+function toThread(row: ThreadRow): StoredThread | undefined {
   // Null timestamps (rows migrated before these columns existed) must not
   // become NaN — a snoozed thread with NaN wakeAt can never be woken.
   const lifecycle = toThreadLifecycle(row)
+  const provider = toProviderId(row.provider)
+  if (provider === undefined) return undefined
   return {
     id: row.id,
     projectPath: row.project_path,
-    provider: toProviderId(row.provider),
+    provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
@@ -3705,7 +4388,11 @@ function requiredSqliteRow<Row>(statement: StatementSync, ...params: SQLInputVal
 
 function queuedTurnIntent(value: string): StoredQueuedTurn['intent'] {
   if (value === 'normal' || value === 'steer') return value
-  throw new Error(`invalid queued turn intent: ${value}`)
+  // Runs in the constructor's claim recovery: one intent only a newer build
+  // wrote must not keep the store from opening. A normal turn is the honest
+  // degradation — the prompt still runs, just without steer semantics.
+  console.warn(`[store] unknown queued turn intent '${value}', treating as normal`)
+  return 'normal'
 }
 
 function serializeJson(value: unknown): string {

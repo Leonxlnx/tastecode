@@ -4,9 +4,11 @@ import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   DesignSourceQualityError,
+  designBuildCorrectionPrompt,
   designBuildPrompt,
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
+  designWorkspaceFileBaseline,
   exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
@@ -65,22 +67,26 @@ const artifacts = [
 describe('build phase', () => {
   it('requires the existing architecture and leaves preview to the harness', () => {
     const prompt = designBuildPrompt(...artifacts)
+    expect(prompt).toContain('Build must wire the triggers and classes')
+    expect(prompt).toContain('Verify an actual hero animation')
+    expect(prompt).toContain('Build and Review must preserve it')
+    expect(prompt).toContain('only fulfilled image needs may reach Build')
     expect(prompt).toContain('Do not scaffold a second app')
     expect(prompt).toContain('TasteCode owns Preview next')
     expect(prompt).toContain('The reference is the primary hard composition requirement')
     expect(prompt).toContain("Implement each section's recorded motion decision")
     expect(prompt).toContain('never use transition: all')
     expect(prompt).toContain('replace the reference with a generic centered heading')
-    expect(prompt).toContain('Three lines is a rare maximum and four lines is always a failure')
-    expect(prompt).toContain('full-height one-sided line attached to or aligned with a card edge')
-    expect(prompt).toContain('Use cards generously for coherent features')
+    expect(prompt).toContain('Match its line count, text block width and relative size')
+    expect(prompt).toContain('Reproduce reference spacing, rules, borders, radii and surfaces')
+    expect(prompt).toContain('open columns remain open')
     expect(prompt).toContain('finished page must not become generic gray')
     expect(prompt).toContain('never leave a browser-default control')
     expect(prompt).toContain('at least 44 by 44 CSS pixels')
     expect(prompt).toContain('A successful production build with a blank runtime is a failed Build')
     expect(prompt).toContain('Record every invented value in a Build summary')
-    expect(prompt).toContain("Preserve every image's natural aspect ratio")
-    expect(prompt).toContain('split heading-and-description pattern at most once per page')
+    expect(prompt).toContain('Never stretch images')
+    expect(prompt).toContain('Preserve intentional large media, asymmetry')
     expect(prompt).toContain('<brand-gradient-recipes>')
     expect(prompt).toContain("recipe's opaque contentSurface")
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
@@ -109,6 +115,21 @@ describe('build phase', () => {
         '.feature-card { border-left: 3px solid #f40; padding: 1rem; }',
       )
       expect(() => validateDesignSourceQuality(workspace, [])).toThrow(DesignSourceQualityError)
+      const referencePage = {
+        ...artifacts[2],
+        sections: artifacts[2].sections.map((section) => ({
+          ...section,
+          referenceDirectionId: 'reference-hero',
+        })),
+      }
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], [], undefined, referencePage),
+      ).not.toThrow()
+      writeFileSync(path.join(workspace, 'filler.svg'), '<svg><path d="M0 0"/></svg>')
+      expect(() =>
+        validateDesignSourceQuality(workspace, [], [], undefined, referencePage),
+      ).toThrow('SVG substitute')
+      rmSync(path.join(workspace, 'filler.svg'))
       expect(() => validateDesignSourceQuality(workspace, ['styles.css'])).toThrow(
         'remove newly introduced card rails or unmanifested SVG substitutes',
       )
@@ -169,6 +190,20 @@ describe('build phase', () => {
     expect(prompt).toContain('Remove every newly introduced prohibited source pattern')
     expect(prompt).toContain('raw or standalone SVG substitutes')
     expect(prompt).not.toContain('Do not repeat tool work')
+  })
+
+  it('asks a Repair correction for the failure shape the Repair parser reads', () => {
+    for (const prompt of [
+      designBuildCorrectionPrompt('unexpected files: helper.js', 'repair'),
+      designSourceQualityCorrectionPrompt('src/Card.css contains a rail', 'repair'),
+    ]) {
+      expect(prompt).toContain('{"status":"failed","summary":"specific recoverable blocker"')
+      expect(prompt).not.toContain('"error"')
+    }
+    expect(designBuildCorrectionPrompt('unexpected files: helper.js')).toContain(
+      '{"status":"failed","error":"specific recoverable blocker"',
+    )
+    expect(designSourceQualityCorrectionPrompt('rail')).toContain('Verify before publishing:')
   })
 
   it('rejects only source-quality violations introduced after the Build baseline', () => {
@@ -355,6 +390,29 @@ describe('build phase', () => {
     }
   })
 
+  it('keeps generated dependency and cache trees out of both Design baselines', () => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-generated-trees-'))
+    try {
+      writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
+      // A virtualenv or a Rust target folder alone can exceed the scan's entry cap.
+      for (const directory of ['.venv/lib', 'target/debug', '.next/cache', '__pycache__']) {
+        mkdirSync(path.join(workspace, directory), { recursive: true })
+        writeFileSync(path.join(workspace, directory, 'generated.svg'), '<svg></svg>')
+      }
+
+      expect(designWorkspaceFileBaseline(workspace)).toEqual([
+        '.next/',
+        '.venv/',
+        '__pycache__/',
+        'index.html',
+        'target/',
+      ])
+      expect(designSourceQualityBaseline(workspace)).toEqual([])
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects new files inside nested internal-named directories', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-nested-internal-'))
     const brief = {
@@ -400,6 +458,7 @@ describe('build phase', () => {
     'Only create index.html, styles.css, and app.js; no other files.',
     'The files must be exactly index.html, styles.css, and app.js.',
     'Create these three files: index.html, styles.css, and app.js.',
+    'Create exactly index.html styles.css and app.js for the landing page.',
   ])('recognizes an exact file-list variant: %s', (constraint) => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-variant-'))
     try {
@@ -425,6 +484,25 @@ describe('build phase', () => {
           constraints: ['Create exactly .nojekyll.'],
         }),
       ).toThrow('unexpected files: extra.json')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    'Redesign our landing page. Create only Next.js components, no plain HTML.',
+    'Write only Three.js code for the 3D scene.',
+    'Only write Vue.js; no jQuery.',
+  ])('does not read a framework name as an exact file: %s', (originalRequest) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-framework-'))
+    const brief = { ...artifacts[0], originalRequest }
+    try {
+      expect(exactBuildFileBaseline(workspace, brief)).toBeUndefined()
+      const [, brand, page, assets] = artifacts
+      expect(designBuildPrompt(brief, brand, page, assets)).not.toContain('deliverable boundary')
+      mkdirSync(path.join(workspace, 'app'))
+      writeFileSync(path.join(workspace, 'app', 'page.tsx'), 'export default () => null')
+      expect(() => validateExactBuildFiles(workspace, brief)).not.toThrow()
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }

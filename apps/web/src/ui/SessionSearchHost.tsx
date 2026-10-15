@@ -11,6 +11,7 @@ import {
   type ComponentProps,
 } from 'react'
 import type { SessionSearch as SessionSearchComponent } from './SessionSearch.js'
+import { ChatSearchSkeleton } from './SurfaceSkeletons.js'
 
 const SessionSearch = lazy(() =>
   import('./SessionSearch.js').then((module) => ({ default: module.SessionSearch })),
@@ -19,6 +20,8 @@ const SessionSearch = lazy(() =>
 export type SessionSearchHandle = {
   open: (initialProjectPath?: string) => void
   close: () => void
+  /** Read at key time; the open state stays here so opening never renders the app shell. */
+  isOpen: () => boolean
 }
 
 type SessionSearchHostProps = Omit<
@@ -65,11 +68,11 @@ const SessionSearchHostComponent = forwardRef<SessionSearchHandle, SessionSearch
       if (canReceiveRestoredFocus(target)) target.focus()
     }, [request])
 
-    useImperativeHandle(ref, () => ({ open, close }), [close, open])
+    useImperativeHandle(ref, () => ({ open, close, isOpen: () => opened.current }), [close, open])
 
     if (!request) return null
     return (
-      <Suspense fallback={null}>
+      <Suspense fallback={<ChatSearchSkeleton />}>
         <SessionSearch
           {...props}
           initialProjectPath={request.initialProjectPath}

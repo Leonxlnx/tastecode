@@ -536,3 +536,24 @@ describe('inactive thread queue cache', () => {
     expect([...queues.keys()]).toEqual(['protected'])
   })
 })
+
+it('releases partial background transcripts while preserving attention and active state', () => {
+  const partial = { ...state('partial', 300, true), activeTurn: { id: 'turn', startedAt: 1 } }
+  const protectedPartial = state('protected', 300, true)
+  const active = state('active', 300, true)
+  const states = new Map([
+    ['partial', partial],
+    ['protected', protectedPartial],
+    ['active', active],
+  ])
+  pruneInactiveThreadStates(states, new Map(), {
+    activeId: 'active',
+    isPartial: () => true,
+    isProtected: (id) => id === 'protected',
+  })
+  expect(states.get('partial')!.items).toHaveLength(0)
+  expect(states.get('partial')!.activeTurn).toEqual(partial.activeTurn)
+  expect(states.get('partial')!.running).toBe(true)
+  expect(states.get('protected')).toBe(protectedPartial)
+  expect(states.get('active')).toBe(active)
+})

@@ -57,6 +57,47 @@ it('undoes pending work and returns the last chat', () => {
   expect(commit).not.toHaveBeenCalled()
 })
 
+it('cancels just the chat that was reopened or submitted to', async () => {
+  vi.useFakeTimers()
+  const harness = renderQueue()
+  const first = vi.fn(async () => undefined)
+  const second = vi.fn(async () => undefined)
+  act(() => {
+    harness.queue.queue('a', first)
+    harness.queue.queue('b', second)
+    expect(harness.queue.cancel('a')).toBe(true)
+  })
+  expect(harness.queue.pendingIds).toEqual(['b'])
+  await act(async () => vi.advanceTimersByTimeAsync(10_000))
+  expect(first).not.toHaveBeenCalled()
+  expect(second).toHaveBeenCalledOnce()
+})
+
+it('allows cancellation until each individual deletion starts', async () => {
+  vi.useFakeTimers()
+  const harness = renderQueue()
+  let release!: () => void
+  const first = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve
+      }),
+  )
+  const second = vi.fn(async () => undefined)
+  act(() => {
+    harness.queue.queue('a', first)
+    harness.queue.queue('b', second)
+  })
+  await act(async () => vi.advanceTimersByTimeAsync(10_000))
+  act(() => {
+    expect(harness.queue.cancel('a')).toBe(false)
+    expect(harness.queue.cancel('b')).toBe(true)
+  })
+  await act(async () => release())
+  expect(second).not.toHaveBeenCalled()
+  expect(harness.queue.hiddenIds).toEqual([])
+})
+
 it.each(['pagehide', 'unmount'] as const)('flushes pending work on %s', async (event) => {
   const harness = renderQueue()
   const commit = vi.fn(async () => undefined)

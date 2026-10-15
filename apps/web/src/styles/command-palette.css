@@ -22,12 +22,14 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* Rows here are 38px or taller, so they take the next step up. */
+  --r-popup-item: var(--r-lg);
   width: min(560px, 100%);
   max-height: calc(100dvh - min(13vh, 104px) - 16px);
   overflow: hidden;
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-panel);
   box-shadow: var(--shadow-modal);
 }
 

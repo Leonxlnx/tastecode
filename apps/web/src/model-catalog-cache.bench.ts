@@ -5,22 +5,7 @@ import { choicesFor } from './model-catalog.js'
 import { parseModelCatalogCache, serializeModelCatalogCache } from './model-catalog-cache.js'
 
 const OPTIONS = { iterations: 20, time: 0, warmupIterations: 5, warmupTime: 0 }
-const ProviderMarkSchema = z.enum([
-  'openai',
-  'anthropic',
-  'grok',
-  'cursor',
-  'opencode',
-  'openrouter',
-  'kimi',
-  'gemini',
-  'qwen',
-  'zai',
-  'antigravity',
-  'pi',
-  'acp',
-  'custom',
-])
+const ProviderMarkSchema = z.enum(['openai', 'anthropic', 'grok'])
 const SchemaCache = z.object({
   version: z.literal(2),
   validatedSources: z
@@ -38,7 +23,6 @@ const SchemaCache = z.object({
         provider: ProviderIdSchema,
         sourceName: z.string().min(1),
         mark: ProviderMarkSchema,
-        connectionId: z.string().min(1).optional(),
         agent: z.object({ id: z.string().min(1), name: z.string().min(1) }).optional(),
         model: ModelSchema,
       }),

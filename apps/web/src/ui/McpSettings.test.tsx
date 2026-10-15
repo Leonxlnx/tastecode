@@ -129,6 +129,25 @@ describe('MCP settings', () => {
     expect(document.activeElement).toBe(action)
   })
 
+  it('keeps the form open when Escape cancels an IME composition', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Add server' }))
+    fireEvent.keyDown(screen.getByLabelText('Server ID'), { key: 'Escape', isComposing: true })
+    expect(screen.getByRole('form')).toBeTruthy()
+  })
+
   it('returns focus to the last action when switching between editor modes', async () => {
     const transport = client(async () => ({
       capabilities: { inventory: true, add: true },
@@ -407,14 +426,14 @@ describe('MCP settings', () => {
     render(
       <McpSettings
         transport={transport}
-        provider="opencode"
-        providerName="OpenCode"
+        provider="grok"
+        providerName="Grok"
         projectPath="/work/project"
         projectName="Project"
       />,
     )
 
-    expect(await screen.findByText('OpenCode · MCP inventory unavailable')).toBeTruthy()
+    expect(await screen.findByText('Grok · MCP inventory unavailable')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 
@@ -826,6 +845,69 @@ describe('MCP settings', () => {
             (params as { projectPath: string }).projectPath === '/work/alpha',
         ),
     ).toHaveLength(1)
+  })
+
+  it('keeps a row locked until its own change settles', async () => {
+    Object.defineProperty(window, 'confirm', { configurable: true, value: () => true })
+    const finishRemove = new Map<string, () => void>()
+    const server = (id: string) => ({
+      id,
+      scope: 'project',
+      enabled: true,
+      auth: { status: 'not_required' },
+      startup: { state: 'ready' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    })
+    const transport = client(async (method, params) => {
+      if (method === 'mcp.list') {
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: false,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [server('alpha'), server('beta')],
+        }
+      }
+      if (method === 'mcp.remove') {
+        return new Promise<void>((resolve) =>
+          finishRemove.set((params as { serverId: string }).serverId, resolve),
+        )
+      }
+      throw new Error(`unexpected ${method}`)
+    })
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('beta')).toBeTruthy()
+    const [alphaRemove, betaRemove] = screen.getAllByRole('button', { name: 'Remove' })
+    fireEvent.click(alphaRemove!)
+    fireEvent.click(betaRemove!)
+    expect((alphaRemove as HTMLButtonElement).disabled).toBe(true)
+    act(() => finishRemove.get('alpha')?.())
+
+    await waitFor(() => expect((alphaRemove as HTMLButtonElement).disabled).toBe(false))
+    expect((betaRemove as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(betaRemove!)
+    expect(
+      vi
+        .mocked(transport.request)
+        .mock.calls.filter(([method]) => method === 'mcp.remove')
+        .map(([, params]) => (params as { serverId: string }).serverId),
+    ).toEqual(['alpha', 'beta'])
   })
 
   it('adds and removes project servers', async () => {

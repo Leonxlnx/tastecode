@@ -17,7 +17,6 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { createPortal } from 'react-dom'
 import type {
   Account,
   ProviderId,
@@ -26,8 +25,7 @@ import type {
   ThreadLifecycle,
 } from '@harness/contracts'
 import {
-  IconArchive as Archive,
-  IconChevronUp as ChevronUp,
+  IconTrash as Trash,
   IconDots as Ellipsis,
   IconFolderOpen as FolderOpen,
   IconFolderPlus as FolderPen,
@@ -42,7 +40,6 @@ import {
   IconSettings as Settings,
   IconEdit as SquarePen,
   IconUser as UserRound,
-  IconX as X,
 } from '@tabler/icons-react'
 import {
   canDropProjectFolders,
@@ -58,14 +55,30 @@ import {
   ResizeHaptics,
   subscribeAppHaptics,
 } from '../haptics.js'
-import { sessionSourcePresentation } from '../provider-presentation.js'
-import { profileInitials, type ProfileIdentityPreferences } from '../profile-preferences.js'
-import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
+import {
+  providerDisplayName,
+  providerMark,
+  providerPresentation,
+} from '../provider-presentation.js'
+import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
+import { sidebarRail } from '../sidebar-order.js'
+import {
+  DEFAULT_KEYBINDINGS,
+  isComposingKey,
+  isConfirmEnter,
+  shortcutAria,
+  type Keybindings,
+} from '../shortcuts.js'
+import { GeneratedAvatar } from './GeneratedAvatar.js'
+import { AppUpdateNotice } from './AppUpdateNotice.js'
 import { Menu, MenuItem } from './Menu.js'
 import type { AccountLimitsState } from './AccountLimits.js'
-import { useDialogFocus } from './dialog-focus.js'
 import type { InboxActions } from './InboxSidebar.js'
-import { SourceIdentity } from './SourceIdentity.js'
+import { ProviderIcon } from './ProviderIcon.js'
+import { activeIndicatorRef } from './active-indicator.js'
+import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
+import '../styles/account-card.css'
+import { InboxRailSkeleton, SidebarTreeSkeleton } from './SurfaceSkeletons.js'
 
 type AccountLimitsModule = typeof import('./AccountLimits.js')
 type AccountLimitsComponent = AccountLimitsModule['AccountLimits']
@@ -78,8 +91,37 @@ const loadAccountLimits = (): Promise<LazyAccountLimitsModule> =>
     return { default: module.AccountLimits }
   }))
 const AccountLimits = lazy(loadAccountLimits)
+
+function AccountLimitsLoading(props: { states: AccountLimitsState[] }) {
+  const panel = useRef<HTMLElement>(null)
+  const visible = props.states.some(({ summary }) =>
+    summary?.limitSource
+      ? summary.limitSource.status !== 'unavailable'
+      : !summary || summary.limits.length > 0,
+  )
+  useLayoutEffect(() => panel.current?.focus(), [])
+  if (!visible) return null
+  return (
+    <section
+      ref={panel}
+      className="account-menu__usage"
+      aria-label="Plan limits"
+      aria-busy
+      tabIndex={0}
+    >
+      <p className="account-menu__usage-note">Checking plan limits…</p>
+    </section>
+  )
+}
+
 const InboxSidebar = lazy(() =>
   import('./InboxSidebar.js').then((module) => ({ default: module.InboxSidebar })),
+)
+
+const SidebarConfirmDialog = lazy(() =>
+  import('./SidebarConfirmDialog.js').then((module) => ({
+    default: module.SidebarConfirmDialog,
+  })),
 )
 
 /**
@@ -114,8 +156,6 @@ export type Project = {
 
 type DropPosition = 'before' | 'after'
 type ProjectDropTarget = { path: string; position: DropPosition }
-type PinnedSession = { projectPath: string; session: Session }
-type ProjectSidebarProjection = { project: Project; pinnedSessions: PinnedSession[] }
 
 /** Narrowest width at which the New chat row and the chat rows stay
  *  roomy — the narrowest rail still looks deliberate, never squeezed. */
@@ -144,12 +184,15 @@ const REVEAL_COOLDOWN_MS = 1250
 /** Matches the .rail__edge hit strip. */
 const REVEAL_EDGE_WIDTH = 6
 const MAX_RAIL_WIDTH = 420
+/** Matches the account menu's own limit bars, which turn red at the same point. */
+const USAGE_LOW_PERCENT = 15
 const INITIAL_PROJECT_RENDER_COUNT = 30
 const DEFERRED_PROJECT_RENDER_COUNT = 20
 const DEFERRED_PROJECT_RENDER_TIMEOUT_MS = 100
 const COLLAPSED_PROJECT_SESSION_COUNT = 5
 const VIRTUALIZED_PROJECT_SESSION_COUNT = 64
-const VIRTUAL_SESSION_ROW_HEIGHT = 27
+/** A 28px chat row plus the list's 2px row gap. */
+const VIRTUAL_SESSION_ROW_HEIGHT = 30
 const VIRTUAL_SESSION_VIEWPORT_ROWS = 16
 const VIRTUAL_SESSION_OVERSCAN = 6
 const VIRTUAL_SESSION_VIEWPORT_HEIGHT = VIRTUAL_SESSION_ROW_HEIGHT * VIRTUAL_SESSION_VIEWPORT_ROWS
@@ -161,6 +204,7 @@ const projectMenuTrigger = () => (
 
 function SidebarComponent(props: {
   projects: Project[]
+  projectsLoading?: boolean | undefined
   activeProjectPath: string | undefined
   activeSessionId: string | undefined
   account: Account | undefined
@@ -206,24 +250,10 @@ function SidebarComponent(props: {
   onOpenSettings: (section?: 'profile') => void
 }) {
   const keybindings = props.keybindings ?? DEFAULT_KEYBINDINGS
-  const profileDisplayName = props.profileIdentity?.displayName.trim()
-  const usageLimit = (props.usageStates ?? [])
-    .flatMap((state) => {
-      const source = state.summary?.limitSource
-      const limits = source
-        ? source.status === 'ready'
-          ? source.limits
-          : []
-        : (state.summary?.limits ?? [])
-      return limits.map((limit) => ({ ...limit, provider: state.provider }))
-    })
-    .filter((limit) => limit.valueLabel === undefined && Number.isFinite(limit.usedPercent))
-    .reduce<{ usedPercent: number; label: string; provider: string } | undefined>(
-      (highest, limit) => (!highest || limit.usedPercent > highest.usedPercent ? limit : highest),
-      undefined,
-    )
+  const profileDisplayName = props.profileIdentity?.displayName.trim() || 'Local profile'
+  const usageLimit = useMemo(() => tightestUsageLimit(props.usageStates), [props.usageStates])
   const usageRemaining = usageLimit
-    ? Math.min(100, Math.max(0, 100 - usageLimit.usedPercent))
+    ? Math.round(Math.min(100, Math.max(0, 100 - usageLimit.usedPercent)))
     : undefined
   useEffect(() => {
     void loadAccountLimits()
@@ -496,21 +526,10 @@ function SidebarComponent(props: {
 
   // A status push replaces one project in an otherwise retained tree. Keep
   // every unchanged projection stable so React only reconciles that project.
-  const { orderedProjects, pinnedSessions } = useMemo(() => {
-    const pinned: PinnedSession[] = []
-    const pinnedProjects: Project[] = []
-    const projects: Project[] = []
-    for (const source of props.projects) {
-      const projection = projectSidebarProjection(source)
-      pinned.push(...projection.pinnedSessions)
-      if (source.pinned) pinnedProjects.push(projection.project)
-      else projects.push(projection.project)
-    }
-    return {
-      orderedProjects: [...pinnedProjects, ...projects],
-      pinnedSessions: prioritizeSessions(pinned, ({ session }) => session),
-    }
-  }, [props.projects])
+  const { orderedProjects, pinnedSessions } = useMemo(
+    () => sidebarRail(props.projects),
+    [props.projects],
+  )
   const [draggedProjectPath, setDraggedProjectPath] = useState<string>()
   const [folderDropActive, setFolderDropActive] = useState(false)
   const folderDragDepth = useRef(0)
@@ -685,9 +704,12 @@ function SidebarComponent(props: {
           </div>
         ) : null}
         {inbox ? (
-          <Suspense fallback={null}>
+          <Suspense
+            fallback={<InboxRailSkeleton pullRequests={Boolean(props.onOpenPullRequests)} />}
+          >
             <InboxSidebar
               projects={props.projects}
+              loading={props.projectsLoading}
               scope={scope}
               activeProjectPath={props.activeProjectPath}
               activeSessionId={props.activeSessionId}
@@ -809,7 +831,11 @@ function SidebarComponent(props: {
                 </button>
               </div>
               {orderedProjects.length === 0 ? (
-                <p className="rail__hint">Nothing here yet.</p>
+                props.projectsLoading ? (
+                  <SidebarTreeSkeleton />
+                ) : (
+                  <p className="rail__hint">Nothing here yet.</p>
+                )
               ) : (
                 renderedProjects.map((project) => (
                   <ProjectRow
@@ -848,82 +874,110 @@ function SidebarComponent(props: {
         )}
 
         <div className="rail__foot">
-          <Menu
-            drop="up"
-            gap={14}
-            label="Account"
-            panelClassName="menu--compact menu--settings"
-            panelRole="dialog"
-            panelLabel="Account and plan limits"
-            trigger={() => (
-              <span className="account">
-                <span className="account__avatar">
-                  {props.profileIdentity?.avatarDataUrl ? (
-                    <img src={props.profileIdentity.avatarDataUrl} alt="" />
-                  ) : (
-                    profileInitials(
-                      profileDisplayName || props.account?.email || props.providerName,
-                    )
-                  )}
-                </span>
-                <span className="account__name">
-                  {profileDisplayName || props.account?.email || props.providerName}
-                </span>
-                {usageLimit && usageRemaining !== undefined && usageRemaining <= 20 ? (
-                  <span
-                    className="account__usage"
-                    title={`${Math.round(usageRemaining)}% left · ${usageLimit.provider} · ${usageLimit.label}`}
-                    aria-label={`${Math.round(usageRemaining)}% of usage limit left`}
-                  >
-                    {Math.round(usageRemaining)}%
+          <div className="account-card">
+            <Menu
+              drop="up"
+              gap={8}
+              label="Account"
+              triggerClassName="account-card__trigger"
+              panelClassName="menu--compact menu--settings menu--account"
+              panelRole="dialog"
+              panelLabel="Account and plan limits"
+              trigger={() => (
+                <span className="account">
+                  <span className="account__avatar">
+                    {props.profileIdentity?.avatarDataUrl ? (
+                      <img src={props.profileIdentity.avatarDataUrl} alt="" />
+                    ) : (
+                      <GeneratedAvatar name={avatarSeedName(props.profileIdentity)} />
+                    )}
                   </span>
-                ) : null}
-                <ChevronUp className="account__chevron" size={13} aria-hidden />
-              </span>
-            )}
-          >
-            {(close) => {
-              const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
-              return (
-                <>
-                  {props.usageStates ? (
-                    <Suspense fallback={null}>
-                      <RenderedAccountLimits
-                        states={props.usageStates}
-                        onRetry={props.onRetryUsage ?? noop}
-                        onConsumeReset={props.onConsumeReset}
-                      />
-                    </Suspense>
-                  ) : null}
-                  <div className="account-menu__actions">
-                    <button
-                      type="button"
-                      className="menu__item"
-                      onClick={() => {
-                        props.onOpenSettings('profile')
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<UserRound size={14} aria-hidden />} title="Profile" />
-                    </button>
-                    <button
-                      type="button"
-                      className="menu__item"
-                      aria-keyshortcuts={shortcutAria(keybindings.settings)}
-                      onClick={() => {
-                        props.onOpenSettings()
-                        closeOnNarrowViewport()
-                        close()
-                      }}
-                    >
-                      <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
-                    </button>
-                  </div>
-                </>
-              )
-            }}
-          </Menu>
+                  <span className="account__identity">
+                    <span className="account__name">{profileDisplayName}</span>
+                    {usageLimit && usageRemaining !== undefined ? (
+                      <span
+                        className="account__usage"
+                        title={`${providerDisplayName(usageLimit.provider)} · ${usageLimit.label} · ${usageRemaining}% left`}
+                      >
+                        <ProviderIcon
+                          className="account__usage-mark"
+                          mark={providerMark(usageLimit.provider)}
+                          size={12}
+                        />
+                        <span
+                          className="account__meter"
+                          data-low={usageRemaining <= USAGE_LOW_PERCENT ? '' : undefined}
+                          aria-hidden
+                        >
+                          <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
+                        </span>
+                        <span className="account__usage-value">{usageRemaining}% left</span>
+                      </span>
+                    ) : null}
+                  </span>
+                </span>
+              )}
+            >
+              {(close) => {
+                const RenderedAccountLimits = resolvedAccountLimits ?? AccountLimits
+                return (
+                  <>
+                    {props.usageStates ? (
+                      <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
+                        <RenderedAccountLimits
+                          states={props.usageStates}
+                          onRetry={props.onRetryUsage ?? noop}
+                          onConsumeReset={props.onConsumeReset}
+                        />
+                      </Suspense>
+                    ) : null}
+                    <div className="account-menu__actions">
+                      <button
+                        type="button"
+                        className="menu__item"
+                        onClick={() => {
+                          props.onOpenSettings('profile')
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction
+                          icon={<UserRound size={14} aria-hidden />}
+                          title="Edit profile"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        className="menu__item"
+                        aria-keyshortcuts={shortcutAria(keybindings.settings)}
+                        onClick={() => {
+                          props.onOpenSettings()
+                          closeOnNarrowViewport()
+                          close()
+                        }}
+                      >
+                        <DialogAction icon={<Settings size={14} aria-hidden />} title="Settings" />
+                      </button>
+                    </div>
+                  </>
+                )
+              }}
+            </Menu>
+            <button
+              type="button"
+              className="account-card__settings"
+              aria-label="Settings"
+              title="Settings"
+              aria-keyshortcuts={shortcutAria(keybindings.settings)}
+              onClick={() => {
+                props.onOpenSettings()
+                closeOnNarrowViewport()
+              }}
+            >
+              <Settings size={15} aria-hidden />
+            </button>
+          </div>
+          {isDesktop ? <AppUpdateNotice /> : null}
         </div>
       </nav>
       <RailResizeHandle
@@ -1189,6 +1243,7 @@ const ProjectRow = memo(function ProjectRow(props: {
   const [renaming, setRenaming] = useState(false)
   const [confirming, setConfirming] = useState<'archive' | 'remove'>()
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
   const previousCount = useRef(count)
   const openRef = useRef(props.active)
   const sessionUnmountTimer = useRef<number | undefined>(undefined)
@@ -1226,9 +1281,11 @@ const ProjectRow = memo(function ProjectRow(props: {
     previousCount.current = count
   }, [count, setProjectOpen])
 
-  // Sync the active project before paint. A passive mount effect can run after
-  // an immediate user click and undo that first manual toggle.
-  useLayoutEffect(() => setProjectOpen(props.active), [props.active, setProjectOpen])
+  // Reveal the active project without closing projects the user already opened.
+  // Run before paint so a delayed mount effect cannot undo a manual toggle.
+  useLayoutEffect(() => {
+    if (props.active) setProjectOpen(true)
+  }, [props.active, setProjectOpen])
 
   useEffect(() => cancelSessionUnmount, [cancelSessionUnmount])
 
@@ -1252,11 +1309,11 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
-            onCommit={(name) => {
+            onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
-              setRenaming(false)
+              finishRename(fromKeyboard)
             }}
-            onCancel={() => setRenaming(false)}
+            onCancel={finishRename}
           />
         ) : (
           <>
@@ -1323,8 +1380,8 @@ const ProjectRow = memo(function ProjectRow(props: {
                     }}
                   />
                   <MenuItem
-                    title="Archive chats"
-                    icon={<Archive size={14} aria-hidden />}
+                    title="Delete chats"
+                    icon={<Trash size={14} aria-hidden />}
                     onClick={() => {
                       setConfirming('archive')
                       close()
@@ -1355,25 +1412,23 @@ const ProjectRow = memo(function ProjectRow(props: {
       </div>
 
       {confirming ? (
-        <SidebarConfirmDialog
-          title={confirming === 'archive' ? 'Archive all chats?' : 'Remove project?'}
-          body={
-            confirming === 'archive'
-              ? `This archives every chat in ${displayName(props.project)}. Files on your computer stay untouched.`
-              : 'This only removes the project from the sidebar. Its folder and chats stay untouched.'
-          }
-          action={confirming === 'archive' ? 'Archive chats' : 'Remove project'}
-          destructive={confirming === 'remove'}
-          onConfirm={() => {
-            if (confirming === 'archive') {
-              props.onArchiveProject(props.project.sessions.map((session) => session.id))
-            } else {
-              props.onRemoveProject(props.project.path)
-            }
-            setConfirming(undefined)
-          }}
-          onClose={() => setConfirming(undefined)}
-        />
+        <Suspense fallback={null}>
+          <SidebarConfirmDialog
+            {...(confirming === 'archive'
+              ? deleteChatsCopy(props.project)
+              : removeProjectCopy(props.project))}
+            path={props.project.path}
+            onConfirm={() => {
+              if (confirming === 'archive') {
+                props.onArchiveProject(props.project.sessions.map((session) => session.id))
+              } else {
+                props.onRemoveProject(props.project.path)
+              }
+              setConfirming(undefined)
+            }}
+            onClose={() => setConfirming(undefined)}
+          />
+        </Suspense>
       ) : null}
 
       {/* Height comes from grid-template-rows in CSS, so the animation covers
@@ -1466,21 +1521,30 @@ const ProjectSessions = memo(function ProjectSessions(props: {
       } as CSSProperties)
     : undefined
 
+  // Deleting or restoring a chat changes the count but must not move the list.
+  // Only a newly active chat, or virtualization switching on (null), re-centres.
+  const centredSessionId = useRef<string | undefined | null>(null)
   useLayoutEffect(() => {
-    if (!virtualized) return
+    if (!virtualized) {
+      centredSessionId.current = null
+      return
+    }
     const list = virtualSessionList.current
     if (!list) return
-    const activeIndex = props.activeSessionId
-      ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
-      : -1
-    const target = Math.max(
-      0,
-      Math.min(
-        activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
-        virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
-      ),
-    )
-    list.scrollTop = activeIndex >= 0 ? target : 0
+    if (centredSessionId.current !== props.activeSessionId) {
+      centredSessionId.current = props.activeSessionId
+      const activeIndex = props.activeSessionId
+        ? props.project.sessions.findIndex((session) => session.id === props.activeSessionId)
+        : -1
+      const target = Math.max(
+        0,
+        Math.min(
+          activeIndex * VIRTUAL_SESSION_ROW_HEIGHT - VIRTUAL_SESSION_VIEWPORT_HEIGHT / 2,
+          virtualHeight - VIRTUAL_SESSION_VIEWPORT_HEIGHT,
+        ),
+      )
+      list.scrollTop = activeIndex >= 0 ? target : 0
+    }
     updateVirtualRange(list.scrollTop)
   }, [props.activeSessionId, updateVirtualRange, virtualHeight, virtualized])
 
@@ -1653,6 +1717,7 @@ function SessionRow(props: {
 }) {
   const [renaming, setRenaming] = useState(false)
   const contextMenuTarget = useRef<HTMLButtonElement>(null)
+  const finishRename = useRenameFocusReturn(renaming, setRenaming, contextMenuTarget)
 
   if (renaming) {
     return (
@@ -1662,15 +1727,16 @@ function SessionRow(props: {
         aria-posinset={props.virtualPosition}
         aria-setsize={props.virtualSetSize}
       >
+        {props.active ? <ActiveIndicator /> : null}
         <InlineRename
           value={props.session.title}
           className="rename--chat rename--session"
           ariaLabel={`Rename ${props.session.title}`}
-          onCommit={(title) => {
+          onCommit={(title, fromKeyboard) => {
             props.onRename(title)
-            setRenaming(false)
+            finishRename(fromKeyboard)
           }}
-          onCancel={() => setRenaming(false)}
+          onCancel={finishRename}
         />
       </li>
     )
@@ -1680,7 +1746,7 @@ function SessionRow(props: {
     <li
       className={`sessrow ${props.active ? 'is-active' : ''} ${props.standalone ? 'is-pinned' : ''} ${
         props.reorderable ? 'is-reorderable' : ''
-      } ${props.dragging ? 'is-dragging' : ''}`}
+      } ${props.dragging ? 'is-dragging' : ''} ${props.session.unread ? 'is-unread' : ''}`}
       data-archive-session-id={props.session.id}
       draggable={props.reorderable}
       data-drop-position={props.dropPosition}
@@ -1692,6 +1758,7 @@ function SessionRow(props: {
       aria-posinset={props.virtualPosition}
       aria-setsize={props.virtualSetSize}
     >
+      {props.active ? <ActiveIndicator /> : null}
       <button
         ref={contextMenuTarget}
         className={`sess ${props.active ? 'is-active' : ''}`}
@@ -1700,14 +1767,17 @@ function SessionRow(props: {
         aria-label={sessionLabel(props.session)}
         title={sessionLabel(props.session)}
       >
-        {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        <span className="sess__provider" aria-hidden>
+          <ProviderIcon mark={providerPresentation(props.session.provider).mark} size={12} />
+        </span>
         <span className="sess__title">{props.session.title}</span>
-        <SourceIdentity
-          className="sess__source"
-          presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
-          density="compact"
-        />
-        <SessionStatus status={props.session.status} />
+        <span className="sess__meta">
+          <SessionStatus
+            status={props.session.status}
+            since={props.session.statusSince ?? props.session.createdAt}
+          />
+          {props.session.unread ? <span className="sess__unread-dot" aria-hidden /> : null}
+        </span>
       </button>
 
       <span className="sess__actions">
@@ -1724,10 +1794,10 @@ function SessionRow(props: {
           type="button"
           className="sess__action"
           onClick={props.onDelete}
-          aria-label={`Archive ${props.session.title}`}
-          title="Archive chat"
+          aria-label={`Delete ${props.session.title}`}
+          title="Delete chat"
         >
-          <Archive size={14} aria-hidden />
+          <Trash size={14} aria-hidden />
         </button>
       </span>
 
@@ -1764,8 +1834,8 @@ function SessionRow(props: {
               }}
             />
             <MenuItem
-              title="Archive chat"
-              icon={<Archive size={14} aria-hidden />}
+              title="Delete chat"
+              icon={<Trash size={14} aria-hidden />}
               onClick={() => {
                 props.onDelete()
                 close()
@@ -1788,53 +1858,56 @@ function SessionRow(props: {
   )
 }
 
-function SidebarConfirmDialog(props: {
-  title: string
-  body: string
-  action: string
-  destructive: boolean
-  onConfirm: () => void
-  onClose: () => void
-}) {
-  const dialog = useDialogFocus<HTMLDivElement>(props.onClose)
+type ConfirmCopy = { title: string; body: string; action: string; destructive: boolean }
 
-  return createPortal(
-    <div
-      className="sheet"
-      role="dialog"
-      aria-modal="true"
-      aria-label={props.title}
-      onKeyDown={dialog.onKeyDown}
-    >
-      <button className="sheet__scrim" onClick={props.onClose} aria-label="Cancel" />
-      <div className="sheet__panel sidebar-confirm" ref={dialog.panel} tabIndex={-1}>
-        <header className="sheet__head">
-          <h2 className="sheet__title">{props.title}</h2>
-          <button className="icon-btn icon-btn--always" onClick={props.onClose} title="Close">
-            <X size={13} aria-hidden />
-          </button>
-        </header>
-        <section className="sheet__section">
-          <p>{props.body}</p>
-          <div className="sidebar-confirm__actions">
-            <button className="ghost" onClick={props.onClose} autoFocus>
-              Cancel
-            </button>
-            <button
-              className={`btn${props.destructive ? ' btn--danger' : ''}`}
-              onClick={props.onConfirm}
-            >
-              {props.action}
-            </button>
-          </div>
-        </section>
-      </div>
-    </div>,
-    document.body,
-  )
+function chatCount(count: number): string {
+  return `${count} chat${count === 1 ? '' : 's'}`
 }
 
-function SessionStatus(props: { status: Session['status'] }) {
+/** Removing only forgets the sidebar entry, so it is not styled as destructive.
+ *  It does stop live turns, which is the one consequence worth naming. */
+function removeProjectCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  const live = project.sessions.filter((session) =>
+    ['starting', 'working', 'queued', 'approval', 'input'].includes(session.status),
+  ).length
+  const kept =
+    chats === 0
+      ? 'The folder stays where it is.'
+      : `The folder and its ${chatCount(chats)} stay where they are. Add the folder again to bring them back.`
+  return {
+    title: `Remove ${displayName(project)} from the sidebar?`,
+    body:
+      live === 0
+        ? kept
+        : `${kept} ${live === 1 ? 'The running chat' : `${live} running chats`} will stop.`,
+    action: 'Remove',
+    destructive: false,
+  }
+}
+
+function deleteChatsCopy(project: Project): ConfirmCopy {
+  const chats = project.sessions.length
+  return {
+    title:
+      chats === 0
+        ? `Delete all chats in ${displayName(project)}?`
+        : `Delete ${chatCount(chats)} in ${displayName(project)}?`,
+    body: 'Their restore points go with them once the Undo window closes. Files in the folder stay untouched.',
+    action: chats === 0 ? 'Delete chats' : `Delete ${chatCount(chats)}`,
+    destructive: true,
+  }
+}
+
+/** The one active-chat pill. Only the active row renders it, and it slides in
+ *  from wherever the previous active row's pill stood. */
+function ActiveIndicator() {
+  return <span className="sessrow__indicator" ref={activeIndicatorRef} aria-hidden />
+}
+
+/** A live state takes the time's place: while a chat works or waits, that is
+ *  the news, and how long ago it started is not. */
+function SessionStatus(props: { status: Session['status']; since: number }) {
   if (props.status === 'starting' || props.status === 'working') {
     return <LoaderCircle className="sess__spinner" size={14} aria-hidden />
   }
@@ -1847,11 +1920,21 @@ function SessionStatus(props: { status: Session['status'] }) {
     return <span className="sess__status-dot is-failed" aria-hidden />
   }
 
-  return null
+  return <SessionTime at={props.since} />
+}
+
+function SessionTime(props: { at: number }) {
+  const now = useSyncExternalStore(subscribeSessionClock, readSessionClock, readSessionClock)
+  if (!(props.at > 0)) return null
+  return (
+    <span className="sess__time" aria-hidden>
+      {compactRelativeTime(props.at, now)}
+    </span>
+  )
 }
 
 function sessionLabel(session: Session): string {
-  const source = sessionSourcePresentation(session.provider, session.agent).label
+  const source = providerPresentation(session.provider).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {
@@ -1887,64 +1970,38 @@ function virtualSessionStyle(top: number | undefined): CSSProperties | undefined
   return top === undefined ? undefined : { transform: `translateY(${top}px)` }
 }
 
-const projectSidebarProjections = new WeakMap<Project, ProjectSidebarProjection>()
-
-function projectSidebarProjection(source: Project): ProjectSidebarProjection {
-  const cached = projectSidebarProjections.get(source)
-  if (cached) return cached
-
-  const pinnedSessions: PinnedSession[] = []
-  const unpinnedSessions: Session[] = []
-  for (const session of source.sessions) {
-    if (session.pinned) pinnedSessions.push({ projectPath: source.path, session })
-    else unpinnedSessions.push(session)
-  }
-  const sessions = prioritizeSessions(unpinnedSessions, (session) => session)
-  const sessionsUnchanged =
-    pinnedSessions.length === 0 &&
-    sessions.length === source.sessions.length &&
-    sessions.every((session, index) => session === source.sessions[index])
-  const project = sessionsUnchanged ? source : { ...source, sessions }
-  const projection = { project, pinnedSessions }
-  projectSidebarProjections.set(source, projection)
-  return projection
-}
-
-function prioritizeSessions<T>(sessions: T[], getSession: (value: T) => Session): T[] {
-  const active: T[] = []
-  const unread: T[] = []
-  const rest: T[] = []
-  for (const value of sessions) {
-    const session = getSession(value)
-    if (isActiveStatus(session.status)) {
-      active.push(value)
-    } else if (session.unread) {
-      unread.push(value)
-    } else {
-      rest.push(value)
-    }
-  }
-  const ordered = [...active, ...unread, ...rest]
-  return ordered.every((value, index) => value === sessions[index]) ? sessions : ordered
-}
-
-function isActiveStatus(status: Session['status']): boolean {
-  return (
-    status === 'starting' ||
-    status === 'working' ||
-    status === 'queued' ||
-    status === 'approval' ||
-    status === 'input'
+/** Rename in place. Enter commits, Escape reverts, blur commits. */
+/**
+ * Ends an inline rename. The input replaced the row's button, so a rename
+ * finished with Enter or Escape would leave focus on the document body; put it
+ * back on the row. A rename that ends on blur leaves focus where the user went.
+ */
+function useRenameFocusReturn(
+  renaming: boolean,
+  setRenaming: (renaming: boolean) => void,
+  row: RefObject<HTMLButtonElement | null>,
+) {
+  const returnFocus = useRef(false)
+  useEffect(() => {
+    if (renaming || !returnFocus.current) return
+    returnFocus.current = false
+    row.current?.focus()
+  }, [renaming, row])
+  return useCallback(
+    (fromKeyboard: boolean) => {
+      returnFocus.current = fromKeyboard
+      setRenaming(false)
+    },
+    [setRenaming],
   )
 }
 
-/** Rename in place. Enter commits, Escape reverts, blur commits. */
 function InlineRename(props: {
   value: string
   className?: string
   ariaLabel?: string
-  onCommit: (value: string) => void
-  onCancel: () => void
+  onCommit: (value: string, fromKeyboard: boolean) => void
+  onCancel: (fromKeyboard: boolean) => void
 }) {
   const [draft, setDraft] = useState(props.value)
   const input = useRef<HTMLInputElement>(null)
@@ -1953,10 +2010,10 @@ function InlineRename(props: {
     input.current?.select()
   }, [])
 
-  const commit = () => {
+  const commit = (fromKeyboard: boolean) => {
     const trimmed = draft.trim()
-    if (trimmed === '') props.onCancel()
-    else props.onCommit(trimmed)
+    if (trimmed === '') props.onCancel(fromKeyboard)
+    else props.onCommit(trimmed, fromKeyboard)
   }
 
   return (
@@ -1967,10 +2024,19 @@ function InlineRename(props: {
       aria-label={props.ariaLabel}
       spellCheck={false}
       onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+      onBlur={() => commit(false)}
       onKeyDown={(e) => {
-        if (e.key === 'Enter') commit()
-        if (e.key === 'Escape') props.onCancel()
+        if (isComposingKey(e)) return
+        // Without preventDefault the Enter keypress that follows lands on the
+        // row button focus just returned to, and clicks it.
+        if (isConfirmEnter(e)) {
+          e.preventDefault()
+          commit(true)
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault()
+          props.onCancel(true)
+        }
       }}
     />
   )
@@ -1983,6 +2049,35 @@ function displayName(project: Project): string {
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean)
   return parts[parts.length - 1] ?? path
+}
+
+type CardUsageLimit = { provider: ProviderId; label: string; usedPercent: number }
+
+/**
+ * The card's one usage figure: the tightest percentage limit any provider
+ * reports, shown with that provider's mark so it says what it measures. A
+ * provider whose read failed with nothing on record could be the tighter one,
+ * so the card then shows no figure rather than a reassuring "100% left".
+ */
+function tightestUsageLimit(
+  states: readonly AccountLimitsState[] | undefined,
+): CardUsageLimit | undefined {
+  let tightest: CardUsageLimit | undefined
+  for (const state of states ?? []) {
+    if (state.status === 'error' && !state.summary) return undefined
+    const source = state.summary?.limitSource
+    const limits = source
+      ? source.status === 'ready'
+        ? source.limits
+        : []
+      : (state.summary?.limits ?? [])
+    for (const limit of limits) {
+      if (limit.valueLabel !== undefined || !Number.isFinite(limit.usedPercent)) continue
+      if (tightest && limit.usedPercent <= tightest.usedPercent) continue
+      tightest = { provider: state.provider, label: limit.label, usedPercent: limit.usedPercent }
+    }
+  }
+  return tightest
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {

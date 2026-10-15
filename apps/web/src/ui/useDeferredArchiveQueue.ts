@@ -26,10 +26,11 @@ export function useDeferredArchiveQueue(delayMs: number) {
   const commitPending = useCallback(() => {
     const pending = [...jobs.current.values()].filter((job) => job.state === 'pending')
     if (!pending.length) return
-    for (const job of pending) job.state = 'committing'
-    refresh()
     void (async () => {
       for (const job of pending) {
+        if (jobs.current.get(job.id) !== job || job.state !== 'pending') continue
+        job.state = 'committing'
+        refresh()
         try {
           await job.commit()
         } catch {
@@ -44,8 +45,21 @@ export function useDeferredArchiveQueue(delayMs: number) {
 
   const queue = useCallback(
     (id: string, commit: () => Promise<void>) => {
+      if (jobs.current.has(id)) return
       jobs.current.set(id, { id, commit, state: 'pending' })
       refresh()
+    },
+    [refresh],
+  )
+
+  const cancel = useCallback(
+    (id: string) => {
+      const job = jobs.current.get(id)
+      if (!job) return true
+      if (job.state === 'committing') return false
+      jobs.current.delete(id)
+      refresh()
+      return true
     },
     [refresh],
   )
@@ -66,6 +80,7 @@ export function useDeferredArchiveQueue(delayMs: number) {
   }, [commitPending, delayMs, pendingIds.join('\0')])
 
   useEffect(() => {
+    mounted.current = true
     const flush = () => commitPending()
     window.addEventListener('pagehide', flush)
     return () => {
@@ -75,5 +90,5 @@ export function useDeferredArchiveQueue(delayMs: number) {
     }
   }, [commitPending])
 
-  return { hiddenIds, pendingIds, queue, undo }
+  return { hiddenIds, pendingIds, queue, undo, cancel }
 }

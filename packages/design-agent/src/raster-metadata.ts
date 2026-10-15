@@ -180,6 +180,8 @@ function jpegDimensions(buffer: Buffer): { width: number; height: number } | und
     0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf,
   ])
   let offset = 2
+  let dimensions: { width: number; height: number } | undefined
+  let orientation = 1
   while (offset + 3 < buffer.length) {
     while (buffer[offset] === 0xff) offset += 1
     const marker = buffer[offset++]
@@ -189,9 +191,41 @@ function jpegDimensions(buffer: Buffer): { width: number; height: number } | und
     const length = buffer.readUInt16BE(offset)
     if (length < 2 || offset + length > buffer.length) break
     if (startOfFrame.has(marker) && length >= 7) {
-      return { height: buffer.readUInt16BE(offset + 3), width: buffer.readUInt16BE(offset + 5) }
+      dimensions = {
+        height: buffer.readUInt16BE(offset + 3),
+        width: buffer.readUInt16BE(offset + 5),
+      }
+    }
+    if (marker === 0xe1) {
+      orientation = exifOrientation(buffer.subarray(offset + 2, offset + length)) ?? orientation
     }
     offset += length
+  }
+  return dimensions && orientation >= 5 && orientation <= 8
+    ? { width: dimensions.height, height: dimensions.width }
+    : dimensions
+}
+
+function exifOrientation(segment: Buffer): number | undefined {
+  if (!segment.subarray(0, 6).equals(Buffer.from('Exif\0\0'))) return undefined
+  const tiff = segment.subarray(6)
+  if (tiff.length < 8) return undefined
+  const order = tiff.toString('ascii', 0, 2)
+  if (order !== 'II' && order !== 'MM') return undefined
+  const uint16 = (offset: number) =>
+    order === 'II' ? tiff.readUInt16LE(offset) : tiff.readUInt16BE(offset)
+  const uint32 = (offset: number) =>
+    order === 'II' ? tiff.readUInt32LE(offset) : tiff.readUInt32BE(offset)
+  if (uint16(2) !== 42) return undefined
+  const directory = uint32(4)
+  if (directory < 8 || directory + 2 > tiff.length) return undefined
+  const count = uint16(directory)
+  for (let index = 0; index < count; index++) {
+    const entry = directory + 2 + index * 12
+    if (entry + 12 > tiff.length) return undefined
+    if (uint16(entry) !== 0x0112 || uint16(entry + 2) !== 3 || uint32(entry + 4) !== 1) continue
+    const orientation = uint16(entry + 8)
+    return orientation >= 1 && orientation <= 8 ? orientation : undefined
   }
   return undefined
 }

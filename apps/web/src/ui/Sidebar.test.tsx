@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Profiler } from 'react'
 import { Sidebar } from './Sidebar.js'
+import type { AccountLimitsState } from './AccountLimits.js'
+import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 
 const hapticMocks = vi.hoisted(() => ({
   perform: vi.fn(),
@@ -62,14 +64,18 @@ const session = (id: string, title: string) => ({
 function renderProjectCatalog(
   projects: Array<{ path: string; name: string; sessions: [] }>,
   active?: string,
+  usageStates?: AccountLimitsState[],
+  projectsLoading?: boolean,
 ) {
-  return render(
+  const content = (active: string | undefined, loading = projectsLoading) => (
     <Sidebar
       projects={projects}
+      projectsLoading={loading}
       activeProjectPath={active}
       activeSessionId={undefined}
       account={undefined}
       providerName="Codex"
+      usageStates={usageStates}
       collapsed={false}
       width={248}
       onWidthChange={vi.fn()}
@@ -86,8 +92,14 @@ function renderProjectCatalog(
       onReorderSession={vi.fn()}
       onOpenSearch={vi.fn()}
       onOpenSettings={vi.fn()}
-    />,
+    />
   )
+  const view = render(content(active))
+  return {
+    ...view,
+    navigate: (active?: string) => view.rerender(content(active)),
+    finishLoading: () => view.rerender(content(active, false)),
+  }
 }
 
 function controlledIdleCallbacks() {
@@ -101,6 +113,200 @@ function controlledIdleCallbacks() {
 }
 
 describe('Sidebar chat actions', () => {
+  it('shows placeholder projects instead of an empty list while projects load', () => {
+    const view = renderProjectCatalog([], undefined, undefined, true)
+
+    expect(screen.getByRole('status').textContent).toBe('Loading projects…')
+    expect(screen.queryByText('Nothing here yet.')).toBeNull()
+    expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
+
+    view.finishLoading()
+    expect(screen.queryByText('Loading projects…')).toBeNull()
+    expect(screen.getByText('Nothing here yet.')).toBeTruthy()
+  })
+
+  it('holds the inbox rail in place while its module loads', async () => {
+    render(
+      <Sidebar
+        projects={[]}
+        projectsLoading
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        providerName="Codex"
+        mode="inbox"
+        inbox={{
+          onSettle: vi.fn(),
+          onUnsettle: vi.fn(),
+          onSnooze: vi.fn(),
+          onUnsnooze: vi.fn(),
+          onKeepActive: vi.fn(),
+        }}
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).not.toBeNull()
+
+    expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
+    expect(document.querySelector('.inbox-skeleton-toolbar')).toBeNull()
+    expect(screen.getByText('Loading threads…')).toBeTruthy()
+  })
+
+  it('hides unavailable plan limits while the account component is loading', () => {
+    const usage = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    renderProjectCatalog([], undefined, [
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: usage,
+          today: usage,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable' },
+        },
+      },
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    expect(within(dialog).queryByRole('region', { name: 'Plan limits' })).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Edit profile' })).toBeTruthy()
+  })
+
+  it('opens on the plan limits while they are still loading', () => {
+    renderProjectCatalog([], undefined, [{ provider: 'codex', status: 'loading' }])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Account and plan limits' })
+    const limits = within(dialog).getByRole('region', { name: 'Plan limits' })
+    expect(dialog.firstElementChild).toBe(limits)
+    expect(limits.getAttribute('aria-busy')).toBe('true')
+    expect(within(dialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(document.activeElement).toBe(limits)
+  })
+
+  it('labels the card meter with its provider and drops it while a provider has failed', () => {
+    const totals = {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    }
+    const ready = (
+      provider: AccountLimitsState['provider'],
+      usedPercent: number,
+    ): AccountLimitsState => ({
+      provider,
+      status: 'ready',
+      summary: {
+        session: totals,
+        today: totals,
+        limits: [],
+        limitSource: { provider, status: 'ready', limits: [{ label: 'Weekly', usedPercent }] },
+      },
+    })
+    const meter = () => document.querySelector<HTMLElement>('.account__usage')
+    const view = renderProjectCatalog([], undefined, [ready('codex', 0), ready('grok', 40)])
+
+    // The tightest limit wins and says whose it is.
+    expect(meter()?.title).toBe('Grok · Weekly · 60% left')
+    expect(meter()?.querySelector('.account__usage-value')?.textContent).toBe('60% left')
+    expect(meter()?.querySelector('svg.account__usage-mark')).not.toBeNull()
+
+    // A provider that failed with nothing on record might be the tighter one,
+    // so a full bar for the others would be a false all-clear.
+    view.unmount()
+    renderProjectCatalog([], undefined, [
+      ready('codex', 0),
+      { provider: 'claude-code', status: 'error', message: 'Claude usage request failed.' },
+    ])
+    expect(meter()).toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+  })
+
+  it('draws the card avatar as the photo, else the generated seal for the profile', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences | undefined) => (
+      <Sidebar
+        projects={[]}
+        activeProjectPath={undefined}
+        activeSessionId={undefined}
+        account={undefined}
+        profileIdentity={profileIdentity}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+    const seal = () => avatar().querySelector<SVGSVGElement>('svg.generated-avatar')
+
+    const rendered = render(view({ displayName: 'Alex Rivera' }))
+    expect(seal()).not.toBeNull()
+    expect(avatar().textContent).toBe('')
+    const alex = seal()!.innerHTML
+
+    // The card strikes the same seal as the profile page: the chosen seed wins over the name.
+    rendered.rerender(view({ displayName: 'Alex Rivera', avatarSeed: 'tide' }))
+    expect(seal()!.innerHTML).not.toBe(alex)
+
+    // Another name draws another seal; a profile without one still gets a seal.
+    rendered.rerender(view({ displayName: 'Leon' }))
+    expect(seal()!.innerHTML).not.toBe(alex)
+    rendered.rerender(view({ displayName: '' }))
+    expect(seal()).not.toBeNull()
+    rendered.rerender(view(undefined))
+    expect(seal()).not.toBeNull()
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
+
+    rendered.rerender(
+      view({ displayName: 'Alex Rivera', avatarDataUrl: 'data:image/png;base64,iVBORw0KGgo=' }),
+    )
+    expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
+      'data:image/png;base64,iVBORw0KGgo=',
+    )
+    expect(seal()).toBeNull()
+  })
+
   it('mounts a large project catalog in bounded idle batches', () => {
     const callbacks = controlledIdleCallbacks()
     const projects = Array.from({ length: 100 }, (_, index) => ({
@@ -353,13 +559,11 @@ describe('Sidebar chat actions', () => {
     )
 
     const rendered = render(view)
-    for (const [usedPercent, expected] of [
-      [11, undefined],
-      [79, undefined],
-      [79.9, undefined],
-      [80, '20%'],
-      [89, '11%'],
-      [100, '0%'],
+    for (const [usedPercent, expected, low] of [
+      [11, '89% left', false],
+      [79.9, '20% left', false],
+      [85, '15% left', true],
+      [100, '0% left', true],
     ] as const) {
       rendered.rerender({
         ...view,
@@ -380,22 +584,36 @@ describe('Sidebar chat actions', () => {
           ],
         },
       })
-      expect(document.querySelector('.account__usage')?.textContent).toBe(expected)
+      expect(document.querySelector('.account__usage-value')?.textContent).toBe(expected)
+      expect(document.querySelector('.account__meter')?.hasAttribute('data-low')).toBe(low)
     }
+    rendered.rerender({
+      ...view,
+      props: { ...view.props, usageStates: [{ provider: 'codex', status: 'loading' }] },
+    })
+    expect(document.querySelector('.account__usage')).toBeNull()
     rendered.rerender(view)
 
     expect(screen.queryByRole('button', { name: /Switch to V[12]/ })).toBeNull()
     expect(await screen.findByRole('textbox', { name: 'Search threads' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'New chat' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add Project' })).toBeTruthy()
-    expect(document.querySelector('.account__name')?.textContent).toBe('private@example.com')
+    expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
     const accountTrigger = screen.getByRole('button', { name: 'Account' })
-    expect(accountTrigger.querySelector('.account__usage')?.textContent).toBe('15%')
+    expect(accountTrigger.querySelector('.account__usage-value')?.textContent).toBe('15% left')
     expect(accountTrigger.querySelector('.account__usage')?.getAttribute('title')).toBe(
-      '15% left · codex · 7 days',
+      'Codex · 7 days · 15% left',
     )
-    expect(accountTrigger.querySelector('.account__chevron')).not.toBeNull()
+    expect(accountTrigger.querySelector('.account__usage .account__usage-mark')).not.toBeNull()
+    expect(
+      accountTrigger.querySelector<HTMLElement>('.account__meter > span')?.style.transform,
+    ).toBe('scaleX(0.15)')
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
+    // The gear beside the card opens Settings without going through the popup.
+    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    expect(onOpenSettings).toHaveBeenLastCalledWith()
+    expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
+    onOpenSettings.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'New chat' }))
     expect(onAddProject).toHaveBeenCalledOnce()
     fireEvent.click(accountTrigger)
@@ -404,30 +622,29 @@ describe('Sidebar chat actions', () => {
     expect(accountDialog).toBeTruthy()
     expect(accountDialog.classList.contains('menu--compact')).toBe(true)
     expect(accountDialog.classList.contains('menu--settings')).toBe(true)
-    const usage = within(accountDialog).getByRole('button', { name: 'Usage, 15% left' })
-    expect(usage.getAttribute('aria-expanded')).toBe('false')
-    expect(screen.getByText('15% left')).toBeTruthy()
-    expect(screen.queryByText('7 days')).toBeNull()
-    expect(document.activeElement).toBe(usage)
-
-    fireEvent.click(usage)
-    expect(usage.getAttribute('aria-expanded')).toBe('true')
-    expect(screen.getByText('7 days')).toBeTruthy()
+    // The limits show straight away; there is no second "Usage … left" row
+    // repeating them under the list.
+    const limits = await within(accountDialog).findByRole('region', { name: 'Codex' })
+    expect(within(accountDialog).queryByRole('button', { name: /Usage/ })).toBeNull()
+    expect(within(limits).getByText('7 days')).toBeTruthy()
+    expect(within(accountDialog).getAllByText('15% left')).toHaveLength(1)
     const limitBar = screen.getByRole('progressbar', { name: 'Codex 7 days left' })
     expect(limitBar.getAttribute('aria-valuenow')).toBe('15')
     expect(limitBar.querySelector<HTMLElement>(':scope > *')!.style.width).toBe('15%')
-    expect(document.activeElement).toBe(usage)
+    expect(document.activeElement).toBe(
+      within(accountDialog).getByRole('region', { name: 'Plan limits' }),
+    )
 
     expect(screen.queryAllByRole('menuitem')).toHaveLength(0)
     const accountActions = screen
       .getAllByRole('button')
-      .filter((button) => ['Profile', 'Settings'].includes(button.textContent ?? ''))
+      .filter((button) => ['Edit profile', 'Settings'].includes(button.textContent ?? ''))
     for (const item of accountActions) expect(item.querySelector('svg')).not.toBeNull()
     expect(accountDialog.firstElementChild?.classList.contains('account-menu__usage')).toBe(true)
     expect(accountDialog.lastElementChild?.classList.contains('account-menu__actions')).toBe(true)
     expect(
       within(accountDialog.lastElementChild as HTMLElement).getByRole('button', {
-        name: 'Profile',
+        name: 'Edit profile',
       }),
     ).toBeTruthy()
     expect(
@@ -435,7 +652,7 @@ describe('Sidebar chat actions', () => {
         name: 'Settings',
       }),
     ).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Profile' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit profile' }))
     expect(onOpenSettings).toHaveBeenCalledWith('profile')
     expect(accountTrigger.getAttribute('aria-expanded')).toBe('false')
 
@@ -444,7 +661,11 @@ describe('Sidebar chat actions', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Account' }))
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
-    fireEvent.click(screen.getByRole('button', { name: /Settings/ }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Account and plan limits' })).getByRole('button', {
+        name: /Settings/,
+      }),
+    )
     expect(onOpenSettings).toHaveBeenCalledTimes(2)
     expect(onOpenSettings).toHaveBeenLastCalledWith()
   })
@@ -490,13 +711,19 @@ describe('Sidebar chat actions', () => {
     expect(screen.getByRole('button', { name: 'Project options' })).toBeTruthy()
 
     const chat = screen.getByText('Polish the sidebar').closest('button')!
-    const identity = within(chat).getByText('Codex').closest('.source-identity')
-    expect(identity?.classList.contains('source-identity--compact')).toBe(true)
-    expect(identity?.querySelector('svg')).toBeTruthy()
+    // The provider is a mark in the gutter; its name stays in the label.
+    expect(chat.firstElementChild?.classList.contains('sess__provider')).toBe(true)
+    expect(chat.querySelector('.sess__provider svg')).toBeTruthy()
+    expect(within(chat).queryByText('Codex')).toBeNull()
     expect(chat.getAttribute('aria-label')).toBe('Polish the sidebar, Codex')
+    // One pill marks the active chat, and only the active row draws it.
+    expect(document.querySelectorAll('.sessrow__indicator')).toHaveLength(1)
+    expect(
+      chat.closest('.sessrow')?.firstElementChild?.classList.contains('sessrow__indicator'),
+    ).toBe(true)
 
     const rename = screen.getByRole('button', { name: 'Rename Polish the sidebar' })
-    const archive = screen.getByRole('button', { name: 'Archive Polish the sidebar' })
+    const archive = screen.getByRole('button', { name: 'Delete Polish the sidebar' })
     expect(rename.querySelector('svg')).not.toBeNull()
     expect(archive.querySelector('svg')).not.toBeNull()
 
@@ -505,15 +732,91 @@ describe('Sidebar chat actions', () => {
     expect(input.classList.contains('rename--chat')).toBe(true)
     expect(input.getAttribute('aria-label')).toBe('Rename Polish the sidebar')
     expect(input.closest('.sessrow')?.classList.contains('is-active')).toBe(true)
+    expect(input.closest('.sessrow')?.querySelector('.sessrow__indicator')).not.toBeNull()
     fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
+    fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+    expect(onRenameSession).not.toHaveBeenCalled()
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Archive Polish the sidebar' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Polish the sidebar' }))
     expect(onDeleteSession).toHaveBeenCalledWith('thread-1')
   })
 
-  it('confirms bulk archive and sidebar removal before acting', () => {
+  it('returns focus to the row after a rename ends with Enter or Escape, not on blur', () => {
+    const onRenameSession = vi.fn()
+    const onRenameProject = vi.fn()
+    render(
+      <Sidebar
+        projects={[
+          {
+            path: '/work/harness',
+            name: 'TasteCode',
+            sessions: [session('thread-1', 'Polish the sidebar')],
+          },
+        ]}
+        activeProjectPath="/work/harness"
+        activeSessionId="thread-1"
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={onRenameProject}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={onRenameSession}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    )
+    const chatRow = () => screen.getByRole('button', { name: 'Polish the sidebar, Codex' })
+    const renameChat = () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Rename Polish the sidebar' }))
+      return screen.getByRole('textbox', { name: 'Rename Polish the sidebar' })
+    }
+
+    let input = renameChat()
+    fireEvent.change(input, { target: { value: 'Wider sidebar chats' } })
+    // A cancelled keydown suppresses the keypress that would click the row.
+    expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false)
+    expect(onRenameSession).toHaveBeenCalledWith('thread-1', 'Wider sidebar chats')
+    expect(document.activeElement).toBe(chatRow())
+
+    input = renameChat()
+    expect(fireEvent.keyDown(input, { key: 'Escape' })).toBe(false)
+    expect(document.activeElement).toBe(chatRow())
+
+    const elsewhere = document.createElement('button')
+    document.body.append(elsewhere)
+    try {
+      input = renameChat()
+      elsewhere.focus()
+      fireEvent.blur(input)
+      expect(screen.queryByRole('textbox', { name: 'Rename Polish the sidebar' })).toBeNull()
+      expect(document.activeElement).toBe(elsewhere)
+    } finally {
+      elsewhere.remove()
+    }
+
+    fireEvent.focus(screen.getByRole('button', { name: 'TasteCode' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: /Edit name/ }))
+    const projectInput = screen.getByDisplayValue('TasteCode')
+    fireEvent.change(projectInput, { target: { value: 'Harness' } })
+    fireEvent.keyDown(projectInput, { key: 'Enter' })
+    expect(onRenameProject).toHaveBeenCalledWith('/work/harness', 'Harness')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'TasteCode' }))
+  })
+
+  it('confirms bulk archive and sidebar removal before acting', async () => {
     const onArchiveProject = vi.fn()
     const onRemoveProject = vi.fn()
     render(
@@ -554,7 +857,7 @@ describe('Sidebar chat actions', () => {
     fireEvent.contextMenu(screen.getByRole('button', { name: 'TasteCode' }))
     const pinItem = screen.getByRole('menuitem', { name: 'Pin to top' })
     const editItem = screen.getByRole('menuitem', { name: 'Edit name' })
-    const archiveItem = screen.getByRole('menuitem', { name: 'Archive chats' })
+    const archiveItem = screen.getByRole('menuitem', { name: 'Delete chats' })
     const removeItem = screen.getByRole('menuitem', { name: 'Remove from sidebar' })
     for (const item of [pinItem, editItem, archiveItem, removeItem]) {
       expect(item.querySelector('svg')).not.toBeNull()
@@ -562,21 +865,29 @@ describe('Sidebar chat actions', () => {
     expect(removeItem.classList.contains('menu__item--danger')).toBe(true)
 
     fireEvent.click(archiveItem)
-    fireEvent.click(screen.getByRole('button', { name: 'Archive chats' }))
+    const deleteDialog = await screen.findByRole('alertdialog', {
+      name: 'Delete 2 chats in TasteCode?',
+    })
+    expect(deleteDialog.textContent).toContain('/work/harness')
+    const deleteButton = screen.getByRole('button', { name: 'Delete 2 chats' })
+    expect(deleteButton.classList.contains('is-destructive')).toBe(true)
+    fireEvent.click(deleteButton)
     expect(onArchiveProject).toHaveBeenCalledWith(['thread-1', 'thread-2'])
 
     fireEvent.click(screen.getByRole('button', { name: 'Project options' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Remove from sidebar' }))
+    const removeDialog = await screen.findByRole('alertdialog', {
+      name: 'Remove TasteCode from the sidebar?',
+    })
+    expect(removeDialog.closest('.sheet')?.parentElement).toBe(document.body)
     expect(
       screen.getByText(
-        'This only removes the project from the sidebar. Its folder and chats stay untouched.',
+        'The folder and its 2 chats stay where they are. Add the folder again to bring them back.',
       ),
     ).toBeTruthy()
-    const removeButton = screen.getByRole('button', { name: 'Remove project' })
-    expect(screen.getByRole('dialog', { name: 'Remove project?' }).parentElement).toBe(
-      document.body,
-    )
-    expect(removeButton.classList.contains('btn--danger')).toBe(true)
+    const removeButton = screen.getByRole('button', { name: 'Remove' })
+    // Only the sidebar entry goes, so removal is not dressed as destructive.
+    expect(removeButton.classList.contains('is-destructive')).toBe(false)
     expect(document.activeElement?.textContent).toBe('Cancel')
     fireEvent.click(removeButton)
     expect(onRemoveProject).toHaveBeenCalledWith('/work/harness')
@@ -681,7 +992,8 @@ describe('Sidebar chat actions', () => {
       ),
     ).toEqual(['Still running', 'Just done', 'Older chat', 'Newer chat'])
     const justDone = screen.getByRole('button', { name: 'Just done, Codex, ready, unread' })
-    expect(justDone.firstElementChild?.classList.contains('sess__unread-dot')).toBe(true)
+    expect(justDone.querySelector('.sess__meta > .sess__unread-dot')).not.toBeNull()
+    expect(justDone.closest('.sessrow')?.classList.contains('is-unread')).toBe(true)
   })
 
   it('shows five project chats until the list is expanded', () => {
@@ -783,15 +1095,15 @@ describe('Sidebar chat actions', () => {
       const commitsBeforeSameRangeScroll = commitCount
       list.scrollTop = 1
       fireEvent.scroll(list)
-      list.scrollTop = 26
+      list.scrollTop = 29
       fireEvent.scroll(list)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll)
 
-      list.scrollTop = 27
+      list.scrollTop = 30
       fireEvent.scroll(list)
       expect(commitCount).toBe(commitsBeforeSameRangeScroll + 1)
 
-      list.scrollTop = sessionCount * 27
+      list.scrollTop = sessionCount * 30
       fireEvent.scroll(list)
 
       const last = screen.getByRole('button', { name: `Chat ${sessionCount}, Codex` }).closest('li')
@@ -800,6 +1112,58 @@ describe('Sidebar chat actions', () => {
       expect(list.querySelectorAll('.sessrow').length).toBeLessThanOrEqual(28)
     },
   )
+
+  it('keeps an expanded long project scrolled in place when a chat is deleted or restored', () => {
+    const sessions = Array.from({ length: 70 }, (_, index) =>
+      session(`thread-${index + 1}`, `Chat ${index + 1}`),
+    )
+    const content = (projectSessions: typeof sessions, activeSessionId: string) => (
+      <Sidebar
+        projects={[{ path: '/work/large', name: 'Large project', sessions: projectSessions }]}
+        activeProjectPath="/work/large"
+        activeSessionId={activeSessionId}
+        account={undefined}
+        providerName="Codex"
+        collapsed={false}
+        width={248}
+        onWidthChange={vi.fn()}
+        onClose={vi.fn()}
+        onAddProject={vi.fn()}
+        onNewSession={vi.fn()}
+        onSelectSession={vi.fn()}
+        onRenameProject={vi.fn()}
+        onRemoveProject={vi.fn()}
+        onTogglePin={vi.fn()}
+        onRenameSession={vi.fn()}
+        onDeleteSession={vi.fn()}
+        onArchiveProject={vi.fn()}
+        onReorderSession={vi.fn()}
+        onOpenSearch={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />
+    )
+    const view = render(content(sessions, 'thread-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }))
+    const list = screen.getByRole('list', { name: 'Large project chats' })
+    list.scrollTop = 60 * 30
+    fireEvent.scroll(list)
+
+    view.rerender(
+      content(
+        sessions.filter((entry) => entry.id !== 'thread-61'),
+        'thread-1',
+      ),
+    )
+    expect(list.scrollTop).toBe(60 * 30)
+    expect(screen.getByRole('button', { name: 'Chat 62, Codex' })).toBeTruthy()
+
+    view.rerender(content(sessions, 'thread-1'))
+    expect(list.scrollTop).toBe(60 * 30)
+    expect(screen.getByRole('button', { name: 'Chat 61, Codex' })).toBeTruthy()
+
+    view.rerender(content(sessions, 'thread-40'))
+    expect(list.scrollTop).toBe(39 * 30 - 8 * 30)
+  })
 
   it('starts with only the active project expanded', () => {
     vi.useFakeTimers()
@@ -848,6 +1212,36 @@ describe('Sidebar chat actions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Quiet' }))
     expect(view.container.querySelectorAll('.sess')).toHaveLength(1)
     vi.useRealTimers()
+  })
+
+  it('keeps opened projects expanded when switching projects or leaving the active chat', () => {
+    const projects = [
+      { path: '/work/first', name: 'First', sessions: [] as [] },
+      { path: '/work/second', name: 'Second', sessions: [] as [] },
+      { path: '/work/third', name: 'Third', sessions: [] as [] },
+    ]
+    const view = renderProjectCatalog(projects, '/work/first')
+    const expanded = (name: string) =>
+      screen.getByRole('button', { name }).getAttribute('aria-expanded')
+    fireEvent.click(screen.getByRole('button', { name: 'Second' }))
+    view.navigate('/work/second')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('false')
+
+    view.navigate()
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Second')).toBe('true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'First' }))
+    view.navigate('/work/third')
+    expect(expanded('First')).toBe('false')
+    expect(expanded('Second')).toBe('true')
+    expect(expanded('Third')).toBe('true')
+
+    view.navigate('/work/first')
+    expect(expanded('First')).toBe('true')
+    expect(expanded('Third')).toBe('true')
   })
 
   it('reorders chats when one is dragged between sidebar rows', () => {

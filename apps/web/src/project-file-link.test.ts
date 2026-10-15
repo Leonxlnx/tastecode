@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   preserveProjectFileLinks,
+  preserveRelativeLink,
   projectFileLinkParseWindow,
   projectFileReference,
 } from './project-file-link.js'
@@ -150,6 +151,21 @@ describe('project file links', () => {
     ).toEqual({ kind: 'safe', path: '/Users/blue/Developer/site/src/index.ts' })
   })
 
+  it('accepts slash-prefixed Windows drives without allowing traversal or other projects', () => {
+    const root = 'E:/randomtesting/A_personalharness/AAAA/test24'
+    expect(projectFileReference(`/${root}/dist/index.html`, root)).toEqual({
+      kind: 'safe',
+      path: 'E:\\randomtesting\\A_personalharness\\AAAA\\test24\\dist\\index.html',
+    })
+    for (const candidate of [
+      `/${root}/../test25/index.html`,
+      '/C:/other/index.html',
+      '//server/share/index.html',
+    ]) {
+      expect(projectFileReference(candidate, root)?.kind).toBe('blocked')
+    }
+  })
+
   it('accepts files inside a stored home-relative macOS project', () => {
     expect(
       projectFileReference('/Users/blue/Developer/site/src/index.ts:42', '~/Developer/site'),
@@ -161,6 +177,26 @@ describe('project file links', () => {
       path: '/Users/blue/Developer/other/secret.ts',
       reason: 'This file is outside the selected project',
     })
+  })
+
+  it('resolves preserved relative links inside the project', () => {
+    const relative = (href: string, root: string) =>
+      projectFileReference(preserveRelativeLink(href), root)
+
+    expect(relative('./src/a.ts:12', '/home/u/project')).toEqual({
+      kind: 'safe',
+      path: '/home/u/project/src/a.ts',
+    })
+    expect(relative('src/a%20b.ts', 'E:\\project')).toEqual({
+      kind: 'safe',
+      path: 'E:\\project\\src\\a b.ts',
+    })
+    expect(relative('../secret.ts', '/home/u/project')?.kind).toBe('blocked')
+    expect(relative('src/a.ts', '~/project')).toBeUndefined()
+    for (const href of ['https://example.com', '/abs.ts', '#top', '?q', 'mailto:a@b.c', '..']) {
+      expect(preserveRelativeLink(href)).toBe(href)
+    }
+    expect(preserveRelativeLink('//example.com/docs')).toBe('https://example.com/docs')
   })
 
   it('blocks traversal, sibling, drive, and network paths with useful reasons', () => {

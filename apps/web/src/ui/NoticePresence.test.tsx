@@ -2,8 +2,9 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-import { act, cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import * as bridge from '../bridge.js'
 import { NoticePresence } from './NoticePresence.js'
 
 const rootCssPath = resolve(process.cwd(), 'apps/web/src/styles/app.css')
@@ -12,7 +13,11 @@ const css = readFileSync(
   'utf8',
 )
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  vi.useRealTimers()
+})
 
 function dispatchTransitionEnd(element: Element, propertyName: string) {
   const event = new Event('transitionend', { bubbles: true })
@@ -21,6 +26,171 @@ function dispatchTransitionEnd(element: Element, propertyName: string) {
 }
 
 describe('NoticePresence', () => {
+  it('reports startup activity until the exit transition actually completes', () => {
+    const milestone = vi.spyOn(bridge, 'reportStartupMilestone')
+    const view = render(
+      <NoticePresence className="notice" role="status" visible>
+        Update
+      </NoticePresence>,
+    )
+    expect(milestone).toHaveBeenCalledExactlyOnceWith('notice-open')
+    view.rerender(
+      <NoticePresence className="notice" role="status" visible={false}>
+        Update
+      </NoticePresence>,
+    )
+    expect(milestone).not.toHaveBeenCalledWith('notice-closed')
+    act(() => dispatchTransitionEnd(screen.getByRole('status'), 'opacity'))
+    expect(milestone).toHaveBeenLastCalledWith('notice-closed')
+    expect(milestone).toHaveBeenCalledTimes(2)
+    view.unmount()
+    expect(milestone).toHaveBeenCalledTimes(2)
+  })
+
+  it.each(['finished', 'cancelled'] as const)(
+    'removes an occluded notice when its transition is %s without an end event',
+    async (outcome) => {
+      let finish!: () => void
+      let cancel!: () => void
+      const finished = new Promise<void>((resolve, reject) => {
+        finish = resolve
+        cancel = () => reject(new Error('Transition cancelled'))
+      })
+      const view = render(
+        <NoticePresence className="notice" role="status" visible>
+          Update
+        </NoticePresence>,
+      )
+      Object.defineProperty(screen.getByRole('status'), 'getAnimations', {
+        value: () => [{ finished }],
+      })
+      view.rerender(
+        <NoticePresence className="notice" role="status" visible={false}>
+          Update
+        </NoticePresence>,
+      )
+      expect(screen.getByRole('status').getAttribute('data-state')).toBe('closing')
+      await act(async () => {
+        if (outcome === 'finished') finish()
+        else cancel()
+      })
+      expect(screen.queryByRole('status')).toBeNull()
+    },
+  )
+
+  it('finishes an exit when the page becomes hidden', () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const notice = (visible: boolean) => (
+      <NoticePresence className="notice" role="status" visible={visible}>
+        Update
+      </NoticePresence>
+    )
+    const view = render(notice(true))
+    view.rerender(notice(false))
+    expect(screen.getByRole('status').getAttribute('data-state')).toBe('closing')
+    visibility.mockReturnValue('hidden')
+    act(() => document.dispatchEvent(new Event('visibilitychange')))
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('does not remove a reopened notice when its old transition finishes', async () => {
+    let finish!: () => void
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const notice = (visible: boolean) => (
+      <NoticePresence className="notice" role="status" visible={visible}>
+        Update
+      </NoticePresence>
+    )
+    const view = render(notice(true))
+    Object.defineProperty(screen.getByRole('status'), 'getAnimations', {
+      value: () => [{ finished }],
+    })
+    view.rerender(notice(false))
+    view.rerender(notice(true))
+    await act(async () => finish())
+    expect(screen.getByRole('status').getAttribute('data-state')).toBe('open')
+  })
+
+  it('uses the latest callback without restarting the timeout on renders', () => {
+    vi.useFakeTimers()
+    const first = vi.fn()
+    const latest = vi.fn()
+    const view = render(
+      <NoticePresence className="notice" role="status" visible onDismiss={first}>
+        Update
+      </NoticePresence>,
+    )
+    act(() => vi.advanceTimersByTime(4_000))
+    view.rerender(
+      <NoticePresence className="notice" role="status" visible onDismiss={latest}>
+        Update
+      </NoticePresence>,
+    )
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(first).not.toHaveBeenCalled()
+    expect(latest).toHaveBeenCalledOnce()
+  })
+
+  it('pauses for hover, focus and work, then gives changed content a fresh timeout', () => {
+    vi.useFakeTimers()
+    const dismiss = vi.fn()
+    const renderNotice = (paused = false, key = 'first') => (
+      <NoticePresence
+        className="notice"
+        role="status"
+        visible
+        onDismiss={dismiss}
+        autoDismissPaused={paused}
+        dismissKey={key}
+      >
+        <button>Update</button>
+      </NoticePresence>
+    )
+    const view = render(renderNotice())
+    fireEvent.mouseEnter(screen.getByRole('status'))
+    act(() => vi.advanceTimersByTime(6_000))
+    fireEvent.mouseLeave(screen.getByRole('status'))
+    act(() => screen.getByRole('button').focus())
+    act(() => vi.advanceTimersByTime(6_000))
+    act(() => screen.getByRole('button').blur())
+    view.rerender(renderNotice(true))
+    act(() => vi.advanceTimersByTime(6_000))
+    expect(dismiss).not.toHaveBeenCalled()
+    view.rerender(renderNotice())
+    act(() => vi.advanceTimersByTime(4_000))
+    view.rerender(renderNotice(false, 'second'))
+    act(() => vi.advanceTimersByTime(4_999))
+    expect(dismiss).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(1))
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
+  it('resumes once the focused control removes itself', () => {
+    vi.useFakeTimers()
+    const dismiss = vi.fn()
+    const renderNotice = (phase: 'idle' | 'running') => (
+      <NoticePresence
+        className="notice"
+        role="status"
+        visible
+        onDismiss={dismiss}
+        dismissKey={phase}
+      >
+        {phase === 'idle' ? <button>Update</button> : <span>Updating</span>}
+      </NoticePresence>
+    )
+    const view = render(renderNotice('idle'))
+    act(() => screen.getByRole('button').focus())
+    act(() => vi.advanceTimersByTime(6_000))
+    expect(dismiss).not.toHaveBeenCalled()
+    // Browsers fire no blur for a focused element that leaves the document.
+    view.rerender(renderNotice('running'))
+    act(() => vi.advanceTimersByTime(5_000))
+    expect(dismiss).toHaveBeenCalledOnce()
+  })
+
   it('starts hidden when visible is false', () => {
     render(
       <NoticePresence className="notice" role="alert" visible={false}>
@@ -117,6 +287,98 @@ describe('NoticePresence', () => {
       dispatchTransitionEnd(notice, 'opacity')
     })
     expect(screen.getByRole('alert')).toBeTruthy()
+  })
+
+  describe('over a docked composer', () => {
+    const windowSize = { width: window.innerWidth, height: window.innerHeight }
+    const setWindow = (width: number, height: number) => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
+    }
+    const dockComposer = (options: { newSession?: boolean } = {}) => {
+      const conversation = document.createElement('div')
+      conversation.className = `stage__conversation${options.newSession ? ' is-new-session' : ''}`
+      const composer = document.createElement('div')
+      composer.className = 'composer'
+      const box = document.createElement('div')
+      box.className = 'composer__box'
+      composer.append(box)
+      conversation.append(composer)
+      document.body.append(conversation)
+      const place = (rect: { top: number; left: number; width: number; height: number }) => {
+        composer.getBoundingClientRect = () =>
+          ({
+            ...rect,
+            x: rect.left,
+            y: rect.top,
+            right: rect.left + rect.width,
+            bottom: rect.top + rect.height,
+            toJSON: () => rect,
+          }) as DOMRect
+      }
+      // An 800px column, 24px of composer padding, a 720px box.
+      place({ top: 700, left: 300, width: 800, height: 160 })
+      Object.defineProperty(box, 'offsetLeft', { configurable: true, value: 24 })
+      Object.defineProperty(box, 'offsetWidth', { configurable: true, value: 720 })
+      return { conversation, place }
+    }
+
+    afterEach(() => {
+      document.querySelectorAll('.stage__conversation').forEach((node) => node.remove())
+      setWindow(windowSize.width, windowSize.height)
+    })
+
+    it('lifts an open toast above the composer and right-aligns it with the box', () => {
+      setWindow(1280, 860)
+      dockComposer()
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Your draft was replaced.
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('alert')
+      // 160px of composer, then the Jump to latest lane.
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
+      // 1280 - (300 + 24 + 720): the toast ends where the box ends, not over Send.
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('236px')
+    })
+
+    it('follows the composer when the window resizes', () => {
+      setWindow(1280, 860)
+      const { place } = dockComposer()
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Your draft was replaced.
+        </NoticePresence>,
+      )
+
+      // A narrow window: the box fills the column and the composer grows.
+      setWindow(727, 640)
+      place({ top: 420, left: 0, width: 727, height: 220 })
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      const notice = screen.getByRole('alert')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('276px')
+      // Never closer than 12px to the window edge.
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('12px')
+    })
+
+    it('keeps the window corner when no composer is docked', () => {
+      setWindow(1280, 860)
+      dockComposer({ newSession: true })
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Changes undone.
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('alert')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
   })
 
   it('keeps reduced motion notice handoff to opacity only', () => {

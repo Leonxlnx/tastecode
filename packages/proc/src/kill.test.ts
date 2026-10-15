@@ -22,6 +22,37 @@ function heartbeat(file: string, ignoreTerm = false): string {
 }
 
 describe('owned process tree termination', () => {
+  it.runIf(process.platform === 'win32')(
+    'keeps the event loop responsive while taskkill stops a tree',
+    async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'harness-async-taskkill-'))
+      const file = path.join(directory, 'leaf')
+      const parent = `const { spawn } = require('node:child_process'); spawn(process.execPath, ['-e', ${JSON.stringify(heartbeat(file))}], { stdio: 'ignore' }); setInterval(() => {}, 1000);`
+      const child = spawnCli(process.execPath, ['-e', parent])
+      try {
+        await waitForFile(file)
+        // A synchronous taskkill blocks the loop for its whole run (about
+        // 500 ms on Windows), which froze every stream on the server.
+        let last = performance.now()
+        let worstGap = 0
+        const ticker = setInterval(() => {
+          const now = performance.now()
+          worstGap = Math.max(worstGap, now - last)
+          last = now
+        }, 5)
+        const started = performance.now()
+        await killTree(child)
+        const elapsed = performance.now() - started
+        clearInterval(ticker)
+        expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
+        expect(worstGap).toBeLessThan(Math.max(150, elapsed / 2))
+      } finally {
+        await killTree(child)
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
   it.skipIf(process.platform === 'win32')(
     'stops grandchildren after their leader exits and leaves another group alive',
     async () => {
@@ -57,6 +88,7 @@ describe('owned process tree termination', () => {
     try {
       await waitForFile(file)
       await killTree(child)
+      expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
       const stopped = readFileSync(file, 'utf8')
       await sleep(150)
       expect(readFileSync(file, 'utf8')).toBe(stopped)
@@ -110,7 +142,8 @@ describe('owned process tree termination', () => {
     const child = { pid: 1, exitCode: null as number | null, signalCode: null, kill }
     try {
       const stopped = expect(killTree(child)).rejects.toThrow('did not exit')
-      await vi.advanceTimersByTimeAsync(1600)
+      // On Windows the asynchronous taskkill attempt is bounded by 1.5 s first.
+      await vi.advanceTimersByTimeAsync(3100)
       await stopped
       expect(kill.mock.calls).toHaveLength(2)
       child.exitCode = 0

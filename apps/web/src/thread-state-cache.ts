@@ -119,7 +119,11 @@ export function pruneInactiveThreadStates(
     if (id === options.activeId || options.protectedIds?.has(id) || options.isProtected?.(id))
       continue
     if (state.running) {
-      if (options.isPartial?.(id)) continue
+      if (options.isPartial?.(id)) {
+        states.set(id, compactRunningTranscript(state))
+        options.onCompact?.(id)
+        continue
+      }
       const usage = runningTranscriptUsage(state)
       runningCandidates.push({
         id,
@@ -311,5 +315,7 @@ function compactRunningTranscript(state: ThreadState): ThreadState {
   delete compacted.usage
   delete compacted.diff
   delete compacted.diffTurnId
+  // Its items are gone, so the cursor no longer marks where they begin.
+  delete compacted.olderCursor
   return compacted
 }

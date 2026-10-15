@@ -1,0 +1,176 @@
+/* The account footer is one raised card rather than a full-bleed rule over a
+   row: the rail ends in something soft instead of a hard line. The whole card
+   is the account trigger, so the popup can sit flush with it; the settings
+   gear rides on its right edge as a sibling, because a button cannot nest. */
+.account-card {
+  position: relative;
+  min-width: 0;
+  border-radius: var(--r-card);
+  background: var(--rail-raised);
+  box-shadow:
+    inset 0 0 0 1px var(--rail-raised-ring),
+    var(--shadow-raised);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.account-card:has(.account-card__trigger:hover:not(:disabled)) {
+  background: var(--control-hover);
+}
+
+.account-card:has(.account-card__trigger[aria-expanded='true']) {
+  background: var(--control-pressed);
+}
+
+.account-card > .menuwrap {
+  min-width: 0;
+}
+
+.account-card__trigger.menutrigger {
+  width: 100%;
+  min-height: 46px;
+  /* Room on the right for the gear, which overlays the card. */
+  padding: 7px 44px 7px 7px;
+  background: none;
+  border-radius: var(--r-card);
+  color: var(--rail-text);
+}
+
+.account-card__trigger.menutrigger:hover:not(:disabled) {
+  background: none;
+}
+
+.account-card__trigger:focus-visible,
+.account-card__settings:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+
+.account__avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  overflow: hidden;
+  background: var(--surface-3);
+  border-radius: var(--r-circle);
+  /* Drawn over the picture: a soft edge on light grounds without a hard ring. */
+  outline: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  outline-offset: -1px;
+}
+
+.account__avatar img,
+.account__avatar svg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.account__identity {
+  display: grid;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+}
+
+.account__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--rail-font-size);
+  font-weight: 500;
+  letter-spacing: var(--rail-letter-spacing);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account__usage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 12px;
+}
+
+/* The mark names the provider the figure belongs to. */
+.account__usage-mark {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+}
+
+/* Same quiet track and fill as the popup's bars, so a full allowance does
+   not draw a bright rule under the name. */
+.account__meter {
+  flex: 1;
+  min-width: 24px;
+  max-width: 76px;
+  height: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-radius: var(--r-pill);
+}
+
+.account__meter > span {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, var(--text) 52%, transparent);
+  border-radius: inherit;
+  transform-origin: left center;
+  transition: transform var(--dur-slow) var(--ease-out);
+}
+
+.account__meter[data-low] > span {
+  background: var(--error);
+}
+
+.account__usage-value {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.account-card__settings {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-circle);
+  color: var(--text-3);
+  cursor: pointer;
+  translate: 0 -50%;
+}
+
+.account-card__settings:hover {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+/* The popup opens flush with the card: same width, same corner. */
+.menu.menu--account {
+  width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
+  padding: 4px;
+  border-radius: var(--r-card);
+}
+
+.menu.menu--account .menu__item {
+  padding-block: 7px;
+}

@@ -7,13 +7,19 @@ import type {
   McpServerStatus,
   Options,
   SDKControlInitializeResponse,
+  SDKControlInterruptResponse,
   SDKMessage,
   SDKPartialAssistantMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { DomainEvent, Item } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
-import { ClaudeCodeAdapter, CLAUDE_CAPABILITIES, claudeUserMessage } from './adapter.js'
+import {
+  ClaudeCodeAdapter,
+  CLAUDE_CAPABILITIES,
+  CLAUDE_MODELS,
+  claudeUserMessage,
+} from './adapter.js'
 import type { ClaudeQueryFactory, ClaudeQueryRuntime } from './sdk-runtime.js'
 import { createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import { Store } from '../../../apps/server/src/store.js'
@@ -36,6 +42,8 @@ class FakeQuery implements ClaudeQueryRuntime {
   readonly models: ModelInfo[]
   closed = false
   interrupts = 0
+  /** Async messages the CLI reports as surviving the next interrupt; older CLIs send none. */
+  stillQueued: string[] | undefined
   readonly modelsSet: Array<string | undefined> = []
   readonly permissionModes: string[] = []
   readonly mcpConfigurations: Record<string, McpServerConfig>[] = []
@@ -57,8 +65,9 @@ class FakeQuery implements ClaudeQueryRuntime {
     for (const waiter of this.#waiters.splice(0)) waiter({ value: undefined, done: true })
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(): Promise<SDKControlInterruptResponse | undefined> {
     this.interrupts += 1
+    return this.stillQueued && { still_queued: this.stillQueued }
   }
 
   async setModel(model?: string): Promise<void> {
@@ -128,6 +137,76 @@ function harness(models: ModelInfo[] = []) {
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve))
 
 describe('Claude Agent SDK session', () => {
+  it.each([false, true])('detaches after an unexpected stream end (active: %s)', async (active) => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const disconnected = vi.fn(() => events.slice())
+    adapter.onDisconnected(disconnected)
+    const thread = await adapter.startThread('/repo')
+    if (active) await adapter.sendTurn(thread.id, 'Work')
+    fake.queries[0]!.close()
+    await tick()
+    expect(disconnected).toHaveBeenCalledOnce()
+    expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(active ? 1 : 0)
+    expect(disconnected.mock.results[0]!.value).toEqual(events)
+    await adapter.dispose()
+    expect(disconnected).toHaveBeenCalledOnce()
+  })
+
+  it('includes a bounded tool name and argument summary for generic approvals', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Work')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'mcp__mail__send',
+      { to: 'person@example.test', body: 'x'.repeat(5_000) },
+      { signal: new AbortController().signal, toolUseID: 'mail' },
+    )
+    const event = events.find((entry) => entry.type === 'approval.requested')
+    if (event?.type !== 'approval.requested') throw new Error('missing approval')
+    expect(event.request.reason).toContain('mcp__mail__send')
+    expect(event.request.reason).toContain('person@example.test')
+    expect(event.request.reason!.length).toBeLessThanOrEqual(2_000)
+    adapter.respondToApproval(event.request.id, 'deny')
+    await pending
+    await adapter.dispose()
+  })
+
+  it('preserves multi-select and stringifies all selected labels for Claude', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Choose')
+    const pending = fake.inputs[0]!.options.canUseTool!(
+      'AskUserQuestion',
+      {
+        questions: [
+          {
+            question: 'constructor',
+            multiSelect: true,
+            options: [{ label: 'React' }, { label: 'Vue' }],
+          },
+        ],
+      },
+      { signal: new AbortController().signal, toolUseID: 'ask' },
+    )
+    const event = events.find((entry) => entry.type === 'user_input.requested')
+    if (event?.type !== 'user_input.requested') throw new Error('missing question')
+    expect(event.request.questions[0]).toMatchObject({ id: 'constructor', multiSelect: true })
+    adapter.respondToUserInput(event.request.id, { constructor: ['React', 'Vue', 'Other choice'] })
+    await expect(pending).resolves.toMatchObject({
+      updatedInput: { answers: { constructor: 'React, Vue, Other choice' } },
+    })
+    await adapter.dispose()
+  })
+
   it.each([false, true])('passes project MCP safely on open (resume: %s)', async (resume) => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -618,6 +697,42 @@ describe('Claude Agent SDK session', () => {
     }
   })
 
+  it('creates a session that never received a prompt instead of failing to resume it', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        // Captured from claude 2.1.296: an unused --session-id writes no
+        // transcript, so --resume of that id fails during startup.
+        if (input.options.resume) {
+          vi.spyOn(query, 'initializationResult').mockRejectedValue(
+            new Error(
+              `Claude Code returned an error result: No conversation found with session ID: ${input.options.resume}`,
+            ),
+          )
+        }
+        return query
+      },
+    })
+    const sessionId = crypto.randomUUID()
+    try {
+      const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+
+      expect(thread.id).toBe(`claude-${sessionId}`)
+      expect(fake.inputs.map(({ options }) => [options.resume, options.sessionId])).toEqual([
+        [sessionId, undefined],
+        [undefined, sessionId],
+      ])
+      expect(fake.queries[0]!.closed).toBe(true)
+      await adapter.sendTurn(thread.id, 'Hello')
+      expect(
+        (await fake.inputs[1]!.prompt[Symbol.asyncIterator]().next()).value?.message.content,
+      ).toEqual([{ type: 'text', text: 'Hello' }])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('does not reuse a turn identity when a new instance resumes the session', async () => {
     const first = new ClaudeCodeAdapter({ createQuery: harness().createQuery })
     const resumed = new ClaudeCodeAdapter({ createQuery: harness().createQuery })
@@ -727,6 +842,72 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it.each([undefined, 'medium', 'high', 'xhigh', 'max'])(
+    'keeps a new session when the first turn lowers effort from %s',
+    async (effort) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      try {
+        const thread = await adapter.startThread('/repo', { effort })
+        const sessionId = fake.inputs[0]!.options.sessionId
+        await adapter.sendTurn(thread.id, 'Start the design brief', [], { effort: 'low' })
+
+        expect(fake.queries).toHaveLength(2)
+        expect(fake.queries[0]!.closed).toBe(true)
+        expect(fake.inputs[1]!.options.sessionId).toBe(sessionId)
+        expect(fake.inputs[1]!.options.resume).toBeUndefined()
+        expect(fake.inputs[1]!.options.effort).toBe('low')
+        const prompts = fake.inputs[1]!.prompt[Symbol.asyncIterator]()
+        expect((await prompts.next()).value?.message.content).toEqual([
+          { type: 'text', text: 'Start the design brief' },
+        ])
+
+        fake.queries[1]!.emitMessage(resultMessage(false))
+        await tick()
+        await adapter.sendTurn(thread.id, 'Build the design', [], { effort: 'high' })
+        expect(fake.inputs[2]!.options.resume).toBe('session-1')
+        expect(fake.inputs[2]!.options.sessionId).toBeUndefined()
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('preserves saved history when effort changes before the first resumed turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const thread = await adapter.resumeThread('claude-existing', '/repo', { effort: 'high' })
+      await adapter.sendTurn(thread.id, 'Start the design brief', [], { effort: 'low' })
+
+      expect(fake.queries).toHaveLength(2)
+      expect(fake.inputs[1]!.options.resume).toBe('existing')
+      expect(fake.inputs[1]!.options.sessionId).toBeUndefined()
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('resets resume eligibility when a used adapter opens a new thread', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    try {
+      const first = await adapter.startThread('/repo')
+      await adapter.sendTurn(first.id, 'One')
+      fake.queries[0]!.emitMessage(resultMessage(false))
+      await tick()
+      await adapter.dispose()
+
+      const next = await adapter.startThread('/repo', { effort: 'high' })
+      const sessionId = fake.inputs[1]!.options.sessionId
+      await adapter.sendTurn(next.id, 'Start the design brief', [], { effort: 'low' })
+      expect(fake.inputs[2]!.options.sessionId).toBe(sessionId)
+      expect(fake.inputs[2]!.options.resume).toBeUndefined()
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('resumes through a fresh SDK query when effort changes between turns', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -741,6 +922,47 @@ describe('Claude Agent SDK session', () => {
     expect(fake.inputs[1]!.options.effort).toBe('high')
     adapter.dispose()
   })
+
+  it.each(['factory', 'initialize', 'exit'] as const)(
+    'detaches once when an effort restart fails in %s',
+    async (phase) => {
+      const fake = harness()
+      let failing = false
+      const adapter = new ClaudeCodeAdapter({
+        createQuery: (input) => {
+          if (failing && phase === 'factory') throw new Error('Claude could not start')
+          const query = fake.createQuery(input) as FakeQuery
+          if (failing)
+            vi.spyOn(query, 'initializationResult').mockImplementation(async () => {
+              if (phase === 'exit') query.close()
+              await tick()
+              throw new Error('Claude could not start')
+            })
+          return query
+        },
+      })
+      const disconnected = vi.fn()
+      adapter.onDisconnected(disconnected)
+      try {
+        const thread = await adapter.startThread('/repo', { effort: 'low' })
+        await adapter.sendTurn(thread.id, 'Brief')
+        fake.queries[0]!.emitMessage(resultMessage(false))
+        await tick()
+
+        failing = true
+        await expect(adapter.sendTurn(thread.id, 'Build', [], { effort: 'high' })).rejects.toThrow(
+          'Claude could not start',
+        )
+        await tick()
+        expect(disconnected).toHaveBeenCalledOnce()
+        await expect(adapter.sendTurn(thread.id, 'Again')).rejects.toThrow(
+          'Claude session is closed',
+        )
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
 
   it('streams assistant text through one started/delta/completed lifecycle', async () => {
     const fake = harness()
@@ -845,6 +1067,68 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('logs a redacted approval abort failure without ending the active turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    const secret = `canary-${crypto.randomUUID()}`
+    adapter.on('event', (event) => events.push(event))
+    adapter.on('log', (line) => logs.push(line))
+    try {
+      const thread = await adapter.startThread('/repo', {
+        approval: 'ask',
+        mcpServers: [
+          {
+            id: 'remote',
+            enabled: true,
+            transport: {
+              type: 'http',
+              url: 'https://example.test/mcp',
+              headers: { Authorization: { source: 'credential', credentialRef: 'token' } },
+            },
+          },
+        ],
+        mcpCredentials: { token: secret },
+      })
+      const turnId = await adapter.sendTurn(thread.id, 'Run it')
+      const interrupt = vi
+        .spyOn(fake.queries[0]!, 'interrupt')
+        .mockRejectedValueOnce(new Error(`cannot stop: ${secret}`))
+      const pending = fake.inputs[0]!.options.canUseTool!(
+        'Bash',
+        { command: 'npm test' },
+        { signal: new AbortController().signal, toolUseID: 'abort-failure' },
+      )
+      const request = events.find((event) => event.type === 'approval.requested')
+      if (request?.type !== 'approval.requested') throw new Error('approval request missing')
+
+      adapter.respondToApproval(request.request.id, 'abort')
+      await expect(pending).resolves.toMatchObject({ behavior: 'deny', interrupt: true })
+      await tick()
+
+      expect(interrupt).toHaveBeenCalledTimes(1)
+      expect(logs).toContain('Could not stop Claude: cannot stop: [REDACTED]')
+      expect(JSON.stringify({ events, logs })).not.toContain(secret)
+      expect(events.filter((event) => event.type === 'approval.resolved')).toEqual([
+        { type: 'approval.resolved', id: request.request.id },
+      ])
+      expect(
+        events.filter((event) => event.type === 'thread.error' || event.type === 'turn.completed'),
+      ).toEqual([])
+      await expect(adapter.sendTurn(thread.id, 'Too soon')).rejects.toThrow('running turn')
+
+      fake.queries[0]!.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        expect.objectContaining({ turnId }),
+      ])
+      await expect(adapter.sendTurn(thread.id, 'Next turn')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('round-trips AskUserQuestion answers using the question text as Claude expects', async () => {
     const fake = harness()
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
@@ -891,6 +1175,349 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
+  it('ends a stopped tool call as interrupted without a diagnostic error', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    await adapter.interrupt()
+    fake.queries[0]!.emitMessage({
+      ...(resultMessage(true) as object),
+      terminal_reason: 'aborted_tools',
+      errors: ['[ede_diagnostic] result_type=user last_content_type=n/a stop_reason=tool_use'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'interrupted',
+    })
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+    adapter.dispose()
+  })
+
+  it.each(['receipt first', 'result first'] as const)(
+    'keeps a stopped turn open for a steer that outlives it (%s)',
+    async (order) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      const logs: string[] = []
+      adapter.on('event', (event) => events.push(event))
+      adapter.on('log', (line) => logs.push(line))
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+        const first = await adapter.sendTurn(thread.id, 'A')
+        await prompts.next()
+        await adapter.steer(thread.id, 'B')
+        const steer = (await prompts.next()).value!
+        // The SDK documents that queued async messages survive an interrupt and run next.
+        const stopped = { ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage
+        if (order === 'receipt first') {
+          query.stillQueued = [steer.uuid!]
+          await adapter.interrupt()
+          query.emitMessage(stopped)
+        } else {
+          let receipt!: (value: SDKControlInterruptResponse) => void
+          vi.spyOn(query, 'interrupt').mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                receipt = resolve
+              }),
+          )
+          const stopping = adapter.interrupt()
+          query.emitMessage(stopped)
+          await tick()
+          receipt({ still_queued: [steer.uuid!] })
+          await stopping
+        }
+        await tick()
+        await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+
+        query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+        const next = await adapter.sendTurn(thread.id, 'C')
+        query.emitMessage(assistantMessage('message-c', 'Answer to C'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+
+        expect(
+          events.flatMap((event) =>
+            event.type === 'item.completed' && event.item.type === 'message'
+              ? [{ turnId: event.item.turnId, text: event.item.text }]
+              : [],
+          ),
+        ).toEqual([
+          { turnId: first, text: 'Answer to B' },
+          { turnId: next, text: 'Answer to C' },
+        ])
+        expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+        expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+          { type: 'turn.completed', turnId: first, status: 'completed' },
+          { type: 'turn.completed', turnId: next, status: 'completed' },
+        ])
+        expect(events.filter((event) => event.type === 'thread.error')).toEqual([])
+        expect(logs.filter((line) => line.includes('outside an active turn'))).toEqual([])
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it.each(['without Stop', 'with Stop after the steer started'] as const)(
+    'keeps a steered turn open until the steer has run (%s)',
+    async (variant) => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.startThread('/repo')
+        const query = fake.queries[0]!
+        const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+        query.emitMessage(initMessage(['interrupt_receipt_v1', 'msg_lifecycle_v1']))
+        const first = await adapter.sendTurn(thread.id, 'A')
+        const prompt = (await prompts.next()).value!
+        await adapter.steer(thread.id, 'B')
+        const steer = (await prompts.next()).value!
+        // Captured order: the steer cuts run A short, and A's result comes before A's cancel
+        // and before the steer starts. A Stop sent after that start finds nothing queued.
+        query.emitMessage(lifecycle(steer.uuid!, 'queued'))
+        query.emitMessage(assistantMessage('message-a', 'Story'))
+        query.emitMessage(resultMessage(false))
+        query.emitMessage(lifecycle(prompt.uuid!, 'cancelled'))
+        query.emitMessage(lifecycle(steer.uuid!, 'started'))
+        await tick()
+        await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+        if (variant === 'without Stop') {
+          query.emitMessage(assistantMessage('message-b', 'Answer to B'))
+          query.emitMessage(resultMessage(false))
+        } else {
+          query.stillQueued = []
+          await adapter.interrupt()
+          query.emitMessage({
+            ...(resultMessage(true) as object),
+            errors: ['aborted'],
+          } as SDKMessage)
+        }
+        query.emitMessage(lifecycle(steer.uuid!, 'completed'))
+        await tick()
+        const next = await adapter.sendTurn(thread.id, 'C')
+        query.emitMessage(assistantMessage('message-c', 'Answer to C'))
+        query.emitMessage(resultMessage(false))
+        await tick()
+
+        expect(messageTexts(events)).toEqual([
+          { turnId: first, text: 'Story' },
+          ...(variant === 'without Stop' ? [{ turnId: first, text: 'Answer to B' }] : []),
+          { turnId: next, text: 'Answer to C' },
+        ])
+        expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(2)
+        expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+          {
+            type: 'turn.completed',
+            turnId: first,
+            status: variant === 'without Stop' ? 'completed' : 'interrupted',
+          },
+          { type: 'turn.completed', turnId: next, status: 'completed' },
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+
+  it('ends a held turn when its waiting steer is cancelled without a run', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const prompts = fake.inputs[0]!.prompt[Symbol.asyncIterator]()
+      query.emitMessage(initMessage(['msg_lifecycle_v1']))
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await prompts.next()
+      await adapter.steer(thread.id, 'B')
+      const steer = (await prompts.next()).value!
+      query.emitMessage(lifecycle(steer.uuid!, 'queued'))
+      query.emitMessage(resultMessage(false))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([])
+
+      query.emitMessage(lifecycle(steer.uuid!, 'cancelled'))
+      await tick()
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'completed' },
+      ])
+      await expect(adapter.sendTurn(thread.id, 'C')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('opens a turn for output that arrives after its own turn ended', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const query = fake.queries[0]!
+      const first = await adapter.sendTurn(thread.id, 'A')
+      await adapter.steer(thread.id, 'B')
+      // An older CLI sends no interrupt receipt, so nothing says the steer still runs.
+      await adapter.interrupt()
+      query.emitMessage({ ...(resultMessage(true) as object), errors: ['aborted'] } as SDKMessage)
+      query.emitMessage(
+        streamEvent('wire-b', {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'text', text: 'Answer to B', citations: null },
+        }),
+      )
+      query.emitMessage(streamEvent('wire-b-stop', { type: 'content_block_stop', index: 0 }))
+      await tick()
+      await expect(adapter.sendTurn(thread.id, 'C')).rejects.toThrow('running turn')
+      query.emitMessage(resultMessage(false))
+      await tick()
+
+      const started = events.flatMap((event) =>
+        event.type === 'turn.started' ? [event.turn.id] : [],
+      )
+      expect(started).toHaveLength(2)
+      expect(started[0]).toBe(first)
+      expect(events).toContainEqual({
+        type: 'item.completed',
+        item: expect.objectContaining({ turnId: started[1], text: 'Answer to B' }),
+      })
+      expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+        { type: 'turn.completed', turnId: first, status: 'interrupted' },
+        { type: 'turn.completed', turnId: started[1], status: 'completed' },
+      ])
+      await expect(adapter.sendTurn(thread.id, 'C')).resolves.toBeTypeOf('string')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('still reports a real error when the stop request itself failed', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Run tests')
+    vi.spyOn(fake.queries[0]!, 'interrupt').mockRejectedValueOnce(new Error('control failed'))
+    await expect(adapter.interrupt()).rejects.toThrow('control failed')
+    fake.queries[0]!.emitMessage({
+      ...(resultMessage(true) as object),
+      errors: ['API error: overloaded'],
+    } as SDKMessage)
+    await tick()
+    expect(events.find((event) => event.type === 'turn.completed')).toMatchObject({
+      status: 'failed',
+    })
+    expect(events.find((event) => event.type === 'thread.error')).toMatchObject({
+      message: 'API error: overloaded',
+    })
+    adapter.dispose()
+  })
+
+  it('keeps subagent messages out of the main transcript, plan and model label', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { model: 'opus' })
+    await adapter.sendTurn(thread.id, 'Delegate')
+    const query = fake.queries[0]!
+    query.emitMessage({
+      type: 'assistant',
+      parent_tool_use_id: 'task-1',
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+      message: {
+        id: 'sub-msg',
+        role: 'assistant',
+        model: 'claude-sonnet-5',
+        type: 'message',
+        content: [
+          { type: 'text', text: 'Subagent internal notes' },
+          {
+            type: 'tool_use',
+            id: 'sub-todo',
+            name: 'TodoWrite',
+            input: { todos: [{ content: 'sub step', status: 'pending' }] },
+          },
+        ],
+      },
+    } as unknown as SDKMessage)
+    query.emitMessage({
+      type: 'user',
+      parent_tool_use_id: 'task-1',
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+      message: {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'sub-todo', content: 'Todos updated' }],
+      },
+    } as unknown as SDKMessage)
+    query.emitMessage(resultMessage(false))
+    await tick()
+    expect(events.filter((event) => event.type.startsWith('item.'))).toEqual([])
+    expect(events.filter((event) => event.type === 'plan.updated')).toEqual([])
+    expect(events.find((event) => event.type === 'usage.updated')).toMatchObject({
+      usage: { model: 'opus' },
+    })
+    adapter.dispose()
+  })
+
+  it('reports each turn its own share of the running session cost', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { effort: 'high' })
+    const finish = async (query: FakeQuery, total: number) => {
+      query.emitMessage({
+        ...(resultMessage(false) as object),
+        total_cost_usd: total,
+      } as SDKMessage)
+      await tick()
+    }
+    await adapter.sendTurn(thread.id, 'First')
+    await finish(fake.queries[0]!, 0.1)
+    await adapter.sendTurn(thread.id, 'Second')
+    await finish(fake.queries[0]!, 0.25)
+    // An effort change restarts the query, and the resumed query's total starts over.
+    await adapter.sendTurn(thread.id, 'Third', [], { effort: 'low' })
+    await finish(fake.queries[1]!, 0.05)
+    const costs = events.flatMap((event) =>
+      event.type === 'usage.updated' ? [event.usage.costUsd] : [],
+    )
+    expect(costs.map((cost) => cost?.toFixed(2))).toEqual(['0.10', '0.15', '0.05'])
+    const store = new Store(':memory:')
+    try {
+      store.addProject('/repo')
+      store.addThread({
+        id: thread.id,
+        projectPath: '/repo',
+        provider: 'claude-code',
+        title: 'Cost',
+      })
+      for (const event of events) store.append(thread.id, event)
+      expect(store.usageSummary(thread.id, 0).session.costUsd).toBeCloseTo(0.3)
+    } finally {
+      store.close()
+      adapter.dispose()
+    }
+  })
+
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
@@ -918,6 +1545,14 @@ describe('Claude Agent SDK session', () => {
         supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
       },
       {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+      },
+      {
         value: 'sonnet',
         resolvedModel: 'claude-sonnet-5',
         displayName: 'Sonnet',
@@ -941,21 +1576,222 @@ describe('Claude Agent SDK session', () => {
         isDefault: model.isDefault,
       })),
     ).toEqual([
-      { id: 'claude-fable-5[1m]', displayName: 'Claude Fable 5', isDefault: false },
-      { id: 'opus[1m]', displayName: 'Claude Opus 5', isDefault: true },
-      { id: 'sonnet', displayName: 'Claude Sonnet 5', isDefault: false },
-      { id: 'haiku', displayName: 'Claude Haiku 4.5', isDefault: false },
-      { id: 'claude-opus-4-8', displayName: 'Claude Opus 4.8', isDefault: false },
-      { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7', isDefault: false },
-      { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Claude Opus 4.5', isDefault: false },
-      { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6', isDefault: false },
+      { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'claude-opus-5-5', displayName: 'Opus 5.5', isDefault: false },
+      { id: 'claude-sonnet-5-5', displayName: 'Sonnet 5.5', isDefault: false },
+      { id: 'claude-haiku-5-5', displayName: 'Haiku 5.5', isDefault: false },
+      { id: 'claude-fable-5[1m]', displayName: 'Fable 5', isDefault: false },
+      { id: 'opus[1m]', displayName: 'Opus 5', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5', isDefault: false },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
     expect(models.filter((model) => model.displayName.includes('1M context'))).toEqual([])
     expect(models.filter((model) => model.isDefault)).toHaveLength(1)
     expect(fake.inputs[0]!.options.persistSession).toBe(false)
     adapter.dispose()
+  })
+
+  it('lists the aliases claude 2.1.296 resolves to the 5.5 lineup once, in tier order', async () => {
+    const efforts = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+    const fake = harness([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default (recommended)',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-5',
+        displayName: 'Sonnet',
+        description: 'Sonnet 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+      {
+        value: 'haiku',
+        resolvedModel: 'claude-haiku-5-5',
+        displayName: 'Haiku',
+        description: 'Haiku 5.5',
+        supportsEffort: true,
+        supportedEffortLevels: [...efforts],
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(
+      models.map((model) => ({
+        id: model.id,
+        displayName: model.displayName,
+        isDefault: model.isDefault,
+      })),
+    ).toEqual([
+      { id: 'claude-fable-5-1[1m]', displayName: 'Fable 5.1', isDefault: false },
+      { id: 'opus', displayName: 'Opus 5.5', isDefault: true },
+      { id: 'sonnet', displayName: 'Sonnet 5.5', isDefault: false },
+      { id: 'haiku', displayName: 'Haiku 5.5', isDefault: false },
+      { id: 'claude-fable-5', displayName: 'Fable 5', isDefault: false },
+      { id: 'claude-opus-5', displayName: 'Opus 5', isDefault: false },
+      { id: 'claude-sonnet-5', displayName: 'Sonnet 5', isDefault: false },
+      { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
+      { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
+      { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
+      { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', isDefault: false },
+    ])
+    expect(models.find((model) => model.id === 'haiku')?.reasoningEfforts).toEqual([...efforts])
+    adapter.dispose()
+  })
+
+  it('keeps the catalog default when the runtime reports no default row', async () => {
+    const fake = harness([
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(models.filter((model) => model.isDefault).map((model) => model.id)).toEqual(['opus'])
+    adapter.dispose()
+  })
+
+  it('places models the catalog does not list after the current lineup, newest first', async () => {
+    const fake = harness([
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Default',
+        description: 'Account default',
+        supportsEffort: true,
+      },
+      {
+        value: 'sonnet',
+        resolvedModel: 'claude-sonnet-5-6',
+        displayName: 'Sonnet',
+        description: 'Latest Sonnet',
+        supportsEffort: true,
+      },
+      {
+        value: 'claude-haiku-6',
+        resolvedModel: 'claude-haiku-6',
+        displayName: 'Haiku 6',
+        description: 'Latest Haiku',
+      },
+      {
+        value: 'opus[1m]',
+        resolvedModel: 'claude-opus-6[1m]',
+        displayName: 'Opus (1M context)',
+        description: 'Latest Opus with 1M context',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-6',
+        displayName: 'Opus',
+        description: 'Latest Opus',
+        supportsEffort: true,
+      },
+      {
+        value: 'experimental',
+        resolvedModel: 'claude-experimental',
+        displayName: 'Experimental',
+        description: 'Research preview',
+      },
+    ])
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const models = await adapter.listModels()
+    expect(models.map((model) => model.displayName)).toEqual([
+      'Fable 5.1',
+      'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+      'Opus 6',
+      'Haiku 6',
+      'Sonnet 5.6',
+      'Experimental',
+      'Fable 5',
+      'Opus 5',
+      'Sonnet 5',
+      'Opus 4.8',
+      'Opus 4.7',
+      'Opus 4.6',
+      'Opus 4.5',
+      'Sonnet 4.6',
+      'Haiku 4.5',
+    ])
+    expect(models.find((model) => model.isDefault)?.id).toBe('opus')
+    expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
+    adapter.dispose()
+  })
+})
+
+describe('Claude static model catalog', () => {
+  it('lists the current lineup first, then older generations in tier order', () => {
+    expect(CLAUDE_MODELS.map((model) => model.id)).toEqual([
+      'claude-fable-5-1',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'claude-haiku-5-5',
+      'claude-fable-5',
+      'claude-opus-5',
+      'claude-sonnet-5',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6',
+      'claude-opus-4-5',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5',
+    ])
+    expect(CLAUDE_MODELS.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
+      'claude-opus-5-5',
+    ])
+  })
+
+  it('offers the efforts each model accepts', () => {
+    const efforts = (id: string) => CLAUDE_MODELS.find((model) => model.id === id)?.reasoningEfforts
+    for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
+      expect(efforts(id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    }
+    expect(efforts('claude-haiku-4-5')).toEqual([])
+    expect(CLAUDE_MODELS.find((model) => model.id === 'claude-opus-4-7')).toMatchObject({
+      defaultReasoningEffort: 'xhigh',
+    })
   })
 })
 
@@ -1008,6 +1844,23 @@ function streamEvent(
   }
 }
 
+function assistantMessage(id: string, text: string): SDKMessage {
+  // SAFETY: The adapter reads only the envelope, message id, model and content of this fixture.
+  return {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+    message: {
+      id,
+      role: 'assistant',
+      model: 'claude-opus-5',
+      type: 'message',
+      content: [{ type: 'text', text }],
+    },
+  } as unknown as SDKMessage
+}
+
 function resultMessage(isError: boolean): SDKMessage {
   // SAFETY: This captured result fixture contains every field read by the adapter;
   // the SDK's expanding NonNullableUsage contract adds unrelated telemetry fields.
@@ -1033,4 +1886,35 @@ function resultMessage(isError: boolean): SDKMessage {
     uuid: crypto.randomUUID(),
     session_id: 'session-1',
   } as SDKMessage
+}
+
+function initMessage(capabilities: string[]): SDKMessage {
+  // SAFETY: The adapter reads only the model, version and capabilities of this fixture.
+  return {
+    type: 'system',
+    subtype: 'init',
+    model: 'claude-opus-5',
+    capabilities,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+  } as unknown as SDKMessage
+}
+
+/** Captured from claude 2.1.296; the SDK's message union does not declare this type. */
+function lifecycle(commandUuid: string, state: string): SDKMessage {
+  return {
+    type: 'command_lifecycle',
+    command_uuid: commandUuid,
+    state,
+    uuid: crypto.randomUUID(),
+    session_id: 'session-1',
+  } as unknown as SDKMessage
+}
+
+function messageTexts(events: DomainEvent[]) {
+  return events.flatMap((event) =>
+    event.type === 'item.completed' && event.item.type === 'message'
+      ? [{ turnId: event.item.turnId, text: event.item.text }]
+      : [],
+  )
 }

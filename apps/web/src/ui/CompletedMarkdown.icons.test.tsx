@@ -2,10 +2,43 @@
 import { cleanup, render } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
+import { CompletedMarkdown } from './CompletedMarkdown.js'
 
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+})
+
+describe('inline code file references', () => {
+  it('renders prototype property names as text rather than inherited icon kinds', () => {
+    const names = [
+      'constructor',
+      '__proto__',
+      'Foo.constructor',
+      'toString',
+      'x.hasOwnProperty',
+      'valueOf.js',
+    ]
+    const view = render(<CompletedMarkdown text={names.map((name) => `\`${name}\``).join(' ')} />)
+
+    for (const name of names) expect(view.getByText(name)).toBeTruthy()
+    expect(view.container.querySelectorAll('.md-file-ref')).toHaveLength(1)
+    expect(view.container.querySelector('[data-file-icon="javascript"]')).toBeTruthy()
+  })
+
+  it('keeps commands and member access that end in an extension as code', () => {
+    const view = render(
+      <CompletedMarkdown
+        text={
+          '`cat package.json` `process.env` `import.meta.env` `.env` `config/app.env` `package.json`'
+        }
+      />,
+    )
+
+    expect(
+      [...view.container.querySelectorAll('.md-file-ref')].map((node) => node.textContent),
+    ).toEqual(['.env', 'config/app.env', 'package.json'])
+  })
 })
 
 describe('Streamdown copy icon morph', () => {

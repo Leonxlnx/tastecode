@@ -1,8 +1,10 @@
 import path from 'node:path'
-import type { BrowserWindow } from 'electron'
+import { EventEmitter } from 'node:events'
+import type { BrowserWindow, WebContents } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PreviewCaptureOwner } from './preview-capture.js'
 import { PREVIEW_PAGE_HEIGHT_SCRIPT } from './preview-settle.js'
+import { configureRendererLifecycle } from './renderer-lifecycle.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -32,7 +34,10 @@ function fixture() {
           ? { body: 100_000_000, documentElement: 100_000_000 }
           : undefined,
     ),
-    capturePage: vi.fn().mockResolvedValue({ toPNG: () => Buffer.from('png') }),
+    debugger: {
+      attach: vi.fn(),
+      sendCommand: vi.fn().mockResolvedValue({ data: Buffer.from('png').toString('base64') }),
+    },
   }
   const windows: Array<{ destroy: ReturnType<typeof vi.fn>; loadURL: ReturnType<typeof vi.fn> }> =
     []
@@ -84,6 +89,38 @@ afterEach(() => {
 })
 
 describe('desktop preview capture ownership', () => {
+  it('releases a slow abandoned capture on renderer reload so its retry can run', async () => {
+    vi.useFakeTimers()
+    const test = fixture()
+    const abandoned = deferred<never>()
+    test.contents.debugger.sendCommand.mockReturnValueOnce(abandoned.promise)
+    const renderer = Object.assign(new EventEmitter(), {
+      reload: vi.fn(),
+      isDestroyed: () => false,
+    })
+    configureRendererLifecycle(renderer as unknown as WebContents, {
+      cancelCaptures: () => test.owner.cancelAll(),
+      onPageReplaced: vi.fn(),
+      isQuitting: () => false,
+      onRepeatedCrash: vi.fn(),
+    })
+    const first = test.owner.capture(request())
+    await vi.advanceTimersByTimeAsync(0)
+    renderer.emit('did-navigate', {}, 'file:///app/index.html', 200, 'OK')
+    const retry = test.owner.capture(request(2))
+    await expect(first).resolves.toMatchObject({
+      status: 'failed',
+      error: 'Preview capture cancelled',
+    })
+    await expect(retry).resolves.toMatchObject({ status: 'completed' })
+    expect(test.createWindow).toHaveBeenCalledTimes(2)
+    expect(test.windows[0]!.destroy).toHaveBeenCalledOnce()
+    abandoned.resolve(undefined as never)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(test.files.writeFile).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
   it('cancels validation from the closed window epoch before a job is registered', async () => {
     const test = fixture()
     const validation = deferred<() => ReturnType<typeof request>>()
@@ -242,15 +279,20 @@ describe('desktop preview capture ownership', () => {
 
   it('measures only in an isolated world and caps native allocation in the main process', async () => {
     const test = fixture()
-    await expect(test.owner.capture(request())).resolves.toMatchObject({ status: 'completed' })
+    await expect(test.owner.capture(request())).resolves.toMatchObject({
+      status: 'completed',
+      // The capped capture says how much of the page it left out.
+      screenshots: [{ documentHeight: 100_000_000, capturedHeight: 12_000 }],
+    })
     expect(test.contents.executeJavaScriptInIsolatedWorld).toHaveBeenCalledTimes(3)
     for (const [world] of test.contents.executeJavaScriptInIsolatedWorld.mock.calls)
       expect(world).toBe(1001)
-    expect(test.contents.capturePage).toHaveBeenCalledWith({
-      x: 0,
-      y: 0,
-      width: 1280,
-      height: 12_000,
+    expect(test.contents.debugger.attach).toHaveBeenCalledWith('1.3')
+    expect(test.contents.debugger.sendCommand).toHaveBeenCalledWith('Page.captureScreenshot', {
+      format: 'png',
+      captureBeyondViewport: true,
+      fromSurface: true,
+      clip: { x: 0, y: 0, width: 1280, height: 12_000, scale: 1 },
     })
     expect(test.windows[0]!.destroy).toHaveBeenCalledOnce()
     expect(test.session.clearCache).toHaveBeenCalledOnce()
@@ -342,7 +384,8 @@ describe('desktop preview capture ownership', () => {
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(undefined)
           .mockReturnValueOnce(pending.promise)
-      if (stage === 'capture') test.contents.capturePage.mockReturnValueOnce(pending.promise)
+      if (stage === 'capture')
+        test.contents.debugger.sendCommand.mockReturnValueOnce(pending.promise)
       if (stage === 'write') test.files.writeFile.mockReturnValueOnce(pending.promise)
       const result = test.owner.capture(request())
       await vi.advanceTimersByTimeAsync(51)

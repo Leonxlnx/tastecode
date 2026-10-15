@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { accessSync, constants, realpathSync } from 'node:fs'
+import { accessSync, constants, realpathSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { desktopPath } from './desktop-path.js'
+import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
 
 /**
@@ -13,7 +13,8 @@ import { killTree, spawnOwned } from './kill.js'
  * most common way a cross-platform agent wrapper breaks on Windows, so every
  * adapter shares this one implementation rather than each rediscovering it.
  *
- * Arguments are passed as an array, so cmd.exe never sees an unquoted value.
+ * Native executables bypass the shell. Batch shims need both Windows argv
+ * quoting and cmd escaping; Node's default argv quoting alone is not enough.
  */
 export function spawnCli(
   command: string,
@@ -29,9 +30,86 @@ export function spawnCli(
 
   if (process.platform === 'win32') {
     if (/\.(?:exe|com)$/i.test(command)) return spawnOwned(command, args, spawnOptions)
-    return spawnOwned('cmd.exe', ['/d', '/s', '/c', command, ...args], spawnOptions)
+    const resolved = resolveWindowsExecutable(command, spawnOptions.env, options.cwd)
+    const executable = resolved ?? command
+    if (/\.(?:exe|com)$/i.test(executable)) return spawnOwned(executable, args, spawnOptions)
+    const batch = /\.(?:cmd|bat)$/i.test(executable)
+    const shellCommand = [
+      escapeCmdToken(path.win32.normalize(executable)),
+      ...args.map((argument) => quoteCmdArgument(argument, batch)),
+    ].join(' ')
+    return spawnOwned('cmd.exe', ['/d', '/s', '/v:off', '/c', `"${shellCommand}"`], {
+      ...spawnOptions,
+      // cmd.exe searches cwd for a name it could not find on PATH either.
+      ...(resolved
+        ? {}
+        : {
+            env: { ...(spawnOptions.env ?? process.env), NoDefaultCurrentDirectoryInExePath: '1' },
+          }),
+      windowsVerbatimArguments: true,
+    })
   }
   return spawnOwned(command, args, spawnOptions)
+}
+
+const CMD_META = /([()[\]%!^"`<>&|;, *?\t\v\f])/g
+
+function escapeCmdToken(value: string): string {
+  // cmd cannot carry literal line breaks safely. Multiline CLI bodies belong on stdin.
+  if (/[\r\n\0]/.test(value)) {
+    throw new Error('Windows batch commands cannot contain line breaks or NUL bytes')
+  }
+  return value.replace(CMD_META, '^$1')
+}
+
+export function quoteCmdArgument(value: string, batch = false): string {
+  if (value && !/[\s()[\]%!^"`<>&|;,*?\0]/.test(value)) return value
+  let quoted = '"'
+  let backslashes = 0
+  for (const character of value) {
+    if (character === '\\') {
+      backslashes += 1
+      continue
+    }
+    quoted += '\\'.repeat(character === '"' ? backslashes * 2 + 1 : backslashes) + character
+    backslashes = 0
+  }
+  quoted += '\\'.repeat(backslashes * 2) + '"'
+  const escaped = escapeCmdToken(quoted)
+  // A forwarding .cmd shim parses %* a second time before starting its executable.
+  return batch ? escapeCmdToken(escaped) : escaped
+}
+
+function resolveWindowsExecutable(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): string | undefined {
+  const envValue = (name: string) =>
+    Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
+  const extensions = path.win32.extname(command)
+    ? ['']
+    : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
+  // A bare command is searched on PATH only, never in cwd: cwd is usually the
+  // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
+  // Empty PATH entries are skipped because they would resolve to cwd as well.
+  const directories = /[\\/]/.test(command)
+    ? [cwd]
+    : (envValue('PATH') ?? '')
+        .split(';')
+        .map((directory) => directory.replace(/^"|"$/g, ''))
+        .filter(Boolean)
+  for (const directory of directories) {
+    for (const extension of extensions) {
+      const candidate = path.win32.resolve(cwd, directory, command + extension)
+      try {
+        if (statSync(candidate).isFile()) return candidate
+      } catch {
+        // Match Windows PATH/PATHEXT order without launching the candidate.
+      }
+    }
+  }
+  return undefined
 }
 
 /**
@@ -50,10 +128,12 @@ export function isInstalled(
   }
 
   return new Promise((resolve) => {
+    const env = { ...environment }
+    applyDesktopPath(env)
     const child = spawn('where.exe', [command], {
       stdio: 'ignore',
       windowsHide: true,
-      env: { ...environment, PATH: desktopPath(environment.PATH ?? '', { env: environment }) },
+      env,
     })
     child.on('error', () => resolve(false))
     child.on('exit', (code) => resolve(code === 0))
@@ -66,7 +146,7 @@ function childEnvironment(options: {
 }): NodeJS.ProcessEnv | undefined {
   if (options.replaceEnv) return options.env
   const env = { ...process.env, ...options.env }
-  env.PATH = desktopPath(env.PATH ?? '', { env })
+  applyDesktopPath(env)
   return env
 }
 
@@ -99,34 +179,24 @@ export async function commandVersion(
   return spawnCommandVersion(command, timeoutMs)
 }
 
-function spawnCommandVersion(command: string, timeoutMs: number): Promise<string | undefined> {
-  return new Promise((resolve) => {
+async function spawnCommandVersion(
+  command: string,
+  timeoutMs: number,
+): Promise<string | undefined> {
+  try {
     const child = spawnCli(command, ['--version'])
-    let output = ''
-    let settled = false
-
-    const finish = (value: string | undefined) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      void killTree(child).then(
-        () => resolve(value),
-        () => resolve(undefined),
-      )
-    }
-
-    const timer = setTimeout(() => finish(undefined), timeoutMs)
-
-    child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      output += chunk
-    })
-    child.on('error', () => finish(undefined))
-    child.on('close', () => {
-      const line = output.split('\n').find((entry) => /\d+\.\d+/.test(entry))
-      finish(line?.trim() || undefined)
-    })
-  })
+    const captured = captureCli(child, timeoutMs, 64 * 1024)
+    endStdin(child)
+    const { stdout } = await captured
+    return (
+      stdout
+        .split('\n')
+        .find((entry) => /\d+\.\d+/.test(entry))
+        ?.trim() || undefined
+    )
+  } catch {
+    return undefined
+  }
 }
 
 function resolveExecutable(
@@ -142,7 +212,8 @@ function resolveExecutable(
   for (const candidate of candidates) {
     try {
       accessSync(candidate, constants.X_OK)
-      return candidate
+      // X_OK also holds for a directory, such as one named after the CLI.
+      if (statSync(candidate).isFile()) return candidate
     } catch {
       // Continue in PATH order, matching normal command resolution.
     }
@@ -156,34 +227,78 @@ export function runCli(
   args: string[],
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
+  const child = spawnCli(command, args)
+  const captured = captureCli(child, timeoutMs)
+  endStdin(child)
+  return captured
+}
+
+/**
+ * Send EOF to a command that gets no input. spawnCli opens stdin as a pipe, and
+ * a CLI that reads it until EOF would otherwise wait for the time limit.
+ */
+function endStdin(child: ChildProcessWithoutNullStreams): void {
+  // A child that exits or fails to start before reading leaves a broken pipe;
+  // captureCli already reports that through the child's own events.
+  child.stdin.on('error', () => undefined)
+  child.stdin.end()
+}
+
+/**
+ * Bound combined stdout/stderr before retaining bytes; settle only after owned cleanup.
+ * stdin stays open: callers that send a request body write and end it themselves.
+ */
+export function captureCli(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs = 5000,
+  maxBytes = 1024 * 1024,
+): Promise<CapturedCli> {
   return new Promise((resolve, reject) => {
-    const child = spawnCli(command, args)
     let stdout = ''
     let stderr = ''
+    let bytes = 0
     let settled = false
-    const finish = (
-      result: { code: number | null; stdout: string; stderr?: string | undefined } | Error,
-    ) => {
+    const finish = (result: CapturedCli | Error) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      // Handlers keep draining pipes but cannot retain more output after failure.
+      stdout = ''
+      stderr = ''
       void killTree(child).then(() => {
         if (result instanceof Error) reject(result)
         else resolve(result)
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error(`${command} did not respond`))
+      finish(new Error('CLI did not respond within the time limit'))
     }, timeoutMs)
+    const append = (chunk: string, stream: 'stdout' | 'stderr') => {
+      if (settled) return
+      const size = Buffer.byteLength(chunk)
+      if (size > maxBytes - bytes) {
+        finish(new Error('CLI output exceeded the size limit. Reduce command output and retry.'))
+        return
+      }
+      bytes += size
+      if (stream === 'stdout') stdout += chunk
+      else stderr += chunk
+    }
     child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => {
-      stdout += chunk
-    })
+    child.stdout.on('data', (chunk: string) => append(chunk, 'stdout'))
     child.stderr.setEncoding('utf8')
-    child.stderr.on('data', (chunk: string) => {
-      stderr += chunk
-    })
-    child.on('error', finish)
-    child.on('close', (code) => finish({ code, stdout, stderr }))
+    child.stderr.on('data', (chunk: string) => append(chunk, 'stderr'))
+    child.on('error', () =>
+      finish(new Error('CLI could not start. Check the executable and permissions.')),
+    )
+    // Exit can precede the final bytes in inherited pipes.
+    child.on('close', (code, signal) => finish({ code, signal, stdout, stderr }))
   })
+}
+
+export type CapturedCli = {
+  code: number | null
+  signal: NodeJS.Signals | null
+  stdout: string
+  stderr: string
 }

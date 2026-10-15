@@ -14,6 +14,9 @@ import {
   fontFamilyFromPreference,
   fontPreferenceForFamily,
   readAccentPreference,
+  readAppearancePreferences,
+  appearanceKey,
+  FONT_KEY,
   readBackdropPreference,
   readFontPreference,
   readGlassPreference,
@@ -37,6 +40,20 @@ afterEach(() => {
 })
 
 describe('preference readers', () => {
+  it('inherits legacy preferences and restores independent mode values', () => {
+    localStorage.setItem(FONT_KEY, 'inter')
+    localStorage.setItem(ACCENT_KEY, 'ocean')
+    expect(readAppearancePreferences().light).toEqual(readAppearancePreferences().dark)
+    localStorage.setItem(appearanceKey(FONT_KEY, 'light'), 'serif')
+    localStorage.setItem(appearanceKey(ACCENT_KEY, 'dark'), '#abc')
+    localStorage.setItem(appearanceKey(BACKDROP_KEY, 'light'), '#fff')
+    localStorage.setItem(appearanceKey(GLASS_KEY, 'dark'), '0')
+    expect(readAppearancePreferences()).toEqual({
+      light: { font: 'serif', accent: 'ocean', backdrop: '#FFFFFF', glass: 35 },
+      dark: { font: 'inter', accent: '#AABBCC', backdrop: 'default', glass: 0 },
+    })
+  })
+
   it('defaults to the system theme when no choice is stored', () => {
     expect(readThemePreference()).toBe('system')
   })
@@ -110,6 +127,22 @@ describe('custom colors', () => {
 })
 
 describe('font preference', () => {
+  it('defaults both appearance modes to the native system font', () => {
+    expect(readFontPreference()).toBe('system')
+    expect(readAppearancePreferences().light.font).toBe('system')
+    expect(readAppearancePreferences().dark.font).toBe('system')
+    localStorage.setItem(FONT_KEY, 'unknown-font')
+    expect(readFontPreference()).toBe('system')
+  })
+
+  it.each(['geist', 'inter', 'system', 'humanist', 'rounded', 'serif', 'mono'])(
+    'preserves the saved %s font instead of replacing it with the default',
+    (font) => {
+      localStorage.setItem(FONT_KEY, font)
+      expect(readFontPreference()).toBe(font)
+    },
+  )
+
   it('round-trips an installed font family and rejects malformed stored values', () => {
     const preference = fontPreferenceForFamily('  Atkinson Hyperlegible  ')
 
@@ -119,7 +152,7 @@ describe('font preference', () => {
     expect(readFontPreference()).toBe(preference)
 
     localStorage.setItem('harness.font', 'local:Broken\nFamily')
-    expect(readFontPreference()).toBe('geist')
+    expect(readFontPreference()).toBe('system')
   })
 
   it('applies a quoted local family and clears it when returning to a preset', () => {

@@ -1,8 +1,12 @@
 import {
+  createContext,
+  Fragment,
   lazy,
   memo,
   Suspense,
+  type ReactNode,
   useCallback,
+  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -10,7 +14,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual'
+import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
 import { ThinkingOrb } from 'thinking-orbs'
 import {
@@ -23,31 +27,43 @@ import {
   IconHelpCircle as CircleQuestionMark,
   IconCopy as Copy,
   IconFilePencil as FilePenLine,
+  IconHistory as History,
   IconLibraryPhoto as Images,
   IconListCheck as ListChecks,
   IconLoader2 as LoaderCircle,
   IconPalette as Palette,
   IconPencil as Pencil,
+  IconPlayerStop as Stop,
   IconRotate as RotateCcw,
   IconSearch as Search,
+  IconStack2 as Layers,
   IconTerminal2 as SquareTerminal,
   IconTool as Wrench,
+  IconWorldSearch as WorldSearch,
 } from '@tabler/icons-react'
 import {
+  canPreviewViewedImages,
+  knownViewedImagePreview,
   previewViewedImage,
   revealPath,
   writeClipboardText,
-  type PickedAttachment,
 } from '../bridge.js'
-import { isEditableTarget } from '../shortcuts.js'
+import {
+  isEditableTarget,
+  matchesShortcut,
+  NEXT_TURN_SHORTCUT,
+  PREVIOUS_TURN_SHORTCUT,
+} from '../shortcuts.js'
 import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
-import { Diff } from './Diff.js'
+import { ChangeStats, Diff, parseDiff } from './Diff.js'
+import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
 import { IconMorph } from './IconMorph.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSkeleton } from './Skeleton.js'
+import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
   createThreadProjector,
@@ -65,6 +81,9 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
+import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
+import { shiftPendingScrollIndex } from './pending-scroll.js'
+import { useOlderHistory } from './use-older-history.js'
 import { UserInput } from '../design-agent/UserInput.js'
 import type { Checkpoint } from './RollbackDialog.js'
 import {
@@ -90,6 +109,18 @@ const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
 
 /**
+ * Lets a disclosure re-measure its virtual row in the same commit that its
+ * reveal enters or leaves flow. Waiting for the ResizeObserver would move the
+ * rows below one frame after the reveal starts animating.
+ */
+const RowMeasureContext = createContext<
+  ((row: Element, header: Element | null) => void) | undefined
+>(undefined)
+
+/** Space kept between a disclosure's summary and the viewport edge it moves toward. */
+const HEADER_MARGIN = 12
+
+/**
  * The thread.
  *
  * Virtualised: only the rows near the viewport exist in the DOM, so a session
@@ -106,11 +137,17 @@ export interface ThreadProps {
   errorsInComposer?: boolean
   frameStore: ThreadFrameStore
   loading?: boolean
+  /** Why the transcript could not be read; an empty thread is then not a new chat. */
+  loadFailure?: string | undefined
+  /** Read the transcript again after `loadFailure`; needs a stable identity. */
+  onRetryLoad?: (() => void) | undefined
   projectPath?: string | undefined
   stopping?: boolean | undefined
   threadId?: string | undefined
   transport?: Transport | undefined
   searchJump?: { turnId: string; request: number } | undefined
+  /** A search jump has landed on its turn; the owner drops it so the next entry opens at the end. */
+  onSearchJumpDone?: ((request: number) => void) | undefined
   revealRequest?: number | undefined
   checkpoints?: Checkpoint[] | undefined
   keyboardActive?: boolean | undefined
@@ -118,8 +155,14 @@ export interface ThreadProps {
   onRevertCheckpoint?: ((checkpoint: Checkpoint) => void) | undefined
   onUndoChanges?:
     ((threadId: string, turnId: string, expectedDiff: string) => Promise<void>) | undefined
+  /** Load turns above the transcript; needs a stable identity. */
+  onLoadOlderHistory?: ((threadId: string, turnLimit?: number) => Promise<void>) | undefined
+  /** Load every turn above the transcript in one read; an aborted read is dropped. */
+  onLoadCompleteHistory?: ((threadId: string, signal: AbortSignal) => Promise<void>) | undefined
   onDecide: (id: string, decision: ApprovalDecision) => void
   onAnswerUserInput: (id: string, answers: Record<string, string[]>) => void | Promise<void>
+  /** Keep agent questions inside this thread instead of the main composer. */
+  inlineUserInput?: boolean | undefined
 }
 
 export const Thread = memo(function Thread(props: ThreadProps) {
@@ -135,6 +178,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
+  const runwayRef = useRef<HTMLDivElement>(null)
+  /** Scroll to apply once the runway has committed a disclosure's new height. */
+  const pendingEndAnchor = useRef<EndAnchor | undefined>(undefined)
+  /** Settled scroll height in reveal-hold; growth past it is new content. */
+  const heldHeight = useRef(0)
   const [mode, setMode] = useState<ScrollMode>('follow-end')
   const [finding, setFinding] = useState(false)
   const completedSearchJump = useRef(0)
@@ -170,25 +218,150 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     writtenScrollTop.current = target
     el.scrollTop = target
   }, [])
+  /**
+   * The frame request of a running "Jump to latest" glide. A native smooth
+   * scroll fixes its target when it starts, so it lands short of a reply that
+   * keeps growing and never reaches the end it was sent to. The glide chases
+   * the settled end on every frame instead and hands over to follow-end once
+   * it is there.
+   */
+  const jumpFrame = useRef<number | undefined>(undefined)
+  const stopJump = useCallback(() => {
+    if (jumpFrame.current !== undefined) window.cancelAnimationFrame(jumpFrame.current)
+    jumpFrame.current = undefined
+  }, [])
+  const jumpToLatest = useCallback(() => {
+    const el = scroller.current
+    if (!el) return
+    stopJump()
+    const instant = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    let last: number | undefined
+    const step = (now: number) => {
+      jumpFrame.current = undefined
+      const elapsed = last === undefined ? 16 : Math.min(64, Math.max(0, now - last))
+      last = now
+      const end = Math.max(0, settledScrollHeight(el) - el.clientHeight)
+      const gap = end - el.scrollTop
+      // Ease out towards wherever the end is now, at the same pace whatever
+      // the frame rate. An ease alone trails an end that keeps moving by a
+      // constant distance and never arrives; the minimum speed is faster
+      // than any reply can be read, so the glide always catches up.
+      const minimum = JUMP_MIN_PX_PER_MS * elapsed
+      if (instant || Math.abs(gap) <= minimum) {
+        modeRef.current = 'follow-end'
+        setMode('follow-end')
+        writeScrollTop(el, end)
+        return
+      }
+      const travel = Math.max(Math.abs(gap) * (1 - Math.exp(-elapsed / JUMP_EASE_MS)), minimum)
+      writeScrollTop(el, el.scrollTop + Math.sign(gap) * travel)
+      jumpFrame.current = window.requestAnimationFrame(step)
+    }
+    // Stay in free mode for the whole glide. Flipping to follow-end first
+    // would unmount the button mid-flight; the glide hands over itself.
+    jumpFrame.current = window.requestAnimationFrame(step)
+  }, [stopJump, writeScrollTop])
+  // Any other mode means something else owns the scroll position now.
+  useLayoutEffect(() => {
+    if (mode !== 'free') stopJump()
+  }, [mode, stopJump])
+  useEffect(() => stopJump, [props.threadId, stopJump])
+  const {
+    status: olderHistory,
+    loadOlder,
+    canLoadOnScroll,
+    completeStatus,
+    loadComplete,
+    cancelComplete,
+  } = useOlderHistory(
+    props.threadId,
+    props.frameStore,
+    props.onLoadOlderHistory,
+    props.onLoadCompleteHistory,
+  )
+  const searchJumpRef = useRef(props.searchJump)
+  searchJumpRef.current = props.searchJump
+  const searchJumpDone = useRef(props.onSearchJumpDone)
+  searchJumpDone.current = props.onSearchJumpDone
+  const closeFind = useCallback(() => {
+    setFinding(false)
+    const jump = searchJumpRef.current
+    // A search jump still waiting for its turn keeps the read it shares with find.
+    if (!jump || completedSearchJump.current === jump.request) cancelComplete()
+  }, [cancelComplete])
   const liveItems = thread.liveItems
   const enteringItemIds = useEnteringItemIds(thread.items, props.threadId)
   const settledTurnId = useSettledTurnId(running, thread.activeTurn?.id)
   const getItemKey = useVirtualItemKey(thread.items, props.threadId)
+  /** Filled in once this render has projected the thread; read lazily by the virtualizer. */
+  const estimateRow = useRef<(index: number) => number>(() => DEFAULT_ROW_ESTIMATE)
+  const estimateSize = useCallback((index: number) => estimateRow.current(index), [])
+  const virtualizerRef = useRef<Virtualizer<HTMLDivElement, Element> | undefined>(undefined)
+  const rangeExtractor = useCallback(
+    (range: Range) =>
+      overscanVisibleRows(range, (index) => virtualizerRef.current?.measurementsCache[index]?.size),
+    [],
+  )
+
+  // Older rows arrived above: remember which row sits at the top of the
+  // viewport and how far into it, so the same pixels stay there after the
+  // virtualizer lays the new rows out. Computed once per items array, so a
+  // repeated render never re-reads measurements that already include them.
+  // The baseline moves in render, together with the shifts below: a render
+  // React throws away has still moved those refs, and the next render must not
+  // shift them by the same rows again.
+  const shiftedItems = useRef({ threadId: props.threadId, items: thread.items })
+  const prepend = useRef<PrependAnchor | undefined>(undefined)
+  if (prepend.current?.items !== thread.items) {
+    const shifted = shiftedItems.current
+    const shift =
+      shifted.threadId === props.threadId ? prependedRowCount(shifted.items, thread.items) : 0
+    const previous = virtualizerRef.current
+    const offset = previous?.scrollOffset ?? null
+    const row =
+      shift > 0 && offset !== null && modeRef.current !== 'follow-end'
+        ? previous?.getVirtualItemForOffset(offset)
+        : undefined
+    if (shift > 0) {
+      // Row indexes recorded against the old rows now name rows `shift`
+      // further down. Move them here, in render: FrameScrollFollower is a
+      // child, so its layout effect runs before this component's and would
+      // otherwise pin, measure or release the anchored turn by a stale index.
+      anchorIndex.current += shift
+      if (previous) shiftPendingScrollIndex(previous, shift)
+    }
+    prepend.current =
+      shift > 0
+        ? {
+            items: thread.items,
+            applied: false,
+            previousSize: previous?.getTotalSize() ?? 0,
+            ...(row && offset !== null
+              ? { index: row.index + shift, offset: offset - row.start }
+              : {}),
+          }
+        : undefined
+  }
+  shiftedItems.current = { threadId: props.threadId, items: thread.items }
 
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     getScrollElement: () => scroller.current,
-    // Roughly one paragraph. Wrong estimates only cost a correction on measure.
-    estimateSize: () => 72,
+    // A wrong estimate costs a scroll correction when the row is first
+    // measured. Hidden tool rows are most rows in a working session, so they
+    // must estimate as nothing rather than a paragraph each.
+    estimateSize,
     // Stable identity per item, never the index — index keys make every
     // insertion look like a change to every row after it.
     getItemKey,
     overscan: 8,
+    rangeExtractor,
     // Assume a viewport for the very first render, before measurement has run.
     // Without it the first frame contains no rows at all, which reads as a
     // blank thread for one frame when switching sessions.
     initialRect: { width: 720, height: 800 },
   })
+  virtualizerRef.current = virtualizer
 
   // A turn starting is the one moment the reading position should change.
   // Watch its first item rather than the running boolean: a queued turn can
@@ -235,7 +408,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       modeRef.current = nextMode
       setMode(nextMode)
     }
-  }, [])
+    if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
+  }, [canLoadOnScroll, loadOlder])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -269,30 +443,66 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
 
   const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(thread.items, thread.turnTiming)
+  const { turns, presentations } = projectThread(
+    thread.items,
+    thread.turnTiming,
+    thread.activeTurn?.id,
+  )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
+  estimateRow.current = (index) => {
+    const item = thread.items[index]
+    return item
+      ? estimateThreadRowSize(item, index, presentations.get(item.turnId))
+      : DEFAULT_ROW_ESTIMATE
+  }
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
   const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
+  // The older-history hook stops waiting for the complete read when its effects
+  // are torn down, which StrictMode also does on mount; the next run must ask again.
+  useEffect(
+    () => () => {
+      searchJumpRead.current = undefined
+    },
+    [props.threadId],
+  )
   useEffect(() => {
     const target = props.searchJump
     if (!target || completedSearchJump.current === target.request) return
     const index = thread.items.findIndex((item) => item.turnId === target.turnId)
-    if (index < 0) return
+    if (index < 0) {
+      // Ask once per jump and cursor. Structural updates keep arriving while
+      // the read is out, and after a failure the retry is the reader's call.
+      const cursor = thread.olderCursor
+      const asked = searchJumpRead.current
+      if (cursor && (asked?.request !== target.request || asked.cursor !== cursor)) {
+        searchJumpRead.current = { request: target.request, cursor }
+        loadComplete()
+      }
+      return
+    }
     completedSearchJump.current = target.request
     setFinding(false)
     setMode('free')
     virtualizer.scrollToIndex(index, { align: 'center' })
-  }, [thread.items, props.searchJump, virtualizer])
+    // This instance remembers the jump, but the next entry to the chat mounts a
+    // new one; without this the old hit would be jumped to again every time.
+    searchJumpDone.current?.(target.request)
+  }, [thread.items, thread.olderCursor, props.searchJump, virtualizer, loadComplete])
 
   // Alt+Up/Down moves a turn at a time. Scrolling by pixel through a long
   // session to find where an exchange began is the slow way to do it.
   useEffect(() => {
     if (props.keyboardActive === false) return
     const onKey = (event: KeyboardEvent) => {
-      if (isEditableTarget(event.target)) return
-      if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return
+      if (event.defaultPrevented || isEditableTarget(event.target)) return
+      if (
+        !matchesShortcut(event, PREVIOUS_TURN_SHORTCUT) &&
+        !matchesShortcut(event, NEXT_TURN_SHORTCUT)
+      )
+        return
       // The first VISIBLE row, not rows[0] — that one is up to `overscan`
       // items above the viewport, and navigating from it could send the user
       // backwards to a turn they had already scrolled past.
@@ -309,181 +519,330 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [props.keyboardActive, turns, virtualizer])
 
+  const anchor = prepend.current
+  if (anchor && anchor.grown === undefined) {
+    // Reveal-hold reads growth past the held height as new content below;
+    // rows arriving above are not that.
+    anchor.grown = virtualizer.getTotalSize() - anchor.previousSize
+    heldHeight.current += anchor.grown
+  }
+  if (anchor?.index !== undefined && anchor.top === undefined) {
+    virtualizer.getTotalSize()
+    const start = virtualizer.measurementsCache[anchor.index]?.start
+    if (start !== undefined) anchor.top = Math.max(0, start + anchor.offset!)
+  }
+  if (anchor?.top !== undefined && !anchor.applied) virtualizer.scrollOffset = anchor.top
   const rows = virtualizer.getVirtualItems()
 
-  // The generic rail only covers the gap before the first response, plus
-  // design turns whose phase owns the status line. Normal reasoning, tool
-  // activity and answer text carry their own visible state in chronological
-  // rows, so the rail must disappear instead of duplicating them.
+  useLayoutEffect(() => {
+    const anchor = prepend.current
+    if (!anchor || anchor.items !== thread.items || anchor.applied) return
+    anchor.applied = true
+    const el = scroller.current
+    // The virtualizer may already have corrected its offset for newly
+    // measured rows above the fold during this commit; follow its value.
+    if (el && anchor.top !== undefined) writeScrollTop(el, virtualizer.scrollOffset ?? anchor.top)
+  }, [props.threadId, thread.items, virtualizer, writeScrollTop])
+
+  useEffect(() => {
+    const el = scroller.current
+    if (!el || !thread.olderCursor || props.loading || thread.items.length === 0) return
+    if (olderHistory !== 'idle' || completeStatus === 'loading') return
+    if (nearOlderHistoryEdge(el)) void loadOlder()
+  }, [
+    thread.olderCursor,
+    thread.items.length,
+    props.loading,
+    olderHistory,
+    completeStatus,
+    loadOlder,
+  ])
+
+  // measureElement without a ResizeObserver entry returns the cached size, so
+  // a disclosure that just changed its row's height has to hand over a fresh
+  // measurement. Rounded like the observer's border box so the observer's own
+  // notification a frame later finds nothing left to change.
+  const measureRow = useCallback(
+    (row: Element, header: Element | null) => {
+      const el = scroller.current
+      const index = virtualizer.indexFromElement(row)
+      const size = Math.round(row.getBoundingClientRect().height)
+      // resizeItem's rerender is flushed after this layout effect, so the
+      // runway has not changed yet; the cache says by how much it will.
+      const delta = size - (virtualizer.measurementsCache[index]?.size ?? size)
+      // Read before resizeItem: the virtualizer may correct the scroll for a
+      // row it thinks is above the fold, and adding the shift below on top
+      // of that would move the viewport twice.
+      const from = el?.scrollTop ?? 0
+      virtualizer.resizeItem(index, size)
+      if (!el || delta === 0) return
+      // Another toggle is not new content, even when the scroll cannot follow it.
+      if (modeRef.current === 'reveal-hold') heldHeight.current += delta
+      if (header) slideFollowingInRow(row, header, delta)
+      // The text after the disclosure is what the user is reading, so it must
+      // not move: the details open upward and the summary travels instead.
+      // Scroll by the row's growth in the same step that commits the runway
+      // height, then slide the runway back from the old offset on the
+      // compositor over the same curve as the rows, so both share one clock.
+      // When the scroll cannot follow (a thread shorter than its viewport,
+      // closing at the very top) the rows below slide instead, which is the
+      // only honest option left.
+      const nextMax = Math.max(0, settledScrollHeight(el) + delta - el.clientHeight)
+      // The summary the user just clicked must stay on screen: it may rise to
+      // the top edge or sink to the bottom edge, no further. Past that the
+      // details push the text below instead, so a long reveal never scrolls
+      // its own header — and its virtual row — out of view.
+      const viewport = el.getBoundingClientRect()
+      const headerBox = (header ?? row).getBoundingClientRect()
+      const headerTop = headerBox.top - viewport.top
+      const roomAbove = Math.max(0, headerTop - HEADER_MARGIN)
+      const roomBelow = Math.max(0, viewport.height - headerTop - headerBox.height - HEADER_MARGIN)
+      const shift = delta > 0 ? Math.min(delta, roomAbove) : Math.max(delta, -roomBelow)
+      // The runway commits its height in this same render; the follower
+      // applies the scroll before paint and starts everything that moved
+      // from where it was.
+      pendingEndAnchor.current = {
+        from,
+        target: Math.min(Math.max(from + shift, 0), nextMax),
+        delta,
+      }
+    },
+    [virtualizer],
+  )
+
+  // Keep the turn timer above its first response until the whole turn ends.
+  // The anchor row reserves the rail's height as more content arrives.
   //
   // measurementsCache, not getOffsetForIndex: the latter clamps to the
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
-  const showWorkingRail =
-    running &&
-    thread.activeTurn !== undefined &&
-    (activePresentation?.design === true || activePresentation?.firstResponseIndex === undefined)
+  const showWorkingRail = running && thread.activeTurn !== undefined
   const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railOffset =
     railIndex === undefined
       ? virtualizer.getTotalSize()
       : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
 
+  // Find shows its own read in the find bar; a search jump's read shows here.
+  const completeFailed = !finding && completeStatus === 'failed'
+  const olderPill =
+    olderHistory === 'loading' || (!finding && completeStatus === 'loading')
+      ? 'loading'
+      : olderHistory === 'failed' || completeFailed
+        ? 'failed'
+        : 'idle'
+  // While find reads the rest of the chat, the find bar's status speaks for
+  // both reads; two live regions at once would talk over each other.
+  const olderAnnouncement = finding && completeStatus === 'loading' ? 'idle' : olderPill
+
   return (
     // The overlays live OUTSIDE the scroller: an absolutely positioned child
     // of a scroll container scrolls away with the content — Ctrl+F used to
     // yank the transcript to the top just to show the find bar, and "Jump to
     // latest" rendered below the viewport exactly when it was needed.
-    <div className="thread-shell">
-      <FrameScrollFollower
-        frameStore={props.frameStore}
-        revealRequest={props.revealRequest ?? 0}
-        completedRevealRequest={completedRevealRequest}
-        scroller={scroller}
-        modeRef={modeRef}
-        anchorIndex={anchorIndex}
-        virtualizer={virtualizer}
-        writeScrollTop={writeScrollTop}
-        setMode={setMode}
-      />
-      {finding ? (
-        <Suspense fallback={null}>
-          <ThreadSearch
-            items={thread.items}
-            liveItems={liveItems}
-            frameStore={props.frameStore}
-            threadId={props.threadId}
-            onJump={jumpTo}
-            onClose={() => setFinding(false)}
-          />
-        </Suspense>
-      ) : null}
-      {thread.items.length === 0 && !running ? (
-        props.loading ? (
-          <ThreadSkeleton className="thread__empty" />
-        ) : (
-          <div className="empty thread__empty">
-            <div className="empty__prompt" role="heading" aria-level={1}>
-              Tell the agent what you want to build, then send it below.
+    <RowMeasureContext.Provider value={measureRow}>
+      <div className="thread-shell">
+        {finding ? (
+          <Suspense fallback={<FindBarSkeleton />}>
+            <ThreadSearch
+              items={thread.items}
+              liveItems={liveItems}
+              frameStore={props.frameStore}
+              threadId={props.threadId}
+              hasOlder={thread.olderCursor !== undefined}
+              olderStatus={completeStatus}
+              onLoadOlder={loadComplete}
+              onJump={jumpTo}
+              onClose={closeFind}
+            />
+          </Suspense>
+        ) : null}
+        {thread.items.length === 0 && !running ? (
+          props.loading ? (
+            <ThreadSkeleton className="thread__empty" />
+          ) : props.loadFailure !== undefined ? (
+            <div className="empty thread__empty" role="alert">
+              <div className="empty__prompt" role="heading" aria-level={1}>
+                This chat could not be loaded.
+              </div>
+              {props.loadFailure ? <p className="empty__detail">{props.loadFailure}</p> : null}
+              {props.onRetryLoad ? (
+                <button className="btn" type="button" onClick={props.onRetryLoad}>
+                  Retry
+                </button>
+              ) : null}
             </div>
-          </div>
-        )
-      ) : null}
-      <div className="thread" ref={scroller} onScroll={onScroll}>
-        <div className="thread__col">
-          <div className="thread__runway" style={{ height: virtualizer.getTotalSize() }}>
-            {rows.map((row) => {
-              const item = threadItemAt(thread.items, liveItems, row.index)
-              if (!item) return null
-              const presentation = presentations.get(item.turnId)
-              const activityGroup =
-                presentation && presentation.design !== true
+          ) : (
+            <div className="empty thread__empty">
+              <div className="empty__prompt" role="heading" aria-level={1}>
+                Tell the agent what you want to build, then send it below.
+              </div>
+            </div>
+          )
+        ) : null}
+        <div
+          className="thread"
+          ref={scroller}
+          onScroll={onScroll}
+          // The user steering in any way ends a running jump on the spot.
+          onWheel={stopJump}
+          onPointerDown={stopJump}
+          onTouchStart={stopJump}
+          onKeyDown={stopJump}
+        >
+          <div className="thread__col">
+            <div
+              className="thread__runway"
+              ref={runwayRef}
+              style={{ height: virtualizer.getTotalSize() }}
+            >
+              {rows.map((row) => {
+                const item = threadItemAt(thread.items, liveItems, row.index)
+                if (!item) return null
+                const presentation = presentations.get(item.turnId)
+                const activityGroup = presentation
                   ? activityGroupAt(presentation.activityGroups, row.index)
                   : undefined
-              return (
-                <ThreadFrameRow
-                  key={row.key}
-                  index={row.index}
-                  start={row.start}
-                  measureElement={virtualizer.measureElement}
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  presentation={presentation}
-                  activityGroup={activityGroup}
-                  running={running}
-                  errorsInComposer={props.errorsInComposer ?? false}
-                  activeTurnId={thread.activeTurn?.id}
-                  repeatedDesignRowAt={repeatedDesignRowAt}
-                  entering={enteringItemIds.has(item.id)}
-                  settlingTurnId={settledTurnId}
-                  showWorkingRail={showWorkingRail}
-                  projectPath={props.projectPath}
-                  onEditMessage={props.onEditMessage}
-                  checkpointIndex={checkpointIndex}
-                  onRevertCheckpoint={props.onRevertCheckpoint}
-                />
-              )
-            })}
-            {showWorkingRail && thread.activeTurn ? (
-              // Deliberately not keyed by turn id: the optimistic turn's id is
-              // replaced by the server's a few seconds in, and a key would
-              // remount the rail at exactly the moment this render position
-              // exists to survive. Before any response row exists the rail
-              // sits at the end of the runway, over the space the spacer
-              // below holds.
-              <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
-                <FrameWorkingRail
-                  frameStore={props.frameStore}
-                  items={thread.items}
-                  turnId={thread.activeTurn.id}
-                  liveStart={thread.liveStart}
-                  activityIndices={activeActivityIndices}
-                  startedAt={activePresentation?.workStartedAt ?? thread.activeTurn.startedAt}
-                />
-              </div>
+                return (
+                  <ThreadFrameRow
+                    key={row.key}
+                    index={row.index}
+                    start={row.start}
+                    measureElement={virtualizer.measureElement}
+                    frameStore={props.frameStore}
+                    items={thread.items}
+                    presentation={presentation}
+                    activityGroup={activityGroup}
+                    running={running}
+                    errorsInComposer={props.errorsInComposer ?? false}
+                    activeTurnId={thread.activeTurn?.id}
+                    repeatedDesignRowAt={repeatedDesignRowAt}
+                    entering={enteringItemIds.has(item.id)}
+                    settlingTurnId={settledTurnId}
+                    showWorkingRail={showWorkingRail}
+                    projectPath={props.projectPath}
+                    onEditMessage={props.onEditMessage}
+                    checkpointIndex={checkpointIndex}
+                    onRevertCheckpoint={props.onRevertCheckpoint}
+                  />
+                )
+              })}
+              {showWorkingRail && thread.activeTurn ? (
+                // Deliberately not keyed by turn id: the optimistic turn's id is
+                // replaced by the server's a few seconds in, and a key would
+                // remount the rail at exactly the moment this render position
+                // exists to survive. Before any response row exists the rail
+                // sits at the end of the runway, over the space the spacer
+                // below holds.
+                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                  {activePresentation?.design ? (
+                    <FrameWorkingRail
+                      frameStore={props.frameStore}
+                      items={thread.items}
+                      turnId={thread.activeTurn.id}
+                      liveStart={thread.liveStart}
+                      activityIndices={activeActivityIndices}
+                      startedAt={activePresentation.workStartedAt}
+                    />
+                  ) : (
+                    <TurnDuration startedAt={thread.activeTurn.startedAt} />
+                  )}
+                </div>
+              ) : null}
+            </div>
+
+            {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
+              <div className="thread__rail-spacer" aria-hidden />
+            ) : null}
+
+            {/* Above the plan and the diff: it is the only thing here that blocks
+            the agent, so it should be the first thing the eye lands on. */}
+            {thread.userInputs.map((request) => (
+              <UserInput
+                key={request.id}
+                request={request}
+                inline={props.inlineUserInput}
+                onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
+              />
+            ))}
+
+            {currentApproval ? (
+              <Approval
+                key={currentApproval.id}
+                request={currentApproval}
+                onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
+              />
+            ) : null}
+
+            {running ? <Plan steps={thread.plan} compact /> : null}
+            {!running ? (
+              <Diff
+                diff={thread.diff}
+                threadId={props.threadId}
+                transport={props.transport}
+                onUndo={
+                  props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
+                    ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
+                    : undefined
+                }
+              />
             ) : null}
           </div>
-
-          {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
-            <div className="thread__rail-spacer" aria-hidden />
-          ) : null}
-
-          {/* Above the plan and the diff: it is the only thing here that blocks
-            the agent, so it should be the first thing the eye lands on. */}
-          {thread.userInputs.map((request) => (
-            <UserInput
-              key={request.id}
-              request={request}
-              onSubmit={(answers) => props.onAnswerUserInput(request.id, answers)}
-            />
-          ))}
-
-          {currentApproval ? (
-            <Approval
-              key={currentApproval.id}
-              request={currentApproval}
-              onDecide={(decision) => props.onDecide(currentApproval.id, decision)}
-            />
-          ) : null}
-
-          {running ? <Plan steps={thread.plan} compact /> : null}
-          {!running ? (
-            <Diff
-              diff={thread.diff}
-              threadId={props.threadId}
-              transport={props.transport}
-              onUndo={
-                props.threadId && thread.diffTurnId && thread.diff && props.onUndoChanges
-                  ? () => props.onUndoChanges!(props.threadId!, thread.diffTurnId!, thread.diff!)
-                  : undefined
-              }
-            />
-          ) : null}
         </div>
-      </div>
 
-      {mode === 'free' ? (
-        <button
-          className="jump"
-          onClick={() => {
-            const el = scroller.current
-            if (!el) return
-            // Stay in free mode for the whole glide. Flipping to follow-end
-            // here unmounts the button, and the first mid-flight scroll event
-            // then flips it straight back — remounting it with its entrance
-            // animation — until the scroll lands. The onScroll handler hands
-            // over to follow-end once the glide actually reaches the bottom.
-            el.scrollTo({ top: el.scrollHeight - el.clientHeight, behavior: 'smooth' })
-            // Already at the bottom? Nothing animates and no scroll event
-            // comes, so there would be no handover — hide right away.
-            if (isAtBottom(el)) setMode('follow-end')
-          }}
-        >
-          <ArrowDownToLine size={13} aria-hidden />
-          Jump to latest
-        </button>
-      ) : null}
-    </div>
+        {/* Mount after the scroller so its ref is set before the layout effect. */}
+        <FrameScrollFollower
+          frameStore={props.frameStore}
+          threadId={props.threadId}
+          revealRequest={props.revealRequest ?? 0}
+          completedRevealRequest={completedRevealRequest}
+          scroller={scroller}
+          modeRef={modeRef}
+          anchorIndex={anchorIndex}
+          pendingEndAnchor={pendingEndAnchor}
+          heldHeight={heldHeight}
+          runway={runwayRef}
+          virtualizer={virtualizer}
+          writeScrollTop={writeScrollTop}
+          setMode={setMode}
+        />
+
+        {/* Mounted for as long as older turns exist: a live region announces
+            changes to its text, not its own arrival. The pills below stay
+            out of the reading. */}
+        {thread.olderCursor ? (
+          <div className="visually-hidden" role="status">
+            {olderAnnouncement === 'loading'
+              ? 'Loading earlier messages'
+              : olderAnnouncement === 'failed'
+                ? 'Couldn’t load earlier messages'
+                : ''}
+          </div>
+        ) : null}
+        {thread.olderCursor && olderPill === 'loading' ? (
+          <div className="thread__older" aria-hidden>
+            <LoaderCircle className="spinner" aria-hidden />
+            Loading earlier messages
+          </div>
+        ) : null}
+        {thread.olderCursor && olderPill === 'failed' ? (
+          <button
+            className="thread__older"
+            onClick={() => (completeFailed ? loadComplete() : void loadOlder())}
+          >
+            <RotateCcw size={13} aria-hidden />
+            Couldn’t load earlier messages. Retry
+          </button>
+        ) : null}
+
+        {mode === 'free' ? (
+          <button className="jump" onClick={jumpToLatest}>
+            <ArrowDownToLine size={13} aria-hidden />
+            Jump to latest
+          </button>
+        ) : null}
+      </div>
+    </RowMeasureContext.Provider>
   )
 })
 
@@ -494,44 +853,119 @@ export const Thread = memo(function Thread(props: ThreadProps) {
  */
 function FrameScrollFollower({
   frameStore,
+  threadId,
   revealRequest,
   completedRevealRequest,
   scroller,
   modeRef,
   anchorIndex,
+  pendingEndAnchor,
+  heldHeight,
+  runway,
   virtualizer,
   writeScrollTop,
   setMode,
 }: {
   frameStore: ThreadFrameStore
+  threadId: string | undefined
   revealRequest: number
   completedRevealRequest: { current: number }
   scroller: { current: HTMLDivElement | null }
   modeRef: { current: ScrollMode }
   anchorIndex: { current: number }
+  pendingEndAnchor: { current: EndAnchor | undefined }
+  heldHeight: { current: number }
+  runway: { current: HTMLDivElement | null }
   virtualizer: Virtualizer<HTMLDivElement, Element>
   writeScrollTop: (element: HTMLElement, top: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
-  const itemVersion = useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
+  const openedThread = useRef(threadId)
 
-  // Layout effect, not effect: this runs before paint, so the correction is
-  // never visible as a jump.
+  // Images and change previews can resize below the virtual list without a
+  // transcript render. Keep the end pinned until the user takes over.
+  useLayoutEffect(() => {
+    const element = scroller.current
+    const content = element?.firstElementChild
+    if (!element || !content) return
+    const observer = new ResizeObserver(() => {
+      // Settled, not scrollHeight: this fires right after a disclosure
+      // commits, while its reveal and the runway are still mid-slide.
+      if (modeRef.current === 'follow-end') {
+        writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
+      }
+    })
+    observer.observe(element)
+    observer.observe(content)
+    return () => observer.disconnect()
+  }, [scroller, modeRef, writeScrollTop])
+
+  // Follow every render before paint: replay and virtual row measurements can
+  // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
     const element = scroller.current
     if (!element) return
 
-    if (completedRevealRequest.current !== revealRequest) {
+    // A disclosure just committed its row's new height: apply its scroll
+    // (see measureRow), whatever the mode.
+    const anchor = pendingEndAnchor.current
+    if (anchor) {
+      pendingEndAnchor.current = undefined
+      writeScrollTop(element, anchor.target)
+      // Not the scroll position read here: a shrinking runway has already
+      // clamped it by the time this effect runs, which would hide the shift.
+      const shift = element.scrollTop - anchor.from
+      const settled = settledScrollHeight(element)
+      const atEnd = settled - element.scrollTop - element.clientHeight <= 1
+      // Opening something taller than the space above it leaves the viewport
+      // short of the end. That was the user's choice; following the end now
+      // would drag the summary they just clicked out of view. They did not
+      // scroll away either, so hold without offering a jump.
+      const next: ScrollMode | undefined = atEnd
+        ? modeRef.current === 'free' || modeRef.current === 'reveal-hold'
+          ? 'follow-end'
+          : undefined
+        : modeRef.current === 'free'
+          ? undefined
+          : 'reveal-hold'
+      if (next === 'reveal-hold') heldHeight.current = settled
+      if (next && next !== modeRef.current) {
+        modeRef.current = next
+        setMode(next)
+      }
+      if (runway.current && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        slideTranscript(runway.current, shift, anchor.delta)
+      }
+      return
+    }
+
+    if (openedThread.current !== threadId || completedRevealRequest.current !== revealRequest) {
+      openedThread.current = threadId
       completedRevealRequest.current = revealRequest
       modeRef.current = 'follow-end'
       setMode('follow-end')
-      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
       return
     }
 
     if (modeRef.current === 'follow-end') {
-      writeScrollTop(element, element.scrollHeight - element.clientHeight)
+      // Settled, not scrollHeight: any render during a disclosure's slide (a
+      // streamed delta, the virtualizer's range update) lands here while the
+      // runway or a closing reveal still extends the scrollable overflow.
+      // Following that put the viewport past the end for one frame, until
+      // the ResizeObserver pulled it back — a jump on every toggle.
+      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
+      return
+    }
+
+    if (modeRef.current === 'reveal-hold') {
+      // Something new arrived below the details: now there is a latest to jump to.
+      if (settledScrollHeight(element) > heldHeight.current + 1) {
+        modeRef.current = 'free'
+        setMode('free')
+      }
       return
     }
 
@@ -545,23 +979,102 @@ function FrameScrollFollower({
       }
       writeScrollTop(element, start)
     }
-  }, [
-    anchorIndex,
-    completedRevealRequest,
-    itemVersion,
-    modeRef,
-    revealRequest,
-    scroller,
-    setMode,
-    virtualizer,
-    writeScrollTop,
-  ])
+  })
 
   return null
 }
 
+/** Where the viewport stood when older rows were prepended above it. */
+type PrependAnchor = {
+  items: Item[]
+  applied: boolean
+  /** The runway height before the rows arrived. */
+  previousSize: number
+  /** How much the runway grew, once measured against the new rows. */
+  grown?: number
+  index?: number
+  offset?: number
+  top?: number
+}
+
+/** A disclosure's row height change, waiting for the runway to commit it. */
+type EndAnchor = {
+  /** The scroll position before the commit. */
+  from: number
+  target: number
+  delta: number
+}
+
+/** Time constant of the jump glide: about 95% of the way after 3x this. */
+const JUMP_EASE_MS = 110
+/** The slowest the jump glide moves, about 13px per frame at 60 Hz. */
+const JUMP_MIN_PX_PER_MS = 0.8
+
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
+
+/**
+ * The scroll height once the running reveal and slide animations settle.
+ * scrollHeight also counts boxes that are mid-animation — a closing reveal
+ * still hanging below its summary, the runway starting its slide below its
+ * place — so during a toggle it puts the end further away than it will be.
+ * The column's own box is in-flow layout only and never transformed.
+ */
+function settledScrollHeight(element: HTMLElement): number {
+  const height = element.firstElementChild?.getBoundingClientRect().height ?? 0
+  // No layout box yet: nothing is animating either.
+  if (height === 0) return element.scrollHeight
+  const style = getComputedStyle(element)
+  const padding =
+    (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0)
+  return Math.min(element.scrollHeight, Math.round(height + padding))
+}
+
+/**
+ * The scroll just moved by `shift` and the runway's height by `delta`, both
+ * in one step. Start everything that jumped where it was on screen and let it
+ * settle over the reveal's own curve: the runway carries the rows above the
+ * disclosure, and whatever follows the transcript (plan, approvals, diff)
+ * travels with the rows below it. A reversal mid-flight keeps whatever offset
+ * the previous slide had left to unwind.
+ */
+function slideTranscript(runway: HTMLElement, shift: number, delta: number) {
+  const opening = delta > 0
+  if (shift !== 0) slideFrom(runway, shift, opening)
+  if (Math.abs(shift - delta) < 1) return
+  for (let next = runway.nextElementSibling; next; next = next.nextElementSibling) {
+    if (next instanceof HTMLElement) slideFrom(next, shift - delta, opening)
+  }
+}
+
+/**
+ * Rows after a disclosure glide on their own transform, but content later in
+ * the same row moves with layout in one step. Start that content where it was
+ * and let it travel over the reveal's curve, so everything below the summary
+ * moves as one piece whether or not the scroll could follow.
+ */
+function slideFollowingInRow(row: Element, header: Element, delta: number) {
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+  for (let node = header.parentElement; node && node !== row; node = node.parentElement) {
+    for (let next = node.nextElementSibling; next; next = next.nextElementSibling) {
+      if (next instanceof HTMLElement) slideFrom(next, -delta, delta > 0)
+    }
+  }
+}
+
+const REVEAL_SLIDE = 'reveal-slide'
+
+/** A reversal mid-flight keeps whatever offset the previous slide had left. */
+function slideFrom(element: HTMLElement, offset: number, opening: boolean) {
+  const running = element.getAnimations().find((animation) => animation.id === REVEAL_SLIDE)
+  const current = running ? new DOMMatrix(getComputedStyle(element).transform).m42 : 0
+  running?.cancel()
+  element.animate([{ transform: `translateY(${current + offset}px)` }, { transform: 'none' }], {
+    id: REVEAL_SLIDE,
+    duration: opening ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS,
+    easing: REVEAL_EASING,
+  })
+}
 
 function useFrameLiveItems(
   frameStore: ThreadFrameStore,
@@ -640,14 +1153,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   if (!item) return null
 
   const live = running && activeTurnId === item.turnId
-  const compactedActivity =
-    activityGroup !== undefined &&
-    (isStackedActivity(item) ||
-      (presentation?.complete === true &&
-        item.type === 'message' &&
-        item.role === 'assistant' &&
-        index !== presentation.finalAnswerIndex))
-  const activityLead = compactedActivity && activityGroup.firstIndex === index
+  const compactedActivity = isCompactedActivity(item, index, presentation, activityGroup)
+  const activityLead = compactedActivity && activityGroup?.firstIndex === index
   const itemAfterActivity = activityGroup
     ? threadItemAt(items, liveItems, activityGroup.lastIndex + 1)
     : undefined
@@ -661,12 +1168,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     (errorsInComposer && item.type === 'error') ||
     isBlankReasoning(item) ||
     (compactedActivity && !activityLead) ||
-    repeatedDesignRowAt(item, index) ||
-    // A design turn tells its story through the phase labels and TasteCode
-    // notes; raw provider work would drown that story in noise.
-    (presentation?.design === true &&
-      !compactedActivity &&
-      ((isActivity(item) && !designPhaseLabel(toolText(item))) || item.type === 'error'))
+    repeatedDesignRowAt(item, index)
   const nextVisibleItem = threadItemAt(
     items,
     liveItems,
@@ -674,14 +1176,36 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   )
   const compactToNext =
     !suppressed &&
-    nextVisibleItem?.turnId === item.turnId &&
+    nextVisibleItem !== undefined &&
+    (nextVisibleItem.turnId === item.turnId ||
+      (item.type === 'message' &&
+        item.role === 'assistant' &&
+        item.id.startsWith('design-not-applicable-'))) &&
     !(item.type === 'message' && item.role === 'user') &&
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
+  const activityComplete = presentation?.complete === true && !live && presentation.design !== true
   const activitySource =
-    activityLead && activityGroup ? { group: activityGroup, items, liveItems } : undefined
+    activityLead && activityGroup
+      ? {
+          group: activityGroup,
+          items,
+          liveItems,
+          complete: activityComplete,
+          stopped: activityComplete && presentation.stopped,
+        }
+      : undefined
   const liveItemUpdate = liveItems.get(index)
+  // A restart also ends a turn as interrupted; its error row says why, so the
+  // turn does not claim the user stopped it.
+  const stoppedByUser =
+    !live &&
+    presentation?.stopped === true &&
+    presentation.endIndex === index &&
+    threadItemAt(items, liveItems, presentation.lastIndex + 1)?.type !== 'error'
+  // An answer carries its marker under its text, above its actions.
+  const stoppedAnswer = stoppedByUser && item.type === 'message' && item.role === 'assistant'
 
   return (
     <div
@@ -690,6 +1214,9 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
       ref={measureElement}
       style={{ transform: `translateY(${start}px)` }}
     >
+      {responseLead && !presentation.design && presentation.activityGroups.length === 0 ? (
+        <TurnDuration elapsedMs={presentation.elapsedMs} stopped={presentation.stopped} />
+      ) : null}
       <Row
         item={item}
         liveTextUpdate={liveItemUpdate?.textUpdate}
@@ -703,12 +1230,82 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         finalResponse={responseLead}
         settling={settling}
         onEditMessage={onEditMessage}
-        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex)}
+        checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex, items)}
         onRevertCheckpoint={onRevertCheckpoint}
+        stoppedByUser={stoppedAnswer}
       />
+      {stoppedByUser && !stoppedAnswer ? <TurnStopped /> : null}
     </div>
   )
 })
+
+/** Roughly one paragraph, for rows whose height depends on their text. */
+const DEFAULT_ROW_ESTIMATE = 72
+/** A collapsed one-line work summary: its 30px line, 8px margin and the row gap. */
+const COLLAPSED_ACTIVITY_ESTIMATE = 46
+
+/** Whether this row belongs to a work disclosure that another row renders. */
+function isCompactedActivity(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+  activityGroup: TurnActivityGroup | undefined,
+): boolean {
+  return (
+    activityGroup !== undefined &&
+    (isStackedActivity(item) ||
+      (presentation?.complete === true &&
+        isWorkDisclosureItem(item) &&
+        index !== presentation.finalAnswerIndex))
+  )
+}
+
+/**
+ * The height a row is expected to measure before it has rendered. Only the
+ * lead row of a work disclosure renders, so every other row in it measures 0.
+ */
+export function estimateThreadRowSize(
+  item: Item,
+  index: number,
+  presentation: TurnPresentation | undefined,
+): number {
+  if (isBlankReasoning(item)) return 0
+  const activityGroup = presentation
+    ? activityGroupAt(presentation.activityGroups, index)
+    : undefined
+  if (isCompactedActivity(item, index, presentation, activityGroup)) {
+    return activityGroup?.firstIndex === index ? COLLAPSED_ACTIVITY_ESTIMATE : 0
+  }
+  if (isActivity(item)) return COLLAPSED_ACTIVITY_ESTIMATE
+  return DEFAULT_ROW_ESTIMATE
+}
+
+/** Bounds the walk past hidden rows so a huge collapsed batch stays cheap. */
+const MAX_OVERSCAN_WALK = 256
+
+/**
+ * The rows to mount: the visible range plus `overscan` rows on each side that
+ * actually take up space. Most rows inside a work disclosure measure 0, and
+ * counting them would leave no real margin: a disclosure just above the
+ * viewport could unmount for one frame while it collapses, losing its state.
+ */
+export function overscanVisibleRows(
+  range: Range,
+  sizeOf: (index: number) => number | undefined,
+): number[] {
+  const step = (from: number, direction: 1 | -1, last: number) => {
+    let index = from
+    for (let seen = 0, walked = 0; index !== last && seen < range.overscan; walked++) {
+      if (walked >= MAX_OVERSCAN_WALK) break
+      index += direction
+      if ((sizeOf(index) ?? 1) > 0) seen++
+    }
+    return index
+  }
+  const start = step(range.startIndex, -1, 0)
+  const end = step(range.endIndex, 1, Math.max(0, range.count - 1))
+  return Array.from({ length: end - start + 1 }, (_, offset) => start + offset)
+}
 
 /**
  * Only animate items appended while this thread is open. Historical rows can
@@ -821,6 +1418,7 @@ const Row = memo(function Row({
   onEditMessage,
   checkpoint,
   onRevertCheckpoint,
+  stoppedByUser = false,
 }: {
   item: Item
   liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
@@ -836,6 +1434,8 @@ const Row = memo(function Row({
   onEditMessage: ((text: string) => void) | undefined
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
+  /** The answer of a turn the user stopped ends on the stopped marker. */
+  stoppedByUser?: boolean
 }) {
   if (hidden) return null
 
@@ -847,8 +1447,12 @@ const Row = memo(function Row({
   }
 
   if (activity) {
+    // A batch of one would only repeat its call; the call is the row.
+    const lone = !activityLive && !activity.complete ? loneToolCall(activity) : undefined
+    if (lone) return <AuxDisclosure key={lone.id} item={lone} live={false} />
     return (
       <ActivityStack
+        key={activity.complete ? 'complete' : 'working'}
         activity={activity}
         live={activityLive}
         projectPath={projectPath}
@@ -883,8 +1487,8 @@ const Row = memo(function Row({
               <button
                 type="button"
                 onClick={() => onEditMessage(item.text!)}
-                aria-label="Edit prompt"
-                title="Edit"
+                aria-label="Edit as new prompt"
+                title="Edit as new prompt"
               >
                 <Pencil aria-hidden />
               </button>
@@ -893,10 +1497,10 @@ const Row = memo(function Row({
               <button
                 type="button"
                 onClick={() => onRevertCheckpoint(checkpoint)}
-                aria-label="Revert to before prompt"
-                title="Revert"
+                aria-label="Restore to before this prompt"
+                title="Restore to before this prompt"
               >
-                <RotateCcw aria-hidden />
+                <History aria-hidden />
               </button>
             ) : null}
           </div>
@@ -907,8 +1511,9 @@ const Row = memo(function Row({
 
   if (item.type === 'message') {
     const text = responseText ?? item.text ?? ''
+    const notice = item.id.startsWith('design-not-applicable-')
     return (
-      <div className={`reply${live ? ' is-streaming' : ''}`}>
+      <div className={`reply${notice ? ' reply--notice' : ''}${live ? ' is-streaming' : ''}`}>
         <Markdown
           text={text}
           projectPath={projectPath}
@@ -916,7 +1521,8 @@ const Row = memo(function Row({
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
         />
-        {finalResponse && !live && item.status === 'completed' && text ? (
+        {stoppedByUser ? <TurnStopped /> : null}
+        {finalResponse && !notice && !live && item.status === 'completed' && text ? (
           <ResponseActions
             text={text}
             createdAt={item.createdAt}
@@ -929,8 +1535,10 @@ const Row = memo(function Row({
   }
 
   if (item.type === 'reasoning') {
-    const text = item.text?.trim()
-    if (!text) return null
+    const raw = item.text ?? ''
+    if (!/\S/.test(raw)) return null
+    // Streamed Markdown appends a delta only when the text grew by exactly that delta.
+    const text = live && item.status === 'started' ? raw : raw.trim()
     return (
       <ReasoningDisclosure
         item={item}
@@ -954,6 +1562,17 @@ const Row = memo(function Row({
 
   return <AuxDisclosure item={item} live={live} />
 })
+
+function loneToolCall(activity: ActivityRenderSource): Item | undefined {
+  const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
+  let lone: Item | undefined
+  for (const item of items) {
+    if (!isWorkDisclosureItem(item)) continue
+    if (lone || !isStackedActivity(item)) return undefined
+    lone = item
+  }
+  return lone
+}
 
 function activityItemsForRender(
   group: TurnActivityGroup,
@@ -981,8 +1600,16 @@ type ActivityRenderSource = {
   group: TurnActivityGroup
   items: readonly Item[]
   liveItems: ReadonlyMap<number, LiveItemUpdate>
+  complete: boolean
+  /** A settled turn the user stopped: its summary says so instead of "Worked for". */
+  stopped?: boolean | undefined
 }
 
+/**
+ * What the live summary names. Reasoning that is still open counts even when
+ * its summary is empty — some models never send one — because the alternative
+ * is a row that keeps saying "Used …" in the past tense while the model thinks.
+ */
 function lastActivityItemForRender({
   group,
   items,
@@ -990,7 +1617,10 @@ function lastActivityItemForRender({
 }: ActivityRenderSource): Item | undefined {
   for (let index = group.lastIndex; index >= group.firstIndex; index -= 1) {
     const item = threadItemAt(items, liveItems, index)
-    if (item && isWorkDisclosureItem(item)) return item
+    if (!item) continue
+    if (isWorkDisclosureItem(item) || (item.type === 'reasoning' && item.status === 'started')) {
+      return item
+    }
   }
   return undefined
 }
@@ -1001,34 +1631,35 @@ function lastActivityItemForRender({
  */
 function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   const disclosure = useDisclosure()
-  const detail =
-    item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
-      ? activityDetail(item)
-      : isContextCompaction(item)
-        ? undefined
-        : (imageViewDetail(item) ?? item.text)
+  const phase = item.type === 'tool_call' && designPhaseLabel(toolText(item)) !== undefined
+  // An open row needs its detail anyway, so the detail answers whether it has
+  // any; a closed row asks without building it.
+  const detail = useMemo(
+    () => (!phase && disclosure.contentMounted ? auxDetail(item) : undefined),
+    [item, phase, disclosure.contentMounted],
+  )
+  const expandable = !phase && (disclosure.contentMounted ? Boolean(detail) : hasAuxDetail(item))
+  const label = live ? summariseLive(item) : activityItemLabel(item)
 
   return (
     <div
-      className={`aux aux--${item.type} ${live ? 'aux--live' : ''}`}
+      className={`aux aux--${item.type}${phase ? ' aux--phase' : ''}${live ? ' aux--live' : ''}`}
       data-expanded={disclosure.expanded}
+      data-failed={isFailedActivity(item)}
     >
       <button
         type="button"
         className="aux__row"
-        aria-expanded={disclosure.expanded}
+        aria-expanded={expandable ? disclosure.expanded : undefined}
+        disabled={!expandable}
+        title={label}
         onClick={disclosure.toggle}
       >
         <span className="aux__glyph" aria-hidden>
           {glyph(item)}
         </span>
-        <span className="aux__label">
-          {live
-            ? summariseLive(item)
-            : item.type === 'command' || item.type === 'file_change'
-              ? activityItemLabel(item)
-              : summarise(item)}
-        </span>
+        <span className="aux__label">{activityLabelParts(item, label)}</span>
+        {item.type === 'file_change' ? <ItemChangeStats item={item} /> : null}
         {item.exitCode !== undefined && item.exitCode !== 0 ? (
           <span className="aux__code">exit {item.exitCode}</span>
         ) : null}
@@ -1039,30 +1670,26 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
         {!live && item.status === 'started' && !isImageView(item) ? (
           <LoaderCircle className="spinner" aria-hidden />
         ) : null}
+        {expandable ? (
+          <ChevronRight className="aux__chevron" size={14} strokeWidth={1.8} aria-hidden />
+        ) : null}
       </button>
       {/* Design markers have no output worth expanding — their text is the slug. */}
-      {detail && !(item.type === 'tool_call' && designPhaseLabel(toolText(item))) ? (
+      {expandable ? (
         <div
+          ref={disclosure.revealRef}
           className="aux__reveal"
           data-open={disclosure.dataOpen}
           aria-hidden={!disclosure.expanded}
           inert={!disclosure.expanded}
           onTransitionEnd={(event) => {
-            if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-              disclosure.finishClosing()
+            if (event.target === event.currentTarget && event.propertyName === 'transform')
+              disclosure.finishTransition()
           }}
         >
-          {disclosure.contentMounted ? (
+          {detail ? (
             <div className="aux__reveal-clip">
-              {isImageView(item) && item.status === 'completed' ? (
-                <ViewedImagePreview
-                  reference={detail}
-                  active={disclosure.expanded}
-                  fallbackClassName="aux__out"
-                />
-              ) : (
-                <pre className="aux__out">{detail}</pre>
-              )}
+              <AuxDetail item={item} detail={detail} active={disclosure.expanded} />
             </div>
           ) : null}
         </div>
@@ -1071,7 +1698,178 @@ function AuxDisclosure({ item, live }: { item: Item; live: boolean }) {
   )
 }
 
-type DisclosurePhase = 'closed' | 'open' | 'closing'
+/** What a standalone row opens to, or nothing beyond its label. */
+function auxDetail(item: Item): string | undefined {
+  return item.type === 'command' || item.type === 'tool_call' || item.type === 'file_change'
+    ? activityDetail(item)
+    : isContextCompaction(item)
+      ? undefined
+      : (imageViewDetail(item) ?? item.text)
+}
+
+const auxDetailPresence = new WeakMap<Item, boolean>()
+
+/**
+ * Whether a closed row has detail to open, decided without building it. A
+ * tool's output can be hundreds of kilobytes of JSON: arguments already answer
+ * for almost every call, and any other row reads its output once per item
+ * rather than on every render of the stack around it. Items are immutable; a
+ * live update arrives as a new object. An open row builds its detail instead.
+ */
+function hasAuxDetail(item: Item): boolean {
+  let present = auxDetailPresence.get(item)
+  if (present === undefined) {
+    present = hasToolArguments(item) || Boolean(auxDetail(item))
+    auxDetailPresence.set(item, present)
+  }
+  return present
+}
+
+/** A tool call's arguments are part of its detail, so a call with any has detail. */
+function hasToolArguments(item: Item): boolean {
+  return (
+    item.type === 'tool_call' &&
+    !isContextCompaction(item) &&
+    designPhaseLabel(toolText(item)) === undefined &&
+    toolArgumentEntries(parseToolCall(item.text).args).length > 0
+  )
+}
+
+/** Rendered only while its reveal is mounted, and not again on a parent render. */
+const AuxDetail = memo(function AuxDetail({
+  item,
+  detail,
+  active,
+}: {
+  item: Item
+  detail: string
+  active: boolean
+}) {
+  return isImageView(item) && item.status === 'completed' ? (
+    <ViewedImagePreview reference={detail} active={active} fallbackClassName="aux__out" />
+  ) : (
+    <ActivityDetail item={item} detail={detail} className="aux__out" />
+  )
+})
+
+/**
+ * What opens under a tool row. A tool call shows what it was asked and what
+ * it answered as two things, not one blob; a file change shows the diff the
+ * way the turn summary does; everything else is the plain output.
+ */
+function ActivityDetail({
+  item,
+  detail,
+  className,
+}: {
+  item: Item
+  detail: string
+  className: string
+}) {
+  if (item.type === 'file_change') {
+    const diff = fileChangeDiff(item)
+    if (diff) return <FileChangeDetail diff={diff} className={className} />
+  }
+  if (item.type === 'tool_call') {
+    const call = parseToolCall(item.text)
+    const entries = toolArgumentEntries(call.args)
+    if (entries.length > 0 || call.output) {
+      return (
+        <div className={`${className} tool-detail`}>
+          {entries.length > 0 ? (
+            <dl className="tool-detail__args">
+              {entries.map(([key, value]) => (
+                <Fragment key={key}>
+                  <dt>{key}</dt>
+                  <dd>{value}</dd>
+                </Fragment>
+              ))}
+            </dl>
+          ) : null}
+          {call.output ? <pre className="tool-detail__output">{call.output}</pre> : null}
+        </div>
+      )
+    }
+  }
+  return <pre className={className}>{detail}</pre>
+}
+
+function FileChangeDetail({
+  diff,
+  className,
+}: {
+  diff: ReturnType<typeof parseDiff>
+  className: string
+}) {
+  return (
+    <div className={`${className} change-detail`}>
+      {diff.fileEntries.length > 1 ? (
+        <ul className="change-detail__files">
+          {diff.fileEntries.map((file, index) => (
+            <li key={`${file.path}:${index}`}>
+              <span className="change-detail__path">{file.path}</span>
+              <ChangeStats
+                added={file.added}
+                removed={file.removed}
+                className="change-detail__stat"
+              />
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      <pre className="change-detail__diff">
+        {diff.lines
+          .filter((line) => line.kind !== 'meta')
+          .map((line, index) => (
+            <span key={index} className={`dline dline--${line.kind}`}>
+              {line.text || ' '}
+            </span>
+          ))}
+      </pre>
+    </div>
+  )
+}
+
+/** The unified diff a file change carries, when its text is one. */
+function fileChangeDiff(item: Item): ReturnType<typeof parseDiff> | undefined {
+  const text = item.text ?? ''
+  if (!/^(diff --git|--- |@@ )/m.test(text)) return undefined
+  const diff = parseDiff(text)
+  return diff.lines.some((line) => line.kind === 'add' || line.kind === 'del') ? diff : undefined
+}
+
+function ItemChangeStats({ item }: { item: Item }) {
+  const added = item.linesAdded ?? 0
+  const removed = item.linesRemoved ?? 0
+  if (added === 0 && removed === 0) return null
+  return <ChangeStats added={added} removed={removed} className="aux__stat" />
+}
+
+/**
+ * A tool's name is an identifier, so it renders as code inside an otherwise
+ * plain label. The label text stays a single string for accessible names.
+ */
+function activityLabelParts(item: Item, label: string): ReactNode {
+  if (item.type !== 'tool_call') return label
+  const { name } = parseToolCall(item.text)
+  if (!name || !looksLikeIdentifier(name)) return label
+  const index = label.indexOf(name)
+  if (index === -1) return label
+  return (
+    <>
+      {label.slice(0, index)}
+      <code className="activity__tool">{name}</code>
+      {label.slice(index + name.length)}
+    </>
+  )
+}
+
+/** `cua_repl.js`, `github.search_issues`, `WebFetch` — not "Searched thoughtLabel". */
+function looksLikeIdentifier(name: string): boolean {
+  return !/\s/.test(name) && /[._\-A-Z0-9]/.test(name)
+}
+
+type DisclosurePhase = 'closed' | 'opening' | 'open' | 'closing'
 
 function ReasoningDisclosure({
   item,
@@ -1136,17 +1934,18 @@ function ReasoningDisclosure({
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="aux__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
+            disclosure.finishTransition()
         }}
       >
         <div className="aux__reveal-clip">
-          {disclosure.expanded || disclosure.dataOpen === 'closing' ? (
+          {disclosure.contentMounted ? (
             <div className={`reasoning-summary${live ? ' is-live' : ''}`}>
               <Markdown
                 text={text}
@@ -1187,52 +1986,86 @@ function thoughtDuration(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
+/** Mirror --dur-fast, --dur-press and --ease-out: the reveal transitions in thread.css. */
+const REVEAL_OPEN_MS = 180
+const REVEAL_CLOSE_MS = 140
+const REVEAL_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
+
+function settledPhase(phase: DisclosurePhase): DisclosurePhase {
+  return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
+}
+
 function useDisclosure() {
   const [phase, setPhase] = useState<DisclosurePhase>('closed')
-  const expanded = phase === 'open'
+  const revealRef = useRef<HTMLDivElement>(null)
+  const measureRow = useContext(RowMeasureContext)
+  const expanded = phase === 'open' || phase === 'opening'
+  const transitioning = phase === 'opening' || phase === 'closing'
+
+  // The reveal enters or leaves flow in this commit. Measuring the row now,
+  // before paint, starts the rows below in the same frame as the wipe; the
+  // ResizeObserver would only catch up a frame later.
+  useLayoutEffect(() => {
+    if (!transitioning || !measureRow) return
+    const reveal = revealRef.current
+    const row = reveal?.closest('.thread__row')
+    // The summary button sits right before its reveal in every disclosure.
+    if (row) measureRow(row, reveal?.previousElementSibling ?? null)
+  }, [phase, transitioning, measureRow])
 
   useEffect(() => {
-    if (phase !== 'closing') return
+    if (!transitioning) return
     // A reversal before the first paint can leave no transition to finish.
     const timer = window.setTimeout(
-      () => setPhase((current) => (current === 'closing' ? 'closed' : current)),
-      180,
+      () => setPhase((current) => (current === phase ? settledPhase(phase) : current)),
+      (phase === 'opening' ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS) + 60,
     )
     return () => window.clearTimeout(timer)
-  }, [phase])
+  }, [phase, transitioning])
 
   const toggle = useCallback(() => {
     const reduceMotion =
       globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    setPhase((current) => (current === 'open' ? (reduceMotion ? 'closed' : 'closing') : 'open'))
+    setPhase((current) =>
+      current === 'open' || current === 'opening'
+        ? reduceMotion
+          ? 'closed'
+          : 'closing'
+        : reduceMotion
+          ? 'open'
+          : 'opening',
+    )
   }, [])
 
-  const finishClosing = useCallback(() => {
-    setPhase((current) => (current === 'closing' ? 'closed' : current))
+  const finishTransition = useCallback(() => {
+    setPhase(settledPhase)
   }, [])
 
   return {
     expanded,
     contentMounted: phase !== 'closed',
-    dataOpen: phase === 'open' ? 'true' : phase === 'closing' ? 'closing' : 'false',
+    dataOpen: phase === 'open' ? 'true' : phase === 'closed' ? 'false' : phase,
+    revealRef,
     toggle,
-    finishClosing,
+    finishTransition,
   } as const
 }
 
-function groupCommandRuns(items: Item[]): (Item | Item[])[] {
-  if (items.every((item) => item.type === 'command')) return items
+/**
+ * Every run of tool calls between two thoughts or messages folds into one
+ * batch. A lone call stays a row of its own, and a list that is nothing but
+ * tool calls is already the batch its summary names.
+ */
+function groupToolRuns(items: Item[]): (Item | Item[])[] {
+  if (items.every(isStackedActivity)) return items
   const rows: (Item | Item[])[] = []
   for (const item of items) {
     const previous = rows.at(-1)
-    if (item.type === 'command' && Array.isArray(previous)) {
+    if (isStackedActivity(item) && Array.isArray(previous)) {
       previous.push(item)
-    } else if (
-      item.type === 'command' &&
-      !Array.isArray(previous) &&
-      previous?.type === 'command'
-    ) {
-      rows[rows.length - 1] = [previous, item]
+    } else if (isStackedActivity(item) && previous && !Array.isArray(previous)) {
+      if (isStackedActivity(previous)) rows[rows.length - 1] = [previous, item]
+      else rows.push(item)
     } else {
       rows.push(item)
     }
@@ -1240,16 +2073,12 @@ function groupCommandRuns(items: Item[]): (Item | Item[])[] {
   return rows
 }
 
-function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
+function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
   const disclosure = useDisclosure()
-  const failed = items.filter(
-    (item) => item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0),
-  ).length
-  const pending = items.some((item) => item.status === 'started')
-  const label = `${live && pending ? 'Running commands' : 'Ran commands'}${failed ? ` (${failed} failed)` : ''}${!live && pending ? ' (interrupted)' : ''}`
+  const tally = toolTally(items, live)
 
   return (
-    <div className="activity" data-expanded={disclosure.expanded}>
+    <div className="activity activity--batch" data-expanded={disclosure.expanded}>
       <button
         type="button"
         className="activity__summary"
@@ -1257,19 +2086,20 @@ function CommandRun({ items, live }: { items: Item[]; live: boolean }) {
         onClick={disclosure.toggle}
       >
         <span className="activity__glyph" aria-hidden>
-          {glyph(items[0]!)}
+          {toolBatchGlyph(items)}
         </span>
-        <span className="activity__label">{label}</span>
+        <ToolTallyLabel tally={tally} />
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
@@ -1303,15 +2133,22 @@ function ActivityStack({
   const current = live
     ? lastActivityItemForRender(activity)
     : (operationalActivity.at(-1) ?? completedActivity.at(-1))
-  const hasCommentary = completedActivity.some(
-    (item) => item.type === 'message' && item.role === 'assistant',
+  const hasWorkNotes = completedActivity.some(
+    (item) => item.type === 'reasoning' || (item.type === 'message' && item.role === 'assistant'),
   )
+  const tally =
+    live && current
+      ? undefined
+      : activity.complete || hasWorkNotes
+        ? undefined
+        : toolTally(operationalActivity, false)
+  const stopped = !live && activity.stopped === true
   const label =
     live && current
       ? liveActivityLabel(current)
-      : hasCommentary
-        ? `Worked for ${workedFor(activity.group.elapsedMs)}`
-        : activityStackLabel(operationalActivity)
+      : tally
+        ? toolTallyText(tally)
+        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}`
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
   const summaryRef = useRef<HTMLButtonElement>(null)
   const summaryId = summaryItem?.id
@@ -1358,35 +2195,56 @@ function ActivityStack({
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || !hasCommentary ? (
+        {live || tally || stopped ? (
           <span className="activity__glyph" aria-hidden>
-            {glyph(summaryItem)}
+            {tally ? (
+              toolBatchGlyph(operationalActivity)
+            ) : stopped ? (
+              <Stop strokeWidth={1.8} />
+            ) : (
+              glyph(summaryItem)
+            )}
           </span>
         ) : null}
-        <span className="activity__label" aria-live="polite" aria-atomic="true">
-          {label}
-        </span>
+        {tally ? (
+          <ToolTallyLabel tally={tally} announce />
+        ) : (
+          <span className="activity__label" aria-live="polite" aria-atomic="true">
+            {live && current ? activityLabelParts(current, label) : label}
+          </span>
+        )}
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
       </button>
       <div
+        ref={disclosure.revealRef}
         className="activity__reveal"
         data-open={disclosure.dataOpen}
         aria-hidden={!disclosure.expanded}
         inert={!disclosure.expanded}
         onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && event.propertyName === 'clip-path')
-            disclosure.finishClosing()
+          if (event.target === event.currentTarget && event.propertyName === 'transform')
+            disclosure.finishTransition()
         }}
       >
         {disclosure.contentMounted ? (
           <div className="activity__reveal-clip">
             <div className="activity__body">
-              {(visibleActivity ? groupCommandRuns(visibleActivity) : []).map((item) => {
+              {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
-                  return <CommandRun key={item[0]!.id} items={item} live={live} />
+                  return <ToolBatch key={item[0]!.id} items={item} live={live} />
                 }
-                if (item.type === 'command' || item.type === 'file_change') {
-                  return <AuxDisclosure key={item.id} item={item} live={false} />
+                if (item.type === 'reasoning') {
+                  return (
+                    <ReasoningDisclosure
+                      key={item.id}
+                      item={item}
+                      text={item.text ?? ''}
+                      live={false}
+                      projectPath={projectPath}
+                      liveTextUpdate={undefined}
+                      liveUpdateVersion={undefined}
+                    />
+                  )
                 }
                 if (item.type === 'message') {
                   return (
@@ -1395,41 +2253,12 @@ function ActivityStack({
                     </div>
                   )
                 }
-                const detail = activityDetail(item)
-                const itemLabel = activityItemLabel(item)
                 return (
-                  <div
-                    className="activity__item"
-                    data-failed={
-                      item.status === 'failed' ||
-                      (item.exitCode !== undefined && item.exitCode !== 0)
-                    }
+                  <AuxDisclosure
                     key={item.id}
-                  >
-                    <div className="activity__file-change">
-                      {glyph(item)}
-                      <span className="activity__item-label" title={itemLabel}>
-                        {itemLabel}
-                      </span>
-                      {item.exitCode !== undefined && item.exitCode !== 0 ? (
-                        <span className="aux__code">exit {item.exitCode}</span>
-                      ) : null}
-                      {item.durationMs !== undefined && item.durationMs >= 1000 ? (
-                        <span className="aux__time">{duration(item.durationMs)}</span>
-                      ) : null}
-                    </div>
-                    {detail ? (
-                      isImageView(item) && item.status === 'completed' ? (
-                        <ViewedImagePreview
-                          reference={detail}
-                          active={disclosure.expanded}
-                          fallbackClassName="activity__detail"
-                        />
-                      ) : (
-                        <pre className="activity__detail">{detail}</pre>
-                      )
-                    ) : null}
-                  </div>
+                    item={item}
+                    live={live && item.status === 'started'}
+                  />
                 )
               })}
             </div>
@@ -1443,6 +2272,7 @@ function ActivityStack({
 function isWorkDisclosureItem(item: Item): boolean {
   return (
     isStackedActivity(item) ||
+    (item.type === 'reasoning' && !isBlankReasoning(item)) ||
     (item.type === 'message' && item.role === 'assistant' && Boolean(item.text?.trim()))
   )
 }
@@ -1453,31 +2283,34 @@ function activityDetail(item: Item): string | undefined {
   const image = imageViewDetail(item)
   if (image !== undefined) return image
   if (item.type === 'tool_call') return toolCallDetail(item)
-  if (item.type === 'command' && item.command) {
-    const detail = toolCallDetail(item)
-    if (detail !== undefined) return detail
-    if (/\s[[{]/.test(item.text ?? '')) return undefined
-  }
-  const details =
-    item.type === 'command' ? [item.text] : item.type === 'file_change' ? [item.text] : [item.text]
-  const unique = details.filter(
-    (detail, index) =>
-      detail &&
-      detail !== activityItemLabel(item) &&
-      detail !== item.command &&
-      detail !== item.path &&
-      details.indexOf(detail) === index,
-  )
-  return unique.length > 0 ? unique.join('\n') : undefined
+  if (item.type === 'command') return commandOutput(item)
+  const text = item.text?.trim()
+  if (!text || text === activityItemLabel(item) || text === item.path) return undefined
+  return text
+}
+
+/**
+ * A command's text is its output. Rows persisted by an older adapter wrapped
+ * it in the tool's result envelope (`Bash [ … ]\n{ … }`); those unwrap to the
+ * text inside, and an empty envelope means there was no output.
+ */
+function commandOutput(item: Item): string | undefined {
+  const text = item.text?.trim()
+  if (!text) return undefined
+  if (/^\S+\s[[{]/.test(text.split('\n', 1)[0] ?? '')) return parseToolCall(text).output
+  return text
 }
 
 function toolCallHeadline(item: Item): string {
-  const firstLine = (item.text ?? '').split('\n', 1)[0]?.trim() ?? ''
-  const withoutPayload = firstLine.replace(/\s*[[{].*$/, '').trim()
-  const raw = withoutPayload || firstLine
-  return raw ? humanToolHeadline(raw) : 'Tool call'
+  const { name } = parseToolCall(item.text)
+  return name ? humanToolHeadline(name) : 'Tool call'
 }
 
+/**
+ * Tool names some agents use for reading and searching read as verbs. Any
+ * other identifier stays exactly as the agent named it: `cua_repl.js` is a
+ * tool, not "Cua repl.js".
+ */
 function humanToolHeadline(raw: string): string {
   const space = raw.indexOf(' ')
   const token = (space === -1 ? raw : raw.slice(0, space)).toLowerCase()
@@ -1489,112 +2322,40 @@ function humanToolHeadline(raw: string): string {
   if (token === 'list_dir' || token === 'list_files') {
     return rest ? `Listed ${rest}` : 'Listed files'
   }
-  if (/[_-]/.test(token)) {
-    const named = token.replaceAll(/[_-]+/g, ' ')
-    const titled = `${named.charAt(0).toUpperCase()}${named.slice(1)}`
-    return rest ? `${titled} ${rest}` : titled
-  }
   return raw
 }
 
+/** Arguments and output as one text, for consumers that want a string. */
 function toolCallDetail(item: Item): string | undefined {
-  const text = item.text?.trim()
-  if (!text) return undefined
-  const firstLine = text.split('\n', 1)[0]?.trim() ?? ''
-  const rest = text.includes('\n') ? text.slice(firstLine.length + 1).trim() : ''
-  const payloadIndex = firstLine.search(/\s[[{]/)
-  const firstLinePayload = payloadIndex > 0 ? firstLine.slice(payloadIndex).trim() : ''
-  const payload = [firstLinePayload, rest].filter(Boolean).join('\n') || undefined
-  return payload ? unwrapToolPayload(payload) : undefined
+  const call = parseToolCall(item.text)
+  const args = toolArgumentEntries(call.args).map(([key, value]) => `${key}: ${value}`)
+  const detail = [...args, call.output].filter(Boolean).join('\n')
+  return detail || undefined
 }
 
-function unwrapToolPayload(text: string): string | undefined {
-  const trimmed = text.trim()
-  const values = parseJsonSequence(trimmed)
-  if (!values) return trimmed
-  const parts = values
-    .map((value) => readableToolJson(value))
-    .filter((value): value is string => value !== undefined)
-  const unique = [...new Set(parts)]
-  return unique.length > 0 ? unique.join('\n') : undefined
+/**
+ * A finished tool call in the expanded list. Adapters that already chose a
+ * human label ("Searched thoughtLabel") keep it; a bare identifier gets a
+ * verb and the argument it acted on, like the command rows beside it.
+ */
+function toolCallRowLabel(item: Item): string {
+  const headline = toolCallHeadline(item)
+  if (isWebSearch(item)) {
+    const query = webSearchQuery(item)
+    return query ? `Searched the web for “${query}”` : 'Searched the web'
+  }
+  if (headline === 'Tool call' || !looksLikeIdentifier(headline)) return headline
+  const verb =
+    item.status === 'failed' ? 'Failed' : item.status === 'started' ? 'Interrupted' : 'Used'
+  const snippet = toolCallSnippet(item, headline)
+  return `${verb} ${headline}${snippet ? ` · ${snippet}` : ''}`
 }
 
-function parseJsonSequence(text: string): unknown[] | undefined {
-  const values: unknown[] = []
-  let index = 0
-  while (index < text.length) {
-    while (/\s/.test(text[index] ?? '')) index += 1
-    if (index >= text.length) break
-    if (text[index] !== '{' && text[index] !== '[') return undefined
-
-    const start = index
-    let depth = 0
-    let inString = false
-    let escaped = false
-    let closed = false
-    for (; index < text.length; index += 1) {
-      const character = text[index]
-      if (inString) {
-        if (escaped) escaped = false
-        else if (character === '\\') escaped = true
-        else if (character === '"') inString = false
-        continue
-      }
-      if (character === '"') inString = true
-      else if (character === '{' || character === '[') depth += 1
-      else if (character === '}' || character === ']') {
-        depth -= 1
-        if (depth === 0) {
-          index += 1
-          closed = true
-          break
-        }
-      }
-    }
-    if (!closed) return undefined
-    try {
-      values.push(JSON.parse(text.slice(start, index)) as unknown)
-    } catch {
-      return undefined
-    }
-  }
-  return values.length > 0 ? values : undefined
-}
-
-function readableToolJson(value: unknown, depth = 0): string | undefined {
-  if (depth > 8 || value === null || value === undefined || value === '') return undefined
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    if (!trimmed) return undefined
-    if (
-      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-      (trimmed.startsWith('[') && trimmed.endsWith(']'))
-    ) {
-      try {
-        return readableToolJson(JSON.parse(trimmed) as unknown, depth + 1) ?? value
-      } catch {
-        return value
-      }
-    }
-    return value
-  }
-  if (typeof value !== 'object') return undefined
-  if (Array.isArray(value)) {
-    if (value.every((entry) => typeof entry === 'number')) return undefined
-    const parts = value
-      .map((entry) => readableToolJson(entry, depth + 1))
-      .filter((entry): entry is string => entry !== undefined)
-    const unique = [...new Set(parts)]
-    return unique.length ? unique.join('\n') : undefined
-  }
-  const record = value as Record<string, unknown>
-  for (const key of ['text', 'stdout', 'output', 'result', 'message', 'content']) {
-    if (key in record) {
-      const extracted = readableToolJson(record[key], depth + 1)
-      if (extracted) return extracted
-    }
-  }
-  return undefined
+/** The tool call's target, short enough to sit beside its name. */
+function toolCallSnippet(item: Item, name: string): string | undefined {
+  const snippet = toolArgumentSnippet(parseToolCall(item.text).args)
+  if (!snippet || name.toLowerCase().includes(snippet.toLowerCase())) return undefined
+  return snippet
 }
 
 function isSearchTool(text: string): boolean {
@@ -1612,8 +2373,13 @@ function ViewedImagePreview({
   fallbackClassName?: string
   variant?: 'detail' | 'message'
 }) {
-  const [preview, setPreview] = useState<PickedAttachment>()
-  const [previewSettled, setPreviewSettled] = useState(false)
+  // A disclosure measures its row in the commit that opens it. A preview that
+  // arrives a frame later would resize the reveal mid-wipe, so anything
+  // already known renders in the first frame.
+  const [preview, setPreview] = useState(() => knownViewedImagePreview(reference))
+  const [previewSettled, setPreviewSettled] = useState(
+    () => preview !== undefined || !canPreviewViewedImages,
+  )
   const [viewerOpen, setViewerOpen] = useState(false)
   const [thumbnailFailed, setThumbnailFailed] = useState(false)
   const [imageFailed, setImageFailed] = useState(false)
@@ -1621,8 +2387,9 @@ function ViewedImagePreview({
   useEffect(() => {
     if (!active) return
     let cancelled = false
-    setPreview(undefined)
-    setPreviewSettled(false)
+    const known = knownViewedImagePreview(reference)
+    setPreview(known)
+    setPreviewSettled(known !== undefined || !canPreviewViewedImages)
     setThumbnailFailed(false)
     setImageFailed(false)
     void previewViewedImage(reference)
@@ -1643,18 +2410,36 @@ function ViewedImagePreview({
   const inlineSource =
     preview?.thumbnailUrl && !thumbnailFailed ? preview.thumbnailUrl : preview?.previewUrl
   if (!preview || !inlineSource || !preview.previewUrl || imageFailed) {
-    if (variant === 'detail' && fallbackClassName) {
+    // Without a bridge nothing will ever load, so the plain reference is final.
+    if (variant === 'detail' && fallbackClassName && !canPreviewViewedImages) {
       return <pre className={fallbackClassName}>{reference}</pre>
+    }
+    const status = previewSettled ? 'is-unavailable' : 'is-loading'
+    const label = previewSettled
+      ? `Preview unavailable for ${attachmentName(reference)}`
+      : `Loading preview of ${attachmentName(reference)}`
+    if (variant === 'detail') {
+      // The image's own frame and name line, so the reveal around it keeps
+      // its height when the preview settles.
+      return (
+        <div className={`viewed-image-preview ${status}`} role="status" aria-label={label}>
+          <span className="viewed-image-preview__placeholder" aria-hidden>
+            <Images />
+            {previewSettled ? (
+              <span className="viewed-image-preview__unavailable-copy">Preview unavailable</span>
+            ) : null}
+          </span>
+          <span className="viewed-image-preview__name" title={reference}>
+            {reference}
+          </span>
+        </div>
+      )
     }
     return (
       <span
-        className={`viewed-image-preview viewed-image-preview--message ${previewSettled ? 'is-unavailable' : 'is-loading'}`}
+        className={`viewed-image-preview viewed-image-preview--message ${status}`}
         role="status"
-        aria-label={
-          previewSettled
-            ? `Preview unavailable for ${attachmentName(reference)}`
-            : `Loading preview of ${attachmentName(reference)}`
-        }
+        aria-label={label}
       >
         <span className="viewed-image-preview__placeholder" aria-hidden>
           <Images />
@@ -1716,53 +2501,161 @@ function ViewedImagePreview({
 const IMAGE_ATTACHMENT_RE = /\.(?:apng|avif|bmp|gif|ico|jpe?g|png|webp)$/i
 
 function isImageAttachment(reference: string): boolean {
-  return IMAGE_ATTACHMENT_RE.test(reference)
+  return (
+    IMAGE_ATTACHMENT_RE.test(reference) ||
+    /^data:image\/(?:png|jpeg|gif|webp|avif);base64,/.test(reference)
+  )
 }
 
 function attachmentName(reference: string): string {
+  if (reference.startsWith('data:image/')) return 'Attached image'
   return reference.split(/[\\/]/).filter(Boolean).at(-1) ?? reference
 }
 
-function activityStackLabel(items: Item[]): string {
-  const onlyItem = items.length === 1 ? items[0] : undefined
-  if (
-    onlyItem &&
-    (onlyItem.status !== 'completed' ||
-      (onlyItem.exitCode !== undefined && onlyItem.exitCode !== 0))
-  ) {
-    return activityItemLabel(onlyItem)
-  }
+type ToolKind =
+  | 'command'
+  | 'edit'
+  | 'read'
+  | 'search'
+  | 'web'
+  | 'image'
+  | 'generated-image'
+  | 'plan'
+  | 'compaction'
+  | 'tool'
 
-  const categories = items.reduce<string[]>((labels, item) => {
-    const label = activityCategoryLabel(item)
-    if (!labels.includes(label)) labels.push(label)
-    return labels
-  }, [])
-
-  return categories
-    .map((label, index) => (index === 0 ? label : `${label[0]?.toLowerCase()}${label.slice(1)}`))
-    .join(', ')
-}
-
-function activityCategoryLabel(item: Item): string {
+function toolKind(item: Item): ToolKind {
   switch (item.type) {
     case 'command':
-      return 'Ran commands'
+      return 'command'
     case 'file_change':
-      return 'Edited files'
+      return 'edit'
     case 'plan':
-      return 'Updated plan'
+      return 'plan'
     case 'tool_call': {
       const text = toolText(item)
-      if (isContextCompaction(item)) return 'Compacted context window'
-      if (isImageView(item) || text.includes('image')) return 'Viewed images'
-      if (isSearchTool(text)) return 'Searched'
-      if (text.match(/read|open|file|list/)) return 'Read files'
-      return 'Used tools'
+      if (isContextCompaction(item)) return 'compaction'
+      if (toolNameKey(item) === 'imagegeneration') return 'generated-image'
+      if (isImageView(item) || text.includes('image')) return 'image'
+      if (isWebSearch(item)) return 'web'
+      if (isSearchTool(text)) return 'search'
+      if (text.match(/read|open|file|list/)) return 'read'
+      return 'tool'
     }
     default:
-      return 'Used tools'
+      return 'tool'
   }
+}
+
+function isFailedActivity(item: Item): boolean {
+  return item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)
+}
+
+type ToolTally = {
+  /** "Ran 3 commands", "read 2 files" — in the order the work happened. */
+  phrases: string[]
+  failed: number
+  interrupted: number
+}
+
+/** What a batch of tool calls did, counted per kind of work. */
+function toolTally(items: readonly Item[], live: boolean): ToolTally {
+  const counts = new Map<ToolKind, number>()
+  const editedFiles = new Set<string>()
+  let failed = 0
+  let interrupted = 0
+  for (const item of items) {
+    const kind = toolKind(item)
+    counts.set(kind, (counts.get(kind) ?? 0) + 1)
+    if (kind === 'edit') {
+      const files = fileChangeDiff(item)?.fileEntries
+      if (files?.length) for (const file of files) editedFiles.add(file.path)
+      else editedFiles.add(item.path ?? item.id)
+    }
+    if (isFailedActivity(item)) failed += 1
+    else if (!live && item.status === 'started') interrupted += 1
+  }
+  const phrases = [...counts].map(([kind, count]) =>
+    toolPhrase(kind, kind === 'edit' ? editedFiles.size : count),
+  )
+  return { phrases, failed, interrupted }
+}
+
+function toolPhrase(kind: ToolKind, count: number): string {
+  const counted = (one: string, many: string) => `${count} ${count === 1 ? one : many}`
+  switch (kind) {
+    case 'command':
+      return `Ran ${counted('command', 'commands')}`
+    case 'edit':
+      return `Edited ${counted('file', 'files')}`
+    case 'read':
+      return `Read ${counted('file', 'files')}`
+    case 'search':
+      return count === 1 ? 'Searched once' : `Searched ${count} times`
+    case 'web':
+      return count === 1 ? 'Searched the web' : `Searched the web ${count} times`
+    case 'image':
+      return `Viewed ${counted('image', 'images')}`
+    case 'generated-image':
+      return `Generated ${counted('image', 'images')}`
+    case 'plan':
+      return 'Updated the plan'
+    case 'compaction':
+      return 'Compacted context'
+    case 'tool':
+      return `Used ${counted('tool', 'tools')}`
+  }
+}
+
+/** "Ran 3 commands, read 2 files and edited 1 file". */
+function toolTallySummary(tally: ToolTally): string {
+  const phrases = tally.phrases.map((phrase, index) =>
+    index === 0 ? phrase : `${phrase[0]?.toLowerCase()}${phrase.slice(1)}`,
+  )
+  const last = phrases.pop()
+  if (last === undefined) return 'Used tools'
+  return phrases.length === 0 ? last : `${phrases.join(', ')} and ${last}`
+}
+
+function toolTallyOutcomes(tally: ToolTally): string[] {
+  return [
+    ...(tally.failed > 0 ? [`${tally.failed} failed`] : []),
+    ...(tally.interrupted > 0 ? [`${tally.interrupted} interrupted`] : []),
+  ]
+}
+
+function toolTallyText(tally: ToolTally): string {
+  return [toolTallySummary(tally), ...toolTallyOutcomes(tally)].join(' · ')
+}
+
+function ToolTallyLabel({ tally, announce }: { tally: ToolTally; announce?: boolean }) {
+  const outcomes = toolTallyOutcomes(tally)
+  return (
+    <span
+      className="activity__label"
+      title={toolTallyText(tally)}
+      aria-live={announce ? 'polite' : undefined}
+      aria-atomic={announce ? true : undefined}
+    >
+      {toolTallySummary(tally)}
+      {outcomes.map((outcome) => (
+        <span
+          key={outcome}
+          className={`activity__outcome${outcome.endsWith('failed') ? ' is-failed' : ''}`}
+        >
+          {` · ${outcome}`}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/** One kind of work keeps its own icon; a mix reads as a stack. */
+function toolBatchGlyph(items: readonly Item[]) {
+  const first = items[0]
+  if (!first) return <Layers size={14} />
+  const kind = toolKind(first)
+  return items.every((item) => toolKind(item) === kind) ? glyph(first) : <Layers size={14} />
 }
 
 function liveActivityLabel(item: Item): string {
@@ -1770,7 +2663,7 @@ function liveActivityLabel(item: Item): string {
 
   switch (item.type) {
     case 'command': {
-      const command = inlineActivityText(item.command)
+      const command = commandLabel(item.command)
       if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
         return command ? `Command failed: ${command}` : 'Command failed'
       }
@@ -1778,9 +2671,11 @@ function liveActivityLabel(item: Item): string {
       return `${ongoing ? 'Running' : 'Ran'} ${command}`
     }
     case 'file_change': {
-      const path = inlineActivityText(item.path)
-      if (!path) return ongoing ? 'Editing files' : 'Edited files'
-      return `${ongoing ? 'Editing' : 'Edited'} ${path}`
+      const target = fileChangeTarget(item)
+      if (item.status === 'failed')
+        return target ? `Could not edit ${target}` : 'Could not edit files'
+      if (!target) return ongoing ? 'Editing files' : 'Edited files'
+      return `${ongoing ? 'Editing' : 'Edited'} ${target}`
     }
     case 'tool_call': {
       const text = toolText(item)
@@ -1789,11 +2684,20 @@ function liveActivityLabel(item: Item): string {
         return ongoing ? 'Viewing image' : 'Viewed image'
       }
       if (text.includes('image')) return ongoing ? 'Viewing images' : 'Viewed images'
+      if (isWebSearch(item)) {
+        const query = webSearchQuery(item)
+        const verb = ongoing ? 'Searching' : 'Searched'
+        return query ? `${verb} the web for “${query}”` : `${verb} the web`
+      }
       if (isSearchTool(text)) return ongoing ? 'Searching' : 'Searched'
       if (text.match(/read|open|file|list/)) return ongoing ? 'Reading files' : 'Read files'
       const tool = inlineActivityText(toolCallHeadline(item))
       if (!tool || tool === 'Tool call') return ongoing ? 'Using a tool' : 'Used a tool'
-      return `${ongoing ? 'Using' : 'Used'} ${tool}`
+      const verb = item.status === 'failed' ? 'Failed' : ongoing ? 'Using' : 'Used'
+      // The argument the tool acts on keeps consecutive calls of the same
+      // tool from reading as one stuck row.
+      const snippet = toolCallSnippet(item, tool)
+      return `${verb} ${tool}${snippet ? ` · ${snippet}` : ''}`
     }
     case 'plan':
       return ongoing ? 'Updating the plan' : 'Updated the plan'
@@ -1804,7 +2708,7 @@ function liveActivityLabel(item: Item): string {
 
 function activityItemLabel(item: Item): string {
   if (item.type === 'command') {
-    const command = inlineActivityText(item.command)
+    const command = commandLabel(item.command)
     if (item.status === 'started')
       return command ? `Command interrupted: ${command}` : 'Command interrupted'
     if (item.status === 'failed' || (item.exitCode !== undefined && item.exitCode !== 0)) {
@@ -1814,10 +2718,12 @@ function activityItemLabel(item: Item): string {
   }
 
   if (item.type === 'file_change') {
-    const path = inlineActivityText(item.path)
-    if (item.status === 'started') return path ? `Edit interrupted: ${path}` : 'Edit interrupted'
-    if (item.status === 'failed') return path ? `Could not edit ${path}` : 'Could not edit files'
-    return path ? `Edited ${path}` : 'Edited files'
+    const target = fileChangeTarget(item)
+    if (item.status === 'started')
+      return target ? `Edit interrupted: ${target}` : 'Edit interrupted'
+    if (item.status === 'failed')
+      return target ? `Could not edit ${target}` : 'Could not edit files'
+    return target ? `Edited ${target}` : 'Edited files'
   }
 
   if (item.type === 'plan') return 'Updated plan'
@@ -1825,9 +2731,43 @@ function activityItemLabel(item: Item): string {
   return summarise(item)
 }
 
+/** One path reads as the path; a patch across several files reads as a count. */
+function fileChangeTarget(item: Item): string {
+  const files = fileChangeDiff(item)?.fileEntries.length ?? 0
+  if (files > 1) return `${files} files`
+  return inlineActivityText(item.path)
+}
+
+function isWebSearch(item: Item): boolean {
+  return item.type === 'tool_call' && /^web ?search$/i.test(parseToolCall(item.text).name)
+}
+
+function webSearchQuery(item: Item): string | undefined {
+  const { args } = parseToolCall(item.text)
+  const query = args && !Array.isArray(args) ? args['query'] : undefined
+  return typeof query === 'string' && query.trim() ? inlineActivityText(query) : undefined
+}
+
+/**
+ * Codex runs every command through a login shell, so the label would start
+ * with the same `/bin/zsh -lc` on every row. The command inside is what ran.
+ */
+function commandLabel(command: string | undefined): string {
+  const text = inlineActivityText(command)
+  const wrapped = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/.exec(text)
+  return wrapped?.[2]?.trim() || text
+}
+
 function inlineActivityText(text: string | undefined): string {
   return text?.replace(/\s+/g, ' ').trim() ?? ''
 }
+
+/**
+ * One formatter for every reply's time. toLocaleTimeString builds a new
+ * formatter on each call, and every reply row that mounts while a long chat
+ * is paged calls it.
+ */
+const RESPONSE_TIME = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 
 function ResponseActions({
   text,
@@ -1847,15 +2787,13 @@ function ResponseActions({
         <button
           type="button"
           onClick={() => onRevertCheckpoint(checkpoint)}
-          aria-label="Revert to before response"
-          title="Revert"
+          aria-label="Restore to before this turn"
+          title="Restore to before this turn"
         >
-          <RotateCcw aria-hidden />
+          <History aria-hidden />
         </button>
       ) : null}
-      <time dateTime={new Date(createdAt).toISOString()}>
-        {new Date(createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-      </time>
+      <time dateTime={new Date(createdAt).toISOString()}>{RESPONSE_TIME.format(createdAt)}</time>
     </div>
   )
 }
@@ -1902,6 +2840,43 @@ function CopyAction({ text, label }: { text: string; label: string }) {
         </span>
       ) : null}
     </span>
+  )
+}
+
+function TurnDuration(
+  props: { startedAt: number } | { elapsedMs: number; stopped?: boolean | undefined },
+) {
+  const working = 'startedAt' in props
+  const stopped = !working && props.stopped === true
+  return (
+    <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
+      <div className="activity__summary">
+        {stopped ? (
+          <span className="activity__glyph" aria-hidden>
+            <Stop strokeWidth={1.8} />
+          </span>
+        ) : null}
+        <span className="activity__label">
+          {working ? (
+            <>
+              Working for <WorkingTimer startedAt={props.startedAt} />
+            </>
+          ) : (
+            `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(props.elapsedMs)}`
+          )}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/** The quiet end of a turn the user stopped, under whatever it reached. */
+function TurnStopped() {
+  return (
+    <p className="turn-stopped">
+      <span className="turn-stopped__dot" aria-hidden />
+      Stopped by you
+    </p>
   )
 }
 
@@ -2110,12 +3085,15 @@ function glyph(item: Item) {
       return <Brain size={13} />
     case 'file_change':
       return <FilePenLine size={13} />
-    case 'tool_call':
-      if (toolText(item).includes('image')) return <Images size={14} />
-      if (designPhaseLabel(toolText(item))) return <Palette size={13} />
-      if (isSearchTool(toolText(item))) return <Search size={14} />
-      if (toolText(item).match(/read|open|file|list/)) return <BookOpen size={14} />
+    case 'tool_call': {
+      const name = toolText(item)
+      if (name.includes('image')) return <Images size={14} />
+      if (designPhaseLabel(name)) return <Palette size={13} />
+      if (isWebSearch(item)) return <WorldSearch size={14} />
+      if (isSearchTool(name)) return <Search size={14} />
+      if (name.match(/read|open|file|list/)) return <BookOpen size={14} />
       return <Wrench size={13} />
+    }
     case 'plan':
       return <ListChecks size={13} />
     default:
@@ -2162,7 +3140,7 @@ function summariseLive(item: Item): string {
 }
 
 function designPhaseLabel(text: string): string | undefined {
-  if (text.includes('design:brief')) return 'Preparing questions'
+  if (text.includes('design:brief')) return 'Understanding the request'
   if (text.includes('design:brand')) return 'Creating brand direction'
   if (text.includes('design:page')) return 'Planning the page'
   if (text.includes('design:assets')) return 'Gathering assets'
@@ -2173,8 +3151,13 @@ function designPhaseLabel(text: string): string | undefined {
   return undefined
 }
 
+/**
+ * What a tool is, for the read/search/image heuristics: its name and the
+ * command line, never its arguments or output — a screenshot script that
+ * mentions "file" is not a file read.
+ */
 function toolText(item: Item): string {
-  return `${item.text ?? ''} ${item.command ?? ''}`.toLowerCase()
+  return `${parseToolCall(item.text).name} ${item.command ?? ''}`.toLowerCase()
 }
 
 function summarise(item: Item): string {
@@ -2207,7 +3190,7 @@ function summarise(item: Item): string {
               : item.status === 'started'
                 ? 'Image inspection interrupted'
                 : 'Viewed image'
-            : toolCallHeadline(item))
+            : toolCallRowLabel(item))
       )
     case 'plan':
       return 'Plan'
@@ -2218,12 +3201,17 @@ function summarise(item: Item): string {
   }
 }
 
-function supportedActivitySummary(item: Item, ongoing: boolean): string | undefined {
-  if (item.type !== 'tool_call' && item.type !== 'unknown') return undefined
-  const name = (item.text ?? '')
+/** The tool's name on the first line, lowercased with punctuation removed. */
+function toolNameKey(item: Item): string | undefined {
+  return (item.text ?? '')
     .split('\n', 1)[0]
     ?.replaceAll(/[^a-z0-9]/gi, '')
     .toLowerCase()
+}
+
+function supportedActivitySummary(item: Item, ongoing: boolean): string | undefined {
+  if (item.type !== 'tool_call' && item.type !== 'unknown') return undefined
+  const name = toolNameKey(item)
   const failed = item.status === 'failed'
   const interrupted = item.status === 'started' && !ongoing
 

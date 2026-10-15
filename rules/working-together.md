@@ -6,6 +6,10 @@ Two humans and an agent, three machines, one trunk.
 git cannot decide: what gets worked on, by whom, and what happens when two people want the
 same thing to look different.
 
+An explicitly assigned task includes the necessary branches, worktrees, PRs and manual
+verification runs under [AGENTS.md](../AGENTS.md). Existing authorization for merges remains
+valid; do not ask for it again. Permission never replaces verification or required review.
+
 ## Where work lives
 
 Three places, and each answers a different question. Putting a thing in the wrong one is
@@ -88,16 +92,19 @@ that makes disagreement cheap.
 
 What a normal piece of work looks like, start to finish:
 
-1. `git pull` on `main`. Always start from fresh trunk.
-2. Check open PRs. That is how you see what the other two are touching right now.
-3. Branch. Naming in [git.md](./git.md).
+1. Fetch and compare the assigned branch with its target (`main` or `nightly`). Merge
+   target updates into an existing working branch without rewriting its history.
+2. Check open PRs and worktrees so you know what the other contributors own.
+3. Reuse an appropriate owned branch or create a task-scoped branch/worktree as needed.
+   Naming in [git.md](./git.md); no separate approval is needed for assigned work.
 4. First commit → **open a draft PR immediately.** The draft PR is the signal "I am in these
    files". It costs nothing and prevents the expensive kind of collision.
 5. Push after every commit. Unpushed work is invisible work.
 6. Keep it short — under two days, under ~400 lines. Long branches are what actually cause
    conflicts, not parallel work.
-7. Mark ready. The human responsible for the work explicitly approves it.
-8. Rebase-merge. Delete the branch.
+7. Mark ready only after the required verification and review. Apply the merge
+   authorization in [AGENTS.md](../AGENTS.md); do not ask again for existing approval.
+8. Server-side rebase-merge. Delete the branch.
 
 Conflicts almost never come from two people editing at once. They come from a branch that
 sat for a week. Short branches are the whole trick.

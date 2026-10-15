@@ -51,7 +51,10 @@
   --text: #ededed;
   --response-text: color-mix(in srgb, var(--text) 80%, var(--text-2));
   --text-2: #a3a3a3;
-  --text-3: #6f6f6f;
+  /* Muted copy (section labels, meta, timestamps) still has to be read: this
+     grey clears 4.5:1 on every dark surface up to --surface-2 and stays a
+     clear step below --text-2. */
+  --text-3: #8a8a8a;
   --queue-text: #ededed;
   --queue-action: #8a8a8a;
   --queue-hover: #2b2b2b;
@@ -77,7 +80,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--surface-3);
-  --composer-design-border-hover: var(--composer-control-border-hover);
   --composer-design-border-active: var(--composer-control-border-hover);
   --composer-design-beam-stroke-strength: 1;
   --composer-design-beam-inner-strength: 1;
@@ -96,12 +98,14 @@
   --shadow-flyout: 0 8px 24px -14px rgb(0 0 0 / 46%);
   --shadow-modal: 0 20px 56px -24px rgb(0 0 0 / 52%);
   --shadow-rail: 12px 0 30px -18px rgb(0 0 0 / 40%);
+  /* Something resting a step above the rail: the account card, the active chat. */
+  --shadow-raised: 0 1px 2px rgb(0 0 0 / 28%);
   --chrome-raised: var(--control-hover);
   --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: #101010;
   /* Chevron for restyled native selects. A data URI cannot read currentColor,
      so each theme carries its own text-3-coloured copy. */
-  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236f6f6f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6%209l6%206l6%20-6'/%3E%3C/svg%3E");
   --chrome-border: #303030;
   --chrome-highlight: transparent;
   --chrome-shadow: none;
@@ -122,29 +126,31 @@
   --error: #e5687a;
   --success: #6fbf8e;
 
-  --effort-track: #171719;
-  --effort-track-shadow:
-    inset 0 1px rgb(255 255 255 / 1.2%), inset 0 0 0 1px rgb(255 255 255 / 0.8%),
-    0 1px 2px rgb(0 0 0 / 18%);
-  --effort-fill: linear-gradient(
-    180deg,
-    #2d2d2f 0%,
-    #252527 19%,
-    #262628 43%,
-    #2a2a2a 68%,
-    #2f2f2f 95%,
-    #363638 100%
-  );
-  --effort-fill-shadow: inset 0 1px rgb(255 255 255 / 2%), inset 0 -1px rgb(255 255 255 / 2.5%);
-  --effort-value: #f5f5f7;
-  --dither-texture-filter: none;
-  --dither-texture-opacity: 1;
-  --dither-bloom-filter: blur(1.75px) brightness(1.2);
-  --dither-bloom-opacity: 0.44;
-  --dither-bloom-blend: plus-lighter;
+  /* Effort slider: a recessed pill, a mid-grey fill through the chosen level
+     and a thumb in the text colour on it, so the level reads at a glance.
+     Mixed from the text and surface tokens so backdrops follow. */
+  --effort-track: color-mix(in srgb, black 34%, var(--surface));
+  --effort-track-line: color-mix(in srgb, var(--text) 7%, transparent);
+  --effort-fill: color-mix(in srgb, var(--text) 24%, var(--surface));
+  --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--text) 80%, transparent);
+  --effort-thumb-bg: var(--text);
+  --effort-thumb-dot: var(--surface);
+  --effort-thumb-shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 0 0 0.5px rgb(0 0 0 / 35%);
+  --effort-ring: color-mix(in srgb, var(--text) 50%, transparent);
+  --effort-mark-empty: color-mix(in srgb, var(--text) 22%, transparent);
+  --effort-mark-filled: var(--text-2);
 
-  --font-ui: 'Geist Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --font-system: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-ui: var(--font-system);
   --font-mono: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+  /* The interface font presets, named once: data-font picks one for the app,
+     and the font picker sets each option's sample in its own. */
+  --font-geist: 'Geist Variable', var(--font-system);
+  --font-inter: 'Inter Variable', var(--font-system);
+  --font-humanist: Aptos, Candara, 'Segoe UI', sans-serif;
+  --font-rounded: ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
+  --font-serif: Charter, 'Iowan Old Style', Georgia, serif;
   --font-terminal:
     'JetBrainsMono Nerd Font Mono', 'JetBrains Mono Variable', 'JetBrains Mono',
     'CaskaydiaCove Nerd Font Mono', 'Cascadia Mono', 'Cascadia Code', 'Geist Mono Variable',
@@ -158,20 +164,28 @@
   --t-xl: 20px;
   --t-2xl: 26px;
 
-  /* Corner scale: the 34px composer controls are the visual anchor at 10px.
-     Keep roughly the same 5:17 radius-to-height ratio as surfaces grow, then
-     cap large surfaces at 20px. The steps map to micro details, 25-29px rows,
-     30-36px controls, 37-44px controls, 45-60px panels, and 61px+ surfaces. */
+  /* Corner scale, tuned by eye against the prompt bar: its 32px controls sit at
+     10px and the bar itself at 20px. Smaller things keep about the same
+     roundness (a radius near a third of their height); larger surfaces grow
+     more slowly and stop at 20px. The names are roles, not an ordered ramp:
+     xs marks and bars; sm swatches, buttons up to 20px and segments inside an
+     md track; md 22-30px rows and controls; xl 32-40px controls like the
+     prompt bar's own; lg popups, blocks and cards, concentric around md rows
+     with 3px of padding; card and panel large cards and floating panels;
+     dialog and 2xl modal dialogs and the prompt bar. */
   --r-xs: 2px;
-  --r-sm: 3px;
-  --r-md: 5px;
-  --r-lg: 8px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
   --r-xl: 10px;
   --r-2xl: 20px;
-  --r-card: 12px;
+  --r-card: 16px;
   --r-panel: 16px;
   --r-dialog: 20px;
-  /* Compact rows and controls use 5px corners; floating panels use 8px. */
+  /* The prompt bar and everything docked to it share one outer corner. 10px
+     controls sit ~10px inside it, so 20px keeps the two curves concentric. */
+  --r-composer: var(--r-2xl);
+  /* Popup rows use 8px corners; the popup around them uses 12px. */
   --r-popup-item: var(--r-md);
   --r-popup: var(--r-lg);
   --r-pill: 999px;
@@ -187,8 +201,21 @@
      where there is no overlay. */
   --titlebar-h: env(titlebar-area-height, 34px);
 
+  /* One keyboard focus ring for every control. It is the text colour at 60%,
+     so it reads at 3:1 or better on every surface in both themes without the
+     browser's heavy black default. Standalone controls draw it 2px outside;
+     rows that run edge to edge in a scroller draw it inside, where nothing
+     clips it. */
+  --focus-ring-color: color-mix(in srgb, var(--text) 60%, transparent);
+  --focus-ring: 2px solid var(--focus-ring-color);
+  --focus-ring-offset: 2px;
+  --focus-ring-inset: -2px;
+
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  /* Hover colour changes: long enough to read as a fade, short enough that a
+     control never feels late. */
+  --dur-hover: 120ms;
   --dur-press: 140ms;
   --dur-fast: 180ms;
   --dur-slow: 260ms;
@@ -204,27 +231,31 @@
 }
 
 :root[data-font='system'] {
-  --font-ui: 'Segoe UI Variable Text', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-ui: var(--font-system);
+}
+
+:root[data-font='geist'] {
+  --font-ui: var(--font-geist);
 }
 
 :root[data-font='inter'] {
-  --font-ui: 'Inter Variable', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --font-ui: var(--font-inter);
 }
 
 :root[data-font='humanist'] {
-  --font-ui: Aptos, Candara, 'Segoe UI', sans-serif;
+  --font-ui: var(--font-humanist);
 }
 
 :root[data-font='rounded'] {
-  --font-ui: ui-rounded, 'SF Pro Rounded', 'Arial Rounded MT Bold', system-ui, sans-serif;
+  --font-ui: var(--font-rounded);
 }
 
 :root[data-font='serif'] {
-  --font-ui: Charter, 'Iowan Old Style', Georgia, serif;
+  --font-ui: var(--font-serif);
 }
 
 :root[data-font='mono'] {
-  --font-ui: 'Geist Mono Variable', 'Cascadia Code', ui-monospace, monospace;
+  --font-ui: var(--font-mono);
 }
 
 :root[data-accent='ocean'] {
@@ -293,7 +324,10 @@
   --line: #ebebed;
   --line-strong: #dedee2;
   --queue-line: #eeeeef;
-  --skeleton: var(--surface-3);
+  /* A bare --surface-3 bar is 1.18:1 on white, so loading controls read as
+     missing. A step of text keeps it quiet but visible, and follows the
+     backdrop tint the way --surface-3 does. */
+  --skeleton: color-mix(in srgb, var(--text) 9%, var(--surface-3));
   --skeleton-shine: color-mix(in srgb, var(--bg-prompt) 70%, var(--surface-3));
 
   --text: #27272a;
@@ -325,7 +359,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--composer-control-bg);
-  --composer-design-border-hover: #c7c7cd;
   --composer-design-border-active: #b9bac2;
   --composer-design-prompt-border: #bfc0c8;
   --composer-design-beam-stroke-strength: 2.1;
@@ -345,6 +378,7 @@
   --shadow-flyout: 0 1px 2px rgb(24 24 27 / 5%), 0 10px 28px -18px rgb(24 24 27 / 18%);
   --shadow-modal: 0 2px 6px rgb(24 24 27 / 7%), 0 24px 56px -30px rgb(24 24 27 / 24%);
   --shadow-rail: 12px 0 28px -20px rgb(24 24 27 / 16%);
+  --shadow-raised: 0 1px 2px rgb(24 24 27 / 6%), 0 2px 8px -4px rgb(24 24 27 / 8%);
   --chrome-raised: var(--control-hover);
   --chrome-raised-hover: var(--menu-hover);
   --chrome-recessed: var(--bg);
@@ -365,16 +399,19 @@
   --error: #be123c;
   --success: #16803c;
 
-  --effort-track: linear-gradient(180deg, #f3f3f5 0%, #ffffff 100%);
-  --effort-track-shadow: inset 0 1px 2px rgb(24 24 27 / 7%), inset 0 0 0 1px #dedee2;
-  --effort-fill: linear-gradient(180deg, #fafafa 0%, #ececef 100%);
-  --effort-fill-shadow: inset 0 1px #ffffff, 0 1px 2px rgb(24 24 27 / 7%);
-  --effort-value: #27272a;
-  --dither-texture-filter: invert(1);
-  --dither-texture-opacity: 0.26;
-  --dither-bloom-filter: invert(1) blur(1.25px);
-  --dither-bloom-opacity: 0.05;
-  --dither-bloom-blend: multiply;
+  /* Light: the same active language as a switch. The empty part is a
+     groove, the chosen range is ink, and the thumb is paper. A mid-grey
+     fill on the near-white menu read as unfinished. */
+  --effort-track: var(--surface-3);
+  --effort-track-line: color-mix(in srgb, var(--text) 16%, transparent);
+  --effort-fill: var(--light);
+  --effort-dot: color-mix(in srgb, var(--text) 42%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--on-light) 78%, transparent);
+  --effort-thumb-bg: var(--on-light);
+  --effort-thumb-dot: var(--light);
+  --effort-thumb-shadow: 0 0 0 0.5px rgb(24 24 27 / 22%), 0 1px 1.5px rgb(24 24 27 / 12%);
+  --effort-ring: color-mix(in srgb, var(--text) 34%, transparent);
+  --effort-mark-empty: color-mix(in srgb, var(--text) 20%, transparent);
 }
 
 :root[data-theme='light'][data-accent='ocean'] {

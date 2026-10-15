@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import {
   detectProviders,
   installCommandFor,
@@ -161,41 +162,45 @@ describe('detectProviders', () => {
 
     expect(providers.map((entry) => entry.id).sort()).toEqual(['claude-code', 'codex', 'grok'])
   })
+
+  it('lists Claude Code first, then Codex, then Grok', async () => {
+    const providers = await detectProviders(system())
+
+    expect(providers.map((entry) => entry.id)).toEqual(['claude-code', 'codex', 'grok'])
+  })
 })
 
 describe('install command resolution', () => {
+  it('offers and runs the same standalone Codex installer on a clean machine', async () => {
+    const codex = find(await detectProviders(system()), 'codex')
+    expect(codex.installed).toBe(false)
+    expect(codex.setup?.installCommand).toBe(codexInstallCommand())
+    await expect(installCommandFor('codex')).resolves.toBe(codex.setup?.installCommand)
+  })
+
   it('resolves install commands from the server-side tables only', async () => {
-    await expect(installCommandFor('acp', 'kimi')).resolves.toBe(
-      'npm install -g @moonshot-ai/kimi-code',
-    )
     await expect(installCommandFor('claude-code')).resolves.toBe(
       'npm install -g @anthropic-ai/claude-code',
-    )
-    await expect(installCommandFor('acp', 'gemini')).resolves.toBe(
-      'npm install -g @google/gemini-cli',
     )
   })
 
   it('refuses targets it cannot script instead of guessing', async () => {
     // Grok ships its own installer; there is no command worth running blind.
     await expect(installCommandFor('grok')).rejects.toThrow(/no scripted install/)
-    await expect(installCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown install target/)
-    await expect(installCommandFor('acp')).rejects.toThrow(/unknown install target/)
+    await expect(installCommandFor('unlisted-cli' as never)).rejects.toThrow(
+      /unknown install target/,
+    )
   })
 })
 
 describe('sign-in launch command resolution', () => {
   it('resolves the interactive sign-in CLI from the server-side tables only', async () => {
-    await expect(launchCommandFor('acp', 'gemini')).resolves.toBe('gemini')
-    await expect(launchCommandFor('acp', 'kimi')).resolves.toBe('kimi')
-    await expect(launchCommandFor('acp', 'qwen')).resolves.toBe('qwen')
     await expect(launchCommandFor('codex')).resolves.toBe('codex login')
     await expect(launchCommandFor('claude-code')).resolves.toBe('claude auth login')
     await expect(launchCommandFor('grok')).resolves.toBe('grok login')
   })
 
   it('refuses unknown launch targets', async () => {
-    await expect(launchCommandFor('acp', 'nonexistent')).rejects.toThrow(/unknown launch target/)
-    await expect(launchCommandFor('acp')).rejects.toThrow(/unknown launch target/)
+    await expect(launchCommandFor('unlisted-cli' as never)).rejects.toThrow(/unknown launch target/)
   })
 })

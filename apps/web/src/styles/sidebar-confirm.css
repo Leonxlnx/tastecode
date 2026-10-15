@@ -1,0 +1,116 @@
+/* Shares the prompt bar's surface and corner. The buttons sit 10px in from
+   the edge with 10px corners, so they nest inside the 20px panel curve the
+   way the composer's own controls do. */
+.sidebar-confirm {
+  width: min(400px, 100%);
+  padding-top: 18px;
+  background: var(--bg-prompt);
+  border: 1px solid var(--line);
+  border-radius: var(--r-composer);
+  outline: none;
+}
+
+.sidebar-confirm__title,
+.sidebar-confirm__path,
+.sidebar-confirm__body {
+  margin: 0 20px;
+}
+
+.sidebar-confirm__title {
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 560;
+  letter-spacing: -0.012em;
+  line-height: 1.3;
+  text-wrap: pretty;
+}
+
+/* A long path gives up its start, never the folder name. */
+.sidebar-confirm__path {
+  display: flex;
+  min-width: 0;
+  margin-top: 3px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.sidebar-confirm__parent {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+}
+
+.sidebar-confirm__leaf {
+  flex: none;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-2);
+}
+
+.sidebar-confirm__body {
+  margin-top: 12px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.sidebar-confirm__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 18px 10px 10px;
+}
+
+.sidebar-confirm__actions button {
+  min-width: 76px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-xl);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.sidebar-confirm__cancel {
+  background: transparent;
+  color: var(--text-2);
+}
+
+.sidebar-confirm__cancel:is(:hover, :focus-visible) {
+  background: var(--composer-control-bg);
+  color: var(--text);
+}
+
+.sidebar-confirm__confirm {
+  background: var(--light);
+  color: var(--on-light);
+}
+
+.sidebar-confirm__confirm:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--light) 88%, var(--bg-prompt));
+}
+
+/* Deleting stays on the neutral control surface; only the word turns red,
+   so colour keeps meaning danger instead of shouting it. */
+.sidebar-confirm__confirm.is-destructive {
+  background: var(--composer-control-bg);
+  border-color: var(--composer-control-border);
+  color: var(--error);
+}
+
+.sidebar-confirm__confirm.is-destructive:is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--error) 12%, var(--composer-control-bg));
+  border-color: color-mix(in srgb, var(--error) 32%, var(--composer-control-border));
+}

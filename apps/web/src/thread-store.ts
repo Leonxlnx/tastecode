@@ -1,5 +1,12 @@
 import type { DomainEvent, Item, Usage } from '@harness/contracts'
-import { EMPTY_LIVE_ITEMS, type LiveItemUpdate, type ThreadState } from './thread-state.js'
+import {
+  EMPTY_LIVE_ITEMS,
+  emptyThread,
+  type LiveItemUpdate,
+  type ThreadState,
+  type TurnLifecycle,
+  type TurnTiming,
+} from './thread-state.js'
 
 export { emptyThread } from './thread-state.js'
 export type { LiveItemUpdate, ThreadState } from './thread-state.js'
@@ -199,6 +206,20 @@ export function threadItems(state: ThreadState): Item[] {
   return materializeItems(state)
 }
 
+/**
+ * The newest prompt with text the user sent in this thread, which its Edit
+ * action would open. Prompts are never streamed, so the structural items are
+ * enough. Read on a key press only, never per delta.
+ */
+export function lastSentPrompt(state: ThreadState): string | undefined {
+  const { items } = state
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!
+    if (item.type === 'message' && item.role === 'user' && item.text) return item.text
+  }
+  return undefined
+}
+
 function settleLiveItems(state: ThreadState): ThreadState {
   return state.liveItems.size === 0
     ? state
@@ -252,6 +273,30 @@ function settleThreadError(state: ThreadState, items: Item[]): ThreadState {
   }
 }
 
+type TurnCompletedEvent = Extract<DomainEvent, { type: 'turn.completed' }>
+
+/** The lifecycle a finished turn leaves behind: when it ended and whether it was stopped. */
+function settledTurnLifecycle(
+  timing: TurnLifecycle | undefined,
+  event: TurnCompletedEvent,
+): TurnLifecycle {
+  return {
+    ...timing,
+    ...(event.completedAt !== undefined
+      ? { completedAt: timing?.completedAt ?? event.completedAt }
+      : {}),
+    ...(event.status === 'interrupted' ? { interrupted: true as const } : {}),
+  }
+}
+
+function settleTurnTiming(turnTiming: TurnTiming, event: TurnCompletedEvent): TurnTiming {
+  if (event.completedAt === undefined && event.status !== 'interrupted') return turnTiming
+  return {
+    ...turnTiming,
+    [event.turnId]: settledTurnLifecycle(turnTiming[event.turnId], event),
+  }
+}
+
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started': {
@@ -284,23 +329,13 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       // fix). userInputs stay: design-briefing questions legitimately outlive
       // their turn and are answered to start the next one.
       const current = settleLiveItems(state)
-      const timing = current.turnTiming[event.turnId]
       return {
         ...current,
         running: false,
         liveStart: current.items.length,
         activeTurn: undefined,
         approvals: [],
-        turnTiming:
-          event.completedAt === undefined
-            ? current.turnTiming
-            : {
-                ...current.turnTiming,
-                [event.turnId]: {
-                  ...timing,
-                  completedAt: timing?.completedAt ?? event.completedAt,
-                },
-              },
+        turnTiming: settleTurnTiming(current.turnTiming, event),
       }
     }
 
@@ -705,7 +740,7 @@ export function reduceEventLog(
   let deltaChunksByItem:
     Map<string, { chunks: string[]; itemId: string; turnId: string }> | undefined
   let replayItems: ReplayItems | undefined
-  let replayTurnTiming: Record<string, { startedAt?: number; completedAt?: number }> | undefined
+  let replayTurnTiming: Record<string, TurnLifecycle> | undefined
 
   // Replayed state is private until this function returns. Claim one shallow
   // copy lazily, then update its top-level fields instead of allocating a new
@@ -833,13 +868,9 @@ export function reduceEventLog(
     }
     if (event.type === 'turn.completed') {
       let timing = next.turnTiming
-      if (event.completedAt !== undefined) {
+      if (event.completedAt !== undefined || event.status === 'interrupted') {
         const mutable = mutableTurnTiming()
-        const previous = mutable[event.turnId]
-        mutable[event.turnId] = {
-          ...previous,
-          completedAt: previous?.completedAt ?? event.completedAt,
-        }
+        mutable[event.turnId] = settledTurnLifecycle(mutable[event.turnId], event)
         timing = mutable
       }
       const mutable = mutableState()
@@ -857,6 +888,88 @@ export function reduceEventLog(
   }
   flushDeltas()
   replayItems?.retainIndex()
+  return next
+}
+
+/**
+ * Places an older history page above the loaded transcript. Only its rows,
+ * their turn timing and reviews are taken: usage, plan, diff, pending requests
+ * and the live turn already reflect newer events than anything on the page.
+ */
+export function prependOlderHistory(
+  state: ThreadState,
+  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+  olderCursor: string | null,
+): ThreadState {
+  return prependHistoryRows(
+    settleLiveItems(state),
+    reduceEventLog(emptyThread, entries),
+    olderCursor,
+  )
+}
+
+/**
+ * Places the rows a complete history orders before the first loaded row above
+ * the transcript, which then needs no cursor. Loaded rows keep their live
+ * state; anything newer in the history already reached them live. Undefined
+ * when the history lacks the first loaded row it can name: the transcript no
+ * longer matches the server's and has to be reloaded.
+ */
+export function prependCompleteHistory(
+  state: ThreadState,
+  entries: ReadonlyArray<{ seq?: number | undefined; event: DomainEvent }>,
+): ThreadState | undefined {
+  const current = settleLiveItems(state)
+  const complete = reduceEventLog(emptyThread, entries)
+  const end = completeHistorySeam(current.items, complete.items)
+  if (end < 0) return undefined
+  return prependHistoryRows(current, { ...complete, items: complete.items.slice(0, end) }, null)
+}
+
+/** createThreadErrorItem gives a thread error a fresh id on every replay. */
+function isThreadErrorRow(item: Item): boolean {
+  return item.type === 'error' && item.id.startsWith('error:')
+}
+
+/**
+ * Where the loaded rows begin in a complete replay: at the first loaded row
+ * the replay also holds, less the replay's own copies of thread error rows
+ * loaded above it, which no other replay can name. -1 when no loaded row
+ * matches.
+ */
+function completeHistorySeam(loaded: readonly Item[], complete: readonly Item[]): number {
+  let errorRows = 0
+  for (const item of loaded) {
+    if (isThreadErrorRow(item)) {
+      errorRows += 1
+      continue
+    }
+    let end = itemIndex(complete, item.id)
+    if (end < 0) return -1
+    while (errorRows > 0 && end > 0 && isThreadErrorRow(complete[end - 1]!)) {
+      end -= 1
+      errorRows -= 1
+    }
+    return end
+  }
+  return loaded.length === 0 ? complete.length : -1
+}
+
+function prependHistoryRows(
+  current: ThreadState,
+  older: ThreadState,
+  olderCursor: string | null,
+): ThreadState {
+  const rows = older.items.filter((item) => itemIndex(current.items, item.id) < 0)
+  const next: ThreadState = {
+    ...current,
+    items: rows.length === 0 ? current.items : [...rows, ...current.items],
+    liveStart: current.liveStart + rows.length,
+    turnTiming: { ...older.turnTiming, ...current.turnTiming },
+    reviews: { ...older.reviews, ...current.reviews },
+  }
+  if (olderCursor === null) delete next.olderCursor
+  else next.olderCursor = olderCursor
   return next
 }
 
@@ -992,5 +1105,6 @@ export function removeOptimisticMessage(state: ThreadState, itemId: string): Thr
   const items = copyMaterializedItems(state)
   items.splice(index, 1)
   itemIndexes.delete(items)
-  return { ...state, items, liveItems: EMPTY_LIVE_ITEMS }
+  const liveStart = index < state.liveStart ? state.liveStart - 1 : state.liveStart
+  return { ...state, items, liveItems: EMPTY_LIVE_ITEMS, liveStart }
 }

@@ -12,6 +12,7 @@ import type {
   SkillCapabilities,
   SkillDiscoveryError,
 } from '@harness/contracts'
+import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
@@ -19,9 +20,7 @@ import { WatchLeases } from './watch-leases.js'
 
 const loadCodex = retryableLazy(() => import('@harness/adapter-codex'))
 const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
-const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
-const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -53,7 +52,7 @@ export type CodexControlAdapter = Pick<
 > & {
   on(event: 'log', listener: (line: string) => void): void
   on(event: 'login', listener: (result: ProviderLoginResult) => void): void
-  on(event: 'skillsChanged' | 'mcpChanged', listener: () => void): void
+  on(event: 'skillsChanged' | 'mcpChanged' | 'disconnected', listener: () => void): void
 }
 
 /** Injectable readers keep auth tests independent of installed CLIs and credentials. */
@@ -105,6 +104,12 @@ export type ProviderControlsOptions = {
   controlIdleMs?: number
   watchTtlMs?: number
   loginTtlMs?: number
+  /** How long a sign-in may take to return its URL before later auth work proceeds. */
+  loginStartTimeoutMs?: number
+  /** How long a successful limit read answers later reads without a change signal. */
+  limitCacheMs?: number
+  /** Minimum spacing of forwarded usage-change signals per provider. */
+  limitChangeIntervalMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -125,13 +130,18 @@ type LoginEntry = {
   canceling?: Promise<void> | undefined
   earlyResults: ProviderLoginResult[]
 }
+type LimitEntry = {
+  /** Bumped by every change so a read that started earlier cannot refresh the cache. */
+  version: number
+  value?: ProviderLimitSource | undefined
+  freshUntil: number
+  reading?: Promise<ProviderLimitSource> | undefined
+  notifiedAt: number
+  notifyTimer?: ReturnType<typeof setTimeout> | undefined
+}
 
 const defaultServices = {
-  antigravity: {},
-  api: {},
   codex: {},
-  opencode: {},
-  pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
     account: async () => (await loadClaude()).claudeAccount(),
@@ -139,21 +149,12 @@ const defaultServices = {
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
-  cursor: {
-    account: async () => (await loadCursor()).cursorAccount(),
-    startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
-    signOut: async () => (await loadCursor()).signOutCursor(),
-  },
   grok: {
+    // Grok's MCP sessions run through ACP.
+    validateMcpServer: validateAcpMcpServer,
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),
-  },
-  acp: {
-    account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
-    signOut: async (agent) => {
-      if (agent) await (await loadAcp()).acpSignOut(agent)
-    },
   },
 } satisfies Record<ProviderId, ProviderServices>
 
@@ -163,11 +164,17 @@ export class ProviderControls {
   readonly #controls = new Map<ProviderId, ProviderControl>()
   readonly #owned = new Set<ProcessEntry>()
   readonly #logins = new Map<ProviderId, LoginEntry>()
+  /** Starts that missed their deadline; their handle is canceled on arrival. */
+  readonly #lateLogins = new Map<LoginEntry, ProviderId>()
   readonly #authQueues = new Map<ProviderId, Promise<void>>()
   readonly #skills: WatchLeases
   readonly #mcp: WatchLeases
   readonly #idleMs: number
   readonly #loginTtlMs: number
+  readonly #loginStartTimeoutMs: number
+  readonly #limitCacheMs: number
+  readonly #limitChangeIntervalMs: number
+  readonly #limits = new Map<ProviderId, LimitEntry>()
   #shared: ProcessEntry | undefined
   #users = 0
   #idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -180,6 +187,11 @@ export class ProviderControls {
     this.#options = options
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
+    this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
+    // Codex reports a limit change after nearly every model request, and each
+    // read starts a vendor process, so reads are cached and signals spaced.
+    this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
+    this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
@@ -200,6 +212,32 @@ export class ProviderControls {
     this.#scheduleIdle()
   }
 
+  /**
+   * Marks cached limits stale and forwards the signal at a bounded rate: the
+   * first change notifies at once, a burst after it collapses into one
+   * trailing notification per interval.
+   */
+  usageChanged(provider: ProviderId, immediate = false): void {
+    if (this.#closed) return
+    const entry = this.#invalidateLimits(provider)
+    const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
+    if (wait <= 0) {
+      clearTimeout(entry.notifyTimer)
+      entry.notifyTimer = undefined
+      entry.notifiedAt = Date.now()
+      this.#options.onUsageChanged?.(provider)
+      return
+    }
+    if (entry.notifyTimer) return
+    entry.notifyTimer = setTimeout(() => {
+      entry.notifyTimer = undefined
+      if (this.#limits.get(provider) !== entry || this.#closed) return
+      entry.notifiedAt = Date.now()
+      this.#options.onUsageChanged?.(provider)
+    }, wait)
+    entry.notifyTimer.unref?.()
+  }
+
   /** Failed cleanup retains ownership, so a subsequent call can retry it. */
   disposeAll(): Promise<void> {
     if (this.#disposing) return this.#disposing
@@ -210,6 +248,8 @@ export class ProviderControls {
     clearTimeout(this.#watchTimer)
     this.#skills.clear()
     this.#mcp.clear()
+    for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
+    this.#limits.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
     // Stopping the control process also cancels its browser login. Sending a
     // cancellation RPC while stopping that same process would race its exit.
@@ -226,9 +266,14 @@ export class ProviderControls {
       await Promise.all(this.#authQueues.values())
       // A login loader may have returned its handle during the reset. Its
       // canceled start owns cleanup; failed cleanup remains available here.
-      const late = await Promise.allSettled(
-        [...this.#logins].map(([provider, login]) => this.#cancelOwnedLogin(provider, login)),
-      )
+      const late = await Promise.allSettled([
+        ...[...this.#logins].map(([provider, login]) => this.#cancelOwnedLogin(provider, login)),
+        ...[...this.#lateLogins].map(([login, provider]) =>
+          this.#cancelOwnedLogin(provider, login).then(() => {
+            if (login.cancel) this.#lateLogins.delete(login)
+          }),
+        ),
+      ])
       const errors = [...results, ...late].flatMap((result) =>
         result.status === 'rejected' ? [result.reason] : [],
       )
@@ -264,12 +309,16 @@ export class ProviderControls {
       account: (agent) =>
         this.#read(async () => (await services.account?.(agent)) ?? { signedIn: false }),
       usageLimitSource: () =>
-        this.#read(async () => {
-          const source = await services.usageLimitSource?.()
-          return source?.status === 'ready'
-            ? { provider, status: 'ready', limits: source.limits }
-            : { provider, status: 'unavailable' }
-        }),
+        services.usageLimitSource
+          ? this.#cachedLimits(provider, () =>
+              this.#read(async () => {
+                const source = await services.usageLimitSource?.()
+                return source?.status === 'ready'
+                  ? { provider, status: 'ready', limits: source.limits }
+                  : { provider, status: 'unavailable' }
+              }),
+            )
+          : this.#read(async () => ({ provider, status: 'unavailable' })),
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -277,7 +326,7 @@ export class ProviderControls {
           this.#assertOpen(generation)
           await services.signOut?.(agent)
           this.#assertOpen(generation)
-          this.#options.onAuthChanged?.(provider)
+          this.#authChanged(provider)
         }),
       watch: (projectPath, targets) => this.#watch(provider, projectPath, targets),
       ...(services.validateMcpServer ? { validateMcpServer: services.validateMcpServer } : {}),
@@ -320,21 +369,24 @@ export class ProviderControls {
         }),
       setSkillEnabled: (_projectPath, skillId, enabled) =>
         this.#withShared((adapter) => adapter.setSkillEnabled(skillId, enabled)),
-      // These reads use a fresh process, preserving the uncached account-limit wire flow.
+      // A fresh process reads the account's current limits rather than the
+      // snapshot a long-lived process captured at startup.
       usageLimitSource: () =>
-        this.#withFresh(async (adapter) => {
-          const source = await adapter.rateLimitSource()
-          return source.status === 'ready'
-            ? { provider, status: 'ready', limits: source.limits }
-            : { provider, status: 'unavailable' }
-        }),
+        this.#cachedLimits(provider, () =>
+          this.#withFresh(async (adapter) => {
+            const source = await adapter.rateLimitSource()
+            return source.status === 'ready'
+              ? { provider, status: 'ready', limits: source.limits }
+              : { provider, status: 'unavailable' }
+          }),
+        ),
       consumeRateLimitReset: async (idempotencyKey, creditId) => {
         const generation = this.#generation
         const outcome = await this.#withFresh((adapter) =>
           adapter.consumeRateLimitReset(idempotencyKey, creditId),
         )
         this.#assertOpen(generation)
-        this.#options.onUsageChanged?.(provider)
+        this.usageChanged(provider, true)
         return { outcome }
       },
       startLogin: () =>
@@ -357,7 +409,7 @@ export class ProviderControls {
           this.#assertOpen(generation)
           const account = await this.#withShared((adapter) => adapter.useApiKey(apiKey))
           this.#assertOpen(generation)
-          this.#options.onAuthChanged?.(provider)
+          this.#authChanged(provider)
           return account
         }),
       signOut: () =>
@@ -367,9 +419,57 @@ export class ProviderControls {
           this.#assertOpen(generation)
           await this.#withShared((adapter) => adapter.signOut())
           this.#assertOpen(generation)
-          this.#options.onAuthChanged?.(provider)
+          this.#authChanged(provider)
         }),
     }
+  }
+
+  #limitEntry(provider: ProviderId): LimitEntry {
+    let entry = this.#limits.get(provider)
+    if (!entry) {
+      entry = { version: 0, freshUntil: 0, notifiedAt: Number.NEGATIVE_INFINITY }
+      this.#limits.set(provider, entry)
+    }
+    return entry
+  }
+
+  #invalidateLimits(provider: ProviderId): LimitEntry {
+    const entry = this.#limitEntry(provider)
+    entry.version += 1
+    entry.freshUntil = 0
+    // A read already in flight may predate the change; the next caller starts its own.
+    entry.reading = undefined
+    return entry
+  }
+
+  /** One read serves concurrent callers, and a fresh result serves later ones. */
+  #cachedLimits(
+    provider: ProviderId,
+    read: () => Promise<ProviderLimitSource>,
+  ): Promise<ProviderLimitSource> {
+    this.#assertOpen()
+    const entry = this.#limitEntry(provider)
+    if (entry.reading) return entry.reading
+    if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
+    const version = entry.version
+    const reading = read()
+      .then((value) => {
+        if (entry.version === version && this.#limits.get(provider) === entry) {
+          entry.value = value
+          entry.freshUntil = Date.now() + this.#limitCacheMs
+        }
+        return value
+      })
+      .finally(() => {
+        if (entry.reading === reading) entry.reading = undefined
+      })
+    entry.reading = reading
+    return reading
+  }
+
+  #authChanged(provider: ProviderId): void {
+    this.#invalidateLimits(provider)
+    this.#options.onAuthChanged?.(provider)
   }
 
   async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {
@@ -427,13 +527,27 @@ export class ProviderControls {
   #listen(adapter: CodexControlAdapter, entry: ProcessEntry): void {
     const current = () => !this.#closed && !entry.closing && this.#shared === entry
     adapter.onUsageChanged(() => {
-      if (current()) this.#options.onUsageChanged?.('codex')
+      if (current()) this.usageChanged('codex')
     })
     adapter.on('login', (result) => {
       if (!current()) return
       const login = this.#logins.get('codex')
       if (login) this.#loginResult('codex', login, result)
       else if (result.loginId === null) this.#emitLogin('codex', result)
+    })
+    adapter.on('disconnected', () => {
+      if (!current()) return
+      const login = this.#logins.get('codex')
+      // A start still in flight rejects with the dead process on its own.
+      if (!login || login.loginId === undefined || login.expired) return
+      // The callback listener died with the process, so nothing is left to cancel.
+      login.expired = true
+      this.#releaseLogin('codex', login)
+      this.#emitLogin('codex', {
+        loginId: login.loginId,
+        success: false,
+        error: 'Codex sign-in stopped because its helper process exited.',
+      })
     })
     adapter.on('skillsChanged', () => {
       if (!current()) return
@@ -602,30 +716,67 @@ export class ProviderControls {
             provider,
             'Provider sign-in could not stop; cleanup can be retried.',
           )
+          this.#options.onLogin?.(provider, {
+            loginId: login.loginId ?? null,
+            success: false,
+            error: 'Provider sign-in timed out.',
+          })
         },
       )
     }, this.#loginTtlMs)
     login.timer.unref?.()
-    try {
-      const handle = await start((result) => this.#loginResult(provider, login, result))
-      login.loginId = handle.loginId
-      login.cancel = handle.cancel
-      if (
-        this.#closed ||
-        generation !== this.#generation ||
-        login.expired ||
-        this.#logins.get(provider) !== login
-      ) {
-        await this.#cancelOwnedLogin(provider, login)
-        throw new Error('Provider sign-in was canceled')
+    const starting = (async () => {
+      try {
+        const handle = await start((result) => this.#loginResult(provider, login, result))
+        login.loginId = handle.loginId
+        login.cancel = handle.cancel
+        if (
+          this.#closed ||
+          generation !== this.#generation ||
+          login.expired ||
+          this.#logins.get(provider) !== login
+        ) {
+          await this.#cancelOwnedLogin(provider, login)
+          throw new Error('Provider sign-in was canceled')
+        }
+        for (const result of login.earlyResults) this.#loginResult(provider, login, result)
+        login.earlyResults = []
+        return { loginId: handle.loginId, ...(handle.authUrl ? { authUrl: handle.authUrl } : {}) }
+      } catch (error) {
+        // Retain a handle whose cancellation failed for a later cleanup attempt.
+        if (!login.cancel) this.#releaseLogin(provider, login)
+        throw error
       }
-      for (const result of login.earlyResults) this.#loginResult(provider, login, result)
-      login.earlyResults = []
-      return { loginId: handle.loginId, ...(handle.authUrl ? { authUrl: handle.authUrl } : {}) }
+    })()
+    let startTimer: ReturnType<typeof setTimeout> | undefined
+    let timedOut = false
+    const deadline = new Promise<never>((_resolve, reject) => {
+      startTimer = setTimeout(() => {
+        timedOut = true
+        reject(new Error('Provider sign-in did not start in time.'))
+      }, this.#loginStartTimeoutMs)
+      startTimer.unref?.()
+    })
+    try {
+      return await Promise.race([starting, deadline])
     } catch (error) {
-      // Retain a handle whose cancellation failed for a later cleanup attempt.
-      if (!login.cancel) this.#releaseLogin(provider, login)
+      if (timedOut) {
+        // A start that never answered would hold every later sign-in, sign-out
+        // and shutdown behind it. Release the queue, but keep the late handle
+        // owned so it is canceled when it finally arrives.
+        login.expired = true
+        this.#releaseLogin(provider, login)
+        this.#lateLogins.set(login, provider)
+        void starting.then(
+          () => this.#lateLogins.delete(login),
+          () => {
+            if (!login.cancel || login.canceled) this.#lateLogins.delete(login)
+          },
+        )
+      }
       throw error
+    } finally {
+      clearTimeout(startTimer)
     }
   }
 
@@ -661,7 +812,7 @@ export class ProviderControls {
   }
 
   #emitLogin(provider: ProviderId, result: ProviderLoginResult): void {
-    if (result.success) this.#options.onAuthChanged?.(provider)
+    if (result.success) this.#authChanged(provider)
     this.#options.onLogin?.(provider, result)
   }
 

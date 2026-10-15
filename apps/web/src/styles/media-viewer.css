@@ -29,7 +29,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: rgb(244 244 245 / 68%);
   cursor: pointer;
   text-decoration: none;
@@ -163,7 +163,7 @@
   width: 42px;
   height: 34px;
   border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
 }
 
 .media-viewer__video-controls {
@@ -190,7 +190,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: inherit;
   cursor: pointer;
 }
@@ -285,7 +285,7 @@
   padding: 0;
   background: transparent;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   color: inherit;
   cursor: pointer;
 }

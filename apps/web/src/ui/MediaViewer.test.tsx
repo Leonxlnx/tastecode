@@ -32,6 +32,24 @@ describe('MediaViewer image zoom', () => {
     expect(fullImage.style.opacity).toBe('')
   })
 
+  it('keeps focus where it is when the video fails to load', () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    render(<MediaViewer src="movie.mp4" name="movie" mediaType="video" onClose={vi.fn()} />)
+    const mute = screen.getByRole('button', { name: 'Mute video' })
+    mute.focus()
+    const focused = vi.fn()
+    opener.addEventListener('focus', focused)
+
+    fireEvent.error(screen.getByLabelText('movie'))
+
+    expect(screen.getByRole('button', { name: 'Play video' }).hasAttribute('disabled')).toBe(true)
+    expect(document.activeElement).toBe(mute)
+    expect(focused).not.toHaveBeenCalled()
+    opener.remove()
+  })
+
   it('shows the thumbnail as the video poster while metadata loads', () => {
     render(
       <MediaViewer

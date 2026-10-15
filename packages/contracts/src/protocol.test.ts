@@ -59,11 +59,11 @@ describe('audit recovery contracts', () => {
     expect(channels['preview.captureCancelled'].parse({ requestId })).toEqual({ requestId })
     expect(
       methods['providers.watch'].params.parse({
-        provider: 'api',
+        provider: 'grok',
         projectPath: '/repo',
         targets: ['mcp', 'skills'],
       }),
-    ).toMatchObject({ provider: 'api' })
+    ).toMatchObject({ provider: 'grok' })
     expect(
       methods['providers.watch'].params.safeParse({
         provider: 'codex',
@@ -376,35 +376,41 @@ describe('protocol envelopes', () => {
       }),
     ).toThrow()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
-    expect(methods['models.list'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
-      provider: 'acp',
-      agent: 'kimi',
-    })
+    expect(methods['models.list'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
+      {
+        provider: 'codex',
+        agent: 'codex-fork',
+      },
+    )
     expect(
       methods['harnesses.upsert'].params.parse({
-        id: 'deepseek-pi',
-        displayName: 'DeepSeek Pi',
-        provider: 'pi',
-        command: '/Applications/Pi forks/deepseek-pi',
-        args: ['--openrouter', 'value with spaces'],
-        workingDirectory: '~/Developer/pi-deepseek',
-        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+        id: 'codex-fork',
+        displayName: 'Codex Fork',
+        provider: 'codex',
+        command: '/Applications/Codex forks/codex-fork',
+        args: ['--profile', 'value with spaces'],
+        workingDirectory: '~/Developer/codex-fork',
+        environment: { CODEX_HOME: '/Users/me/.codex-fork' },
       }),
     ).toMatchObject({
-      provider: 'pi',
-      args: ['--openrouter', 'value with spaces'],
-      workingDirectory: '~/Developer/pi-deepseek',
-      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
+      provider: 'codex',
+      args: ['--profile', 'value with spaces'],
+      workingDirectory: '~/Developer/codex-fork',
+      environment: { CODEX_HOME: '/Users/me/.codex-fork' },
     })
     expect(
       methods['harnesses.verify'].result.parse({
         verification: {
           status: 'ready',
-          summary: 'DeepSeek Pi is compatible',
+          summary: 'Codex Fork is compatible',
           checkedAt: 1,
-          resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
+          resolvedCommand: '/Users/me/.local/bin/codex-fork',
           checks: [
-            { label: 'Pi RPC', status: 'passed', detail: 'Initialize handshake completed.' },
+            {
+              label: 'Codex app-server',
+              status: 'passed',
+              detail: 'Initialize handshake completed.',
+            },
           ],
         },
       }),
@@ -413,20 +419,22 @@ describe('protocol envelopes', () => {
       methods['harnesses.upsert'].params.parse({
         id: 'bad',
         displayName: 'Bad',
-        provider: 'api',
+        provider: 'unlisted-cli',
         command: 'bad',
         args: [],
       }),
     ).toThrow()
-    expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
-    expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
-      provider: 'acp',
-      agent: 'kimi',
-    })
+    expect(() => methods['models.list'].params.parse({ provider: 'codex', agent: '' })).toThrow()
+    expect(methods['auth.status'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
+      {
+        provider: 'codex',
+        agent: 'codex-fork',
+      },
+    )
     expect(methods['auth.startLogin'].result.parse({ loginId: 'cli-login' })).toEqual({
       loginId: 'cli-login',
     })
-    expect(() => methods['auth.status'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(() => methods['auth.status'].params.parse({ provider: 'codex', agent: '' })).toThrow()
     expect(() => methods['auth.startLogin'].result.parse({ loginId: '' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
@@ -655,8 +663,8 @@ describe('protocol envelopes', () => {
       status: 'ready',
       limits: [],
     })
-    expect(parse([], { provider: 'api', status: 'unavailable' }).limitSource).toEqual({
-      provider: 'api',
+    expect(parse([], { provider: 'codex', status: 'unavailable' }).limitSource).toEqual({
+      provider: 'codex',
       status: 'unavailable',
     })
 
@@ -1204,8 +1212,8 @@ describe('protocol envelopes', () => {
       methods['providers.list'].result.parse({
         providers: [
           {
-            id: 'opencode',
-            displayName: 'OpenCode',
+            id: 'grok',
+            displayName: 'Grok',
             installed: false,
             auth: 'unknown',
             setup,
@@ -1213,48 +1221,23 @@ describe('protocol envelopes', () => {
         ],
       }).providers[0]?.setup,
     ).toEqual(setup)
-    expect(
-      methods['acp.agents'].result.parse({
-        agents: [
-          {
-            id: 'gemini',
-            name: 'Gemini CLI',
-            installed: false,
-            verified: true,
-            setup,
-          },
-        ],
-      }).agents[0]?.setup,
-    ).toEqual(setup)
-    // A vendor breaking a login path is the agent's story to tell; the field
-    // is optional so healthy agents carry nothing.
-    expect(
-      methods['acp.agents'].result.parse({
-        agents: [
-          {
-            id: 'gemini',
-            name: 'Gemini CLI',
-            installed: true,
-            verified: true,
-            setup,
-            problem: 'Google ended individual sign-in.',
-          },
-        ],
-      }).agents[0]?.problem,
-    ).toBe('Google ended individual sign-in.')
   })
 
   it('names an install target without carrying any command text', () => {
-    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
+    const valid = { provider: 'codex', columns: 80, rows: 24 }
     expect(methods['providers.install'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.install'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
+      methods['providers.install'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
     expect(methods['providers.install'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
     expect(() =>
-      methods['providers.install'].params.parse({ provider: 'acp', agent: '' }),
+      methods['providers.install'].params.parse({
+        provider: 'unlisted-cli',
+        columns: 80,
+        rows: 24,
+      }),
     ).toThrow()
     expect(methods['providers.install'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
@@ -1277,15 +1260,17 @@ describe('protocol envelopes', () => {
   })
 
   it('names a launch target without carrying any command text', () => {
-    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
+    const valid = { provider: 'codex', columns: 80, rows: 24 }
     expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.launch'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
+      methods['providers.launch'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
     expect(methods['providers.launch'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
-    expect(() => methods['providers.launch'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(() =>
+      methods['providers.launch'].params.parse({ provider: 'unlisted-cli', columns: 80, rows: 24 }),
+    ).toThrow()
     expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
     })
@@ -1402,9 +1387,9 @@ describe('protocol envelopes', () => {
     const target = {
       mode: 'manual' as const,
       target: {
-        provider: 'api' as const,
-        connectionId: 'openrouter',
-        model: 'anthropic/claude-haiku-4.5',
+        provider: 'claude-code' as const,
+        agent: 'claude-fork',
+        model: 'haiku',
         effort: 'low',
       },
     }
@@ -1423,7 +1408,7 @@ describe('protocol envelopes', () => {
     expect(() =>
       methods['backgroundModel.updateSettings'].params.parse({
         mode: 'manual',
-        target: { provider: 'api', model: 'missing-connection' },
+        target: { provider: 'unlisted-cli', model: 'missing-provider' },
       }),
     ).toThrow()
     expect(
@@ -1459,12 +1444,44 @@ describe('protocol envelopes', () => {
         preference: { mode: 'automatic' },
         sources: [],
         resolved: {
-          provider: 'api',
-          model: 'missing-connection',
-          sourceName: 'API',
+          provider: 'unlisted-cli',
+          model: 'missing-provider',
+          sourceName: 'Unlisted',
           automatic: true,
         },
       }),
+    ).toThrow()
+  })
+})
+
+describe('backward history page contract', () => {
+  const params = methods['thread.history'].params
+  it('keeps legacy replay compatible and supports bounded whole-turn page requests', () => {
+    expect(params.parse({ threadId: 'fixture' })).toEqual({ threadId: 'fixture' })
+    expect(params.parse({ threadId: 'fixture', afterSeq: 12 })).toMatchObject({ afterSeq: 12 })
+    expect(
+      params.parse({ threadId: 'fixture', page: { before: 'opaque-cursor', turnLimit: 50 } }),
+    ).toMatchObject({ page: { before: 'opaque-cursor', turnLimit: 50 } })
+  })
+  it.each([
+    { page: { turnLimit: 0 } },
+    { page: { turnLimit: 101 } },
+    { page: { turnLimit: 1.5 } },
+    { page: { before: '' } },
+    { page: { before: 'x'.repeat(513) } },
+    { page: {}, afterSeq: 0 },
+  ])('rejects ambiguous or unbounded page parameters: %j', (request) => {
+    expect(() => params.parse({ threadId: 'fixture', ...request })).toThrow()
+  })
+  it('distinguishes an exhausted page from a legacy response', () => {
+    const schema = methods['thread.history'].result
+    expect(schema.parse({ events: [], running: false }).page).toBeUndefined()
+    expect(
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: 42 } })
+        .page,
+    ).toEqual({ olderCursor: null, snapshotSeq: 42 })
+    expect(() =>
+      schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: -1 } }),
     ).toThrow()
   })
 })

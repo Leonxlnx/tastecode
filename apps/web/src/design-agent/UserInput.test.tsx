@@ -52,6 +52,42 @@ const request = {
 }
 
 describe('briefing questions', () => {
+  it.each(['constructor', '__proto__', 'toString'])('handles arbitrary question id %s', (id) => {
+    const onSubmit = vi.fn()
+    render(
+      <UserInput
+        request={{ ...request, questions: [{ ...request.questions[0]!, id }] }}
+        onSubmit={onSubmit}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Submit' }).hasAttribute('disabled')).toBe(true)
+    fireEvent.click(screen.getByRole('radio', { name: 'Decide for me' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(onSubmit).toHaveBeenCalledWith(Object.fromEntries([[id, ['Decide for me']]]))
+  })
+
+  it('toggles multiple options and includes Other without replacing them', () => {
+    const onSubmit = vi.fn()
+    render(
+      <UserInput
+        request={{ ...request, questions: [{ ...request.questions[0]!, multiSelect: true }] }}
+        onSubmit={onSubmit}
+      />,
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Decide for me' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'I have colours' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Decide for me' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Write your own answer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Custom answer/ }), {
+      target: { value: '  Green  ' },
+    })
+    expect(
+      (screen.getByRole('checkbox', { name: 'I have colours' }) as HTMLInputElement).checked,
+    ).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+    expect(onSubmit).toHaveBeenCalledWith({ palette: ['I have colours', 'Green'] })
+  })
+
   it('attaches the question card directly to the composer', () => {
     const composer = document.createElement('div')
     composer.className = 'composer__box'
@@ -60,6 +96,17 @@ describe('briefing questions', () => {
     render(<UserInput request={request} onSubmit={vi.fn()} />)
 
     expect(composer.querySelector('form[aria-label="Design brief questions"]')).toBeTruthy()
+  })
+
+  it('keeps an inline question card out of the main composer', () => {
+    const composer = document.createElement('div')
+    composer.className = 'composer__box'
+    document.body.append(composer)
+
+    const view = render(<UserInput request={request} onSubmit={vi.fn()} inline />)
+
+    expect(composer.querySelector('form')).toBeNull()
+    expect(view.container.querySelector('form[aria-label="Design brief questions"]')).toBeTruthy()
   })
 
   it('pages through one question at a time and preserves earlier answers', () => {
@@ -138,6 +185,82 @@ describe('briefing questions', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
 
     expect(onSubmit).toHaveBeenCalledWith({ palette: ['Deep green with warm ivory'] })
+  })
+
+  it('keeps a custom answer open while typing through an option label', () => {
+    const onSubmit = vi.fn()
+    render(
+      <UserInput
+        request={{ ...request, questions: request.questions.slice(0, 2) }}
+        onSubmit={onSubmit}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
+    const customAnswer = screen.getByRole('textbox', { name: /Custom answer/ })
+    const text = 'I have colours, use green'
+    for (let length = 1; length <= text.length; length += 1) {
+      fireEvent.change(customAnswer, { target: { value: text.slice(0, length) } })
+      expect(screen.getByRole('textbox', { name: /Custom answer/ })).toBe(customAnswer)
+      expect(document.activeElement).toBe(customAnswer)
+      expect(
+        (screen.getByRole('radio', { name: 'I have colours' }) as HTMLInputElement).checked,
+      ).toBe(false)
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Editorial' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }))
+    expect((screen.getByRole('textbox', { name: /Custom answer/ }) as HTMLInputElement).value).toBe(
+      text,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }))
+
+    expect(onSubmit).toHaveBeenCalledWith({ palette: [text], tone: ['Editorial'] })
+  })
+
+  it('lets an explicit option choice replace matching custom text', () => {
+    render(<UserInput request={request} onSubmit={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Custom answer/ }), {
+      target: { value: 'I have colours' },
+    })
+    expect(screen.getByRole('textbox', { name: /Custom answer/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('radio', { name: 'I have colours' }))
+    expect(screen.queryByRole('textbox', { name: /Custom answer/ })).toBeNull()
+    expect(
+      (screen.getByRole('radio', { name: 'I have colours' }) as HTMLInputElement).checked,
+    ).toBe(true)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
+    expect((screen.getByRole('textbox', { name: /Custom answer/ }) as HTMLInputElement).value).toBe(
+      '',
+    )
+    expect(screen.getByRole('button', { name: 'Next' }).hasAttribute('disabled')).toBe(true)
+  })
+
+  it('preserves custom mode on refresh and resets it for a new request key', () => {
+    const onSubmit = vi.fn()
+    const view = render(<UserInput key={request.id} request={request} onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Write your own answer' }))
+    fireEvent.change(screen.getByRole('textbox', { name: /Custom answer/ }), {
+      target: { value: 'I have colours' },
+    })
+    view.rerender(<UserInput key={request.id} request={{ ...request }} onSubmit={onSubmit} />)
+    expect((screen.getByRole('textbox', { name: /Custom answer/ }) as HTMLInputElement).value).toBe(
+      'I have colours',
+    )
+
+    const nextRequest = { ...request, id: 'brief-2' }
+    view.rerender(<UserInput key={nextRequest.id} request={nextRequest} onSubmit={onSubmit} />)
+    expect(screen.queryByRole('textbox', { name: /Custom answer/ })).toBeNull()
+    expect(
+      screen.getAllByRole('radio').every((radio) => !(radio as HTMLInputElement).checked),
+    ).toBe(true)
+    expect(screen.getByRole('button', { name: 'Next' }).hasAttribute('disabled')).toBe(true)
   })
 
   it('restores the questions when answer submission fails', async () => {

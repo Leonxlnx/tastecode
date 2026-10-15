@@ -1,5 +1,5 @@
 import { ChildProcess } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -10,6 +10,7 @@ import {
   GROK_CAPABILITIES,
   GrokAdapter,
   grokPromptJson,
+  grokDiff,
   grokToolLabel,
   grokToolOutput,
   grokTurnArgs,
@@ -29,6 +30,10 @@ class FakeChild extends ChildProcess {
     null,
   ]
   wasKilled = false
+  constructor(spawns = true) {
+    super()
+    if (spawns) queueMicrotask(() => this.emit('spawn'))
+  }
 
   override kill(): boolean {
     this.wasKilled = true
@@ -53,6 +58,67 @@ const MODELS_OUTPUT = [
 ].join('\n')
 
 describe('Grok adapter', () => {
+  it('applies an access change to the next print-mode launch', async () => {
+    const args: string[][] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, value) => {
+        args.push(value)
+        return new FakeChild()
+      },
+    })
+    const thread = await adapter.startThread('C:\\repo', { approval: 'full' })
+    await adapter.sendTurn(thread.id, 'one')
+    adapter.setApproval('ask')
+    await adapter.interrupt()
+    await adapter.sendTurn(thread.id, 'two')
+    expect(args[0]).toContain('bypassPermissions')
+    expect(args[1]).not.toContain('--permission-mode')
+    expect(() => adapter.setApproval('auto-review')).toThrow('does not support')
+    await adapter.dispose()
+  })
+
+  it.each(['throw', 'error', 'attachment'] as const)(
+    'retains initial session creation and instructions after %s failure',
+    async (failure) => {
+      const children: FakeChild[] = []
+      const args: string[][] = []
+      let fail = true
+      const adapter = new GrokAdapter({
+        spawn: (_command, value) => {
+          if (fail && failure === 'throw') throw new Error('launch failed')
+          args.push(value)
+          const child = new FakeChild(!fail)
+          children.push(child)
+          return child
+        },
+      })
+      const thread = await adapter.startThread('C:\\repo', { instructions: 'Keep the rules.' })
+      if (failure === 'error') {
+        await adapter.sendTurn(thread.id, 'first')
+        children[0]!.emit('error', new Error('ENOENT'))
+      } else {
+        await expect(
+          adapter.sendTurn(
+            thread.id,
+            'first',
+            failure === 'attachment'
+              ? [path.join(os.tmpdir(), `missing-${crypto.randomUUID()}.png`)]
+              : [],
+          ),
+        ).rejects.toThrow()
+      }
+      fail = false
+      await adapter.sendTurn(thread.id, 'retry')
+      const retryArgs = args.at(-1)!
+      expect(retryArgs).toContain('--session-id')
+      expect(retryArgs).not.toContain('--resume')
+      expect(readFileSync(retryArgs[retryArgs.indexOf('--prompt-file') + 1]!, 'utf8')).toContain(
+        '<system-instructions>\nKeep the rules.\n</system-instructions>\n\nretry',
+      )
+      await adapter.dispose()
+    },
+  )
+
   it('encodes images and files as ACP prompt content blocks', () => {
     const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-grok-attachment-'))
     try {
@@ -443,6 +509,38 @@ describe('Grok adapter', () => {
     expect(child.wasKilled).toBe(false)
   })
 
+  it('reports the reason from an error frame when grok exits without a result', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo', { model: 'no-such-model' })
+    const turnId = await adapter.sendTurn(thread.id, 'go')
+
+    // Captured from grok 1.0.40 with a model it no longer lists: one error
+    // frame on stdout, no end frame, exit code 1.
+    child.stdout.end(
+      `${JSON.stringify({
+        type: 'error',
+        message:
+          "Couldn't set model 'no-such-model': Invalid params: \"unknown model id\". Run 'grok models' to see available models.",
+      })}\n`,
+    )
+    await new Promise((resolve) => setImmediate(resolve))
+    child.emit('close', 1)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(events.filter((event) => event.type === 'thread.error')).toEqual([
+      {
+        type: 'thread.error',
+        threadId: thread.id,
+        message:
+          "Couldn't set model 'no-such-model': Invalid params: \"unknown model id\". Run 'grok models' to see available models.",
+      },
+    ])
+    expect(events.at(-1)).toEqual({ type: 'turn.completed', turnId, status: 'failed' })
+  })
+
   it.each(['close', 'error'] as const)('handles stopped turns on %s', async (signal) => {
     const children: FakeChild[] = []
     const adapter = new GrokAdapter({
@@ -497,6 +595,52 @@ describe('Grok adapter', () => {
     expect(children[2]?.wasKilled).toBe(true)
     expect(events.filter((event) => event.type === 'turn.completed')).toHaveLength(1)
     expect(events.some((event) => event.type === 'thread.error')).toBe(false)
+  })
+
+  it('does not launch a turn when the session is disposed while the previous child stops', async () => {
+    const children: FakeChild[] = []
+    const promptFiles: string[] = []
+    const adapter = new GrokAdapter({
+      spawn: (_command, args) => {
+        promptFiles.push(args[args.indexOf('--prompt-file') + 1]!)
+        const child = new FakeChild()
+        children.push(child)
+        return child
+      },
+    })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    const firstTurnId = await adapter.sendTurn(thread.id, 'first')
+    children[0]!.stdout.write(`${JSON.stringify({ type: 'end', stopReason: 'end_turn' })}\n`)
+    await new Promise((resolve) => setImmediate(resolve))
+
+    // The first child is still alive after its end frame, so the follow-up
+    // waits for it to stop. Closing the chat lands inside that wait.
+    const promptDirectories = () =>
+      new Set(readdirSync(os.tmpdir()).filter((name) => name.startsWith('harness-grok-')))
+    const before = promptDirectories()
+    const followUp = adapter.sendTurn(thread.id, 'queued follow-up')
+    const followUpDirectories = [...promptDirectories()].filter((name) => !before.has(name))
+    const disposed = adapter.dispose()
+    await expect(followUp).rejects.toThrow('Grok session is closed')
+    await disposed
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(children).toHaveLength(1)
+    expect(children[0]!.wasKilled).toBe(true)
+    expect(
+      events.filter((event) => event.type === 'turn.started').map((event) => event.turn.id),
+    ).toEqual([firstTurnId])
+    expect(promptFiles.every((file) => !existsSync(file))).toBe(true)
+    expect(followUpDirectories).not.toHaveLength(0)
+    expect(followUpDirectories.filter((name) => existsSync(path.join(os.tmpdir(), name)))).toEqual(
+      [],
+    )
+    await expect(adapter.sendTurn(thread.id, 'after close')).rejects.toThrow(
+      'Grok session is closed',
+    )
+    expect(children).toHaveLength(1)
   })
 
   it('records how long a thought ran on the completed reasoning item', async () => {
@@ -627,6 +771,40 @@ describe('Grok adapter', () => {
     })
   })
 
+  it('completes the turn when an event listener throws on the end frame', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({
+      spawn: () => child,
+    })
+    const events: DomainEvent[] = []
+    const logs: string[] = []
+    adapter.on('event', (event) => {
+      events.push(event)
+      if (event.type === 'usage.updated') throw new Error('listener failed')
+    })
+    adapter.on('log', (line: string) => logs.push(line))
+    const thread = await adapter.startThread('C:\\repo')
+    const turnId = await adapter.sendTurn(thread.id, 'finish normally')
+
+    const drained = new Promise<void>((resolve) => child.stdout.once('end', resolve))
+    child.stdout.end(
+      JSON.stringify({
+        type: 'end',
+        stopReason: 'end_turn',
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+      }),
+    )
+    await drained
+
+    expect(events.filter((event) => event.type === 'turn.completed')).toEqual([
+      { type: 'turn.completed', turnId, status: 'completed' },
+    ])
+    expect(logs.some((line) => line.includes('unparsable'))).toBe(false)
+    expect(logs.some((line) => line.includes('listener failed'))).toBe(true)
+    expect(child.wasKilled).toBe(false)
+    child.emit('close', 0)
+  })
+
   it('parses the captured models listing and its auth line', () => {
     expect(parseGrokModels(MODELS_OUTPUT)).toEqual([
       {
@@ -667,6 +845,24 @@ describe('Grok adapter', () => {
         serviceTiers: [],
       },
     ])
+  })
+
+  it('uses the live Grok 4.7 roster and its model-specific reasoning levels', () => {
+    const models = parseGrokModels(
+      'Available models:\n  * grok-4.7 (default)\n  - grok-4.7-build-fast\n  - grok-4.6\n  - grok-4.5',
+    )
+    expect(models.map((model) => model.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-build-fast',
+      'grok-4.6',
+      'grok-4.5',
+    ])
+    expect(models[0]).toMatchObject({
+      isDefault: true,
+      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
+      defaultReasoningEffort: 'high',
+    })
+    expect(models[1]?.reasoningEfforts).toEqual([])
   })
 
   it('stops parsing after the available-model rows', () => {
@@ -796,17 +992,23 @@ describe('Grok adapter', () => {
     child.emit('close', 0)
     await new Promise((resolve) => setImmediate(resolve))
 
+    // Headline, then the input as one JSON line, then the output: the same
+    // text convention every provider's tool calls use.
+    const arguments_ = '{"path":"apps/web/src/ui/Thread.tsx","pattern":"thoughtLabel"}'
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'item.started',
-          item: expect.objectContaining({ type: 'tool_call', text: 'Searched thoughtLabel' }),
+          item: expect.objectContaining({
+            type: 'tool_call',
+            text: `Searched thoughtLabel\n${arguments_}`,
+          }),
         }),
         expect.objectContaining({
           type: 'item.completed',
           item: expect.objectContaining({
             type: 'tool_call',
-            text: 'Searched thoughtLabel\nfound 12 matches',
+            text: `Searched thoughtLabel\n${arguments_}\nfound 12 matches`,
           }),
         }),
       ]),
@@ -814,7 +1016,103 @@ describe('Grok adapter', () => {
     adapter.dispose()
   })
 
+  it('counts edited lines that look like diff headers', async () => {
+    const child = new FakeChild()
+    const adapter = new GrokAdapter({ spawn: () => child })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('C:\\repo')
+    await adapter.sendTurn(thread.id, 'Update the schema')
+    const completed = new Promise<void>((resolve) => {
+      adapter.on('event', (event) => {
+        if (event.type === 'turn.completed') resolve()
+      })
+    })
+
+    const frames = [
+      {
+        type: 'tool_call',
+        toolCallId: 'tool-1',
+        toolName: 'search_replace',
+        title: 'search_replace',
+        rawInput: { file_path: 'C:\\repo\\schema.sql' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'tool-1',
+        status: 'completed',
+        content: [
+          {
+            type: 'diff',
+            path: 'C:\\repo\\schema.sql',
+            oldText: '-- old note\nSELECT 1;\n',
+            newText: '++ counter\nSELECT 2;\n',
+          },
+        ],
+      },
+      { type: 'end', stopReason: 'end_turn', sessionId: 'session-1' },
+    ]
+    child.stdout.end(frames.map((frame) => JSON.stringify(frame)).join('\n'))
+    await completed
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'item.completed',
+        item: expect.objectContaining({ type: 'file_change', linesAdded: 2, linesRemoved: 2 }),
+      }),
+    )
+    adapter.dispose()
+  })
+
+  it('renders an edit as a unified diff with line counts', () => {
+    expect(
+      grokDiff([
+        { type: 'diff', path: 'C:\\repo\\one.txt', oldText: 'a\nb\n', newText: 'a\nc\n' },
+        { type: 'content', content: { type: 'text', text: 'ignored' } },
+      ]),
+    ).toEqual({
+      text: [
+        'diff --git a/C:\\repo\\one.txt b/C:\\repo\\one.txt',
+        '--- a/C:\\repo\\one.txt',
+        '+++ b/C:\\repo\\one.txt',
+        '@@ -1,2 +1,2 @@',
+        '-a',
+        '-b',
+        '+a',
+        '+c',
+      ].join('\n'),
+      linesAdded: 2,
+      linesRemoved: 2,
+    })
+    expect(
+      grokDiff([{ type: 'diff', path: 'new.txt', oldText: '', newText: 'x' }])?.text,
+    ).toContain('--- /dev/null')
+    expect(grokDiff([{ type: 'content', content: 'nothing' }])).toBeUndefined()
+  })
+
   it('declares the one-shot print-mode capability set', () => {
     expect(GROK_CAPABILITIES).toMatchObject({ steer: false, interrupt: true, reasoningItems: true })
   })
+})
+
+describe('bounded model discovery capture', () => {
+  it.each(['stdout', 'stderr'] as const)(
+    'rejects a %s flood before parsing output',
+    async (stream) => {
+      const child = new FakeChild()
+      let killed = 0
+      child.kill = () => {
+        killed++
+        return true
+      }
+      const adapter = new GrokAdapter({ spawn: () => child })
+      const discovery = adapter.listModels()
+      const rejected = expect(discovery).rejects.toThrow('CLI output exceeded the size limit')
+      child[stream].write('harmless-fixture'.repeat(100_000))
+      await rejected
+      child[stream].write('late output')
+      child.emit('close', 0)
+      expect(killed).toBe(1)
+    },
+  )
 })

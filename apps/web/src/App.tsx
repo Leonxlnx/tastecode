@@ -16,12 +16,10 @@ import type {
   ApprovalDecision,
   ApprovalMode,
   DomainEvent,
-  ModelConnection,
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
   QueuedTurn,
-  ResultOf,
   SidebarSettings,
 } from '@harness/contracts'
 import {
@@ -35,10 +33,13 @@ import {
 } from './bridge.js'
 import {
   createDefaultKeybindings,
+  DEBUG_SETTINGS_SHORTCUT,
   KEYBINDING_DEFINITIONS,
   matchesShortcut,
   readKeybindings,
   shortcutLabel,
+  shortcutRoute,
+  WORKSPACE_TOOL_SHORTCUTS,
   writeKeybindings,
   type KeybindingId,
   type Shortcut,
@@ -52,6 +53,7 @@ import {
   beginOptimisticTurn,
   createOptimisticMessageId,
   emptyThread,
+  lastSentPrompt,
   removeOptimisticMessage,
   type ThreadState,
 } from './thread-store.js'
@@ -82,8 +84,10 @@ import {
 } from './project-store.js'
 import {
   applyProjectOrder,
+  moveRailSession,
   parseStoredProjectOrder,
   parseStoredSessionOrder,
+  sidebarSessions,
 } from './sidebar-order.js'
 import { createSessionOrderSerializer } from './session-order-serializer.js'
 import type { CommandScope, PaletteCommand } from './ui/CommandPalette.js'
@@ -98,7 +102,14 @@ import { SessionSearchHost, type SessionSearchHandle } from './ui/SessionSearchH
 import type { SettingsSection } from './ui/Settings.js'
 import { Sidebar, type Project } from './ui/Sidebar.js'
 import { Skeleton, SkeletonStatus, ThreadSkeleton } from './ui/Skeleton.js'
+import {
+  PullRequestsSkeleton,
+  SettingsSkeleton,
+  WorkspacePanelSkeleton,
+} from './ui/SurfaceSkeletons.js'
 import { PanelToggles, StageHeader } from './ui/StageHeader.js'
+import { SurfaceErrorBoundary } from './ui/SurfaceErrorBoundary.js'
+import { surfaceLoadFailed } from './surface-load-error.js'
 import { NoticePresence } from './ui/NoticePresence.js'
 import type { ComposerError } from './ui/ComposerErrors.js'
 import { LazyThread } from './ui/LazyThread.js'
@@ -111,21 +122,26 @@ import { sourceSupportsAttachments } from './attachment-capability.js'
 import { canCaptureVoice, type VoiceRecording } from './voice-capability.js'
 import { UsageLimitsController } from './usage-limits-state.js'
 import {
-  agentMark,
   choicesFor,
   customModelChoice,
   customModelKey,
   isCustomModelChoice,
+  migratePendingHiddenModels,
+  MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
   modelVisibleByDefault,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
   sourceKey,
+  unlistedHiddenModels,
   type ModelChoice,
+  type ModelVisibilityMigration,
+  type ModelVisibilityProgress,
 } from './model-catalog.js'
 import {
   freshModelCatalogChoices,
+  isModelCatalogSourceFresh,
   parseModelCatalogCache,
   serializeModelCatalogCache,
 } from './model-catalog-cache.js'
@@ -144,6 +160,13 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
+import {
+  pinnedModelChoice,
+  readProviderDefaults,
+  writeProviderDefaults,
+  type ProviderDefault,
+  type ProviderDefaults,
+} from './provider-defaults.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -151,6 +174,11 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import {
+  DEFAULT_BOTTOM_PANEL_HEIGHT,
+  restoreWorkspacePanelWidth,
+} from './ui/workspace/workspace-panel-width.js'
+import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
@@ -169,68 +197,61 @@ import {
   DARK_THEME_QUERY,
   FONT_KEY,
   GLASS_KEY,
-  readAccentPreference,
-  readBackdropPreference,
-  readFontPreference,
-  readGlassPreference,
+  appearanceKey,
+  readAppearancePreferences,
+  type AppearancePreference,
   readSystemTheme,
   readThemePreference,
   THEME_KEY,
-  type AccentPreference,
-  type BackdropPreference,
   type Theme,
   type ThemePreference,
-  type FontPreference,
 } from './theme.js'
 
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
-const PROVIDER_IDS = [
-  'codex',
-  'claude-code',
-  'grok',
-  'cursor',
-  'opencode',
-  'antigravity',
-  'pi',
-  'acp',
-  'api',
-] as const satisfies readonly ProviderId[]
+const DRAFT_REPLACED_NOTICE = 'Your draft was replaced.'
+const PROVIDER_IDS = ['claude-code', 'codex', 'grok'] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
-const PUBLIC_BETA_PROVIDER_IDS = new Set<ProviderId>(['codex', 'claude-code', 'grok'])
-/** Engines a custom model can be attached to — ACP agents and API
- *  connections carry their own roster concepts and stay out of this list. */
-const DIRECT_PROVIDER_IDS = PROVIDER_IDS.filter((id) => id !== 'acp' && id !== 'api' && id !== 'pi')
-const DIRECT_PROVIDER_ID_SET = new Set<ProviderId>(DIRECT_PROVIDER_IDS)
-/** Which named agent or custom harness source was chosen. */
+/** Which custom harness source was chosen. The key names predate custom
+ *  harnesses; renaming them would forget every stored choice. */
 const AGENT_KEY = 'harness.acpAgent'
 const AGENT_NAME_KEY = 'harness.acpAgentName'
 const PROJECTS_KEY = 'harness.projects'
 const PROJECT_ORDER_KEY = 'harness.projectOrder'
-const SESSION_ORDER_KEY = 'harness.sessionOrder'
+/** Only projects whose chats the user reordered by dragging. */
+const SESSION_ORDER_KEY = 'harness.sessionOrder.dragged'
+/** Snapshots of every project's order, dragged or not. They froze the order in
+ *  which provider histories happened to arrive, so they are discarded. */
+const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
+const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
+const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-const MODEL_VISIBILITY_VERSION = '3'
+/** Rows a pending visibility migration already moved, while other sources have not answered yet. */
+const MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
+/** Every direct-provider model key the profile has listed, so a later arrival gets its default. */
+const LISTED_MODELS_KEY = 'harness.listedModels'
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
 const APPROVAL_KEY = 'harness.approval'
 const APPROVAL_BY_PROVIDER_KEY = 'harness.approvalByProvider'
 const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
+/** Debug settings stay unlocked across restarts until the shortcut locks them. */
+const DEBUG_SETTINGS_KEY = 'harness.debugSettings'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const BOTTOM_TERMINAL_MOTION_MS = 260
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
-const NOTICE_AUTO_DISMISS_MS = 5_000
 const DEFAULT_SIDEBAR_SETTINGS: SidebarSettings = { mode: 'classic', autoSettleDays: 3 }
 type BottomTerminalPhase = 'closed' | 'opening' | 'open' | 'closing'
 const PullRequestsView = lazy(() =>
@@ -253,7 +274,9 @@ const loadWorkspacePanel = (): Promise<LazyWorkspacePanelModule> =>
   }))
 const WorkspacePanel = lazy(loadWorkspacePanel)
 const Settings = lazy(() =>
-  import('./ui/Settings.js').then((module) => ({ default: module.Settings })),
+  import('./ui/Settings.js')
+    .then((module) => ({ default: module.Settings }))
+    .catch(surfaceLoadFailed),
 )
 const CommandPalette = lazy(() =>
   import('./ui/CommandPalette.js').then((module) => ({ default: module.CommandPalette })),
@@ -266,8 +289,8 @@ const CheckoutDiscardDialog = lazy(() =>
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
 )
-const WelcomeDialog = lazy(() =>
-  import('./ui/WelcomeDialog.js').then((module) => ({ default: module.WelcomeDialog })),
+const Onboarding = lazy(() =>
+  import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
 )
 
 /**
@@ -315,6 +338,9 @@ type AccountCheck = {
   error?: ComposerError
 }
 
+/** The counter makes a repeated request for the open section navigate again. */
+type SettingsSectionRequest = { section: SettingsSection; request: number }
+
 type WorkspaceIdleProbe = {
   inFlight: Promise<void> | undefined
   pendingPath: string | undefined
@@ -356,15 +382,17 @@ function workspaceLayoutStyle(width: number): WorkspaceLayoutStyle {
   return { '--workspace-panel-w': `${width}px` }
 }
 
-function resolveSendAvailability(input: {
+function requestSettingsSection(section: SettingsSection) {
+  return (current: SettingsSectionRequest) => ({ section, request: current.request + 1 })
+}
+
+export function resolveSendAvailability(input: {
   catalog: CatalogAvailability
-  serverBoundSession: boolean
   activeProvider?: ProviderId | undefined
   selectedChoice?: ModelChoice | undefined
   providerStatuses: ProviderStatus[]
   accountCheck: AccountCheck
 }): SendAvailability {
-  if (input.serverBoundSession) return 'ready'
   if (input.catalog === 'loading') return 'loading'
   if (input.catalog === 'failed') return 'unavailable'
 
@@ -377,12 +405,16 @@ function resolveSendAvailability(input: {
       : 'unavailable'
   }
 
-  if (input.selectedChoice?.agent && input.selectedChoice.provider !== 'acp') return 'ready'
+  if (input.selectedChoice?.agent) return 'ready'
 
   const status = input.providerStatuses.find((entry) => entry.id === provider)
   if (!status) return 'unavailable'
-  if (!status.installed || status.auth === 'unauthenticated') return 'setup-required'
+  if (!status.installed) return 'setup-required'
   if (status.problem || !status.capabilities) return 'unavailable'
+  if (input.accountCheck.provider === provider && input.accountCheck.state === 'ready') {
+    return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
+  }
+  if (status.auth === 'unauthenticated') return 'setup-required'
   if (status.auth === 'authenticated') return 'ready'
   if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
     return 'loading'
@@ -402,11 +434,7 @@ function readCustomModels(): CustomModel[] {
       if (!isRecord(entry)) continue
       const provider = entry['provider']
       const storedModelId = entry['modelId']
-      if (
-        !isProviderId(provider) ||
-        !DIRECT_PROVIDER_ID_SET.has(provider) ||
-        typeof storedModelId !== 'string'
-      ) {
+      if (!isProviderId(provider) || typeof storedModelId !== 'string') {
         continue
       }
       const modelId = storedModelId.trim()
@@ -429,23 +457,17 @@ function readCustomModels(): CustomModel[] {
  *  choice, so the same model can never appear twice. */
 function mergeCustomModels(catalog: ModelChoice[], custom: CustomModel[]): ModelChoice[] {
   if (custom.length === 0) return catalog
-  const customChoices = custom.map((entry) =>
-    customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
-  )
+  const customChoices = custom.map((entry) => customModelChoice(entry))
   const customKeys = new Set(customChoices.map((choice) => choice.key))
   return [...catalog.filter((choice) => !customKeys.has(choice.key)), ...customChoices]
 }
 
 function modelSource(choice: ModelChoice): string {
-  return sourceKey({
-    provider: choice.provider,
-    connectionId: choice.connectionId,
-    agentId: choice.agent?.id,
-  })
+  return sourceKey({ provider: choice.provider, agentId: choice.agent?.id })
 }
 
 export function App() {
-  const transport = useMemo(() => new Transport(SERVER_BASE_URL), [])
+  const [transport] = useState(() => new Transport(SERVER_BASE_URL))
   // StrictMode replays effect cleanup against this same memoized instance.
   const usageController = useMemo(
     () => new UsageLimitsController((params) => transport.request('usage.summary', params)),
@@ -494,30 +516,59 @@ export function App() {
   }, [usageController])
   const [provider, setProvider] = useState<ProviderId>(() => {
     const stored = readSetting(SETUP_KEY)
-    return PROVIDER_IDS.find((id) => id === stored) ?? 'codex'
+    // Only a launch without a usable stored provider starts here, and the
+    // first ready provider in providers.list order replaces it if needed.
+    return PROVIDER_IDS.find((id) => id === stored) ?? 'claude-code'
   })
   const providerRef = useRef(provider)
   providerRef.current = provider
-  const [acpAgent, setAcpAgent] = useState<string | undefined>(
+  // Read once at mount. The provider-default choice persists the initial
+  // provider before providers.list answers, so by then storage can no longer
+  // tell that this launch started without a usable stored provider.
+  const [launchedUnchosen] = useState(() => !isProviderId(readSetting(SETUP_KEY)))
+  const providerUnchosenAtLaunch = useRef(launchedUnchosen)
+  const [sourceAgent, setSourceAgent] = useState<string | undefined>(
     () => readSetting(AGENT_KEY) ?? undefined,
   )
-  // Kept so the sidebar can say "Gemini CLI" rather than "acp". The name lives
-  // in the adapter package, which the renderer deliberately cannot import.
-  const [acpAgentName, setAcpAgentName] = useState<string | undefined>(
+  const sourceAgentRef = useRef(sourceAgent)
+  sourceAgentRef.current = sourceAgent
+  // The custom harness's own name, so the composer can show what the user called it.
+  const [sourceAgentName, setSourceAgentName] = useState<string | undefined>(
     () => readSetting(AGENT_NAME_KEY) ?? undefined,
   )
   // A cache of what the server says, not a source of truth. Every change goes
   // to the server and comes back through here.
   const [projects, setProjects] = useState<Project[]>([])
+  const removedProjectPaths = useRef(new Set<string>())
+  const projectStartRevisions = useRef(new Map<string, number>())
+  // Other projects follow the server's newest-first order, so chats imported
+  // later from another provider land by date instead of below a saved snapshot.
+  const [draggedSessionOrder] = useState(() => new Set(Object.keys(loadSessionOrder())))
   const projectChoiceProjector = useMemo(createProjectChoiceProjector, [])
   const projectChoices = useMemo(
     () => projectChoiceProjector(projects),
     [projectChoiceProjector, projects],
   )
   const [projectsStatus, setProjectsStatus] = useState<'loading' | 'ready' | 'failed'>('loading')
+  // Startup opens the first project, so its remembered name lets the first
+  // frame paint the new-chat heading instead of waiting for projects.list.
+  const [startupProjectName, setStartupProjectName] = useState(readStartupProjectName)
+  useEffect(() => {
+    if (projectsStatus === 'loading') return
+    setStartupProjectName(undefined)
+    if (projectsStatus === 'ready') saveStartupProjectName(projects[0])
+  }, [projects, projectsStatus])
   const [onboardingDismissed, setOnboardingDismissed] = useState(
     () => readSetting(ONBOARDING_KEY) === 'done',
   )
+  const [debugSettingsVisible, setDebugSettingsVisible] = useState(
+    () => readSetting(DEBUG_SETTINGS_KEY) === 'on',
+  )
+  useEffect(() => {
+    if (debugSettingsVisible) writeSetting(DEBUG_SETTINGS_KEY, 'on')
+    else removeSetting(DEBUG_SETTINGS_KEY)
+  }, [debugSettingsVisible])
+  const [onboardingPreview, setOnboardingPreview] = useState(false)
   /** The thread whose interrupt has been sent but not yet acknowledged. */
   const [stoppingThreadId, setStoppingThreadId] = useState<string | undefined>()
 
@@ -526,6 +577,14 @@ export function App() {
     writeSetting(ONBOARDING_KEY, 'done')
     setOnboardingDismissed(true)
   }, [projects, projectsStatus, onboardingDismissed])
+  const onboardingWanted =
+    onboardingPreview ||
+    (isDesktop && projectsStatus === 'ready' && projects.length === 0 && !onboardingDismissed)
+  // Setup stays mounted a moment after it stops being wanted — a project
+  // arrived, or the preview was closed — so it can open up into the app
+  // instead of vanishing. It unmounts itself through onDismiss.
+  const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
+  if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
   const [threadController] = useState(() => new ThreadController(transport))
   const [activeId, setActiveIdState] = useState<string | undefined>()
@@ -547,6 +606,9 @@ export function App() {
     [threadFrameStore],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
+  const [historyFailure, setHistoryFailure] = useState<
+    { threadId: string; message: string } | undefined
+  >()
   const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
   const pendingSession = useRef<
@@ -555,10 +617,13 @@ export function App() {
         promise: Promise<string | undefined>
         threadId?: string | undefined
         title: string
+        pinned?: boolean | undefined
       }
     | undefined
   >(undefined)
   const pendingInterruptThreadIds = useRef(new Set<string>())
+  const pendingProviderHistoryIds = useRef(new Set<string>())
+  const providerHistoryReads = useRef(new Map<string, object>())
   const [queuedTurns, setQueuedTurns] = useState<QueuedTurn[]>([])
   const [canSteerQueue, setCanSteerQueue] = useState(false)
   const [customModels] = useState<CustomModel[]>(readCustomModels)
@@ -591,15 +656,8 @@ export function App() {
       }
     })
   const [providerStatuses, setProviderStatuses] = useState<ProviderStatus[]>([])
-  const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
-  const [acpAgentsRequest, setAcpAgentsRequest] = useState(0)
-  const acpAgentsCache = useRef<{ transport: Transport; request: number } | undefined>(undefined)
-  const [customHarnessIds, setCustomHarnessIds] = useState<Set<string>>(() => new Set())
-  const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
-  const [modelConnectionsSource, setModelConnectionsSource] = useState<
-    { transport: Transport; request: number } | undefined
-  >()
+  const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
   >()
@@ -623,15 +681,31 @@ export function App() {
       reportStartupMilestone('catalog-ready')
     }
   }, [catalogAvailability, projectsStatus])
-  const [hiddenModels, setHiddenModels] = useState<Set<string>>(() => {
+  const [initialModelVisibility] = useState<ModelVisibilityMigration>(() => {
+    const saved = readSetting(HIDDEN_MODELS_KEY)
+    let hidden: Set<string>
     try {
-      const stored: unknown = JSON.parse(readSetting(HIDDEN_MODELS_KEY) ?? '[]')
-      return new Set(isStringArray(stored) ? stored : [])
+      const stored: unknown = JSON.parse(saved ?? '[]')
+      hidden = new Set(isStringArray(stored) ? stored : [])
     } catch {
-      return new Set()
+      hidden = new Set()
     }
+    if (saved === null) return { hidden, migrated: [] }
+    // Apply a pending visibility migration to the cached catalog already, so
+    // the picker never opens on models it is about to hide or reveal. Rows a
+    // source lists later get it when discovery first shows them.
+    return migratePendingHiddenModels(
+      hidden,
+      readModelVisibilityProgress(),
+      catalogModels.filter((choice) => !choice.agent && !isCustomModelChoice(choice)),
+    )
   })
+  const [hiddenModels, setHiddenModels] = useState(initialModelVisibility.hidden)
   const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
+  /** Rows a first visibility click saved on their defaults, recorded with that list. */
+  const pendingVisibilityRows = useRef<string[] | undefined>(undefined)
+  const [initialListedModels] = useState(readListedModels)
+  const listedModelsRef = useRef(initialListedModels)
   // Read via ref inside the catalog effect so toggling visibility does not
   // refetch every provider's model list.
   const hiddenModelsRef = useRef(hiddenModels)
@@ -645,10 +719,22 @@ export function App() {
   const [serviceTier, setServiceTier] = useState<string | undefined>(
     () => readSetting(SERVICE_TIER_KEY) ?? undefined,
   )
+  const pendingThreadModelSave = useRef<string | undefined>(undefined)
   const [approvalByProvider, setApprovalByProvider] = useState<ApprovalPreferences>(() =>
     readApprovalPreferences(provider),
   )
+  const [providerDefaults, setProviderDefaults] = useState<ProviderDefaults>(readProviderDefaults)
+  const providerDefaultsRef = useRef(providerDefaults)
+  providerDefaultsRef.current = providerDefaults
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
+  /** The last mode each opened chat showed, so reopening it never waits on history. */
+  const threadApprovals = useRef(new Map<string, ApprovalMode>())
+  useEffect(() => {
+    if (activeId && activeThreadApproval)
+      threadApprovals.current.set(activeId, activeThreadApproval)
+  }, [activeId, activeThreadApproval])
+  const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
+  const approvalChanges = useRef(new Map<string, Promise<void>>())
   const [collapsed, setCollapsed] = useState(
     () => globalThis.matchMedia?.('(max-width: 700px)').matches ?? false,
   )
@@ -664,6 +750,7 @@ export function App() {
   const [railWidth, setRailWidth] = useState(readRailWidth)
   const [workspace, setWorkspace] = useState<WorkspaceInfo | undefined>()
   const [branches, setBranches] = useState<string[]>([])
+  const [branchesPath, setBranchesPath] = useState<string>()
   const projectBranches = useRef(new Map<string, string>())
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
@@ -677,11 +764,16 @@ export function App() {
   }, [])
   const [accountCheck, setAccountCheck] = useState<AccountCheck>({ provider, state: 'loading' })
   const accountRequestRevision = useRef(0)
+  const [authStatusRequest, setAuthStatusRequest] = useState(0)
   const [voiceAvailable, setVoiceAvailable] = useState(false)
+  const [voiceStatusLoading, setVoiceStatusLoading] = useState(true)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [keybindings, setKeybindings] = useState(readKeybindings)
   const [surface, setSurface] = useState<'chat' | 'pull-requests'>('chat')
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>('providers')
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionRequest>({
+    section: 'workflows',
+    request: 0,
+  })
   const [providerAuthRefreshRevision, setProviderAuthRefreshRevision] = useState(0)
   const [pullRequestSetupRefreshRevision, setPullRequestSetupRefreshRevision] = useState(0)
   const [sidebarSettings, setSidebarSettings] = useState(DEFAULT_SIDEBAR_SETTINGS)
@@ -698,6 +790,7 @@ export function App() {
     turnId: string
     request: number
   }>()
+  const searchJumpRequests = useRef(0)
   const [composerFocusRequest, setComposerFocusRequest] = useState(0)
   const [composerDraft, setComposerDraft] = useState<
     | {
@@ -713,16 +806,20 @@ export function App() {
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
+  /** The unsent draft an "Edit as new prompt" replaced, offered back in the notice. */
+  const [replacedDraft, setReplacedDraft] = useState<{ owner: string; text: string } | undefined>()
   const [actionError, setActionError] = useState<ComposerError>()
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
   }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
+  const pendingDeletionChecks = useRef(new Map<string, object>())
   const {
     hiddenIds: archivingIds,
     pendingIds: pendingArchives,
     queue: enqueueArchive,
     undo: undoQueuedArchives,
+    cancel: cancelQueuedArchive,
   } = useDeferredArchiveQueue(10_000)
   const archiveProjects = useMemo(() => {
     if (archivingIds.length === 0) return projects
@@ -740,29 +837,69 @@ export function App() {
   >()
   const [rollbackLoadingId, setRollbackLoadingId] = useState<number | undefined>()
   const [rollbackRestoring, setRollbackRestoring] = useState(false)
-  const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
+  const rollbackInspectionRequest = useRef<object | undefined>(undefined)
+  const restoreInFlight = useRef(false)
   useEffect(() => {
-    if (!notice) return
-    const timeout = globalThis.setTimeout(() => {
-      setNotice(undefined)
-      setUndoRestore(undefined)
-    }, NOTICE_AUTO_DISMISS_MS)
-    return () => globalThis.clearTimeout(timeout)
-  }, [notice])
+    rollbackInspectionRequest.current = undefined
+    setRollbackInspection(undefined)
+    setRollbackLoadingId(undefined)
+  }, [activeId])
+  useEffect(() => {
+    if (rollbackOpen) return
+    rollbackInspectionRequest.current = undefined
+    setRollbackInspection(undefined)
+    setRollbackLoadingId(undefined)
+  }, [rollbackOpen])
+  const [undoRestore, setUndoRestore] = useState<{ threadId: string; token: string } | undefined>()
   const [isolateSession, setIsolateSession] = useState(false)
-  const [designMode, setDesignMode] = useState(false)
-  const [checkoutDelete, setCheckoutDelete] = useState<
-    { id: string; title: string; branch: string } | undefined
-  >()
+  const [designModes, setDesignModes] = useState<Record<string, boolean>>({})
+  const designMode = useMemo(
+    () =>
+      designModes[activeId ?? NEW_CHAT_DRAFT_KEY] ??
+      readThreadModelSelection(activeId)?.designMode ??
+      false,
+    [activeId, designModes],
+  )
+  const setThreadDesignMode = useCallback((threadId: string | undefined, enabled: boolean) => {
+    const saved = readThreadModelSelection(threadId)
+    if (threadId && saved) writeThreadModelSelection(threadId, { ...saved, designMode: enabled })
+    setDesignModes((current) => ({ ...current, [threadId ?? NEW_CHAT_DRAFT_KEY]: enabled }))
+  }, [])
+  const changeDesignMode = useCallback(
+    (enabled: boolean) => setThreadDesignMode(activeIdRef.current, enabled),
+    [setThreadDesignMode],
+  )
+  // A multi-chat delete can stop on several isolated checkouts; each one is
+  // confirmed in turn while the rest of the batch goes ahead.
+  const [checkoutDeletes, setCheckoutDeletes] = useState<
+    Array<{ id: string; title: string; branch: string }>
+  >([])
+  const checkoutDelete = checkoutDeletes[0]
+  const dropCheckoutDelete = useCallback(
+    (id: string) => setCheckoutDeletes((current) => current.filter((entry) => entry.id !== id)),
+    [],
+  )
   const [checkoutDeleteBusy, setCheckoutDeleteBusy] = useState(false)
   const macOS = isMacOS()
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference)
-  const [fontPreference, setFontPreference] = useState<FontPreference>(readFontPreference)
-  const [accentPreference, setAccentPreference] = useState<AccentPreference>(readAccentPreference)
-  const [backdropPreference, setBackdropPreference] =
-    useState<BackdropPreference>(readBackdropPreference)
-  const [sidebarGlass, setSidebarGlass] = useState<number>(readGlassPreference)
+  const [appearancePreferences, setAppearancePreferences] = useState(readAppearancePreferences)
   const [systemTheme, setSystemTheme] = useState<Theme>(readSystemTheme)
+  const appearanceMode = themePreference === 'system' ? systemTheme : themePreference
+  const {
+    font: fontPreference,
+    accent: accentPreference,
+    backdrop: backdropPreference,
+    glass: sidebarGlass,
+  } = appearancePreferences[appearanceMode]
+  const updateAppearancePreference = useCallback(
+    (mode: Theme, updates: Partial<AppearancePreference>) => {
+      setAppearancePreferences((current) => ({
+        ...current,
+        [mode]: { ...current[mode], ...updates },
+      }))
+    },
+    [],
+  )
   const customColorScheme = backdropColorScheme(backdropPreference)
   const desktopThemePreference = customColorScheme ?? themePreference
   const theme = customColorScheme ?? (themePreference === 'system' ? systemTheme : themePreference)
@@ -800,7 +937,7 @@ export function App() {
   )
   const [sideChatPromptRequest, setSideChatPromptRequest] = useState<SideChatPromptRequest>()
   const providerSignInState = useSyncExternalStore(subscribeInstalls, () =>
-    installState(loginKey({ provider, ...(acpAgent ? { agent: acpAgent } : {}) })),
+    installState(loginKey({ provider })),
   )
   /** The live catalog with user-defined models appended. Everything below
    *  reads this merged list; the cache only ever stores the server catalog. */
@@ -808,45 +945,36 @@ export function App() {
     () => mergeCustomModels(catalogModels, customModels),
     [catalogModels, customModels],
   )
-  const rosterModels = useMemo(
-    () =>
-      models.filter(
-        (choice) =>
-          PUBLIC_BETA_PROVIDER_IDS.has(choice.provider) ||
-          (choice.agent ? customHarnessIds.has(choice.agent.id) : false),
-      ),
-    [models, customHarnessIds],
-  )
   const catalogModelsRef = useRef(catalogModels)
   catalogModelsRef.current = catalogModels
   const modelsRef = useRef(models)
   modelsRef.current = models
   const visibleModels = useMemo(
-    () => rosterModels.filter((choice) => !hiddenModels.has(choice.key)),
-    [rosterModels, hiddenModels],
+    () => models.filter((choice) => !hiddenModels.has(choice.key)),
+    [models, hiddenModels],
   )
+  const visibleModelsRef = useRef(visibleModels)
+  visibleModelsRef.current = visibleModels
   // Memoised for identity: while the catalog is empty this is the selected
   // choice, and a fresh object per render would give every consumer downstream
   // (including effects that write settings) a new dependency each frame.
   const implicitChoice = useMemo(
     () =>
-      provider !== 'api' && (provider !== 'pi' || acpAgent)
-        ? choicesFor(
-            {
-              provider,
-              sourceName: providerName(provider, acpAgentName),
-              mark: provider === 'acp' && acpAgent ? agentMark(acpAgent) : providerMark(provider),
-              ...(acpAgent
-                ? {
-                    agent: { id: acpAgent, name: acpAgentName ?? acpAgent },
-                  }
-                : {}),
-            },
-            [],
-            true,
-          )[0]
-        : undefined,
-    [provider, acpAgent, acpAgentName],
+      choicesFor(
+        {
+          provider,
+          sourceName: providerName(provider, sourceAgentName),
+          mark: providerMark(provider),
+          ...(sourceAgent
+            ? {
+                agent: { id: sourceAgent, name: sourceAgentName ?? sourceAgent },
+              }
+            : {}),
+        },
+        [],
+        true,
+      )[0],
+    [provider, sourceAgent, sourceAgentName],
   )
   const activeSession = useMemo(
     () => (activeId ? findSession(projects, activeId)?.session : undefined),
@@ -871,31 +999,47 @@ export function App() {
   const sourceHasCatalogModels = useMemo(
     () =>
       activeModelSource
-        ? rosterModels.some((choice) => modelSource(choice) === activeModelSource)
+        ? models.some((choice) => modelSource(choice) === activeModelSource)
         : false,
-    [activeModelSource, rosterModels],
+    [activeModelSource, models],
   )
+  const preferredModelSource = activeModelSource ?? sourceKey({ provider, agentId: sourceAgent })
+  const preferredModelKey = useMemo(
+    () => readSourceSelections()[preferredModelSource]?.modelKey,
+    [preferredModelSource, selectableModels],
+  )
+  const preferredSourcePending = pendingModelSources.has(preferredModelSource)
   const selectableImplicitChoice =
     implicitChoice &&
-    PUBLIC_BETA_PROVIDER_IDS.has(implicitChoice.provider) &&
     (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
-    (rosterModels.length === 0 || (activeModelSource && !sourceHasCatalogModels))
+    (models.length === 0 ||
+      preferredSourcePending ||
+      (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
-  const selectedModelChoice =
+  const resolvedModelChoice =
     selectableModels.find((choice) => choice.key === modelId) ??
+    selectableModels.find((choice) => choice.key === preferredModelKey) ??
+    selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
+  // The preferred source has not listed its models yet, so the model a send
+  // would use is not known. The placeholder below keeps that source, but it is
+  // only the provider default: the picker waits and Send stays off instead of
+  // starting a turn the label does not describe.
+  const modelChoicePending = !resolvedModelChoice && preferredSourcePending
+  const selectedModelChoice =
+    resolvedModelChoice ??
+    (preferredSourcePending ? selectableImplicitChoice : undefined) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = resolveSendAvailability({
-    catalog: catalogAvailability,
-    serverBoundSession: Boolean(
-      activeSession && activeSession.provider === provider && !implicitChoice,
-    ),
-    activeProvider: activeSession?.provider,
-    selectedChoice: selectedModelChoice,
-    providerStatuses,
-    accountCheck,
-  })
+  const sendAvailability = modelChoicePending
+    ? 'loading'
+    : resolveSendAvailability({
+        catalog: catalogAvailability,
+        activeProvider: activeSession?.provider,
+        selectedChoice: selectedModelChoice,
+        providerStatuses,
+        accountCheck,
+      })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -921,14 +1065,12 @@ export function App() {
         selectedModelChoice
           ? {
               provider: selectedModelChoice.provider,
-              connectionId: selectedModelChoice.connectionId,
               agentId: selectedModelChoice.agent?.id,
             }
-          : { provider, agentId: acpAgent },
+          : { provider, agentId: sourceAgent },
         providerStatuses,
-        modelConnections,
       ),
-    [selectedModelChoice, provider, acpAgent, providerStatuses, modelConnections],
+    [selectedModelChoice, provider, sourceAgent, providerStatuses],
   )
   const autoReviewSupported = useMemo(
     () =>
@@ -939,7 +1081,21 @@ export function App() {
   const defaultApproval =
     approvalByProvider[provider] ?? (autoReviewSupported ? 'auto-review' : 'full')
   const approval = activeId ? (activeThreadApproval ?? 'ask') : defaultApproval
-  const approvalLoading = Boolean(activeId && activeThreadApproval === undefined)
+  // Auto-review support arrives with the provider list. Until then a saved
+  // auto-review choice, or the default, would show as full access and flip.
+  const approvalWaitsForProvider =
+    catalogAvailability === 'loading' &&
+    !providerStatuses.some((entry) => entry.id === provider) &&
+    (approval === 'auto-review' || (!activeId && approvalByProvider[provider] === undefined))
+  const approvalLoading =
+    Boolean(activeId && activeThreadApproval === undefined) || approvalWaitsForProvider
+  // While waiting, the mode only sizes the placeholder; auto-review is what it
+  // resolves to whenever the provider supports it.
+  const displayedApproval: ApprovalMode = approvalWaitsForProvider
+    ? 'auto-review'
+    : approval === 'auto-review' && !autoReviewSupported
+      ? 'full'
+      : approval
 
   useEffect(() => {
     const checkConnection = () => void transport.ensureHealthy()
@@ -966,22 +1122,43 @@ export function App() {
   useLayoutEffect(() => {
     applyFontPreference(fontPreference)
   }, [fontPreference])
-  usePersistedSettingChange(FONT_KEY, fontPreference)
+  usePersistedSettingChange(appearanceKey(FONT_KEY, 'light'), appearancePreferences.light.font)
+  usePersistedSettingChange(appearanceKey(FONT_KEY, 'dark'), appearancePreferences.dark.font)
 
   useLayoutEffect(() => {
     applyAccentPreference(accentPreference)
   }, [accentPreference])
-  usePersistedSettingChange(ACCENT_KEY, accentPreference)
+  usePersistedSettingChange(appearanceKey(ACCENT_KEY, 'light'), appearancePreferences.light.accent)
+  usePersistedSettingChange(appearanceKey(ACCENT_KEY, 'dark'), appearancePreferences.dark.accent)
 
   useLayoutEffect(() => {
     applyBackdropPreference(backdropPreference)
   }, [backdropPreference])
-  usePersistedSettingChange(BACKDROP_KEY, backdropPreference)
+  usePersistedSettingChange(
+    appearanceKey(BACKDROP_KEY, 'light'),
+    appearancePreferences.light.backdrop,
+  )
+  usePersistedSettingChange(
+    appearanceKey(BACKDROP_KEY, 'dark'),
+    appearancePreferences.dark.backdrop,
+  )
 
   useLayoutEffect(() => {
     applyGlassPreference(sidebarGlass)
   }, [sidebarGlass])
-  usePersistedSettingChange(GLASS_KEY, String(sidebarGlass))
+  usePersistedSettingChange(
+    appearanceKey(GLASS_KEY, 'light'),
+    String(appearancePreferences.light.glass),
+  )
+  usePersistedSettingChange(
+    appearanceKey(GLASS_KEY, 'dark'),
+    String(appearancePreferences.dark.glass),
+  )
+  // After the theme, backdrop and glass above have reached the document.
+  useWindowChrome(
+    theme,
+    `${backdropPreference}|${sidebarGlass}|${settingsOpen}|${onboardingMounted}|${providerLoginTerminal !== undefined}`,
+  )
 
   useEffect(() => {
     const media = globalThis.matchMedia?.(DARK_THEME_QUERY)
@@ -1049,7 +1226,7 @@ export function App() {
   const restoreRejectedDraft = useCallback(
     (threadId: string, rejected: RecoverableDraft) => {
       const draft = threadController.recoverDraft(threadId, rejected)
-      if (threadId === activeIdRef.current) {
+      if (threadId === composerDraftKey(activeIdRef.current)) {
         threadController.draftOwner = threadId
         publishComposerDraft(draft)
       }
@@ -1098,8 +1275,40 @@ export function App() {
   const updateComposerDraftResources = useCallback((resources: ComposerResource[]) => {
     threadController.editDraft(threadController.draftOwner, { resources })
   }, [])
+  // A paste can finish saving after the user switched chats. The composer then
+  // no longer shows its draft, so the file joins the draft it was pasted into.
+  const keepPendingAttachment = useCallback(
+    (savedPath: Promise<string | undefined>) => {
+      const owner = threadController.draftOwner
+      void savedPath.then((path) => {
+        if (!path) return
+        const draft = threadController.draft(owner)
+        if (draft.attachments.includes(path)) return
+        const next = threadController.editDraft(owner, {
+          attachments: [...draft.attachments, path],
+        })
+        if (threadController.draftOwner === owner) publishComposerDraft(next)
+      })
+    },
+    [publishComposerDraft],
+  )
+  // Editing a queued prompt removes it before the composer takes it back. If
+  // the user switched chats meanwhile, the prompt returns to its own chat.
+  const keepQueuedEdit = useCallback(
+    (removed: Promise<RecoverableDraft | undefined>) => {
+      const owner = threadController.draftOwner
+      void removed.then((prompt) => {
+        if (prompt) restoreRejectedDraft(owner, prompt)
+      })
+    },
+    [restoreRejectedDraft],
+  )
   const projectsRef = useRef(projects)
   projectsRef.current = projects
+  // What the sidebar shows. Navigation picks from this list so it never
+  // selects, and thereby silently cancels, a chat queued for deletion.
+  const visibleProjectsRef = useRef(archiveProjects)
+  visibleProjectsRef.current = archiveProjects
   const workspaceIdleProbe = useRef<WorkspaceIdleProbe>({
     inFlight: undefined,
     pendingPath: undefined,
@@ -1241,10 +1450,54 @@ export function App() {
   // prettier-ignore
   const releaseDirectStart = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, queued = new Set([...probe.queuedStarts.entriesForThread(threadId)].map(([, owner]) => owner.token)), token = probe.pendingStarts.get(threadId)?.tokens.find((candidate) => !queued.has(candidate)); if (token === undefined) return; for (const [id, start] of probe.submissionStarts.entriesForThread(threadId)) if (start.token === token) probe.submissionStarts.delete(id); releaseWorkspaceStart(threadId, token) }, [releaseWorkspaceStart])
   // prettier-ignore
-  const clearWorkspaceThread = useCallback((threadId: string) => { const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
+  const clearWorkspaceThread = useCallback((threadId: string) => { pendingProviderHistoryIds.current.delete(threadId); providerHistoryReads.current.delete(threadId); const probe = workspaceIdleProbe.current, path = probe.pendingStarts.get(threadId)?.path ?? findSession(projectsRef.current, threadId)?.project.path; probe.pendingStarts.delete(threadId); probe.unknownQueues.delete(threadId); threadController.forget(threadId); for (const [id] of probe.submissionStarts.entriesForThread(threadId)) probe.submissionStarts.delete(id); for (const [id] of probe.queuedStarts.entriesForThread(threadId)) { probe.queuedStarts.delete(id); probe.claimedStarts.delete(id) }; for (const [id] of probe.queueActions.entriesForThread(threadId)) probe.queueActions.delete(id); if (activeIdRef.current === threadId) { activeIdRef.current = undefined; setActiveId(undefined); setThread(emptyThread) }; return path }, [])
   /** Refetch after an outage. Held in a ref because the transport effect is
    *  set up before the fetchers it needs are declared. */
   const resync = useRef<(retry?: boolean) => void>(() => {})
+  const refreshProviderThreadHistory = useCallback(
+    function replay(threadId: string) {
+      if (
+        threadController.snapshot(threadId)?.running ||
+        providerHistoryReads.current.has(threadId)
+      ) {
+        pendingProviderHistoryIds.current.add(threadId)
+        return
+      }
+      pendingProviderHistoryIds.current.delete(threadId)
+      threadController.invalidateHistory(threadId)
+      if (threadId !== activeIdRef.current) {
+        threadController.discardSnapshot(threadId)
+        return
+      }
+      const owner = {}
+      providerHistoryReads.current.set(threadId, owner)
+      let failed = false
+      void threadController
+        .loadHistory(threadId)
+        .then((loaded) => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          // A queued turn can start before the server reads the native history.
+          if (loaded?.authority.running) pendingProviderHistoryIds.current.add(threadId)
+        })
+        .catch(() => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          failed = true
+          pendingProviderHistoryIds.current.add(threadId)
+        })
+        .finally(() => {
+          if (providerHistoryReads.current.get(threadId) !== owner) return
+          providerHistoryReads.current.delete(threadId)
+          if (
+            !failed &&
+            pendingProviderHistoryIds.current.has(threadId) &&
+            !threadController.snapshot(threadId)?.running
+          ) {
+            replay(threadId)
+          }
+        })
+    },
+    [threadController],
+  )
   const flushPendingLifecyclePushes = useRef<(() => void) | undefined>(undefined)
   const sidebarSettingsRef = useRef(sidebarSettings)
   sidebarSettingsRef.current = sidebarSettings
@@ -1301,9 +1554,9 @@ export function App() {
     flushPendingLifecyclePushes.current = flushLifecyclePushes
     const offEvents = transport.on('thread.event', (data) => {
       const { threadId, event } = data
+      if (endsDesignBriefing(event)) setThreadDesignMode(threadId, false)
       const next = threadController.receive(data, isThreadCacheProtected)
       if (!next) return
-      if (threadId === activeIdRef.current && endsDesignBriefing(event)) setDesignMode(false)
       if (
         event.type === 'turn.started' ||
         event.type === 'turn.completed' ||
@@ -1312,6 +1565,8 @@ export function App() {
         // prettier-ignore
         const projectPath = findSession(projectsRef.current, threadId)?.project.path ?? (threadId === activeIdRef.current ? activePathRef.current : undefined)
         if (event.type === 'turn.started') {
+          if (providerHistoryReads.current.has(threadId))
+            pendingProviderHistoryIds.current.add(threadId)
           threadController.resetBackground(threadId)
           if (threadId !== activeIdRef.current) {
             threadController.compact(threadId, isThreadCacheProtected(threadId))
@@ -1351,14 +1606,19 @@ export function App() {
           // Only here for the server's mark-as-read side effect — the live event
           // stream already delivered the turn. afterSeq skips serializing,
           // shipping, and parsing the full log just to throw it away.
-          void transport
-            .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
-            .catch(() => undefined)
+          if (!pendingProviderHistoryIds.current.has(threadId)) {
+            void transport
+              .request('thread.history', { threadId, afterSeq: Number.MAX_SAFE_INTEGER })
+              .catch(() => undefined)
+          }
           refreshUsage(providerRef.current)
         }
       }
       if (event.type === 'turn.completed' || event.type === 'thread.error') {
         threadController.resetBackground(threadId)
+        if (pendingProviderHistoryIds.current.has(threadId)) {
+          refreshProviderThreadHistory(threadId)
+        }
         pruneThreadStateCache()
       }
     })
@@ -1404,7 +1664,10 @@ export function App() {
     const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
       usageController.changed(provider)
     })
-    const offSequenceGap = transport.onSequenceGap(() => resync.current())
+    const offSequenceGap = transport.onSequenceGap(() => {
+      threadController.markHistoriesForRecovery()
+      resync.current()
+    })
     // Held back briefly: a clean reconnect takes ~500ms, and a banner that
     // appears and vanishes in that time is noise, not information.
     let announce: number | undefined
@@ -1412,11 +1675,16 @@ export function App() {
     const offState = transport.onState((state) => {
       window.clearTimeout(announce)
       if (state === 'reconnecting') {
+        threadController.markHistoriesForRecovery()
         missedPushes = true
         announce = window.setTimeout(() => setOffline(true), 1200)
       } else {
         setOffline(false)
-        if (state === 'open' && missedPushes) setCatalogRequest((current) => current + 1)
+        if (state === 'open' && missedPushes) {
+          setCatalogRequest((current) => current + 1)
+          accountRequestRevision.current += 1
+          setAuthStatusRequest((current) => current + 1)
+        }
         if (
           state === 'open' &&
           usageController.snapshot().some((entry) => entry.status === 'error')
@@ -1482,31 +1750,9 @@ export function App() {
     pruneThreadStateCache,
     pruneQueueMetadata,
     isThreadCacheProtected,
+    refreshProviderThreadHistory,
+    setThreadDesignMode,
   ])
-
-  useEffect(() => {
-    if (workspacePanelHasMounted) return
-    const openWorkspaceTool = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey)) return
-      const key = event.key.toLowerCase()
-      const kind: WorkspaceTool | undefined =
-        key === 'g' && event.shiftKey
-          ? 'review'
-          : key === 't' && !event.shiftKey
-            ? 'browser'
-            : key === 'p' && event.altKey && !event.shiftKey
-              ? 'files'
-              : key === 's' && event.altKey
-                ? 'side-chat'
-                : undefined
-      if (!kind) return
-      event.preventDefault()
-      setWorkspacePanelHasMounted(true)
-      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind })
-    }
-    window.addEventListener('keydown', openWorkspaceTool)
-    return () => window.removeEventListener('keydown', openWorkspaceTool)
-  }, [workspacePanelHasMounted])
 
   useEffect(() => {
     let cancelled = false
@@ -1525,21 +1771,13 @@ export function App() {
   }, [transport, acceptSidebarSettings])
 
   // Build one catalog from every connected source. Model ids are not globally
-  // unique, so each choice keeps the provider/connection that will pay for it.
+  // unique, so each choice keeps the provider or custom harness that runs it.
   useEffect(() => {
     let cancelled = false
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     setCatalogAvailability((current) => (current === 'ready' ? current : 'loading'))
     void (async () => {
-      const connectionsCatalog = transport
-        .request('connections.list', {})
-        .catch(() => ({ connections: [] }))
-      void connectionsCatalog.then((result) => {
-        if (cancelled) return
-        setModelConnections(result?.connections ?? [])
-        setModelConnectionsSource({ transport, request: catalogRequest })
-      })
       const harnessesCatalog = transport
         .request('harnesses.list', {})
         .catch(() => ({ harnesses: [] }))
@@ -1548,14 +1786,13 @@ export function App() {
       if (cancelled) return
       setProviderStatuses(providers)
       setCatalogAvailability('ready')
-      const storedProvider = readSetting(SETUP_KEY)
-      if (
-        !activeIdRef.current &&
-        (!isProviderId(storedProvider) || !PUBLIC_BETA_PROVIDER_IDS.has(storedProvider))
-      ) {
+      // Only the first answer may move an unchosen launch; later refreshes
+      // must not override what the user picked since.
+      const unchosen = providerUnchosenAtLaunch.current
+      providerUnchosenAtLaunch.current = false
+      if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
-            PUBLIC_BETA_PROVIDER_IDS.has(status.id) &&
             status.installed &&
             status.capabilities &&
             !status.problem &&
@@ -1566,20 +1803,93 @@ export function App() {
         }
       }
       setProviderCatalogSource({ transport, request: catalogRequest })
-      const unknownKeys = new Set<string>()
+      setPendingModelSources(
+        new Set([
+          ...providers
+            .filter((entry) => entry.installed)
+            .map((entry) => sourceKey({ provider: entry.id })),
+          ...(sourceAgentRef.current
+            ? [sourceKey({ provider: providerRef.current, agentId: sourceAgentRef.current })]
+            : []),
+        ]),
+      )
+      const cached = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))
+      const unknownKeys = new Set(unvalidatedModelKeys)
+      const validatedSources = new Map<string, number>()
+      let publishedCatalog = catalogModelsRef.current
+      const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
+        source: string,
+        result: T,
+      ): T => {
+        if (cancelled) return result
+        setPendingModelSources((current) => {
+          const next = new Set(current)
+          next.delete(source)
+          return next
+        })
+        for (const choice of publishedCatalog) {
+          if (modelSource(choice) === source) unknownKeys.delete(choice.key)
+        }
+        if (result.discovered) validatedSources.set(source, Date.now())
+        else if (!isModelCatalogSourceFresh(cached, source)) {
+          for (const choice of result.models) unknownKeys.add(choice.key)
+        }
+        publishedCatalog = [
+          ...publishedCatalog.filter((choice) => modelSource(choice) !== source),
+          ...result.models,
+        ]
+        setModelCatalog({
+          models: publishedCatalog,
+          loaded: true,
+          unvalidatedModelKeys: new Set(unknownKeys),
+        })
+        setModelErrors({ ...discoveryErrors })
+        if (result.discovered) {
+          writeSetting(
+            MODEL_CATALOG_KEY,
+            serializeModelCatalogCache(publishedCatalog, {
+              validatedSources: validatedSources.keys(),
+              // A later completion must not refresh an earlier source's age.
+              validatedAt: Math.min(...validatedSources.values()),
+            }),
+          )
+        }
+        return result
+      }
+      // A profile without saved visibility gets its curated defaults below,
+      // once every direct source has answered. Until then, hide each source's
+      // older models as soon as that source answers, so a picker opened during
+      // discovery never lists a model it is about to drop. Nothing is saved
+      // here: the first full catalog still decides and persists the profile.
+      // A saved profile only gets this for models it has never listed.
+      const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
+        if (cancelled) return
+        const current = hiddenModelsRef.current
+        const candidates = modelVisibilityInitialized.current
+          ? unlistedHiddenModels(models, listedModelsRef.current)
+          : models.filter((choice) => !modelVisibleByDefault(choice.model))
+        const additions = candidates.filter((choice) => !current.has(choice.key))
+        if (additions.length === 0) return
+        const next = new Set(current)
+        for (const choice of additions) next.add(choice.key)
+        hiddenModelsRef.current = next
+        setHiddenModels(next)
+      }
       const directPromise = Promise.all(
         providers
-          .filter((entry) => entry.installed && PUBLIC_BETA_PROVIDER_IDS.has(entry.id))
+          .filter((entry) => entry.installed)
           .map(async (entry) => {
             const preserveCatalog = () => {
               const source = sourceKey({ provider: entry.id })
               const preserved = catalogModelsRef.current.filter(
                 (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
               )
-              for (const choice of preserved) {
-                if (unvalidatedModelKeys.has(choice.key)) unknownKeys.add(choice.key)
-              }
-              return { provider: entry.id, discovered: false, models: preserved }
+              hideDefaultHiddenModels(preserved)
+              return settleSource(source, {
+                provider: entry.id,
+                discovered: false,
+                models: preserved,
+              })
             }
             try {
               const result = await transport.request('models.list', { provider: entry.id })
@@ -1592,9 +1902,13 @@ export function App() {
                 result.models,
                 false,
               )
-              return models.length > 0
-                ? { provider: entry.id, discovered: true, models }
-                : preserveCatalog()
+              if (models.length === 0) return preserveCatalog()
+              hideDefaultHiddenModels(models)
+              return settleSource(sourceKey({ provider: entry.id }), {
+                provider: entry.id,
+                discovered: true,
+                models,
+              })
             } catch (cause) {
               discoveryErrors[sourceKey({ provider: entry.id })] = {
                 id: `models:${entry.id}:${catalogRequest}`,
@@ -1605,8 +1919,17 @@ export function App() {
           }),
       )
       const harnessesResult = await harnessesCatalog
+      if (cancelled) return
       const harnesses = harnessesResult?.harnesses ?? []
-      setCustomHarnessIds(new Set(harnesses.map((harness) => harness.id)))
+      setPendingModelSources(
+        (current) =>
+          new Set([
+            ...current,
+            ...harnesses.map((harness) =>
+              sourceKey({ provider: harness.provider, agentId: harness.id }),
+            ),
+          ]),
+      )
       const customSourcesPromise = Promise.all(
         harnesses.map(async (harness) => {
           const source = sourceKey({ provider: harness.provider, agentId: harness.id })
@@ -1621,7 +1944,11 @@ export function App() {
               provider: harness.provider,
               agent: harness.id,
             })
-            return { source, discovered: true, models: choicesFor(input, result.models, true) }
+            return settleSource(source, {
+              source,
+              discovered: true,
+              models: choicesFor(input, result.models, true),
+            })
           } catch (cause) {
             discoveryErrors[source] = {
               id: `models:${source}:${catalogRequest}`,
@@ -1630,85 +1957,71 @@ export function App() {
             const preserved = catalogModelsRef.current.filter(
               (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
             )
-            if (preserved.length > 0) return { source, discovered: false, models: preserved }
+            if (preserved.length > 0)
+              return settleSource(source, { source, discovered: false, models: preserved })
             const fallback = choicesFor(input, [], true)
-            for (const choice of fallback) unknownKeys.add(choice.key)
-            return { source, discovered: false, models: fallback }
+            return settleSource(source, { source, discovered: false, models: fallback })
           }
         }),
       )
       const [direct, customSources] = await Promise.all([directPromise, customSourcesPromise])
-      // Public beta scope: the picker holds only the three direct plans the
-      // server lists. Explicit custom harnesses remain eligible because the
-      // user configured those sources directly; parked built-ins stay hidden.
       if (cancelled) return
+      setPendingModelSources(new Set())
       const directCatalog = direct.flatMap((entry) => entry.models)
-      const publicDiscoveries = direct.filter((entry) =>
-        PUBLIC_BETA_PROVIDER_IDS.has(entry.provider),
-      )
-      const publicCatalog = directCatalog.filter((choice) =>
-        PUBLIC_BETA_PROVIDER_IDS.has(choice.provider),
-      )
-      const catalog = [...publicCatalog, ...customSources.flatMap((entry) => entry.models)]
-      const publicCatalogReady =
-        publicDiscoveries.length > 0 && publicDiscoveries.every((entry) => entry.discovered)
+      const catalog = [...directCatalog, ...customSources.flatMap((entry) => entry.models)]
+      const directCatalogReady = direct.length > 0 && direct.every((entry) => entry.discovered)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
-      // A synthetic cache-miss entry has no tier metadata. Do not persist it
-      // as an authoritative snapshot after a transient discovery failure.
-      if (unknownKeys.size === 0 && direct.every((entry) => entry.discovered)) {
-        writeSetting(
-          MODEL_CATALOG_KEY,
-          serializeModelCatalogCache(catalog, {
-            validatedSources: [
-              ...direct
-                .filter((entry) => entry.discovered)
-                .map((entry) => sourceKey({ provider: entry.provider })),
-              ...customSources.filter((entry) => entry.discovered).map((entry) => entry.source),
-            ],
-          }),
-        )
-      }
       const stored = readSetting(MODEL_KEY)
       // A hidden model cannot remain the internal selection. Otherwise the
       // picker shows no such choice while a turn can still silently use it.
       let hidden = hiddenModelsRef.current
       let hiddenChanged = false
-      if (!modelVisibilityInitialized.current && publicCatalogReady && publicCatalog.length > 0) {
+      if (!modelVisibilityInitialized.current && directCatalogReady && directCatalog.length > 0) {
         hidden = new Set(
-          publicCatalog
+          directCatalog
             .filter((choice) => !modelVisibleByDefault(choice.model))
             .map((choice) => choice.key),
         )
         modelVisibilityInitialized.current = true
         hiddenChanged = true
-      }
-      if (
-        publicCatalogReady &&
-        readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION
-      ) {
-        const migrated = new Set(hidden)
-        for (const choice of publicCatalog) {
-          if (modelVisibleByDefault(choice.model)) migrated.delete(choice.key)
-          else migrated.add(choice.key)
+      } else if (directCatalogReady) {
+        const additions = unlistedHiddenModels(directCatalog, listedModelsRef.current).filter(
+          (choice) => !hidden.has(choice.key),
+        )
+        if (additions.length > 0) {
+          hidden = new Set([...hidden, ...additions.map((choice) => choice.key)])
+          hiddenChanged = true
         }
-        hidden = migrated
-        hiddenChanged = true
-        writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
+      }
+      if (directCatalogReady && modelVisibilityInitialized.current) {
+        const listed = listedModelsRef.current
+        if (!listed || directCatalog.some((choice) => !listed.has(choice.key))) {
+          const next = new Set([...(listed ?? []), ...directCatalog.map((choice) => choice.key)])
+          listedModelsRef.current = next
+          writeSetting(LISTED_MODELS_KEY, JSON.stringify([...next]))
+        }
+      }
+      if (modelVisibilityInitialized.current) {
+        // Each row gets a pending migration once, even while another source
+        // fails. The moved list is saved together with the record of what moved.
+        const migration = migratePendingHiddenModels(
+          hidden,
+          readModelVisibilityProgress(),
+          directCatalog,
+        )
+        if (migration.migrated.length > 0) {
+          hidden = migration.hidden
+          hiddenChanged = true
+          writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]))
+        }
+        recordModelVisibilityProgress(migration.migrated, directCatalogReady)
       }
       if (hiddenChanged) {
         hiddenModelsRef.current = hidden
         setHiddenModels(hidden)
       }
-      const customPool = customModelsRef.current
-        .filter((entry) => PUBLIC_BETA_PROVIDER_IDS.has(entry.provider))
-        .map((entry) =>
-          customModelChoice(
-            entry,
-            providerDisplayName(entry.provider),
-            providerMark(entry.provider),
-          ),
-        )
+      const customPool = customModelsRef.current.map((entry) => customModelChoice(entry))
       const all = [...catalog, ...customPool]
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
@@ -1731,7 +2044,9 @@ export function App() {
           ? preferredPool
           : visible
       const selections = readSourceSelections()
+      const threadSelection = readThreadModelSelection(activeIdRef.current)
       const storedSelection =
+        selectionPool.find((choice) => choice.key === threadSelection?.modelKey) ??
         selectionPool.find((choice) => choice.key === stored) ??
         selectionPool.find((choice) => choice.model.id === stored)
       const fallback = selectionPool.find((choice) => choice.model.isDefault) ?? selectionPool[0]
@@ -1751,12 +2066,15 @@ export function App() {
       const previous =
         modelsRef.current.find((choice) => choice.key === stored) ??
         modelsRef.current.find((choice) => choice.model.id === stored)
-      const remembered = selections[modelSource(selected)]
+      const remembered =
+        threadSelection?.modelKey === selected.key
+          ? threadSelection
+          : selections[modelSource(selected)]
       const remembersSelected = remembered?.modelKey === selected.key
       setModelId(selected.key)
       setProvider(selected.provider)
-      setAcpAgent(selected.agent?.id)
-      setAcpAgentName(selected.agent?.name)
+      setSourceAgent(selected.agent?.id)
+      setSourceAgentName(selected.agent?.name)
       // Persist the whole selection together, exactly like selectModel does.
       // Persisting only the model key left provider and agent to come from
       // stale storage on the next launch — a boot where the model belongs to
@@ -1766,7 +2084,7 @@ export function App() {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale agent id under a non-ACP provider is the same boot split
+        // A stale harness id under the stock provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -1820,42 +2138,14 @@ export function App() {
   }, [transport, catalogRequest])
 
   useEffect(() => {
-    if (
-      !settingsOpen ||
-      (acpAgentsCache.current?.transport === transport &&
-        acpAgentsCache.current.request === acpAgentsRequest)
-    ) {
-      return
-    }
-    let cancelled = false
-    void transport
-      .request('acp.agents', {})
-      .then((result) => {
-        if (cancelled) return
-        setAcpAgents(result?.agents ?? [])
-        acpAgentsCache.current = { transport, request: acpAgentsRequest }
-      })
-      .catch(() => {
-        if (cancelled) return
-        setAcpAgents([])
-        acpAgentsCache.current = { transport, request: acpAgentsRequest }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [transport, settingsOpen, acpAgentsRequest])
-
-  useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
       setVoiceAvailable(false)
+      setVoiceStatusLoading(false)
       return
     }
-    // Wait until the same catalog revision has resolved the provider fallback
-    // and connection
-    // snapshot, so either startup order produces one status request.
+    // Wait until the same catalog revision has resolved the provider fallback,
+    // so either startup order produces one status request.
     if (
-      modelConnectionsSource?.transport !== transport ||
-      modelConnectionsSource.request !== catalogRequest ||
       providerCatalogSource?.transport !== transport ||
       providerCatalogSource.request !== catalogRequest
     ) {
@@ -1870,17 +2160,13 @@ export function App() {
       .catch(() => {
         if (!cancelled) setVoiceAvailable(false)
       })
+      .finally(() => {
+        if (!cancelled) setVoiceStatusLoading(false)
+      })
     return () => {
       cancelled = true
     }
-  }, [
-    transport,
-    provider,
-    catalogRequest,
-    modelConnectionsSource,
-    providerCatalogSource,
-    selectedModelChoice?.agent,
-  ])
+  }, [transport, provider, catalogRequest, providerCatalogSource, selectedModelChoice?.agent])
 
   // Turn start takes a git checkpoint, so refresh the shelf only after project idle.
   useEffect(() => {
@@ -1897,6 +2183,7 @@ export function App() {
       if (cancelled) return
       setWorkspace(info)
       setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
+      setBranchesPath(activePath)
       const available = result?.branches ?? (info?.branch ? [info.branch] : [])
       const remembered =
         projectBranches.current.get(activePath) ?? readSetting(`harness.branch:${activePath}`)
@@ -1917,7 +2204,7 @@ export function App() {
     let cancelled = false
     const revision = ++accountRequestRevision.current
     setAccount(undefined)
-    if (selectedModelChoice?.agent && provider !== 'acp') {
+    if (selectedModelChoice?.agent) {
       setAccountCheck({ provider, state: 'ready', account: { signedIn: true } })
       return () => {
         cancelled = true
@@ -1925,12 +2212,7 @@ export function App() {
     }
     setAccountCheck({ provider, state: 'loading' })
     void transport
-      .request('auth.status', {
-        provider,
-        ...(provider === 'acp' && (selectedModelChoice?.agent?.id ?? acpAgent)
-          ? { agent: selectedModelChoice?.agent?.id ?? acpAgent }
-          : {}),
-      })
+      .request('auth.status', { provider })
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
@@ -1951,14 +2233,15 @@ export function App() {
     return () => {
       cancelled = true
     }
-  }, [transport, provider, acpAgent, selectedModelChoice?.agent])
+  }, [transport, provider, selectedModelChoice?.agent, authStatusRequest])
 
   const refreshProjects = useCallback(async () => {
     if (!startupMilestones.current.projectsRequested) {
       startupMilestones.current.projectsRequested = true
       reportStartupMilestone('projects-requested')
     }
-    const { projects: list } = await transport.request('projects.list', {})
+    const result = await transport.request('projects.list', {})
+    const list = result.projects.filter((project) => !removedProjectPaths.current.has(project.path))
     if (!startupMilestones.current.projectsReceived) {
       startupMilestones.current.projectsReceived = true
       reportStartupMilestone('projects-received')
@@ -1989,12 +2272,24 @@ export function App() {
     [transport],
   )
 
+  useEffect(
+    () =>
+      transport.on('providerHistory.changed', ({ threadIds }) => {
+        for (const id of threadIds) {
+          refreshProviderThreadHistory(id)
+        }
+        void refreshProjects().catch(() => undefined)
+      }),
+    [transport, refreshProviderThreadHistory, refreshProjects],
+  )
+
   const loadHistory = useCallback(
     async (threadId: string, afterSeq?: number) => {
       try {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
         if (loaded && activeIdRef.current === threadId) {
           setActiveThreadApproval(loaded.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === threadId ? undefined : current))
           setProjects((current) => updateSession(current, threadId, markSessionRead))
         }
         return loaded?.authority
@@ -2005,12 +2300,34 @@ export function App() {
     [threadController, pruneThreadStateCache],
   )
 
+  /** Read an opened chat's transcript. An empty failed read is shown in the thread. */
+  const readOpenedHistory = useCallback(
+    async (id: string, afterSeq: number | undefined) => {
+      setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+      setLoadingThreadId(id)
+      try {
+        await loadHistory(id, afterSeq)
+      } catch (error) {
+        if (activeIdRef.current !== id) return
+        const message = error instanceof Error ? error.message : String(error)
+        // Without its history the mode is unknown; the server's default is Ask.
+        setActiveThreadApproval((current) => current ?? 'ask')
+        if (threadController.snapshot(id)?.items.length) reportError(message)
+        else setHistoryFailure({ threadId: id, message })
+      } finally {
+        setLoadingThreadId((current) => (current === id ? undefined : current))
+      }
+    },
+    [loadHistory, reportError, threadController],
+  )
+
   resync.current = (retry = true) => {
     const revision = threadController.beginRecovery()
     workspaceIdleProbe.current.revision += 1
     const activeId = activeIdRef.current
     const path = activePathRef.current
     const threadIds = new Set(threadController.pendingThreadIds())
+    for (const id of threadController.historyRecoveryIds()) threadIds.add(id)
     // prettier-ignore
     const ownerPaths = new Map([...workspaceIdleProbe.current.pendingStarts].filter(([id]) => !id.startsWith('pending:')).map(([id, owner]) => [id, { path: owner.path, tokens: [...owner.tokens] }]))
     for (const id of ownerPaths.keys()) threadIds.add(id)
@@ -2057,6 +2374,10 @@ export function App() {
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
+        if (loaded) {
+          setActiveThreadApproval(recovered.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+        }
       }
       if (!loaded) {
         workspaceIdleProbe.current.unknownQueues.add(id)
@@ -2222,12 +2543,17 @@ export function App() {
     }
   }, [transport, activeId, settleQueuedSubmissions, beginQueueRead, finishQueueRead])
 
+  // Restore points belong to one chat. A running chat skips the read below,
+  // so the previous chat's list must not survive the switch.
   useEffect(() => {
-    if (!activeId || thread.running) {
-      if (!activeId) setCheckpoints([])
-      return
-    }
-    void refreshCheckpoints(activeId).catch(() => setCheckpoints([]))
+    setCheckpoints([])
+  }, [activeId])
+
+  useEffect(() => {
+    if (!activeId || thread.running) return
+    void refreshCheckpoints(activeId).catch(() => {
+      if (activeIdRef.current === activeId) setCheckpoints([])
+    })
   }, [activeId, thread.running, refreshCheckpoints])
 
   const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
@@ -2255,15 +2581,26 @@ export function App() {
   }, [usageController, usageThreadId, provider, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
-  // there is given to the server and the key removed, so it happens once.
+  // there stays recoverable until the server acknowledges that project.
   useEffect(() => {
     let cancelled = false
     void (async () => {
+      removeSetting(LEGACY_SESSION_ORDER_KEY)
       const legacy = takeLegacyProjects()
       for (const project of legacy) {
-        await transport.request('projects.add', project).catch(() => undefined)
+        if (cancelled) return
+        try {
+          await transport.request('projects.add', project)
+          if (cancelled) return
+          const remaining = takeLegacyProjects().filter(
+            (entry) => entry.path !== project.path || entry.name !== project.name,
+          )
+          if (remaining.length) writeSetting(PROJECTS_KEY, JSON.stringify(remaining))
+          else removeSetting(PROJECTS_KEY)
+        } catch {
+          // Unacknowledged entries must survive transport timeouts and relaunches.
+        }
       }
-      if (legacy.length > 0) removeSetting(PROJECTS_KEY)
       if (!cancelled) {
         setProjectsStatus('loading')
         await refreshProjects()
@@ -2290,20 +2627,53 @@ export function App() {
   useEffect(() => {
     if (projects.length > 0) {
       saveProjectOrder(projects)
-      saveSessionOrder(projects)
+      saveSessionOrder(projects, draggedSessionOrder)
     }
-  }, [projects])
+  }, [projects, draggedSessionOrder])
 
   usePersistedSettingChange(MODEL_KEY, modelId || undefined)
 
   useEffect(() => {
     if (!modelVisibilityInitialized.current) return
     writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
+    // The rows a first click saved on their defaults are recorded only once
+    // that list is saved.
+    const rows = pendingVisibilityRows.current
+    if (rows) {
+      pendingVisibilityRows.current = undefined
+      recordModelVisibilityProgress(rows, false)
+    }
   }, [hiddenModels])
+
+  // Record what the first paint migrated only after the effect above saved
+  // the moved list, so the next launch does not move those rows again over
+  // the user's later choices.
+  useEffect(() => {
+    recordModelVisibilityProgress(initialModelVisibility.migrated, false)
+  }, [initialModelVisibility])
 
   usePersistedSettingChange(EFFORT_KEY, effort)
 
   usePersistedSettingChange(SERVICE_TIER_KEY, serviceTier)
+
+  // Save deliberate edits and the first setup of an existing chat. Catalog
+  // fallbacks must not replace a saved choice while its source is unavailable.
+  useEffect(() => {
+    if (
+      !activeId ||
+      pendingThreadModelSave.current !== activeId ||
+      !selectedModelChoice?.model.id ||
+      selectedModelChoice.key !== modelId
+    )
+      return
+    writeThreadModelSelection(activeId, {
+      modelKey: selectedModelChoice.key,
+      designMode,
+      ...(selectedEffort ? { effort: selectedEffort } : {}),
+      ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+    })
+    pendingThreadModelSave.current = undefined
+  }, [activeId, modelId, selectedModelChoice, selectedEffort, selectedServiceTier, designMode])
 
   // Remember the active source's exact setup, so returning to a provider
   // restores what was last used there instead of a best-guess translation.
@@ -2324,7 +2694,6 @@ export function App() {
     }
     const source = sourceKey({
       provider: selectedModelChoice.provider,
-      connectionId: selectedModelChoice.connectionId,
       agentId: selectedModelChoice.agent?.id,
     })
     const selections = readSourceSelections()
@@ -2353,17 +2722,17 @@ export function App() {
   // then restore the effort/tier that source was last used with — or translate
   // the current setup onto the new model's ladder.
   const commitModelChoice = useCallback(
-    (selected: ModelChoice) => {
+    (selected: ModelChoice, threadSelection?: SourceSelection) => {
       setModelId(selected.key)
       setProvider(selected.provider)
-      setAcpAgent(selected.agent?.id)
-      setAcpAgentName(selected.agent?.name)
+      setSourceAgent(selected.agent?.id)
+      setSourceAgentName(selected.agent?.name)
       writeSetting(SETUP_KEY, selected.provider)
       if (selected.agent) {
         writeSetting(AGENT_KEY, selected.agent.id)
         writeSetting(AGENT_NAME_KEY, selected.agent.name)
       } else {
-        // A stale agent id under a non-ACP provider is the same boot split
+        // A stale harness id under the stock provider is the same boot split
         // this block exists to prevent.
         removeSetting(AGENT_KEY)
         removeSetting(AGENT_NAME_KEY)
@@ -2372,10 +2741,10 @@ export function App() {
       // effort and tier that were active then. Any other pick translates the
       // current effort onto the new model's ladder, as before.
       const remembered =
+        threadSelection ??
         readSourceSelections()[
           sourceKey({
             provider: selected.provider,
-            connectionId: selected.connectionId,
             agentId: selected.agent?.id,
           })
         ]
@@ -2417,11 +2786,71 @@ export function App() {
     },
     [selectedModelChoice, storedModelChoice, unvalidatedModelKeys],
   )
+  const commitModelChoiceRef = useRef(commitModelChoice)
+  commitModelChoiceRef.current = commitModelChoice
+
+  useEffect(() => writeProviderDefaults(providerDefaults), [providerDefaults])
+
+  /**
+   * A pinned model replaces whatever the last chat on its provider used. A
+   * pin the picker no longer offers is skipped, so the chat keeps the last
+   * model instead of starting on one the user hid or the provider dropped.
+   */
+  const applyProviderDefault = useCallback(
+    (target: ProviderId, pin: ProviderDefault | undefined) => {
+      const choice = pinnedModelChoice(visibleModelsRef.current, target, pin)
+      if (!choice) return
+      const remembered = readSourceSelections()[sourceKey({ provider: target })]
+      const serviceTier = remembered?.modelKey === choice.key ? remembered.serviceTier : undefined
+      commitModelChoiceRef.current(choice, {
+        modelKey: choice.key,
+        ...(pin?.effort ? { effort: pin.effort } : {}),
+        ...(serviceTier ? { serviceTier } : {}),
+      })
+    },
+    [],
+  )
+
+  const changeProviderDefault = useCallback(
+    (target: ProviderId, pin: ProviderDefault | undefined) => {
+      setProviderDefaults((current) => {
+        const next = { ...current }
+        if (pin) next[target] = pin
+        else delete next[target]
+        return next
+      })
+      // A new chat that has not started yet is exactly what the pin
+      // describes, so it should not wait for the next one to show it.
+      if (!activeIdRef.current && !sourceAgentRef.current && providerRef.current === target) {
+        applyProviderDefault(target, pin)
+      }
+    },
+    [applyProviderDefault],
+  )
+
+  const changeApprovalDefault = useCallback((target: ProviderId, mode: ApprovalMode) => {
+    setApprovalByProvider((current) =>
+      current[target] === mode ? current : { ...current, [target]: mode },
+    )
+  }, [])
+
+  const providerDefaultsControls = useMemo(
+    () => ({
+      pins: providerDefaults,
+      onPinChange: changeProviderDefault,
+      access: approvalByProvider,
+      onAccessChange: changeApprovalDefault,
+    }),
+    [providerDefaults, changeProviderDefault, approvalByProvider, changeApprovalDefault],
+  )
 
   // Keep persisted selection state coherent after a visibility or cache
   // transition. Requests already use the effective values above, so even an
   // interaction before this effect runs cannot observe the stale setup.
   useEffect(() => {
+    // The provider-default placeholder must not replace a stored model that
+    // its source is still about to list.
+    if (modelChoicePending) return
     if (!selectedModelChoice) {
       setModelId(undefined)
       setEffort(undefined)
@@ -2431,8 +2860,8 @@ export function App() {
     if (
       modelId !== selectedModelChoice.key ||
       provider !== selectedModelChoice.provider ||
-      acpAgent !== selectedModelChoice.agent?.id ||
-      acpAgentName !== selectedModelChoice.agent?.name
+      sourceAgent !== selectedModelChoice.agent?.id ||
+      sourceAgentName !== selectedModelChoice.agent?.name
     ) {
       commitModelChoice(selectedModelChoice)
       return
@@ -2443,43 +2872,85 @@ export function App() {
     selectedModelChoice,
     modelId,
     provider,
-    acpAgent,
-    acpAgentName,
+    sourceAgent,
+    sourceAgentName,
     effort,
     serviceTier,
     selectedEffort,
     selectedServiceTier,
     commitModelChoice,
+    modelChoicePending,
   ])
 
   const selectModel = useCallback(
     (id: string) => {
       const selected = models.find((model) => model.key === id)
       if (!selected) return
+      pendingThreadModelSave.current = activeIdRef.current
       commitModelChoice(selected)
     },
     [models, commitModelChoice],
   )
 
+  const changeEffort = useCallback((value: string | undefined) => {
+    pendingThreadModelSave.current = activeIdRef.current
+    setEffort(value)
+  }, [])
+  const changeServiceTier = useCallback((value: string | undefined) => {
+    pendingThreadModelSave.current = activeIdRef.current
+    setServiceTier(value)
+  }, [])
+
   const addProjects = useCallback(
     async (paths: readonly string[]) => {
       const uniquePaths = [...new Set(paths)]
-      const activePath = uniquePaths.at(-1)
-      if (!activePath) return
-      await Promise.all(uniquePaths.map((path) => transport.request('projects.add', { path })))
-      await refreshProjects()
+      if (uniquePaths.length === 0) return
+      // Every request is already in flight, so one failed folder must not skip
+      // the cleanup and refresh that the folders which were added still need.
+      const results = await Promise.allSettled(
+        uniquePaths.map((path) => transport.request('projects.add', { path })),
+      )
+      const added = uniquePaths.filter((_, index) => results[index]?.status === 'fulfilled')
+      const failed = uniquePaths.filter((_, index) => results[index]?.status === 'rejected')
+      const failure = results.find((result) => result.status === 'rejected')
+      const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
+      for (const path of added) removedProjectPaths.current.delete(path)
+      let refreshed = true
+      try {
+        await refreshProjects()
+      } catch (error) {
+        refreshed = false
+        if (!failure) reportError(errorText(error))
+      }
+      if (failure) {
+        const message = errorText(failure.reason)
+        // A dropped batch has to say which folders did not make it.
+        reportError(
+          uniquePaths.length === 1 ? message : `Could not add ${failed.join(', ')}. ${message}`,
+        )
+      }
+      const activePath = added.at(-1)
+      if (!refreshed || !activePath) return
       setActivePath(activePath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
     },
-    [transport, refreshProjects],
+    [transport, refreshProjects, reportError],
   )
 
   const addProject = useCallback(async () => {
-    const path = await pickFolder()
+    // Every caller fires this with `void`, so a failing picker must be
+    // reported here rather than escape as an unhandled rejection.
+    let path: string | undefined
+    try {
+      path = await pickFolder()
+    } catch (error) {
+      reportError(error instanceof Error ? error.message : String(error))
+      return
+    }
     if (path) await addProjects([path])
-  }, [addProjects])
+  }, [addProjects, reportError])
 
   const generateSessionTitle = useCallback(
     async (threadId: string, prompt: string, expectedTitle: string) => {
@@ -2508,6 +2979,10 @@ export function App() {
     ): Promise<string | undefined> => {
       const choice = selectedModelChoice
       if (!choice) return undefined
+      const projectRevision = projectStartRevisions.current.get(projectPath) ?? 0
+      const projectRemoved = () =>
+        removedProjectPaths.current.has(projectPath) ||
+        (projectStartRevisions.current.get(projectPath) ?? 0) !== projectRevision
       setNotice(undefined)
       setActionError(undefined)
       setUndoRestore(undefined)
@@ -2527,19 +3002,15 @@ export function App() {
                 ? 'main'
                 : undefined
         }
-        const sessionApproval =
-          approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
+        if (projectRemoved())
+          throw new Error('The project was removed before the chat could start.')
+        let sessionApproval = approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
         const { threadId } = await transport.request('thread.start', {
           provider: choice.provider,
           workspacePath: projectPath,
           ...(branch ? { baseRef: branch } : {}),
           approval: sessionApproval,
           ...(choice.agent ? { agent: choice.agent.id } : {}),
-          ...(choice.connectionId
-            ? {
-                connectionId: choice.connectionId,
-              }
-            : {}),
           ...(choice.model.id ? { model: choice.model.id } : {}),
           ...(selectedServiceTier
             ? {
@@ -2549,6 +3020,27 @@ export function App() {
           ...(selectedEffort ? { effort: selectedEffort } : {}),
           ...(isolateSession ? { isolate: true } : {}),
         })
+        let pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        while (pendingApproval && pendingApproval !== sessionApproval && !projectRemoved()) {
+          try {
+            await transport.request('thread.setApproval', { threadId, approval: pendingApproval })
+            sessionApproval = pendingApproval
+          } catch (error) {
+            reportError(error instanceof Error ? error.message : String(error))
+            break
+          }
+          pendingApproval = pendingThreadApprovals.current.get(provisionalId)
+        }
+        if (projectRemoved()) {
+          await transport.request('thread.close', { threadId }).catch(() => undefined)
+          throw new Error('The project was removed before the chat could start.')
+        }
+        pendingThreadApprovals.current.delete(provisionalId)
+        const savedSelection = readThreadModelSelection(provisionalId)
+        if (savedSelection) writeThreadModelSelection(threadId, savedSelection)
+        removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
+        if (pendingThreadModelSave.current === provisionalId)
+          pendingThreadModelSave.current = threadId
         const provisional = threadController.snapshot(provisionalId) ?? emptyThread
         threadController.discardSnapshot(provisionalId)
         threadController.update(threadId, provisional)
@@ -2566,9 +3058,15 @@ export function App() {
               ? project
               : {
                   ...project,
+                  // A refresh during the start may already list the real row;
+                  // the local one carries the user's title and wins.
                   sessions: project.sessions.some((session) => session.id === provisionalId)
-                    ? project.sessions.map((session) =>
-                        session.id === provisionalId ? { ...session, id: threadId } : session,
+                    ? project.sessions.flatMap((session) =>
+                        session.id === provisionalId
+                          ? [{ ...session, id: threadId }]
+                          : session.id === threadId
+                            ? []
+                            : [session],
                       )
                     : project.sessions.some((session) => session.id === threadId)
                       ? project.sessions
@@ -2593,8 +3091,8 @@ export function App() {
                 },
           ),
         )
+        threadController.moveDraft(provisionalId, threadId)
         if (activeIdRef.current === provisionalId) {
-          threadController.moveDraft(provisionalId, threadId)
           if (threadController.draftOwner === provisionalId) threadController.draftOwner = threadId
           if (composerDraftKeyRef.current === provisionalId) composerDraftKeyRef.current = threadId
           activeIdRef.current = threadId
@@ -2602,17 +3100,40 @@ export function App() {
           setActiveThreadApproval(sessionApproval)
           setThread(provisional)
         }
+        // A pin made while the chat was starting has only been shown locally.
+        // Send it ahead of the rename so the refresh below already includes it.
+        if (pending?.pinned !== undefined) {
+          void transport
+            .request('thread.pin', { threadId, pinned: pending.pinned })
+            .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        }
+        // A title the user typed while the chat was starting is final; only a
+        // prompt-derived one is worth replacing with a generated title.
         void transport
           .request('thread.rename', { threadId, title: canonicalTitle })
-          .then(() => generateSessionTitle(threadId, titlePrompt, canonicalTitle))
+          .then(() =>
+            canonicalTitle === title
+              ? generateSessionTitle(threadId, titlePrompt, canonicalTitle)
+              : undefined,
+          )
           .catch(() => undefined)
           .then(() => refreshProjects())
           .catch(() => undefined)
         return threadId
       } catch (error) {
+        pendingThreadApprovals.current.delete(provisionalId)
         const path = releaseWorkspaceStart(provisionalId)
+        removeSetting(`${MODEL_BY_THREAD_PREFIX}${provisionalId}`)
         if (path) refreshWorkspaceAfterCompletion(path)
         threadController.discardSnapshot(provisionalId)
+        const laterDraft = threadController.draft(provisionalId)
+        threadController.forgetDraft(provisionalId)
+        if (!isEmptyComposerDraft(laterDraft)) {
+          const recovered = threadController.recoverDraft(NEW_CHAT_DRAFT_KEY, laterDraft)
+          threadController.editDraft(NEW_CHAT_DRAFT_KEY, {
+            resources: [...recovered.resources, ...laterDraft.resources],
+          })
+        }
         setProjects((current) =>
           current.map((project) => ({
             ...project,
@@ -2657,55 +3178,19 @@ export function App() {
         injectedDraftTransition.current = activeIdRef.current !== undefined
         publishComposerDraft(next)
       }
-      // A session nobody typed into is bookkeeping, not history. Pressing "new
-      // session" twice should not leave a trail of empty ones.
-      const untouched = projectsRef.current
-        .find((project) => project.path === projectPath)
-        ?.sessions.filter((session) => session.title === 'New session')
-      for (const session of untouched ?? []) {
-        threadController.discardSnapshot(session.id)
-      }
-      setProjects((current) =>
-        current.map((project) =>
-          project.path === projectPath
-            ? {
-                ...project,
-                sessions: project.sessions.filter((session) => session.title !== 'New session'),
-              }
-            : project,
-        ),
-      )
-      void (async () => {
-        for (const session of untouched ?? []) {
-          const deleted = await transport
-            .request('thread.delete', { threadId: session.id })
-            .then(() => true)
-            .catch(() => false)
-          if (deleted) {
-            clearWorkspaceThread(session.id)
-            refreshWorkspaceAfterCompletion(projectPath)
-          }
-        }
-        await refreshProjects().catch(() => undefined)
-      })()
       setNotice(undefined)
       setActionError(undefined)
       setActivePath(projectPath)
       activeIdRef.current = undefined
       setActiveId(undefined)
       setThread(emptyThread)
+      // A custom harness is a source of its own; the provider's pin is not its to follow.
+      if (!sourceAgentRef.current) {
+        applyProviderDefault(providerRef.current, providerDefaultsRef.current[providerRef.current])
+      }
       setComposerFocusRequest((request) => request + 1)
-      if (!PUBLIC_BETA_PROVIDER_IDS.has(provider)) setCatalogRequest((current) => current + 1)
     },
-    [
-      projects,
-      transport,
-      refreshProjects,
-      provider,
-      clearWorkspaceThread,
-      refreshWorkspaceAfterCompletion,
-      publishComposerDraft,
-    ],
+    [publishComposerDraft, applyProviderDefault],
   )
 
   const updateQueue = useCallback(
@@ -2734,13 +3219,21 @@ export function App() {
       const titlePrompt = text.trim() || attachments.map(basename).join(', ')
       // The composer clears itself the moment it hands the text over. Every
       // early bail below must put the words back — a toast is no substitute
-      // for the paragraph someone just typed.
-      const restoreDraft = () => {
-        const key = composerDraftKey(activeIdRef.current)
-        const next = threadController.editDraft(key, { text, attachments })
-        threadController.draftOwner = key
-        publishComposerDraft(next)
+      // for the paragraph someone just typed. A chat that is still starting
+      // keeps its own draft: startup moves it to the real chat, or to New chat
+      // if it fails. Only a send that waited on that failed startup goes there.
+      const restoreDraft = () =>
+        restoreRejectedDraft(composerDraftKey(activeId), { text, attachments })
+      const restoreDraftAfterFailedStart = () =>
+        restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
+      if (activeId) pendingDeletionChecks.current.delete(activeId)
+      if (activeId && !cancelQueuedArchive(activeId)) {
+        restoreDraft()
+        reportError('This chat is being deleted.')
+        return
       }
+      // Clear only the submitted draft, before startup can yield to later edits.
+      threadController.forgetDraft(composerDraftKey(activeId))
       const sideChatCommand = parseSideChatCommand(text)
       if (sideChatCommand) {
         if (!activeId || activeId.startsWith('pending:')) {
@@ -2816,6 +3309,12 @@ export function App() {
           restoreDraft()
           return
         }
+        writeThreadModelSelection(provisionalId, {
+          modelKey: choice.key,
+          designMode,
+          ...(selectedEffort ? { effort: selectedEffort } : {}),
+          ...(selectedServiceTier ? { serviceTier: selectedServiceTier } : {}),
+        })
         workspaceStartId = provisionalId
         workspaceStartToken = holdWorkspaceStart(provisionalId, activePath)
         optimisticTurnId = provisional.activeTurn?.id
@@ -2873,7 +3372,7 @@ export function App() {
             if (activeIdRef.current === provisionalId) setThread(next)
           }
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -2896,7 +3395,7 @@ export function App() {
         threadId = await pending.promise
         if (!threadId) {
           releasePendingStart()
-          restoreDraft()
+          restoreDraftAfterFailedStart()
           return
         }
         workspaceStartId = threadId
@@ -2943,7 +3442,6 @@ export function App() {
         ])
       }
       const optimisticState = threadController.snapshot(threadId) ?? emptyThread
-      threadController.forgetDraft(threadId)
       const pendingOptimisticTurn = optimisticState.activeTurn
       const precedingTurn = wasRunning ? before.activeTurn : undefined
       const pendingSubmission: PendingSubmission = {
@@ -2991,7 +3489,6 @@ export function App() {
         (selectedModelChoice &&
           sourceKey({
             provider: selectedModelChoice.provider,
-            connectionId: selectedModelChoice.connectionId,
             agentId: selectedModelChoice.agent?.id,
           }) ===
             sourceKey({
@@ -3130,6 +3627,7 @@ export function App() {
       restoreRejectedDraft,
       sendAvailability,
       publishComposerDraft,
+      cancelQueuedArchive,
     ],
   )
 
@@ -3176,18 +3674,17 @@ export function App() {
   // Settings, where a per-render identity would re-trigger them every render.
   const refreshCatalog = useCallback(() => {
     setCatalogRequest((request) => request + 1)
-    setAcpAgentsRequest((request) => request + 1)
   }, [])
 
   const handleAccountChange = useCallback(
     (changedProvider: ProviderId, changedAccount: Account) => {
-      if (changedProvider === provider) {
+      if (changedProvider === providerRef.current) {
         accountRequestRevision.current += 1
         setAccount(changedAccount)
         setAccountCheck({ provider: changedProvider, state: 'ready', account: changedAccount })
       }
     },
-    [provider],
+    [],
   )
 
   useEffect(() => {
@@ -3203,7 +3700,7 @@ export function App() {
     setWorkspacePanelOpen(completed.restorePanelOpen)
     setWorkspacePanelExpanded(completed.restorePanelExpanded)
     if (completed.restoreSettings) {
-      setSettingsSection('providers')
+      setSettingsSection(requestSettingsSection('providers'))
       setSettingsOpen(true)
     }
     if (completed.source === 'pull-requests') {
@@ -3231,7 +3728,7 @@ export function App() {
   ])
 
   // prettier-ignore
-  const deleteQueuedTurn = useCallback((queuedTurnId: string) => { if (!activeId) return; holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; void transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath) }).catch((error) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); reportError(error instanceof Error ? error.message : String(error)) }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
+  const deleteQueuedTurn = useCallback((queuedTurnId: string): Promise<boolean> => { if (!activeId) return Promise.resolve(false); holdQueueAction(queuedTurnId, activeId, 'delete'); const projectPath = findSession(projectsRef.current, activeId)?.project.path; return transport.request('thread.deleteQueuedTurn', { threadId: activeId, queuedTurnId }).then(() => { updateQueue(activeId, (items) => items.filter((item) => item.id !== queuedTurnId)); settleQueueAction(queuedTurnId, 'delete'); workspaceIdleProbe.current.unknownQueues.delete(activeId); releaseQueuedStart(queuedTurnId); refreshWorkspaceAfterCompletion(projectPath); return true }, (error: unknown) => { settleQueueAction(queuedTurnId, 'delete', error instanceof IndeterminateRequestError); throw error }) }, [transport, activeId, updateQueue, releaseQueuedStart, refreshWorkspaceAfterCompletion, holdQueueAction, settleQueueAction])
 
   const moveQueuedTurn = useCallback(
     (queuedTurnId: string, direction: 'up' | 'down') => {
@@ -3300,6 +3797,13 @@ export function App() {
   const selectSession = useCallback(
     async (id: string) => {
       setSurface('chat')
+      pendingDeletionChecks.current.delete(id)
+      if (!cancelQueuedArchive(id)) {
+        reportError('This chat is being deleted.')
+        return
+      }
+      const threadSelection = readThreadModelSelection(id)
+      pendingThreadModelSave.current = threadSelection ? undefined : id
       const found = findSession(projectsRef.current, id)
       if (found?.session.provider) {
         const source = sourceKey({
@@ -3309,11 +3813,13 @@ export function App() {
         const matchesSource = (choice: ModelChoice) =>
           sourceKey({
             provider: choice.provider,
-            connectionId: choice.connectionId,
             agentId: choice.agent?.id,
           }) === source
         const rememberedModelKey = readSourceSelections()[source]?.modelKey
         const matchingChoice =
+          visibleModels.find(
+            (choice) => choice.key === threadSelection?.modelKey && matchesSource(choice),
+          ) ??
           (selectedModelChoice && matchesSource(selectedModelChoice)
             ? selectedModelChoice
             : undefined) ??
@@ -3322,11 +3828,14 @@ export function App() {
           ) ??
           visibleModels.find(matchesSource)
         if (matchingChoice) {
-          commitModelChoice(matchingChoice)
+          commitModelChoice(
+            matchingChoice,
+            threadSelection?.modelKey === matchingChoice.key ? threadSelection : undefined,
+          )
         } else {
           setProvider(found.session.provider)
-          setAcpAgent(found.session.agent)
-          setAcpAgentName(undefined)
+          setSourceAgent(found.session.agent)
+          setSourceAgentName(undefined)
           writeSetting(SETUP_KEY, found.session.provider)
           if (found.session.agent) {
             writeSetting(AGENT_KEY, found.session.agent)
@@ -3342,7 +3851,8 @@ export function App() {
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
-      setActiveThreadApproval(undefined)
+      setActiveThreadApproval(threadApprovals.current.get(id))
+      setHistoryFailure(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
@@ -3361,33 +3871,47 @@ export function App() {
       } else {
         setThread(emptyThread)
       }
+      // A chat that is still starting only has a local id the server does not
+      // know, so asking for its history fails. The start adopts the real id.
+      if (id.startsWith('pending:')) return
 
-      setLoadingThreadId(id)
-      try {
-        await loadHistory(id, cached ? threadController.cursor(id) : undefined)
-      } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
-      } finally {
-        setLoadingThreadId((current) => (current === id ? undefined : current))
-      }
+      await readOpenedHistory(id, cached ? threadController.cursor(id) : undefined)
     },
-    [visibleModels, selectedModelChoice, commitModelChoice, loadHistory, transport],
+    [
+      visibleModels,
+      selectedModelChoice,
+      commitModelChoice,
+      readOpenedHistory,
+      transport,
+      cancelQueuedArchive,
+    ],
   )
+
+  const retryOpenedHistory = useCallback(() => {
+    const id = activeIdRef.current
+    if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
+  }, [readOpenedHistory])
 
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
       if (!activeId) return
+      const request = {}
+      rollbackInspectionRequest.current = request
+      setRollbackInspection(undefined)
       setRollbackLoadingId(checkpoint.id)
       try {
         const { files } = await transport.request('thread.changedSince', {
           threadId: activeId,
           checkpointId: checkpoint.id,
         })
+        if (rollbackInspectionRequest.current !== request || activeIdRef.current !== activeId)
+          return
         setRollbackInspection({ checkpoint, files })
       } catch (error) {
-        reportError(error instanceof Error ? error.message : String(error))
+        if (rollbackInspectionRequest.current === request && activeIdRef.current === activeId)
+          reportError(error instanceof Error ? error.message : String(error))
       } finally {
-        setRollbackLoadingId(undefined)
+        if (rollbackInspectionRequest.current === request) setRollbackLoadingId(undefined)
       }
     },
     [transport, activeId],
@@ -3397,7 +3921,13 @@ export function App() {
     (approvalId: string, decision: ApprovalDecision) => {
       const threadId = activeIdRef.current
       if (!threadId) return
-      void transport.request('thread.respondToApproval', { threadId, approvalId, decision })
+      void transport
+        .request('thread.respondToApproval', { threadId, approvalId, decision })
+        .catch((error) => {
+          setNotice(
+            `Could not send the approval. ${error instanceof Error ? error.message : String(error)}`,
+          )
+        })
     },
     [transport],
   )
@@ -3412,11 +3942,24 @@ export function App() {
         current[provider] === mode ? current : { ...current, [provider]: mode },
       )
       const threadId = activeIdRef.current
-      if (!threadId || threadId.startsWith('pending:')) return
-      setActiveThreadApproval(mode)
-      void transport
-        .request('thread.setApproval', { threadId, approval: mode })
+      if (!threadId) return
+      if (threadId.startsWith('pending:')) {
+        setActiveThreadApproval(mode)
+        pendingThreadApprovals.current.set(threadId, mode)
+        return
+      }
+      const request = () => transport.request('thread.setApproval', { threadId, approval: mode })
+      const previous = approvalChanges.current.get(threadId)
+      const change = (previous ? previous.then(request) : request())
+        .then(() => {
+          if (activeIdRef.current === threadId) setActiveThreadApproval(mode)
+        })
         .catch((error) => reportError(error instanceof Error ? error.message : String(error)))
+        .finally(() => {
+          if (approvalChanges.current.get(threadId) === change)
+            approvalChanges.current.delete(threadId)
+        })
+      approvalChanges.current.set(threadId, change)
     },
     [provider, transport],
   )
@@ -3427,14 +3970,48 @@ export function App() {
       return transport
         .request('thread.respondToUserInput', { threadId, requestId, answers })
         .then(() => undefined)
+        .catch((error: unknown) => {
+          if (error instanceof IndeterminateRequestError) {
+            threadController.invalidateHistory(threadId)
+            void loadHistory(threadId).catch(() => undefined)
+          }
+          throw error
+        })
     },
-    [transport],
+    [transport, threadController, loadHistory],
   )
   const editMessage = useCallback((text: string) => {
-    threadController.editDraft(threadController.draftOwner, { text })
-    setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+    const owner = threadController.draftOwner
+    const draft = threadController.draft(owner).text
+    threadController.editDraft(owner, { text })
+    setComposerDraft((current) => ({ text, undoable: true, request: (current?.request ?? 0) + 1 }))
     setComposerFocusRequest((request) => request + 1)
+    // An unsent draft must not vanish without a way back.
+    if (draft.trim() && draft !== text) {
+      setReplacedDraft({ owner, text: draft })
+      setNotice(DRAFT_REPLACED_NOTICE)
+    }
   }, [])
+  // Arrow Up in an empty composer takes the same path as the Edit action.
+  const recallLastPrompt = useCallback(() => {
+    if (!activeIdRef.current) return undefined
+    const text = lastSentPrompt(threadFrameStore.getStructureSnapshot())
+    if (text !== undefined) editMessage(text)
+    return text
+  }, [editMessage, threadFrameStore])
+  const restoreReplacedDraft = useCallback(() => {
+    const replaced = replacedDraft
+    setNotice(undefined)
+    setReplacedDraft(undefined)
+    if (!replaced || replaced.owner !== threadController.draftOwner) return
+    threadController.editDraft(replaced.owner, { text: replaced.text })
+    setComposerDraft((current) => ({
+      text: replaced.text,
+      undoable: true,
+      request: (current?.request ?? 0) + 1,
+    }))
+    setComposerFocusRequest((request) => request + 1)
+  }, [replacedDraft])
   const revertCheckpoint = useCallback(
     (checkpoint: Checkpoint) => {
       setRollbackInspection(undefined)
@@ -3442,6 +4019,17 @@ export function App() {
       void inspectCheckpoint(checkpoint)
     },
     [inspectCheckpoint],
+  )
+
+  const loadOlderHistory = useCallback(
+    (threadId: string, turnLimit?: number) =>
+      threadController.loadOlderHistory(threadId, turnLimit),
+    [threadController],
+  )
+  const loadCompleteHistory = useCallback(
+    (threadId: string, signal: AbortSignal) =>
+      threadController.loadCompleteHistory(threadId, signal),
+    [threadController],
   )
 
   const undoTurnChanges = useCallback(
@@ -3459,7 +4047,14 @@ export function App() {
   )
 
   const restoreCheckpoint = useCallback(async () => {
-    if (!activeId || !rollbackInspection) return
+    if (
+      !activeId ||
+      !rollbackInspection ||
+      rollbackLoadingId !== undefined ||
+      restoreInFlight.current
+    )
+      return
+    restoreInFlight.current = true
     setRollbackRestoring(true)
     try {
       threadController.invalidateHistory(activeId)
@@ -3467,19 +4062,33 @@ export function App() {
         threadId: activeId,
         checkpointId: rollbackInspection.checkpoint.id,
       })
-      await loadHistory(activeId)
-      await refreshCheckpoints(activeId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
       setUndoRestore({ threadId: activeId, token: undo })
-      setNotice(`Restored to before “${rollbackInspection.checkpoint.label}”.`)
       setRollbackOpen(false)
       setRollbackInspection(undefined)
+      rollbackInspectionRequest.current = undefined
+      setNotice(`Restored to before “${rollbackInspection.checkpoint.label}”.`)
+      await loadHistory(activeId)
+      await refreshCheckpoints(activeId)
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === activeId)
+          setWorkspace(info)
+      }
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
     } finally {
       setRollbackRestoring(false)
+      restoreInFlight.current = false
     }
-  }, [transport, activeId, activePath, rollbackInspection, loadHistory, refreshCheckpoints])
+  }, [
+    transport,
+    activeId,
+    activePath,
+    rollbackInspection,
+    rollbackLoadingId,
+    loadHistory,
+    refreshCheckpoints,
+  ])
 
   const reverseRestore = useCallback(async () => {
     if (!undoRestore) return
@@ -3491,7 +4100,11 @@ export function App() {
       })
       await loadHistory(undoRestore.threadId)
       await refreshCheckpoints(undoRestore.threadId)
-      if (activePath) setWorkspace(await transport.request('workspace.info', { path: activePath }))
+      if (activePath) {
+        const info = await transport.request('workspace.info', { path: activePath })
+        if (activePathRef.current === activePath && activeIdRef.current === undoRestore.threadId)
+          setWorkspace(info)
+      }
       setUndoRestore(undefined)
       setNotice('Restore undone.')
     } catch (error) {
@@ -3505,6 +4118,8 @@ export function App() {
       const projectPath = clearWorkspaceThread(id)
       threadController.discardSnapshot(id)
       threadController.invalidateHistory(id)
+      // Thread ids are never reused, so a saved setup outlives its chat forever.
+      removeSetting(`${MODEL_BY_THREAD_PREFIX}${id}`)
       setProjects((current) => removeSession(current, id))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
@@ -3543,18 +4158,24 @@ export function App() {
   }, [selectSession, undoQueuedArchives])
 
   const archiveSession = useCallback(
-    async (id: string) => {
+    async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
       const found = findSession(projectsRef.current, id)
-      if (!found) return false
+      if (!found) return 'skipped'
+      const check = {}
+      pendingDeletionChecks.current.set(id, check)
       try {
         const work = await transport.request('thread.unsavedWork', { threadId: id })
+        if (pendingDeletionChecks.current.get(id) !== check) return 'skipped'
         if (work.isolated && work.uncommitted) {
-          setCheckoutDelete({
+          const confirmation = {
             id,
             title: found.session.title,
             branch: found.session.worktreeBranch ?? 'isolated checkout',
-          })
-          return false
+          }
+          setCheckoutDeletes((current) =>
+            current.some((entry) => entry.id === id) ? current : [...current, confirmation],
+          )
+          return 'confirming'
         }
         queueArchive(id, async () => {
           if (work.isolated) {
@@ -3563,11 +4184,14 @@ export function App() {
           }
           await deleteSession(id)
         })
-        return true
+        return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
-        return false
+        return 'failed'
+      } finally {
+        if (pendingDeletionChecks.current.get(id) === check)
+          pendingDeletionChecks.current.delete(id)
       }
     },
     [transport, deleteSession, refreshProjects, queueArchive],
@@ -3583,14 +4207,14 @@ export function App() {
         await transport.request('thread.discardWorktree', { threadId: id, force: true })
         await deleteSession(id)
       })
-      setCheckoutDelete(undefined)
+      dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
       await refreshProjects().catch(() => undefined)
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, refreshProjects, queueArchive])
+  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -3658,10 +4282,9 @@ export function App() {
         )
         const activeId = activeIdRef.current
         if (!activeId || !targets.includes(activeId)) return
-        const currentProjects = projectsRef.current
-        const current = findSession(currentProjects, activeId)
+        const current = findSession(projectsRef.current, activeId)
         const hidden = new Set(targets)
-        const next = currentProjects
+        const next = visibleProjectsRef.current
           .flatMap((project) => project.sessions)
           .filter((session) => !hidden.has(session.id) && session.lifecycle.state === 'active')
           .sort((a, b) => b.createdAt - a.createdAt)[0]
@@ -3853,18 +4476,30 @@ export function App() {
   const removeSidebarProject = useCallback(
     (path: string) => {
       const previousActivePath = activePathRef.current
+      removedProjectPaths.current.add(path)
+      projectStartRevisions.current.set(path, (projectStartRevisions.current.get(path) ?? 0) + 1)
       setProjects((current) => current.filter((project) => project.path !== path))
-      if (previousActivePath === path) setActivePath(undefined)
+      if (previousActivePath === path) {
+        activePathRef.current = undefined
+        setActivePath(undefined)
+        activeIdRef.current = undefined
+        setActiveId(undefined)
+        setThread(emptyThread)
+        setActiveThreadApproval(undefined)
+        setUndoRestore(undefined)
+        setRollbackOpen(false)
+      }
       void transport
         .request('projects.remove', { path })
         .then(refreshProjects)
         .catch((error) => {
+          removedProjectPaths.current.delete(path)
           reportError(error instanceof Error ? error.message : String(error))
           // Put the selection back too, not just the list. Removal can now be
           // refused, and refreshProjects would otherwise fill the cleared
           // selection with an arbitrary other project while the open session
           // still belongs to this one.
-          setActivePath(previousActivePath)
+          if (!activePathRef.current && !activeIdRef.current) setActivePath(previousActivePath)
           void refreshProjects().catch(() => undefined)
         })
     },
@@ -3893,6 +4528,8 @@ export function App() {
         if (!pending.threadId) return
         id = pending.threadId
       }
+      // A provisional chat whose start failed has no thread to rename.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:title`,
         () => transport.request('thread.rename', { threadId: id, title }),
@@ -3905,6 +4542,14 @@ export function App() {
     (id: string) => {
       const pinned = !findSession(projectsRef.current, id)?.session.pinned
       setProjects((current) => updateSession(current, id, (session) => ({ ...session, pinned })))
+      const pending = pendingSession.current
+      if (pending?.id === id) {
+        pending.pinned = pinned
+        if (!pending.threadId) return
+        id = pending.threadId
+      }
+      // A provisional chat whose start failed has no thread to pin.
+      if (id.startsWith('pending:')) return
       void sidebarMutations.run(
         `thread:${id}:pinned`,
         () => transport.request('thread.pin', { threadId: id, pinned }),
@@ -3921,7 +4566,7 @@ export function App() {
     (sessionIds: string[]) => {
       void (async () => {
         for (const id of sessionIds) {
-          if (!(await archiveSession(id))) break
+          if ((await archiveSession(id)) === 'failed') break
         }
       })()
     },
@@ -3929,22 +4574,16 @@ export function App() {
   )
   const reorderSidebarSession = useCallback(
     (projectPath: string, sourceId: string, targetId: string, position: 'before' | 'after') => {
+      draggedSessionOrder.add(projectPath)
       setProjects((current) =>
         current.map((project) => {
           if (project.path !== projectPath) return project
-          const sourceIndex = project.sessions.findIndex((session) => session.id === sourceId)
-          if (sourceIndex < 0) return project
-
-          const sessions = [...project.sessions]
-          const [moved] = sessions.splice(sourceIndex, 1)
-          const targetIndex = sessions.findIndex((session) => session.id === targetId)
-          if (!moved || targetIndex < 0) return project
-          sessions.splice(targetIndex + (position === 'after' ? 1 : 0), 0, moved)
-          return { ...project, sessions }
+          const sessions = moveRailSession(project.sessions, sourceId, targetId, position)
+          return sessions === project.sessions ? project : { ...project, sessions }
         }),
       )
     },
-    [],
+    [draggedSessionOrder],
   )
   const reorderSidebarProject = useCallback(
     (sourcePath: string, targetPath: string, position: 'before' | 'after') => {
@@ -3966,7 +4605,7 @@ export function App() {
   }, [])
   const cycleChat = useCallback(
     (direction: -1 | 1) => {
-      const sessions = projectsRef.current.flatMap((project) => project.sessions)
+      const sessions = sidebarSessions(visibleProjectsRef.current, sidebarSettingsRef.current.mode)
       if (sessions.length === 0) return
       const activeId = activeIdRef.current
       const current = activeId ? sessions.findIndex((session) => session.id === activeId) : -1
@@ -3983,21 +4622,22 @@ export function App() {
   )
   const selectSessionSearchResult = useCallback(
     (threadId: string, turnId?: string) => {
-      setSearchJump((current) =>
-        turnId
-          ? {
-              threadId,
-              turnId,
-              request: (current?.request ?? 0) + 1,
-            }
-          : undefined,
+      // Counted outside the state: a used jump is cleared, and a new one must
+      // still never reuse the request number of one a thread already ran.
+      setSearchJump(
+        turnId ? { threadId, turnId, request: ++searchJumpRequests.current } : undefined,
       )
       void selectSession(threadId)
     },
     [selectSession],
   )
-  const openSettings = useCallback((section: SettingsSection = 'providers') => {
-    setSettingsSection(section)
+  const finishSearchJump = useCallback(
+    (request: number) =>
+      setSearchJump((current) => (current?.request === request ? undefined : current)),
+    [],
+  )
+  const openSettings = useCallback((section: SettingsSection = 'workflows') => {
+    setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
   }, [])
   const changeKeybinding = useCallback((action: KeybindingId, shortcut: Shortcut | null) => {
@@ -4023,11 +4663,24 @@ export function App() {
     location.reload()
   }, [cancelWorkspacePanelWidthPersistence])
   const changeModelVisibility = useCallback((key: string, visible: boolean) => {
+    // On a profile without saved visibility this click creates the saved list.
+    // A failing source can keep discovery from ever saving the curated
+    // defaults, so the click saves them for every row the picker knows, and
+    // those rows are recorded as current: the next launch must not run a
+    // pending migration over this choice. Rows that appear later still get
+    // their defaults when they are first listed.
+    const created = modelVisibilityInitialized.current
+      ? undefined
+      : catalogModelsRef.current.filter((choice) => !choice.agent && !isCustomModelChoice(choice))
+    if (created) pendingVisibilityRows.current = created.map((choice) => choice.key)
     // A click is an explicit preference even if live discovery is still
     // replacing a cached catalog. Never let late first-run defaults erase it.
     modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
+      for (const choice of created ?? []) {
+        if (!modelVisibleByDefault(choice.model)) next.add(choice.key)
+      }
       if (visible) next.delete(key)
       else next.add(key)
       return next
@@ -4066,6 +4719,12 @@ export function App() {
     setBottomTerminalHasMounted(true)
     setBottomTerminalToggleRequest((request) => request + 1)
   }, [activePath, terminalPlacement])
+  // The bottom panel unmounts while no project is active and forgets which
+  // toggle it last handled. Without this reset it would treat the old count as
+  // a new toggle on remount and open a terminal nobody asked for.
+  useEffect(() => {
+    if (!activePath) setBottomTerminalToggleRequest(0)
+  }, [activePath])
   const closeTerminal = useCallback(() => {
     setBottomTerminalPhase((phase) => (phase === 'opening' || phase === 'open' ? 'closing' : phase))
   }, [])
@@ -4112,7 +4771,7 @@ export function App() {
       setWorkspacePanelOpen(providerLoginTerminal.restorePanelOpen)
       setWorkspacePanelExpanded(providerLoginTerminal.restorePanelExpanded)
       if (providerLoginTerminal.restoreSettings) {
-        setSettingsSection('providers')
+        setSettingsSection(requestSettingsSection('providers'))
         setSettingsOpen(true)
       }
     },
@@ -4127,6 +4786,9 @@ export function App() {
     const model = selectedModelChoice?.model
     const fast = getFastServiceTier(model)
     if (!fast) return
+    // Save it to the open chat like the picker does, or the chat's saved tier
+    // comes back the next time it is opened.
+    pendingThreadModelSave.current = activeIdRef.current
     setServiceTier((current) => (current === fast.id ? getFastModeOffValue(model) : fast.id))
   }, [selectedModelChoice])
   const active = useMemo(() => findSession(projects, activeId), [projects, activeId])
@@ -4142,7 +4804,7 @@ export function App() {
       },
       settings: () => {
         setPaletteScope(null)
-        openSettings('providers')
+        openSettings()
       },
       keybindings: () => {
         setPaletteScope(null)
@@ -4185,7 +4847,7 @@ export function App() {
       },
       toggleFastMode,
       toggleDesignMode: () => {
-        if (!thread.running) setDesignMode((enabled) => !enabled)
+        if (!thread.running) changeDesignMode(!designMode)
       },
       toggleIsolatedSession: () => {
         if (!activeId) setIsolateSession((enabled) => !enabled)
@@ -4196,6 +4858,8 @@ export function App() {
       activePath,
       addProject,
       checkpoints.length,
+      changeDesignMode,
+      designMode,
       cycleChat,
       deleteSidebarSession,
       interrupt,
@@ -4214,30 +4878,73 @@ export function App() {
 
   useEffect(() => syncNativeMenuShortcuts(keybindings), [keybindings])
 
-  useEffect(() => onNativeMenuAction((action) => keybindingActions[action]()), [keybindingActions])
+  const modalOwnsKeyboard = Boolean(paletteScope || rollbackOpen || checkoutDelete)
+  const runRoutedShortcut = useCallback(
+    (action: KeybindingId) => {
+      const route = shortcutRoute(action, {
+        settingsOpen,
+        onboardingPreview,
+        modalOpen: modalOwnsKeyboard || Boolean(sessionSearch.current?.isOpen()),
+      })
+      if (route === 'closeSettings') setSettingsOpen(false)
+      else if (route === 'showKeybinds') setSettingsSection(requestSettingsSection('keybinds'))
+      else if (route === 'run') keybindingActions[action]()
+    },
+    [keybindingActions, modalOwnsKeyboard, onboardingPreview, settingsOpen],
+  )
+
+  useEffect(
+    () =>
+      onNativeMenuAction((action, source) => {
+        if (source === 'accelerator') runRoutedShortcut(action)
+        else keybindingActions[action]()
+      }),
+    [keybindingActions, runRoutedShortcut],
+  )
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat) return
+      if (event.defaultPrevented || event.repeat || event.isComposing) return
+
+      const debugModifier = macOS
+        ? event.metaKey && !event.ctrlKey
+        : event.ctrlKey && !event.metaKey
+      if (debugModifier && matchesShortcut(event, DEBUG_SETTINGS_SHORTCUT)) {
+        event.preventDefault()
+        setDebugSettingsVisible((visible) => !visible)
+        return
+      }
+      if (onboardingPreview && !settingsOpen) return
 
       // Settings owns all keys while open. Its two app shortcuts can close
       // the sheet or jump directly to the keybind editor.
       if (settingsOpen) {
-        if (matchesShortcut(event, keybindings.settings)) {
+        const action = (['settings', 'keybindings'] as const).find((id) =>
+          matchesShortcut(event, keybindings[id]),
+        )
+        if (action) {
           event.preventDefault()
-          setSettingsOpen(false)
-        } else if (matchesShortcut(event, keybindings.keybindings)) {
-          event.preventDefault()
-          setSettingsSection('keybinds')
+          runRoutedShortcut(action)
         }
         return
       }
-      if (paletteScope || rollbackOpen || checkoutDelete) return
+      if (modalOwnsKeyboard || sessionSearch.current?.isOpen()) return
+
+      // Keybinds come first, so one saved on a number key before the
+      // recorder refused them still runs, as its menu accelerator does.
+      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
+        matchesShortcut(event, keybindings[candidate.id]),
+      )
+      if (definition) {
+        event.preventDefault()
+        runRoutedShortcut(definition.id)
+        return
+      }
 
       // Number keys open the newest sessions in the first sidebar project.
       const primaryOnly = macOS ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
       if (primaryOnly && !event.altKey && !event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const currentProjects = projectsRef.current
+        const currentProjects = visibleProjectsRef.current
         const project = currentProjects.find((candidate) => candidate.pinned) ?? currentProjects[0]
         const session = project?.sessions
           .slice()
@@ -4247,24 +4954,21 @@ export function App() {
         return
       }
 
-      const definition = KEYBINDING_DEFINITIONS.find((candidate) =>
-        matchesShortcut(event, keybindings[candidate.id]),
-      )
-      if (!definition) return
-
+      const tool = WORKSPACE_TOOL_SHORTCUTS.find(({ shortcut }) => matchesShortcut(event, shortcut))
+      if (!tool) return
       event.preventDefault()
-      keybindingActions[definition.id]()
+      setWorkspacePanelHasMounted(true)
+      setWorkspaceToolRequest({ request: ++nextWorkspaceToolRequest.current, kind: tool.kind })
     }
 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [
-    checkoutDelete,
-    keybindingActions,
+    onboardingPreview,
     keybindings,
     macOS,
-    paletteScope,
-    rollbackOpen,
+    modalOwnsKeyboard,
+    runRoutedShortcut,
     selectSession,
     settingsOpen,
   ])
@@ -4301,7 +5005,7 @@ export function App() {
   const paletteChatSearch = useMemo(
     () =>
       createPaletteChatSearch(
-        () => projectsRef.current,
+        () => visibleProjectsRef.current,
         displayName,
         (threadId) => void selectSession(threadId),
         PALETTE_CHAT_SEARCH_CACHE,
@@ -4509,7 +5213,18 @@ export function App() {
     workspacePanelOpen,
   ])
 
-  const RenderedWorkspacePanel = resolvedWorkspacePanel ?? WorkspacePanel
+  // A lazy wrapper and the component it loads are different element types, so
+  // swapping one for the other on a later render remounts the panel and closes
+  // its tabs. Each panel keeps the type it first rendered with: the loaded
+  // component when it was preloaded, otherwise the lazy wrapper.
+  const rightPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  const bottomPanelType = useRef<WorkspacePanelComponent | typeof WorkspacePanel>(undefined)
+  if (workspacePanelHasMounted) rightPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  if (activePath && bottomTerminalMounted) {
+    bottomPanelType.current ??= resolvedWorkspacePanel ?? WorkspacePanel
+  }
+  const RightWorkspacePanel = rightPanelType.current ?? WorkspacePanel
+  const BottomWorkspacePanel = bottomPanelType.current ?? WorkspacePanel
 
   const offlineError = useMemo<ComposerError | undefined>(
     () =>
@@ -4529,7 +5244,7 @@ export function App() {
       : providerSignInState?.phase === 'failed'
         ? {
             id: `sign-in:${providerSignInState.terminalId}`,
-            message: `${providerName(provider, acpAgentName)} sign-in failed. Try signing in again.`,
+            message: `${providerName(provider, sourceAgentName)} sign-in failed. Try signing in again.`,
             action: { label: 'Sign in', run: openProviderSetup },
           }
         : providerProblem
@@ -4582,10 +5297,11 @@ export function App() {
       <div className="shell__body">
         <Sidebar
           projects={archiveProjects}
+          projectsLoading={projectsStatus === 'loading'}
           activeProjectPath={activePath}
           activeSessionId={surface === 'chat' ? activeId : undefined}
           pullRequestsActive={surface === 'pull-requests'}
-          providerName={providerName(provider, acpAgentName)}
+          providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
           onRetryUsage={refreshUsage}
@@ -4622,7 +5338,7 @@ export function App() {
         >
           <main className="stage">
             {surface === 'pull-requests' ? (
-              <Suspense fallback={null}>
+              <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
                   transport={transport}
                   onOpenChat={openPullRequestChat}
@@ -4659,10 +5375,17 @@ export function App() {
                           errorsInComposer
                           stopping={stopping}
                           loading={loadingThreadId === activeId}
+                          loadFailure={
+                            historyFailure?.threadId === activeId
+                              ? historyFailure.message
+                              : undefined
+                          }
+                          onRetryLoad={retryOpenedHistory}
                           projectPath={activePath}
                           threadId={activeId}
                           transport={transport}
                           searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                          onSearchJumpDone={finishSearchJump}
                           revealRequest={threadRevealRequest}
                           checkpoints={checkpoints}
                           onDecide={decideApproval}
@@ -4670,6 +5393,8 @@ export function App() {
                           onEditMessage={editMessage}
                           onRevertCheckpoint={revertCheckpoint}
                           onUndoChanges={undoTurnChanges}
+                          onLoadOlderHistory={loadOlderHistory}
+                          onLoadCompleteHistory={loadCompleteHistory}
                         />
                       </Suspense>
                     ) : (
@@ -4677,6 +5402,7 @@ export function App() {
                         projects={projects}
                         activePath={activePath}
                         status={projectsStatus}
+                        startupProjectName={startupProjectName}
                         onAddProject={addSidebarProject}
                         onRetry={retryProjects}
                       />
@@ -4688,6 +5414,7 @@ export function App() {
                       projects={projectChoices}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
+                      projectsLoading={projectsStatus === 'loading'}
                       branch={
                         (!activeId && activePath
                           ? projectBranches.current.get(activePath)
@@ -4697,20 +5424,24 @@ export function App() {
                         branches[0]
                       }
                       branches={branches}
+                      branchesLoading={Boolean(activePath) && branchesPath !== activePath}
                       models={selectableModels}
                       modelsLoaded={modelsLoaded}
                       modelId={selectedModelChoice?.key}
+                      modelChoice={selectedModelChoice}
+                      modelPending={modelChoicePending}
                       effort={selectedEffort}
                       serviceTier={selectedServiceTier}
                       usage={thread.usage}
-                      approval={
-                        approval === 'auto-review' && !autoReviewSupported ? 'full' : approval
-                      }
+                      approval={displayedApproval}
                       approvalLoading={approvalLoading}
                       autoReviewSupported={autoReviewSupported}
                       attachmentsSupported={attachmentsSupported}
+                      attachmentsLoading={catalogAvailability === 'loading'}
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                      voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
                       disabled={stopping}
+                      placeholder={stopping ? 'Stopping…' : undefined}
                       sendAvailability={sendAvailability}
                       errors={composerErrors}
                       errorsVisible={!settingsOpen && surface === 'chat'}
@@ -4727,16 +5458,19 @@ export function App() {
                       draftRequest={composerDraft}
                       onDraftChange={updateComposerDraftText}
                       onAttachmentsChange={updateComposerDraftAttachments}
+                      onPendingAttachment={keepPendingAttachment}
+                      onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
+                      onRecallLastPrompt={recallLastPrompt}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}
                       canSteerQueue={canSteerQueue}
                       onModelChange={selectModel}
-                      onEffortChange={setEffort}
-                      onServiceTierChange={setServiceTier}
+                      onEffortChange={changeEffort}
+                      onServiceTierChange={changeServiceTier}
                       onApprovalChange={changeApproval}
                       onIsolateChange={setIsolateSession}
-                      onDesignModeChange={setDesignMode}
+                      onDesignModeChange={changeDesignMode}
                       onTranscribeVoice={transcribeVoice}
                       onCancelVoice={cancelVoice}
                       onProjectChange={selectProject}
@@ -4766,8 +5500,10 @@ export function App() {
                       }
                       onTransitionEnd={finishBottomTerminalMotion}
                     >
-                      <Suspense fallback={null}>
-                        <RenderedWorkspacePanel
+                      <Suspense
+                        fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
+                      >
+                        <BottomWorkspacePanel
                           placement="bottom"
                           open={terminalOpen}
                           expanded={false}
@@ -4802,8 +5538,10 @@ export function App() {
           </main>
 
           {workspacePanelHasMounted ? (
-            <Suspense fallback={null}>
-              <RenderedWorkspacePanel
+            <Suspense
+              fallback={<WorkspacePanelSkeleton placement="right" open={workspacePanelOpen} />}
+            >
+              <RightWorkspacePanel
                 open={workspacePanelOpen}
                 expanded={workspacePanelExpanded}
                 width={workspacePanelWidth}
@@ -4843,66 +5581,87 @@ export function App() {
       </div>
 
       {settingsOpen ? (
-        <Suspense fallback={null}>
-          <Settings
-            initialSection={settingsSection}
-            provider={provider}
-            providerName={providerName(provider, acpAgentName)}
-            transport={transport}
-            projectPath={activePath}
-            projectName={activeProject ? displayName(activeProject) : undefined}
-            account={account}
-            profileIdentity={profileIdentity}
-            onProfileIdentityChange={updateProfileIdentity}
-            providerStatuses={providerStatuses}
-            acpAgents={acpAgents}
-            modelConnections={modelConnections}
-            models={rosterModels}
-            hiddenModels={hiddenModels}
-            onModelVisibilityChange={changeModelVisibility}
-            onConnectionsChanged={refreshCatalog}
-            projectCount={projects.length}
-            sidebarSettings={sidebarSettings}
-            onSidebarSettingsChange={updateSidebarSettings}
-            themePreference={themePreference}
-            themeColorScheme={themeColorScheme}
-            onThemePreferenceChange={setThemePreference}
-            fontPreference={fontPreference}
-            onFontPreferenceChange={setFontPreference}
-            accentPreference={accentPreference}
-            onAccentPreferenceChange={setAccentPreference}
-            backdropPreference={backdropPreference}
-            onBackdropPreferenceChange={setBackdropPreference}
-            sidebarGlass={sidebarGlass}
-            onSidebarGlassChange={setSidebarGlass}
-            showMacOSFontSmoothing={macOS}
-            macOSFontSmoothing={macOSFontSmoothing}
-            onMacOSFontSmoothingChange={setMacOSFontSmoothing}
-            macOS={macOS}
-            keybindings={keybindings}
-            onKeybindingChange={changeKeybinding}
-            onKeybindingsReset={resetKeybindings}
-            showMacOSHaptics={isDesktop && macOS}
-            onAccountChange={handleAccountChange}
-            authRefreshRevision={providerAuthRefreshRevision}
-            onProviderLoginTerminalOpen={openProviderLoginTerminal}
-            onReset={resetSettings}
+        <div className="surface-enter">
+          <SurfaceErrorBoundary
+            name="Settings"
             onClose={closeSettings}
-          />
-        </Suspense>
+            fallback={<SettingsSkeleton section={settingsSection.section} />}
+          >
+            <Settings
+              initialSection={settingsSection.section}
+              sectionRequest={settingsSection.request}
+              showDebug={debugSettingsVisible}
+              provider={provider}
+              providerName={providerName(provider, sourceAgentName)}
+              transport={transport}
+              projectPath={activePath}
+              projectName={activeProject ? displayName(activeProject) : undefined}
+              account={account}
+              accountLoading={
+                accountCheck.provider !== provider || accountCheck.state === 'loading'
+              }
+              profileIdentity={profileIdentity}
+              onProfileIdentityChange={updateProfileIdentity}
+              providerStatuses={providerStatuses}
+              providersLoading={catalogAvailability === 'loading'}
+              models={models}
+              modelsLoading={catalogAvailability === 'loading'}
+              hiddenModels={hiddenModels}
+              onModelVisibilityChange={changeModelVisibility}
+              providerDefaults={providerDefaultsControls}
+              onConnectionsChanged={refreshCatalog}
+              projectCount={projects.length}
+              projectsLoading={projectsStatus === 'loading'}
+              sidebarSettings={sidebarSettings}
+              onSidebarSettingsChange={updateSidebarSettings}
+              themePreference={themePreference}
+              themeColorScheme={themeColorScheme}
+              onThemePreferenceChange={setThemePreference}
+              appearancePreferences={appearancePreferences}
+              onAppearancePreferenceChange={updateAppearancePreference}
+              showMacOSFontSmoothing={macOS}
+              macOSFontSmoothing={macOSFontSmoothing}
+              onMacOSFontSmoothingChange={setMacOSFontSmoothing}
+              macOS={macOS}
+              keybindings={keybindings}
+              onKeybindingChange={changeKeybinding}
+              onKeybindingsReset={resetKeybindings}
+              showMacOSHaptics={isDesktop && macOS}
+              onAccountChange={handleAccountChange}
+              authRefreshRevision={providerAuthRefreshRevision}
+              onProviderLoginTerminalOpen={openProviderLoginTerminal}
+              onReset={resetSettings}
+              onForceOnboarding={() => {
+                setSettingsOpen(false)
+                setOnboardingPreview(true)
+              }}
+              onClose={closeSettings}
+            />
+          </SurfaceErrorBoundary>
+        </div>
       ) : null}
 
-      {isDesktop &&
-      projectsStatus === 'ready' &&
-      projects.length === 0 &&
-      !onboardingDismissed &&
-      !settingsOpen ? (
+      {onboardingMounted ? (
         <Suspense fallback={null}>
-          <WelcomeDialog
+          <Onboarding
+            hidden={settingsOpen || providerLoginTerminal !== undefined}
+            finished={!onboardingWanted}
+            displayName={profileIdentity.displayName}
+            onDisplayNameChange={(displayName) => updateProfileIdentity({ displayName })}
+            themePreference={themePreference}
+            onThemePreferenceChange={setThemePreference}
             providerStatuses={providerStatuses}
-            onAddProject={() => void addProject()}
+            onAddProject={() => {
+              setOnboardingPreview(false)
+              void addProject()
+            }}
             onOpenProviders={() => openSettings('providers')}
             onDismiss={() => {
+              setOnboardingMounted(false)
+              if (onboardingPreview) {
+                setOnboardingPreview(false)
+                return
+              }
               writeSetting(ONBOARDING_KEY, 'done')
               setOnboardingDismissed(true)
             }}
@@ -4943,6 +5702,8 @@ export function App() {
             onInspect={(checkpoint) => void inspectCheckpoint(checkpoint)}
             onRestore={() => void restoreCheckpoint()}
             onClose={() => {
+              rollbackInspectionRequest.current = undefined
+              setRollbackLoadingId(undefined)
               setRollbackOpen(false)
               setRollbackInspection(undefined)
             }}
@@ -4953,11 +5714,12 @@ export function App() {
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
+            key={checkoutDelete.id}
             title={checkoutDelete.title}
             branch={checkoutDelete.branch}
             busy={checkoutDeleteBusy}
             onDiscard={() => void discardAndArchive()}
-            onClose={() => setCheckoutDelete(undefined)}
+            onClose={() => dropCheckoutDelete(checkoutDelete.id)}
           />
         </Suspense>
       ) : null}
@@ -4974,10 +5736,6 @@ export function App() {
           <ArchiveToast
             count={pendingArchives.length}
             visible={!archiveToastDismissed}
-            onView={() => {
-              const id = pendingArchives.at(-1)
-              if (id) void selectSession(id)
-            }}
             onUndo={undoArchive}
             onDismiss={() => setArchiveToastDismissed(true)}
           />
@@ -4996,6 +5754,8 @@ export function App() {
         className="notice"
         role="alert"
         visible={Boolean(actionError) && (settingsOpen || surface !== 'chat')}
+        onDismiss={() => setActionError(undefined)}
+        dismissKey={actionError}
       >
         <span className="notice__text">{actionError?.message}</span>
         <button className="ghost" onClick={() => setActionError(undefined)}>
@@ -5007,8 +5767,19 @@ export function App() {
         className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
         role="alert"
         visible={Boolean(notice)}
+        dismissKey={notice}
+        onDismiss={() => {
+          setNotice(undefined)
+          setUndoRestore(undefined)
+          setReplacedDraft(undefined)
+        }}
       >
         <span className="notice__text">{notice}</span>
+        {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
+          <button className="ghost" onClick={restoreReplacedDraft}>
+            Restore
+          </button>
+        ) : null}
         {undoRestore ? (
           <button className="ghost" onClick={() => void reverseRestore()}>
             Undo restore
@@ -5038,6 +5809,7 @@ function Empty(props: {
   projects: Project[]
   activePath: string | undefined
   status: 'loading' | 'ready' | 'failed'
+  startupProjectName: string | undefined
   onAddProject: () => void
   onRetry: () => void
 }) {
@@ -5045,7 +5817,7 @@ function Empty(props: {
 
   // Before the first projects.list reply, "no projects" is not a fact yet —
   // flashing the add-a-project prompt for one round trip reads as a glitch.
-  if (props.status === 'loading') {
+  if (props.status === 'loading' && props.startupProjectName === undefined) {
     return (
       <SkeletonStatus label="Loading projects…" className="empty">
         <Skeleton className="skeleton--block empty__skeleton-prompt" />
@@ -5066,7 +5838,7 @@ function Empty(props: {
     )
   }
 
-  if (props.projects.length === 0) {
+  if (props.status === 'ready' && props.projects.length === 0) {
     return (
       <div className="empty">
         <div className="empty__prompt" role="heading" aria-level={1}>
@@ -5079,10 +5851,15 @@ function Empty(props: {
     )
   }
 
+  const projectName = activeProject
+    ? displayName(activeProject)
+    : props.status === 'loading' && props.startupProjectName
+      ? props.startupProjectName
+      : 'a project'
   return (
     <div className="empty">
       <div className="empty__prompt" role="heading" aria-level={1}>
-        What should we build in {activeProject ? displayName(activeProject) : 'a project'}?
+        What should we build in {projectName}?
       </div>
     </div>
   )
@@ -5090,9 +5867,6 @@ function Empty(props: {
 
 function providerName(id: ProviderId, sourceName?: string): string {
   if (sourceName) return sourceName
-  // ACP is how we talk to the agent, not who the agent is. Showing "ACP" would
-  // name our plumbing instead of the thing the user chose.
-  if (id === 'acp') return 'ACP agent'
   return providerDisplayName(id)
 }
 
@@ -5142,14 +5916,15 @@ function basename(path: string): string {
 
 function readTerminalHeight(): number {
   const stored = Number(readSetting(TERMINAL_HEIGHT_KEY))
-  const height = Number.isFinite(stored) && stored >= 160 ? stored : 260
+  const height = Number.isFinite(stored) && stored >= 160 ? stored : DEFAULT_BOTTOM_PANEL_HEIGHT
   return Math.min(height, Math.max(160, Math.floor(window.innerHeight * 0.72)))
 }
 
 function readWorkspacePanelWidth(): number {
-  const stored = Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY))
-  if (!Number.isFinite(stored) || stored < 360) return 520
-  return Math.min(stored, Math.max(360, Math.floor(window.innerWidth * 0.78)))
+  return restoreWorkspacePanelWidth(
+    Number(readSetting(WORKSPACE_PANEL_WIDTH_KEY)),
+    window.innerWidth,
+  )
 }
 
 function displayName(project: { path: string; name?: string | undefined }): string {
@@ -5200,16 +5975,56 @@ function loadSessionOrder() {
 
 const serializeSessionOrder = createSessionOrderSerializer()
 
-function saveSessionOrder(projects: Project[]): void {
-  const serialized = serializeSessionOrder(projects)
+function saveSessionOrder(projects: Project[], dragged: ReadonlySet<string>): void {
+  const serialized = serializeSessionOrder(projects.filter((project) => dragged.has(project.path)))
   if (serialized === undefined) return
   writeSetting(SESSION_ORDER_KEY, serialized)
+}
+
+function readStartupProjectName(): string | undefined {
+  return readSetting(STARTUP_PROJECT_NAME_KEY) || undefined
+}
+
+function saveStartupProjectName(project: Project | undefined): void {
+  const name = project ? displayName(project) : undefined
+  if ((readSetting(STARTUP_PROJECT_NAME_KEY) ?? undefined) === name) return
+  if (name) writeSetting(STARTUP_PROJECT_NAME_KEY, name)
+  else removeSetting(STARTUP_PROJECT_NAME_KEY)
 }
 
 type SourceSelection = {
   modelKey: string
   effort?: string
   serviceTier?: string
+}
+
+type ThreadSelection = SourceSelection & { designMode?: boolean }
+
+function readThreadModelSelection(threadId: string | undefined): ThreadSelection | undefined {
+  if (!threadId) return undefined
+  try {
+    const value: unknown = JSON.parse(readSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`) ?? 'null')
+    if (
+      !isRecord(value) ||
+      typeof value['modelKey'] !== 'string' ||
+      (value['effort'] !== undefined && typeof value['effort'] !== 'string') ||
+      (value['serviceTier'] !== undefined && typeof value['serviceTier'] !== 'string') ||
+      (value['designMode'] !== undefined && typeof value['designMode'] !== 'boolean')
+    )
+      return undefined
+    return {
+      modelKey: value['modelKey'],
+      ...(value['effort'] !== undefined ? { effort: value['effort'] } : {}),
+      ...(value['serviceTier'] !== undefined ? { serviceTier: value['serviceTier'] } : {}),
+      ...(value['designMode'] !== undefined ? { designMode: value['designMode'] } : {}),
+    }
+  } catch {
+    return undefined
+  }
+}
+
+function writeThreadModelSelection(threadId: string, selection: ThreadSelection): void {
+  writeSetting(`${MODEL_BY_THREAD_PREFIX}${threadId}`, JSON.stringify(selection))
 }
 
 type ApprovalPreferences = Partial<Record<ProviderId, ApprovalMode>>
@@ -5279,6 +6094,50 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
+function readModelVisibilityProgress(): ModelVisibilityProgress {
+  const rows = new Map<string, string>()
+  try {
+    const stored: unknown = JSON.parse(readSetting(MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
+    if (isRecord(stored)) {
+      for (const [key, version] of Object.entries(stored)) {
+        if (typeof version === 'string') rows.set(key, version)
+      }
+    }
+  } catch {
+    // An unreadable record only means those rows are migrated once more.
+  }
+  return { version: readSetting(MODEL_VISIBILITY_VERSION_KEY), rows }
+}
+
+/**
+ * Record the `migrated` rows as moved onto the current visibility defaults.
+ * Once every source has been listed, the whole profile is current and the
+ * per-row record is no longer needed.
+ */
+function recordModelVisibilityProgress(migrated: readonly string[], complete: boolean): void {
+  if (complete) {
+    if (readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
+      writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
+    }
+    removeSetting(MODEL_VISIBILITY_ROWS_KEY)
+    return
+  }
+  if (migrated.length === 0) return
+  const rows = new Map(readModelVisibilityProgress().rows)
+  for (const key of migrated) rows.set(key, MODEL_VISIBILITY_VERSION)
+  writeSetting(MODEL_VISIBILITY_ROWS_KEY, JSON.stringify(Object.fromEntries(rows)))
+}
+
+/** `null` until a full catalog has been recorded; an unreadable record is rebuilt then. */
+function readListedModels(): Set<string> | null {
+  try {
+    const stored: unknown = JSON.parse(readSetting(LISTED_MODELS_KEY) ?? 'null')
+    return isStringArray(stored) ? new Set(stored) : null
+  } catch {
+    return null
+  }
+}
+
 function isProviderId(value: unknown): value is ProviderId {
   return typeof value === 'string' && PROVIDER_ID_SET.has(value as ProviderId)
 }
@@ -5300,31 +6159,16 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   if (storedKey.startsWith('custom:')) {
     const custom = customModels.find((entry) => customModelKey(entry) === storedKey)
     if (!custom) return undefined
-    return customModelChoice(
-      custom,
-      providerDisplayName(custom.provider),
-      providerMark(custom.provider),
-    )
+    return customModelChoice(custom)
   }
-  const storedAgentId = provider !== 'api' ? (readSetting(AGENT_KEY) ?? undefined) : undefined
+  const storedAgentId = readSetting(AGENT_KEY) ?? undefined
   const agentId =
-    provider === 'acp' || provider === 'pi'
+    storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
       ? storedAgentId
-      : storedAgentId && storedKey.startsWith(`${provider}:${storedAgentId}:`)
-        ? storedAgentId
-        : undefined
-  if ((provider === 'acp' || provider === 'pi') && !agentId) return undefined
-  const agentName = agentId ? (readSetting(AGENT_NAME_KEY) ?? agentId) : undefined
-  const separator = storedKey.lastIndexOf(':')
-  const storedSource = separator > 0 ? storedKey.slice(0, separator) : undefined
-  const connectionId =
-    provider === 'api' && storedSource?.startsWith('api:')
-      ? storedSource.slice('api:'.length)
       : undefined
-  if (provider === 'api' && !connectionId) return undefined
-  const expectedSource = sourceKey({ provider, connectionId, agentId })
+  const agentName = agentId ? (readSetting(AGENT_NAME_KEY) ?? agentId) : undefined
+  const expectedSource = sourceKey({ provider, agentId })
   const canonical = storedKey.startsWith(`${expectedSource}:`)
-  if (provider === 'api' && !canonical) return undefined
 
   let modelId: string
   if (canonical) {
@@ -5347,9 +6191,8 @@ function readStoredModelChoice(customModels: CustomModel[] = []): ModelChoice | 
   return {
     key,
     provider,
-    sourceName: provider === 'api' ? 'API connection' : providerName(provider, agentName),
-    mark: provider === 'acp' && agentId ? agentMark(agentId) : providerMark(provider),
-    ...(connectionId ? { connectionId } : {}),
+    sourceName: providerName(provider, agentName),
+    mark: providerMark(provider),
     ...(agent ? { agent } : {}),
     model: {
       id: modelId,

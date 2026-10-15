@@ -66,6 +66,9 @@ importers:
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
+      semver:
+        specifier: 7.7.4
+        version: 7.7.4
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -73,6 +76,9 @@ importers:
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1
+      '@types/semver':
+        specifier: 7.7.1
+        version: 7.7.1
       electron:
         specifier: ^43.4.0
         version: 43.4.0
@@ -94,30 +100,15 @@ importers:
       '@harness/adapter-acp':
         specifier: workspace:*
         version: link:../../packages/adapter-acp
-      '@harness/adapter-antigravity':
-        specifier: workspace:*
-        version: link:../../packages/adapter-antigravity
-      '@harness/adapter-api':
-        specifier: workspace:*
-        version: link:../../packages/adapter-api
       '@harness/adapter-claude-code':
         specifier: workspace:*
         version: link:../../packages/adapter-claude-code
       '@harness/adapter-codex':
         specifier: workspace:*
         version: link:../../packages/adapter-codex
-      '@harness/adapter-cursor':
-        specifier: workspace:*
-        version: link:../../packages/adapter-cursor
       '@harness/adapter-grok':
         specifier: workspace:*
         version: link:../../packages/adapter-grok
-      '@harness/adapter-opencode':
-        specifier: workspace:*
-        version: link:../../packages/adapter-opencode
-      '@harness/adapter-pi':
-        specifier: workspace:*
-        version: link:../../packages/adapter-pi
       '@harness/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -281,47 +272,6 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
 
-  packages/adapter-antigravity:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
-  packages/adapter-api:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
   packages/adapter-claude-code:
     dependencies:
       '@anthropic-ai/claude-agent-sdk':
@@ -369,76 +319,7 @@ importers:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
 
-  packages/adapter-cursor:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
   packages/adapter-grok:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
-  packages/adapter-opencode:
-    dependencies:
-      '@harness/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@harness/proc':
-        specifier: workspace:*
-        version: link:../proc
-      '@opencode-ai/sdk':
-        specifier: 1.18.11
-        version: 1.18.11
-      zod:
-        specifier: 4.4.3
-        version: 4.4.3
-    devDependencies:
-      '@types/node':
-        specifier: ^26.1.1
-        version: 26.1.1
-      typescript:
-        specifier: ^5.9.3
-        version: 5.9.3
-      vitest:
-        specifier: ^4.1.10
-        version: 4.1.10(@types/node@26.1.1)(happy-dom@20.11.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
-
-  packages/adapter-pi:
     dependencies:
       '@harness/contracts':
         specifier: workspace:*
@@ -896,9 +777,6 @@ packages:
   '@noble/hashes@2.3.0':
     resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
     engines: {node: '>= 20.19.0'}
-
-  '@opencode-ai/sdk@1.18.11':
-    resolution: {integrity: sha512-yDImmNv4PhxdMgtiHVNWQWEVwQlAm7Dr0y4XU7CT4dOIbzgO+VP+9I02lAP7Zva1FhGeyI7oKMI2tzB9RUsWaQ==}
 
   '@oxc-project/types@0.139.0':
     resolution: {integrity: sha512-r9gHphtCs+1M7J0pw6Sn/hh/Wpa/iQrOOkrNAlVLF/gHq+/CJmHIWKKUUhdWjcD6CIa8idarspCsASiXCXvFUw==}
@@ -1422,6 +1300,9 @@ packages:
 
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
+
+  '@types/semver@7.7.1':
+    resolution: {integrity: sha512-FmgJfu+MOcQ370SD0ev7EI8TlCAfKYU+B4m5T3yXc1CiRN94g/SZPtsCkk506aUDtlMnFZvasDwHHUcZUEaYuA==}
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -4002,10 +3883,6 @@ snapshots:
 
   '@noble/hashes@2.3.0': {}
 
-  '@opencode-ai/sdk@1.18.11':
-    dependencies:
-      cross-spawn: 7.0.6
-
   '@oxc-project/types@0.139.0': {}
 
   '@oxlint/binding-android-arm-eabi@1.78.0':
@@ -4463,6 +4340,8 @@ snapshots:
   '@types/responselike@1.0.3':
     dependencies:
       '@types/node': 26.1.1
+
+  '@types/semver@7.7.1': {}
 
   '@types/trusted-types@2.0.7':
     optional: true
@@ -5449,7 +5328,7 @@ snapshots:
       es6-error: 4.1.1
       matcher: 3.0.0
       roarr: 2.15.4
-      semver: 7.8.5
+      semver: 7.7.4
       serialize-error: 7.0.1
     optional: true
 
@@ -6267,13 +6146,13 @@ snapshots:
 
   node-abi@4.33.0:
     dependencies:
-      semver: 7.8.5
+      semver: 7.7.4
 
   node-addon-api@7.1.1: {}
 
   node-api-version@0.2.1:
     dependencies:
-      semver: 7.8.5
+      semver: 7.7.4
 
   node-gyp@12.4.0:
     dependencies:
@@ -6282,7 +6161,7 @@ snapshots:
       graceful-fs: 4.2.11
       nopt: 9.0.0
       proc-log: 6.1.0
-      semver: 7.8.5
+      semver: 7.7.4
       tar: 7.5.22
       tinyglobby: 0.2.17
       undici: 6.28.0

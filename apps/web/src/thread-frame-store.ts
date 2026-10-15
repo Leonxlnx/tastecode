@@ -17,7 +17,8 @@ function hasStructuralChange(previous: ThreadState, next: ThreadState): boolean 
     previous.diffTurnId !== next.diffTurnId ||
     previous.approvals !== next.approvals ||
     previous.userInputs !== next.userInputs ||
-    previous.reviews !== next.reviews
+    previous.reviews !== next.reviews ||
+    previous.olderCursor !== next.olderCursor
   )
 }
 

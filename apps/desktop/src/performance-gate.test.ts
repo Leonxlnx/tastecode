@@ -14,6 +14,26 @@ const goodSample = () => ({
   scroll: { seenMessages: 500, frames: Array(120).fill(16.67) },
   streaming: { deltas: 1920, batches: Array(120).fill(2), frames: Array(120).fill(16.67) },
   switches: Array(5).fill(50),
+  highlighting: {
+    codeCharacters: 48_000,
+    coldRequests: 1,
+    remountRequests: 0,
+    themeRequests: 0,
+    coloredTokens: 100,
+    colors: ['rgb(1, 2, 3)', 'rgb(4, 5, 6)'],
+    frames: Array(12).fill(16.67),
+    longTasks: [] as number[],
+    trace: { maxMainTaskMs: 16, mainTaskCount: 10, workerThreads: 1 },
+  },
+  largeActivity: {
+    toolCalls: 300,
+    outputCharacters: 300 * 128 * 1024,
+    collapsed: { activityElements: 6, toolRows: 0, openDetails: 0 },
+    opened: { activityElements: 3_300, toolRows: 300, openDetails: 1 },
+    closed: { activityElements: 6, toolRows: 0, openDetails: 0 },
+    mountedHeapBytes: 2_000_000,
+    retainedAfterCloseBytes: -100_000,
+  },
 })
 const startups = () =>
   Array.from({ length: 3 }, () => ({
@@ -59,5 +79,82 @@ describe('real Electron performance gates', () => {
     expect(performanceFailures(samples, startups())).toContain(
       'renderer 1: memory did not settle within ten seconds',
     )
+  })
+
+  it('requires real highlighting, cache reuse, and distinct painted theme colors', () => {
+    for (const change of [
+      { coldRequests: 0 },
+      { coldRequests: 2 },
+      { remountRequests: 1 },
+      { themeRequests: 1 },
+      { coloredTokens: 0 },
+      { colors: ['same', 'same'] },
+      { frames: [] },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.highlighting, change)
+      expect(performanceFailures(samples, startups())).toContain(
+        'renderer 1: missing real-worker highlighting or cache/theme coverage',
+      )
+    }
+  })
+
+  it('fails slow real-worker frames and observed long tasks', () => {
+    const samples = Array.from({ length: 3 }, goodSample)
+    samples[0]!.highlighting.frames[0] = 33
+    samples[0]!.highlighting.longTasks.push(60)
+    expect(performanceFailures(samples, startups())).toEqual([
+      'renderer 1 worst highlighting frame ms: 33 (must be < 32)',
+      'renderer 1 worst highlighting long task ms: 60 (must be < 32)',
+    ])
+  })
+
+  it('fails a 32 ms trace task even when frame samples and the 50 ms observer pass', () => {
+    const samples = Array.from({ length: 3 }, goodSample)
+    samples[0]!.highlighting.trace.maxMainTaskMs = 32
+    expect(performanceFailures(samples, startups())).toEqual([
+      'renderer 1 worst highlighting trace task ms: 32 (must be < 32)',
+    ])
+  })
+
+  it('requires a real 300-call activity that opened every row', () => {
+    for (const change of [
+      { toolCalls: 30 },
+      { outputCharacters: 1024 },
+      { opened: { activityElements: 6, toolRows: 0, openDetails: 0 } },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.largeActivity, change)
+      expect(performanceFailures(samples, startups())).toEqual([
+        'renderer 1: missing large activity coverage',
+      ])
+    }
+  })
+
+  it('fails rows or output mounted while collapsed, beyond the one opened, or after closing', () => {
+    for (const change of [
+      { collapsed: { activityElements: 6, toolRows: 300, openDetails: 0 } },
+      { collapsed: { activityElements: 6, toolRows: 0, openDetails: 300 } },
+      { opened: { activityElements: 3_300, toolRows: 300, openDetails: 2 } },
+      { closed: { activityElements: 6, toolRows: 0, openDetails: 1 } },
+    ]) {
+      const samples = Array.from({ length: 3 }, goodSample)
+      Object.assign(samples[0]!.largeActivity, change)
+      expect(performanceFailures(samples, startups())).toEqual([
+        'renderer 1: large activity mounted rows or output it was not showing',
+      ])
+    }
+  })
+
+  it('fails collapsed large activity DOM, heap and retained heap budgets', () => {
+    const samples = Array.from({ length: 3 }, goodSample)
+    samples[2]!.largeActivity.collapsed.activityElements = 200
+    samples[2]!.largeActivity.mountedHeapBytes = 8 * 1024 * 1024
+    samples[2]!.largeActivity.retainedAfterCloseBytes = 2 * 1024 * 1024
+    expect(performanceFailures(samples, startups())).toEqual([
+      'renderer 3 collapsed large activity elements: 200 (must be < 200)',
+      `renderer 3 collapsed large activity heap bytes: ${8 * 1024 * 1024} (must be < ${8 * 1024 * 1024})`,
+      `renderer 3 large activity heap retained after closing bytes: ${2 * 1024 * 1024} (must be < ${2 * 1024 * 1024})`,
+    ])
   })
 })

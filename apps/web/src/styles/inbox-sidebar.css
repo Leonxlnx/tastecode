@@ -29,7 +29,7 @@
   padding: 0 9px;
   background: var(--chrome-recessed);
   border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: none;
   color: var(--text-3);
   transition:
@@ -69,7 +69,7 @@
   padding: 0;
   background: none;
   border: 0;
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -89,7 +89,7 @@
   padding: 0 8px;
   background: var(--composer-action-bg);
   border: 1px solid var(--composer-action-border);
-  border-radius: var(--r-md);
+  border-radius: var(--r-xl);
   box-shadow: var(--composer-action-shadow);
   color: var(--text);
   cursor: pointer;
@@ -505,7 +505,7 @@
   padding: 5px 8px;
   background: none;
   border: 0;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
   font: inherit;

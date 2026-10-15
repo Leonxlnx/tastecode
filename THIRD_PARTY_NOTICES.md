@@ -19,7 +19,6 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@fontsource-variable/inter` | Inter variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/jetbrains-mono` | JetBrains Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@napi-rs/keyring` | OS credential-store integration | MIT | [source](https://github.com/Brooooooklyn/keyring-node) |
-| `@opencode-ai/sdk` | OpenCode adapter client | MIT | [source](https://github.com/anomalyco/opencode) |
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
 | `@shikijs/langs` | Syntax highlighting grammars | MIT | [source](https://github.com/shikijs/shiki) |
 | `@shikijs/themes` | Syntax highlighting themes | MIT | [source](https://github.com/shikijs/shiki) |
@@ -38,6 +37,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `parse5` | Static preview HTML parsing | MIT | [source](https://github.com/inikulin/parse5) |
 | `react` | Renderer UI | MIT | [source](https://github.com/facebook/react) |
 | `react-dom` | Renderer DOM integration | MIT | [source](https://github.com/facebook/react) |
+| `semver` | Desktop release version ordering | ISC | [source](https://github.com/npm/node-semver) |
 | `shiki` | Syntax highlighting | MIT | [source](https://github.com/shikijs/shiki) |
 | `streamdown` | Streaming Markdown rendering | Apache-2.0 | [source](https://github.com/vercel/streamdown) |
 | `thinking-orbs` | Agent activity indicators | MIT | [source](https://github.com/Jakubantalik/thinking-orbs) |

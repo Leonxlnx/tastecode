@@ -16,11 +16,16 @@ export type DesktopPathOptions = {
  * PTY all read this PATH.
  */
 export function desktopPath(
-  current = process.env.PATH ?? '',
+  current: string | undefined = undefined,
   options: DesktopPathOptions = {},
 ): string {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
+  // A copied Windows environment is case-sensitive JavaScript even though the OS is not.
+  current ??=
+    platform === 'win32'
+      ? (Object.entries(env).findLast(([key]) => key.toLowerCase() === 'path')?.[1] ?? '')
+      : (env.PATH ?? '')
   const home = options.home ?? homedir(platform, env)
   const { join, delimiter } = platform === 'win32' ? path.win32 : path.posix
   const seen = new Set<string>()
@@ -37,7 +42,10 @@ export function desktopPath(
 
 /** Put the desktop-safe PATH on an environment object, defaulting to this process. */
 export function applyDesktopPath(env: NodeJS.ProcessEnv = process.env): string {
-  const next = desktopPath(env.PATH ?? '', { env })
+  const next = desktopPath(undefined, { env })
+  if (process.platform === 'win32') {
+    for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key]
+  }
   env.PATH = next
   return next
 }
@@ -61,12 +69,15 @@ function extraDirectories(
     join(home, '.deno', 'bin'),
     join(home, '.volta', 'bin'),
     join(home, '.asdf', 'shims'),
+    // Grok's official installer, whose PATH change a running shell never sees.
+    join(home, '.grok', 'bin'),
   ]
   if (platform === 'win32') {
     return [
       env.APPDATA ? join(env.APPDATA, 'npm') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'pnpm') : undefined,
+      env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin') : undefined,
       ...userBins,
       join(home, 'scoop', 'shims'),
       env.ProgramData ? join(env.ProgramData, 'chocolatey', 'bin') : undefined,

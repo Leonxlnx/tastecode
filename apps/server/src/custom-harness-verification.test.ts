@@ -12,32 +12,26 @@ afterEach(() => {
 })
 
 describe('custom harness verification', () => {
-  it('completes a real ACP handshake with the configured cwd and environment', async () => {
-    const launchDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-acp-mod-'))
-    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-acp-workspace-'))
+  it('runs the protocol check with the configured cwd and environment', async () => {
+    const launchDirectory = mkdtempSync(path.join(os.tmpdir(), 'harness-claude-mod-'))
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-claude-workspace-'))
     roots.push(launchDirectory, workspace)
-    const server = path.join(launchDirectory, 'server.mjs')
+    const cli = path.join(launchDirectory, 'cli.mjs')
     writeFileSync(
-      server,
+      cli,
       [
-        "import readline from 'node:readline'",
-        'const lines = readline.createInterface({ input: process.stdin })',
-        "lines.on('line', (line) => {",
-        '  const request = JSON.parse(line)',
-        "  if (request.method !== 'initialize') return",
-        '  const contextMatches = process.cwd() === process.env.MOD_LAUNCH_DIR && process.env.HARNESS_WORKSPACE_PATH === process.env.EXPECTED_WORKSPACE',
-        '  if (!contextMatches) process.exit(12)',
-        "  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result: { protocolVersion: 1, agentInfo: { name: 'Example ACP Mod', version: '3.2.1' } } }) + '\\n')",
-        '})',
+        'const contextMatches = process.cwd() === process.env.MOD_LAUNCH_DIR && process.env.HARNESS_WORKSPACE_PATH === process.env.EXPECTED_WORKSPACE',
+        'if (!contextMatches) process.exit(12)',
+        "if (process.argv.includes('--help')) process.stdout.write('--output-format <format> text, json or stream-json\\n')",
       ].join('\n'),
       'utf8',
     )
     const harness: CustomHarness = {
-      id: 'example-acp-mod',
-      displayName: 'Example ACP Mod',
-      provider: 'acp',
+      id: 'example-claude-mod',
+      displayName: 'Example Claude Mod',
+      provider: 'claude-code',
       command: process.execPath,
-      args: [server],
+      args: [cli],
       workingDirectory: launchDirectory,
       environment: {
         MOD_LAUNCH_DIR: realpathSync(launchDirectory),
@@ -53,17 +47,17 @@ describe('custom harness verification', () => {
       checks: [
         { label: 'Executable', status: 'passed' },
         { label: 'Launch context', status: 'passed' },
-        { label: 'ACP', status: 'passed' },
+        { label: 'Claude Code stream JSON', status: 'passed' },
       ],
     })
-    expect(result.checks[2]?.detail).toContain('Example ACP Mod 3.2.1')
+    expect(result.checks[2]?.detail).toContain('stream-json')
   })
 
   it('returns an actionable error for a shell-only alias', async () => {
     const result = await verifyCustomHarness({
       id: 'missing-mod',
       displayName: 'Missing Mod',
-      provider: 'pi',
+      provider: 'codex',
       command: 'this-is-only-a-shell-alias',
       args: [],
       environment: { PATH: '' },

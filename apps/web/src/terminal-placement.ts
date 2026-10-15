@@ -7,9 +7,9 @@ let sessionPlacement: TerminalPlacement | undefined
 export function readTerminalPlacement(): TerminalPlacement {
   if (sessionPlacement) return sessionPlacement
   try {
-    return localStorage.getItem(TERMINAL_PLACEMENT_KEY) === 'workspace' ? 'workspace' : 'bottom'
+    return localStorage.getItem(TERMINAL_PLACEMENT_KEY) === 'bottom' ? 'bottom' : 'workspace'
   } catch {
-    return 'bottom'
+    return 'workspace'
   }
 }
 

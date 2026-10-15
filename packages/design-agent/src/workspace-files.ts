@@ -11,7 +11,24 @@ import path from 'node:path'
 
 const MAX_ENTRIES = 25_000
 const MAX_DEPTH = 40
-const OPAQUE_DIRECTORIES = new Set(['node_modules', '.pnpm-store'])
+/**
+ * Dependency and cache trees no design reads or delivers into. Listed but never
+ * entered: a single virtualenv or Rust `target` folder exceeds the entry cap.
+ */
+const OPAQUE_DIRECTORIES = new Set([
+  'node_modules',
+  '.pnpm-store',
+  '.venv',
+  'venv',
+  '__pycache__',
+  'target',
+  '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  '.cache',
+  '.gradle',
+])
 
 export interface WorkspaceEntry {
   relative: string
@@ -76,6 +93,7 @@ export function containedWorkspaceFile(
   workspacePath: string,
   relativePath: string,
   label: string,
+  allowDirectory = false,
 ): string {
   const normalized = normalizeWorkspaceFile(relativePath)
   if (!normalized) throw new Error(`${label} must stay inside the workspace`)
@@ -90,7 +108,9 @@ export function containedWorkspaceFile(
   if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
     throw new Error(`${label} must stay inside the workspace after resolving symlinks`)
   }
-  if (!lstatSync(candidate).isFile()) throw new Error(`${label} must be a regular file`)
+  const stat = lstatSync(candidate)
+  if (!stat.isFile() && !(allowDirectory && stat.isDirectory()))
+    throw new Error(`${label} must be a regular file`)
   return candidate
 }
 

@@ -24,6 +24,21 @@ export const NATIVE_MENU_ACTIONS = [
 
 export type NativeMenuAction = (typeof NATIVE_MENU_ACTIONS)[number]
 
+/** An accelerator is a key press and follows the renderer's shortcut guards; a click does not. */
+export type NativeMenuActionSource = 'menu' | 'accelerator'
+
+export type NativeMenuActionMessage = { action: NativeMenuAction; source: NativeMenuActionSource }
+
+export function isNativeMenuActionMessage(value: unknown): value is NativeMenuActionMessage {
+  if (!isRecord(value)) return false
+  const keys = Object.keys(value)
+  return (
+    keys.length === 2 &&
+    isNativeMenuAction(value['action']) &&
+    (value['source'] === 'menu' || value['source'] === 'accelerator')
+  )
+}
+
 export type NativeMenuShortcut = {
   key: string
   primary?: boolean

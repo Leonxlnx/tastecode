@@ -92,8 +92,8 @@ export const KEYBINDING_DEFINITIONS = [
   {
     id: 'archiveSession',
     group: 'Chats',
-    label: 'Archive current chat',
-    description: 'Archive the current chat after any required safety check.',
+    label: 'Delete current chat',
+    description: 'Delete the current chat after any required safety check and the Undo window.',
     defaultShortcut: null,
   },
   {
@@ -179,24 +179,118 @@ export function createDefaultKeybindings(): Keybindings {
 
 export const DEFAULT_KEYBINDINGS = createDefaultKeybindings()
 
+export type ShortcutSurface = {
+  settingsOpen: boolean
+  onboardingPreview: boolean
+  /** The palette, rollback or a confirmation owns the keyboard. */
+  modalOpen: boolean
+}
+
+/**
+ * What an app shortcut does on the current surface. Window key presses and
+ * native menu accelerators share this, so neither bypasses an open sheet.
+ */
+export function shortcutRoute(
+  action: KeybindingId,
+  surface: ShortcutSurface,
+): 'run' | 'closeSettings' | 'showKeybinds' | 'ignore' {
+  if (surface.settingsOpen) {
+    if (action === 'settings') return 'closeSettings'
+    return action === 'keybindings' ? 'showKeybinds' : 'ignore'
+  }
+  return surface.onboardingPreview || surface.modalOpen ? 'ignore' : 'run'
+}
+
+/** Shows or hides the hidden Debug settings category. */
+export const DEBUG_SETTINGS_SHORTCUT = {
+  key: 'd',
+  primary: true,
+  alt: true,
+  shift: true,
+} as const satisfies Shortcut
+
+/** Opens find in the open chat; Thread's own key handler takes it. */
+export const FIND_IN_CHAT_SHORTCUT = { key: 'f', primary: true } as const satisfies Shortcut
+
+/** Move the open chat a turn at a time. */
+export const PREVIOUS_TURN_SHORTCUT = { key: 'arrowup', alt: true } as const satisfies Shortcut
+export const NEXT_TURN_SHORTCUT = { key: 'arrowdown', alt: true } as const satisfies Shortcut
+
+export const WORKSPACE_TOOL_SHORTCUTS = [
+  { kind: 'review', label: 'Open Review', shortcut: { key: 'g', primary: true, shift: true } },
+  { kind: 'browser', label: 'Open Browser', shortcut: { key: 't', primary: true } },
+  { kind: 'files', label: 'Open Files', shortcut: { key: 'p', primary: true, alt: true } },
+  {
+    kind: 'side-chat',
+    label: 'Open Temporary chat',
+    shortcut: { key: 's', primary: true, alt: true },
+  },
+] as const
+
+/**
+ * Who owns a chord the app's own key handlers keep for themselves. A keybind
+ * on one of these either never runs or silently takes the built-in away.
+ */
+export function reservedShortcutLabel(shortcut: Shortcut): string | undefined {
+  if (shortcut.primary && !shortcut.alt && !shortcut.shift && /^[1-9]$/.test(shortcut.key)) {
+    return 'Open recent chat'
+  }
+  if (sameShortcut(shortcut, DEBUG_SETTINGS_SHORTCUT)) return 'Debug settings'
+  if (sameShortcut(shortcut, FIND_IN_CHAT_SHORTCUT)) return 'Find in chat'
+  if (sameShortcut(shortcut, PREVIOUS_TURN_SHORTCUT)) return 'Previous turn'
+  if (sameShortcut(shortcut, NEXT_TURN_SHORTCUT)) return 'Next turn'
+  return WORKSPACE_TOOL_SHORTCUTS.find((tool) => sameShortcut(tool.shortcut, shortcut))?.label
+}
+
+type ShortcutEvent = Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'> &
+  Partial<Pick<KeyboardEvent, 'code' | 'isComposing' | 'getModifierState'>>
+
+function isShortcutInput(event: ShortcutEvent): boolean {
+  return (
+    !event.isComposing && !event.getModifierState?.('AltGraph') && !(event.metaKey && event.ctrlKey)
+  )
+}
+
+/** An Enter that confirms the field, not one that accepts an IME conversion (Japanese, Chinese, Korean). */
+export function isConfirmEnter(event: {
+  key: string
+  nativeEvent: Pick<KeyboardEvent, 'isComposing'>
+}): boolean {
+  return event.key === 'Enter' && !event.nativeEvent.isComposing
+}
+
+type ComposingKeyEvent = Pick<KeyboardEvent, 'isComposing' | 'keyCode'>
+
+/**
+ * A key the IME uses for an open composition: Escape cancels the conversion,
+ * arrows pick a candidate. Safari reports the composition's last keydown only
+ * through keyCode 229.
+ */
+export function isComposingKey(
+  event: ComposingKeyEvent | { nativeEvent: ComposingKeyEvent },
+): boolean {
+  const native = 'nativeEvent' in event ? event.nativeEvent : event
+  return native.isComposing || native.keyCode === 229
+}
+
 export function matchesShortcut(
-  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
+  event: ShortcutEvent,
   shortcut: Shortcut | null | undefined,
 ): boolean {
-  if (!shortcut) return false
+  if (!shortcut || !isShortcutInput(event)) return false
   return (
     (event.metaKey || event.ctrlKey) === Boolean(shortcut.primary) &&
     event.altKey === Boolean(shortcut.alt) &&
     event.shiftKey === Boolean(shortcut.shift) &&
-    normalizeShortcutKey(event.key) === shortcut.key
+    (normalizeShortcutKey(event.key) === shortcut.key || shortcutEventKey(event) === shortcut.key)
   )
 }
 
-export function shortcutFromKeyboardEvent(
-  event: Pick<KeyboardEvent, 'key' | 'metaKey' | 'ctrlKey' | 'altKey' | 'shiftKey'>,
-): Shortcut | undefined {
-  const key = normalizeShortcutKey(event.key)
-  if (!key || MODIFIER_KEYS.has(key)) return undefined
+export function shortcutFromKeyboardEvent(event: ShortcutEvent): Shortcut | undefined {
+  if (!isShortcutInput(event)) return undefined
+  const key = shortcutEventKey(event)
+  // An unresolved dead key would be saved as "dead" and match every dead key.
+  if (!key || key === 'dead' || MODIFIER_KEYS.has(key)) return undefined
 
   const primary = event.metaKey || event.ctrlKey
   const functionKey = /^f(?:[1-9]|1[0-9]|2[0-4])$/.test(key)
@@ -210,8 +304,18 @@ export function shortcutFromKeyboardEvent(
 }
 
 export function shortcutLabel(shortcut: Shortcut, macOS: boolean): string {
+  if (!macOS) {
+    return [
+      shortcut.primary ? 'Ctrl' : undefined,
+      shortcut.alt ? 'Alt' : undefined,
+      shortcut.shift ? 'Shift' : undefined,
+      ariaKey(shortcut.key),
+    ]
+      .filter(Boolean)
+      .join('+')
+  }
   const key = displayKey(shortcut.key)
-  const primary = shortcut.primary ? (macOS ? '⌘' : '⌃') : ''
+  const primary = shortcut.primary ? '⌘' : ''
   return `${primary}${shortcut.alt ? '⌥' : ''}${shortcut.shift ? '⇧' : ''}${key}`
 }
 
@@ -311,6 +415,29 @@ function normalizeShortcutKey(key: string): string {
   if (normalized === 'left') return 'arrowleft'
   if (normalized === 'right') return 'arrowright'
   return normalized
+}
+
+function shortcutEventKey(event: ShortcutEvent): string {
+  const key = normalizeShortcutKey(event.key)
+  // Option can produce a symbol or dead key. Store the base key so the same
+  // binding also works with Alt on Windows/Linux. Keep layout-specific letters.
+  if ((!event.altKey && !event.shiftKey) || /^[a-z]$/.test(key)) return key
+  if (/^Key[A-Z]$/.test(event.code ?? '')) return event.code!.slice(3).toLowerCase()
+  if (/^Digit[0-9]$/.test(event.code ?? '')) return event.code!.slice(5)
+  const punctuation = new Map([
+    ['Backquote', '`'],
+    ['Minus', '-'],
+    ['Equal', '='],
+    ['BracketLeft', '['],
+    ['BracketRight', ']'],
+    ['Backslash', '\\'],
+    ['Semicolon', ';'],
+    ['Quote', "'"],
+    ['Comma', ','],
+    ['Period', '.'],
+    ['Slash', '/'],
+  ])
+  return punctuation.get(event.code ?? '') ?? key
 }
 
 function normalizedShortcut(shortcut: {

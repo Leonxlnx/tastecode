@@ -7,7 +7,14 @@ import type {
   UserInputRequest,
 } from '@harness/contracts'
 
-export type TurnTiming = Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
+export type TurnLifecycle = {
+  startedAt?: number
+  completedAt?: number
+  /** The turn ended with an interrupted status: the user stopped it. */
+  interrupted?: true
+}
+
+export type TurnTiming = Readonly<Record<string, TurnLifecycle>>
 
 export type LiveItemUpdate = {
   item: Item
@@ -40,6 +47,8 @@ export type ThreadState = {
   userInputs: UserInputRequest[]
   /** Automatic approval reviews, upserted by their stable provider id. */
   reviews: Record<string, ApprovalReview>
+  /** Opaque server cursor for turns older than `items`; absent once history is complete. */
+  olderCursor?: string | undefined
 }
 
 export const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()

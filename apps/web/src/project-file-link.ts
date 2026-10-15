@@ -107,6 +107,27 @@ function resourceEndAt(
   return { scanned: scanEnd - openingParenthesis }
 }
 
+/**
+ * Streamdown's hardener resolves a path-relative link against a dummy origin, so
+ * `./src/a.ts` became `/src/a.ts` and `src/a.ts` was blocked. Keep it under the
+ * preserved prefix so it can be resolved against the project or repository.
+ */
+export function preserveRelativeLink(href: string): string {
+  if (href.startsWith('//')) return `https:${href}`
+  return isRelativeHref(href) ? `${INTERNAL_FILE_PREFIX}${encodeFileHref(href)}` : href
+}
+
+/** The path-relative destination behind a preserved link. */
+export function preservedRelativeLink(href: string): string | undefined {
+  const original = decodePreservedHref(href)
+  return original !== undefined && isRelativeHref(original) ? original : undefined
+}
+
+// A bare `.` or `..` would collapse the preserved prefix as a URL dot segment.
+function isRelativeHref(href: string): boolean {
+  return href !== '' && !/^(?:[a-z][a-z\d+.-]*:|[/\\#?]|\.\.?$)/i.test(href)
+}
+
 function encodeFileHref(href: string): string {
   return encodeURIComponent(href).replace(/[()]/g, (character) =>
     character === '(' ? '%28' : '%29',
@@ -118,16 +139,29 @@ export function projectFileReference(
   projectPath: string,
 ): ProjectFileReference | undefined {
   const original = decodePreservedHref(href) ?? href
-  if (!looksLocal(original)) return undefined
+  const relative = isRelativeHref(original)
+  if (!relative && !looksLocal(original)) return undefined
 
   const decoded = decodeLocalPath(original)
   if (decoded.kind === 'blocked') return decoded
 
   const candidate = stripSourceLocation(decoded.path)
+  if (relative) return relativeReference(candidate, projectPath)
   if (isWindowsRoot(projectPath)) return windowsReference(candidate, projectPath)
   if (projectPath.startsWith('/')) return posixReference(candidate, projectPath)
   if (projectPath.startsWith('~/')) return homeRelativePosixReference(candidate, projectPath)
   return { kind: 'blocked', path: candidate, reason: 'The selected project path is invalid' }
+}
+
+function relativeReference(
+  candidate: string,
+  projectPath: string,
+): ProjectFileReference | undefined {
+  if (isWindowsRoot(projectPath))
+    return windowsReference(`${projectPath}\\${candidate}`, projectPath)
+  if (projectPath.startsWith('/')) return posixReference(`${projectPath}/${candidate}`, projectPath)
+  // A home-relative project has no absolute root here to reveal the file from.
+  return undefined
 }
 
 function decodePreservedHref(href: string): string | undefined {
@@ -183,6 +217,8 @@ function isWindowsRoot(value: string): boolean {
 }
 
 function windowsReference(candidate: string, projectPath: string): ProjectFileReference {
+  // Models also emit URL-style drive paths outside a file: URL.
+  if (/^\/[a-z]:[\\/]/i.test(candidate)) candidate = candidate.slice(1)
   if (candidate.startsWith('\\\\') || candidate.startsWith('//')) {
     return { kind: 'blocked', path: candidate, reason: 'Network file links are not allowed' }
   }

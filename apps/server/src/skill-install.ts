@@ -1,4 +1,4 @@
-import { constants } from 'node:fs'
+import { constants, statSync } from 'node:fs'
 import { access, cp, lstat, mkdir, readdir, realpath, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
@@ -11,6 +11,34 @@ function inside(root: string, candidate: string): boolean {
     relative === '' ||
     (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`))
   )
+}
+
+/**
+ * Whether two spellings name the same folder. A provider may report a path
+ * with different drive or directory casing; string comparison would call a
+ * successful install missing. Filesystem identity avoids folding case on a
+ * case-sensitive volume.
+ */
+export function sameSkillFolder(reported: string, destination: string): boolean {
+  if (path.resolve(reported) === path.resolve(destination)) return true
+  const left = statSync(reported, { bigint: true, throwIfNoEntry: false })
+  const right = statSync(destination, { bigint: true, throwIfNoEntry: false })
+  if (!left || !right) return false
+  // Some Windows volumes report no file index; their folders are case-insensitive.
+  if (left.ino === 0n || right.ino === 0n)
+    return (
+      process.platform === 'win32' &&
+      path.resolve(reported).toLowerCase() === path.resolve(destination).toLowerCase()
+    )
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+/** Whether a reported file lies below the installed folder, under any spelling. */
+export function insideSkillFolder(reported: string, destination: string): boolean {
+  for (let folder = path.dirname(path.resolve(reported)); ; folder = path.dirname(folder)) {
+    if (sameSkillFolder(folder, destination)) return true
+    if (path.dirname(folder) === folder) return false
+  }
 }
 
 async function exists(candidate: string): Promise<boolean> {

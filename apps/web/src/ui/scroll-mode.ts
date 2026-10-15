@@ -15,6 +15,12 @@ export type ScrollMode =
   | 'anchor-turn'
   /** The user took over. Nothing moves on its own. */
   | 'free'
+  /**
+   * Details the user opened pushed the end out of view. Nothing moves on its
+   * own, but they never scrolled away, so there is nothing to jump back to
+   * until new content arrives below.
+   */
+  | 'reveal-hold'
 
 /** Distance from the bottom, in px, still counted as "at the bottom". */
 const AT_BOTTOM_SLACK = 80

@@ -133,6 +133,8 @@ export const PullRequestReviewThreadSchema = z.object({
   resolved: z.boolean(),
   outdated: z.boolean(),
   comments: z.array(PullRequestCommentSchema),
+  /** Later replies exist on GitHub beyond the comments returned here. */
+  commentsTruncated: z.boolean().optional(),
 })
 export type PullRequestReviewThread = z.infer<typeof PullRequestReviewThreadSchema>
 
@@ -163,6 +165,8 @@ export const PullRequestDetailSchema = PullRequestListItemSchema.extend({
   reviews: z.array(PullRequestReviewSchema),
   reviewThreads: z.array(PullRequestReviewThreadSchema),
   reviewThreadsTruncated: z.boolean(),
+  /** The conversation read failed; reviewThreads is empty rather than complete. */
+  reviewThreadsUnavailable: z.boolean().optional(),
   permissions: z.object({
     canPush: z.boolean(),
     canAdmin: z.boolean(),
@@ -190,6 +194,8 @@ export const PullRequestFileSchema = z.object({
 export type PullRequestFile = z.infer<typeof PullRequestFileSchema>
 
 export const PullRequestFilesResultSchema = z.object({
+  headRefOid: z.string().min(1),
+  baseRefOid: z.string().min(1),
   files: z.array(PullRequestFileSchema),
   page: z.number().int().positive(),
   hasMore: z.boolean(),
@@ -227,6 +233,8 @@ export const PullRequestActionSchema = z.discriminatedUnion('type', [
     type: z.literal('review'),
     verdict: z.enum(['approve', 'comment', 'request_changes']),
     body: z.string().max(1_000_000),
+    /** Head commit the user inspected; GitHub binds the review to it. */
+    commitId: z.string().min(1),
   }),
   z.object({
     type: z.literal('inline_comment'),
@@ -282,10 +290,14 @@ export const PullRequestActionSchema = z.discriminatedUnion('type', [
     type: z.literal('merge'),
     method: z.enum(['merge', 'rebase', 'squash']),
     deleteBranch: z.boolean(),
+    /** Head commit the user reviewed; the merge fails if the branch has moved since. */
+    expectedHeadOid: z.string().min(1),
   }),
   z.object({
     type: z.literal('enable_auto_merge'),
     method: z.enum(['merge', 'rebase', 'squash']),
+    /** Head commit the user reviewed; auto-merge is refused if the branch has moved since. */
+    expectedHeadOid: z.string().min(1),
   }),
   z.object({ type: z.literal('disable_auto_merge') }),
 ])
