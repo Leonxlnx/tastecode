@@ -1927,7 +1927,9 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    const restore = screen.getByRole('button', { name: 'Revert to before response' })
+    const restore = screen.getByRole('button', { name: 'Restore to before this turn' })
+    // The checkpoint predates the prompt; restoring also removes this reply.
+    expect(restore.title).toBe('Restore to before this turn')
     // A history clock, not the circular arrow that reads as "regenerate".
     expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
     expect(restore.querySelector('.tabler-icon-rotate')).toBeNull()
@@ -1955,16 +1957,16 @@ describe('completed activity disclosure', () => {
     }
     const view = render(<Thread {...props} />)
     expect(view.container.querySelector('.activity--working')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Restore to before this turn' })).toBeNull()
 
     view.rerender(<Thread {...props} stopping />)
 
     expect(view.container.querySelector('.activity--working')).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Revert to before response' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Restore to before this turn' })).toBeNull()
 
     act(() => store.publish({ ...store.getSnapshot(), running: false, activeTurn: undefined }))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to before this turn' }))
     expect(props.onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
@@ -2227,7 +2229,8 @@ describe('thread message actions', () => {
       />,
     )
 
-    const restore = screen.getByRole('button', { name: 'Revert to before prompt' })
+    const restore = screen.getByRole('button', { name: 'Restore to before this prompt' })
+    expect(restore.title).toBe('Restore to before this prompt')
     expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
     fireEvent.click(restore)
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
@@ -2267,7 +2270,7 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore to before this prompt' }))
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 })

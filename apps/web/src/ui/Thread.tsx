@@ -1497,8 +1497,8 @@ const Row = memo(function Row({
               <button
                 type="button"
                 onClick={() => onRevertCheckpoint(checkpoint)}
-                aria-label="Revert to before prompt"
-                title="Revert"
+                aria-label="Restore to before this prompt"
+                title="Restore to before this prompt"
               >
                 <History aria-hidden />
               </button>
@@ -2787,8 +2787,8 @@ function ResponseActions({
         <button
           type="button"
           onClick={() => onRevertCheckpoint(checkpoint)}
-          aria-label="Revert to before response"
-          title="Revert"
+          aria-label="Restore to before this turn"
+          title="Restore to before this turn"
         >
           <History aria-hidden />
         </button>
