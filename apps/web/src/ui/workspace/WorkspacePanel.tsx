@@ -12,6 +12,7 @@ import {
   type PointerEvent,
 } from 'react'
 import {
+  IconArrowLeft as ArrowLeft,
   IconFileDiff as FileDiff,
   IconFolderOpen as FolderOpen,
   IconWorld as Globe2,
@@ -398,6 +399,13 @@ function WorkspacePanelComponent(props: {
       >
         <X size={16} aria-hidden />
       </button>
+      {bottom ? null : (
+        // Shown only in the narrow layout, where the open panel covers the chat.
+        <button type="button" className="workspace-panel__back" onClick={hidePanel}>
+          <ArrowLeft size={14} aria-hidden />
+          <span>Back to chat</span>
+        </button>
+      )}
       <WorkspaceTabs
         tabs={tabLabels}
         activeId={tool?.id}
