@@ -174,6 +174,7 @@ import type {
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
 import { restoreWorkspacePanelWidth } from './ui/workspace/workspace-panel-width.js'
+import { useWindowChrome } from './window-chrome.js'
 import { backdropColorScheme } from './theme-colors.js'
 import {
   readProfileIdentityPreferences,
@@ -205,6 +206,7 @@ import {
 const SERVER_BASE_URL = serverBaseUrl(import.meta.env.VITE_HARNESS_SERVER_URL)
 const SETUP_KEY = 'harness.provider'
 const ONBOARDING_KEY = 'harness.onboarding.v1'
+const DRAFT_REPLACED_NOTICE = 'Your draft was replaced.'
 const PROVIDER_IDS = ['claude-code', 'codex', 'grok'] as const satisfies readonly ProviderId[]
 const PROVIDER_ID_SET = new Set<ProviderId>(PROVIDER_IDS)
 /** Which custom harness source was chosen. The key names predate custom
@@ -600,6 +602,9 @@ export function App() {
     [threadFrameStore],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
+  const [historyFailure, setHistoryFailure] = useState<
+    { threadId: string; message: string } | undefined
+  >()
   const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
   const pendingSession = useRef<
@@ -718,6 +723,12 @@ export function App() {
   const providerDefaultsRef = useRef(providerDefaults)
   providerDefaultsRef.current = providerDefaults
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
+  /** The last mode each opened chat showed, so reopening it never waits on history. */
+  const threadApprovals = useRef(new Map<string, ApprovalMode>())
+  useEffect(() => {
+    if (activeId && activeThreadApproval)
+      threadApprovals.current.set(activeId, activeThreadApproval)
+  }, [activeId, activeThreadApproval])
   const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
   const approvalChanges = useRef(new Map<string, Promise<void>>())
   const [collapsed, setCollapsed] = useState(
@@ -791,6 +802,8 @@ export function App() {
   // session becoming durable keeps this key and preserves its live view.
   const [threadEntryKey, setThreadEntryKey] = useState(0)
   const [notice, setNotice] = useState<string | undefined>()
+  /** The unsent draft an "Edit as new prompt" replaced, offered back in the notice. */
+  const [replacedDraft, setReplacedDraft] = useState<{ owner: string; text: string } | undefined>()
   const [actionError, setActionError] = useState<ComposerError>()
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
@@ -1000,20 +1013,29 @@ export function App() {
       (activeModelSource && !sourceHasCatalogModels))
       ? implicitChoice
       : undefined
-  const selectedModelChoice =
+  const resolvedModelChoice =
     selectableModels.find((choice) => choice.key === modelId) ??
     selectableModels.find((choice) => choice.key === preferredModelKey) ??
-    selectableModels.find((choice) => modelSource(choice) === preferredModelSource) ??
+    selectableModels.find((choice) => modelSource(choice) === preferredModelSource)
+  // The preferred source has not listed its models yet, so the model a send
+  // would use is not known. The placeholder below keeps that source, but it is
+  // only the provider default: the picker waits and Send stays off instead of
+  // starting a turn the label does not describe.
+  const modelChoicePending = !resolvedModelChoice && preferredSourcePending
+  const selectedModelChoice =
+    resolvedModelChoice ??
     (preferredSourcePending ? selectableImplicitChoice : undefined) ??
     selectableModels[0] ??
     selectableImplicitChoice
-  const sendAvailability = resolveSendAvailability({
-    catalog: catalogAvailability,
-    activeProvider: activeSession?.provider,
-    selectedChoice: selectedModelChoice,
-    providerStatuses,
-    accountCheck,
-  })
+  const sendAvailability = modelChoicePending
+    ? 'loading'
+    : resolveSendAvailability({
+        catalog: catalogAvailability,
+        activeProvider: activeSession?.provider,
+        selectedChoice: selectedModelChoice,
+        providerStatuses,
+        accountCheck,
+      })
   // One effective setup drives both the picker and requests. State can briefly
   // contain values from storage or the model that was just hidden; resolving
   // in render prevents that transition from leaking into an immediate send.
@@ -1127,6 +1149,11 @@ export function App() {
   usePersistedSettingChange(
     appearanceKey(GLASS_KEY, 'dark'),
     String(appearancePreferences.dark.glass),
+  )
+  // After the theme, backdrop and glass above have reached the document.
+  useWindowChrome(
+    theme,
+    `${backdropPreference}|${sidebarGlass}|${settingsOpen}|${onboardingMounted}|${providerLoginTerminal !== undefined}`,
   )
 
   useEffect(() => {
@@ -2258,6 +2285,7 @@ export function App() {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
         if (loaded && activeIdRef.current === threadId) {
           setActiveThreadApproval(loaded.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === threadId ? undefined : current))
           setProjects((current) => updateSession(current, threadId, markSessionRead))
         }
         return loaded?.authority
@@ -2266,6 +2294,27 @@ export function App() {
       }
     },
     [threadController, pruneThreadStateCache],
+  )
+
+  /** Read an opened chat's transcript. An empty failed read is shown in the thread. */
+  const readOpenedHistory = useCallback(
+    async (id: string, afterSeq: number | undefined) => {
+      setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+      setLoadingThreadId(id)
+      try {
+        await loadHistory(id, afterSeq)
+      } catch (error) {
+        if (activeIdRef.current !== id) return
+        const message = error instanceof Error ? error.message : String(error)
+        // Without its history the mode is unknown; the server's default is Ask.
+        setActiveThreadApproval((current) => current ?? 'ask')
+        if (threadController.snapshot(id)?.items.length) reportError(message)
+        else setHistoryFailure({ threadId: id, message })
+      } finally {
+        setLoadingThreadId((current) => (current === id ? undefined : current))
+      }
+    },
+    [loadHistory, reportError, threadController],
   )
 
   resync.current = (retry = true) => {
@@ -2321,7 +2370,10 @@ export function App() {
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
-        if (loaded) setActiveThreadApproval(recovered.approval ?? 'ask')
+        if (loaded) {
+          setActiveThreadApproval(recovered.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+        }
       }
       if (!loaded) {
         workspaceIdleProbe.current.unknownQueues.add(id)
@@ -2792,6 +2844,9 @@ export function App() {
   // transition. Requests already use the effective values above, so even an
   // interaction before this effect runs cannot observe the stale setup.
   useEffect(() => {
+    // The provider-default placeholder must not replace a stored model that
+    // its source is still about to list.
+    if (modelChoicePending) return
     if (!selectedModelChoice) {
       setModelId(undefined)
       setEffort(undefined)
@@ -2820,6 +2875,7 @@ export function App() {
     selectedEffort,
     selectedServiceTier,
     commitModelChoice,
+    modelChoicePending,
   ])
 
   const selectModel = useCallback(
@@ -3791,7 +3847,8 @@ export function App() {
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
-      setActiveThreadApproval(undefined)
+      setActiveThreadApproval(threadApprovals.current.get(id))
+      setHistoryFailure(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
@@ -3814,25 +3871,22 @@ export function App() {
       // know, so asking for its history fails. The start adopts the real id.
       if (id.startsWith('pending:')) return
 
-      setLoadingThreadId(id)
-      try {
-        await loadHistory(id, cached ? threadController.cursor(id) : undefined)
-      } catch (error) {
-        if (activeIdRef.current === id)
-          reportError(error instanceof Error ? error.message : String(error))
-      } finally {
-        setLoadingThreadId((current) => (current === id ? undefined : current))
-      }
+      await readOpenedHistory(id, cached ? threadController.cursor(id) : undefined)
     },
     [
       visibleModels,
       selectedModelChoice,
       commitModelChoice,
-      loadHistory,
+      readOpenedHistory,
       transport,
       cancelQueuedArchive,
     ],
   )
+
+  const retryOpenedHistory = useCallback(() => {
+    const id = activeIdRef.current
+    if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
+  }, [readOpenedHistory])
 
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
@@ -3923,10 +3977,30 @@ export function App() {
     [transport, threadController, loadHistory],
   )
   const editMessage = useCallback((text: string) => {
-    threadController.editDraft(threadController.draftOwner, { text })
-    setComposerDraft((current) => ({ text, request: (current?.request ?? 0) + 1 }))
+    const owner = threadController.draftOwner
+    const draft = threadController.draft(owner).text
+    threadController.editDraft(owner, { text })
+    setComposerDraft((current) => ({ text, undoable: true, request: (current?.request ?? 0) + 1 }))
     setComposerFocusRequest((request) => request + 1)
+    // An unsent draft must not vanish without a way back.
+    if (draft.trim() && draft !== text) {
+      setReplacedDraft({ owner, text: draft })
+      setNotice(DRAFT_REPLACED_NOTICE)
+    }
   }, [])
+  const restoreReplacedDraft = useCallback(() => {
+    const replaced = replacedDraft
+    setNotice(undefined)
+    setReplacedDraft(undefined)
+    if (!replaced || replaced.owner !== threadController.draftOwner) return
+    threadController.editDraft(replaced.owner, { text: replaced.text })
+    setComposerDraft((current) => ({
+      text: replaced.text,
+      undoable: true,
+      request: (current?.request ?? 0) + 1,
+    }))
+    setComposerFocusRequest((request) => request + 1)
+  }, [replacedDraft])
   const revertCheckpoint = useCallback(
     (checkpoint: Checkpoint) => {
       setRollbackInspection(undefined)
@@ -5290,6 +5364,12 @@ export function App() {
                           errorsInComposer
                           stopping={stopping}
                           loading={loadingThreadId === activeId}
+                          loadFailure={
+                            historyFailure?.threadId === activeId
+                              ? historyFailure.message
+                              : undefined
+                          }
+                          onRetryLoad={retryOpenedHistory}
                           projectPath={activePath}
                           threadId={activeId}
                           transport={transport}
@@ -5337,6 +5417,8 @@ export function App() {
                       models={selectableModels}
                       modelsLoaded={modelsLoaded}
                       modelId={selectedModelChoice?.key}
+                      modelChoice={selectedModelChoice}
+                      modelPending={modelChoicePending}
                       effort={selectedEffort}
                       serviceTier={selectedServiceTier}
                       usage={thread.usage}
@@ -5348,6 +5430,7 @@ export function App() {
                       voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
                       voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
                       disabled={stopping}
+                      placeholder={stopping ? 'Stopping…' : undefined}
                       sendAvailability={sendAvailability}
                       errors={composerErrors}
                       errorsVisible={!settingsOpen && surface === 'chat'}
@@ -5676,9 +5759,15 @@ export function App() {
         onDismiss={() => {
           setNotice(undefined)
           setUndoRestore(undefined)
+          setReplacedDraft(undefined)
         }}
       >
         <span className="notice__text">{notice}</span>
+        {notice === DRAFT_REPLACED_NOTICE && replacedDraft ? (
+          <button className="ghost" onClick={restoreReplacedDraft}>
+            Restore
+          </button>
+        ) : null}
         {undoRestore ? (
           <button className="ghost" onClick={() => void reverseRestore()}>
             Undo restore
