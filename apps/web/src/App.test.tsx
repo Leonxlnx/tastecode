@@ -2772,7 +2772,11 @@ describe('web client', () => {
     fireEvent.pointerEnter(launcher)
     expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.click(launcher)
-    await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy())
+    // The first open imports the workspace panel chunk, which vitest transforms
+    // cold; that alone can take longer than waitFor's 1 s default.
+    await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy(), {
+      timeout: 10_000,
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
     expect(document.querySelector('.workspace-panel')).toBeTruthy()
