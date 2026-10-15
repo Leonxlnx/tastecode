@@ -219,7 +219,9 @@ describe('streamed Markdown renders', () => {
     expect(streamdownRender).not.toHaveBeenCalled()
 
     rendered.rerender(<Markdown text={text} />)
-    await waitFor(() => expect(streamdownRender).toHaveBeenCalledTimes(1))
+    // The first completion imports the rich renderer chunk, which vitest
+    // transforms cold; that alone can take longer than waitFor's 1 s default.
+    await waitFor(() => expect(streamdownRender).toHaveBeenCalledTimes(1), { timeout: 10_000 })
     expect(shikiHighlight).toHaveBeenCalledTimes(1)
     expect(streamdownRender.mock.calls[0]?.[0].parseIncompleteMarkdown).toBe(false)
   })
