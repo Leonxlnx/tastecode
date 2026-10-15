@@ -6,6 +6,7 @@ import {
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
+  lastSentPrompt,
   prependOlderHistory,
   reduce,
   reduceDeltas,
@@ -1206,5 +1207,23 @@ describe('composer error state', () => {
     }
     expect(reduce(live, turn).error).toBeUndefined()
     expect(reduceEventLog(replay, [{ seq: 3, event: turn }]).error).toBeUndefined()
+  })
+})
+
+describe('last sent prompt', () => {
+  it('finds the newest user prompt with text and skips replies and image-only prompts', () => {
+    const state: ThreadState = {
+      ...emptyThread,
+      items: [
+        item({ id: 'u1', role: 'user', status: 'completed', text: 'Fix the build' }),
+        item({ id: 'a1', status: 'completed', text: 'Fixed.' }),
+        item({ id: 'u2', role: 'user', status: 'completed', text: 'Now add a test' }),
+        item({ id: 'u3', role: 'user', status: 'completed', attachments: ['shot.png'] }),
+        item({ id: 'a2', status: 'started', text: 'Working' }),
+      ],
+    }
+    expect(lastSentPrompt(state)).toBe('Now add a test')
+    expect(lastSentPrompt(emptyThread)).toBeUndefined()
+    expect(lastSentPrompt(appendUserMessage(emptyThread, 'Just sent'))).toBe('Just sent')
   })
 })
