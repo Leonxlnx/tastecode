@@ -250,8 +250,8 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
   })
 
-  it('draws the card avatar as the generated seal unless a photo is set', () => {
-    const view = (profileIdentity: ProfileIdentityPreferences) => (
+  it('draws the card avatar as the photo, else the generated seal for the profile', () => {
+    const view = (profileIdentity: ProfileIdentityPreferences | undefined) => (
       <Sidebar
         projects={[]}
         activeProjectPath={undefined}
@@ -278,18 +278,24 @@ describe('Sidebar chat actions', () => {
       />
     )
     const avatar = () => document.querySelector<HTMLElement>('.account__avatar')!
+    const seal = () => avatar().querySelector<SVGSVGElement>('svg.generated-avatar')
 
     const rendered = render(view({ displayName: 'Alex Rivera' }))
-    const seal = avatar().querySelector('svg.generated-avatar')
-    expect(seal).not.toBeNull()
-    const fromName = seal!.innerHTML
+    expect(seal()).not.toBeNull()
+    expect(avatar().textContent).toBe('')
+    const alex = seal()!.innerHTML
 
     // The card strikes the same seal as the profile page: the chosen seed wins over the name.
     rendered.rerender(view({ displayName: 'Alex Rivera', avatarSeed: 'tide' }))
-    expect(avatar().querySelector('svg.generated-avatar')!.innerHTML).not.toBe(fromName)
+    expect(seal()!.innerHTML).not.toBe(alex)
 
+    // Another name draws another seal; a profile without one still gets a seal.
+    rendered.rerender(view({ displayName: 'Leon' }))
+    expect(seal()!.innerHTML).not.toBe(alex)
     rendered.rerender(view({ displayName: '' }))
-    expect(avatar().querySelector('svg.generated-avatar')).not.toBeNull()
+    expect(seal()).not.toBeNull()
+    rendered.rerender(view(undefined))
+    expect(seal()).not.toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
 
     rendered.rerender(
@@ -298,7 +304,7 @@ describe('Sidebar chat actions', () => {
     expect(avatar().querySelector('img')?.getAttribute('src')).toBe(
       'data:image/png;base64,iVBORw0KGgo=',
     )
-    expect(avatar().querySelector('svg.generated-avatar')).toBeNull()
+    expect(seal()).toBeNull()
   })
 
   it('mounts a large project catalog in bounded idle batches', () => {
