@@ -1,0 +1,76 @@
+/* The context ring beside the model picker. It only renders once a provider
+   reports a context window, so it loads with its component, not at startup. */
+
+.context-usage {
+  position: relative;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  place-items: center;
+  border-radius: var(--r-circle);
+  outline: none;
+}
+
+.context-usage svg {
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.context-usage circle {
+  fill: none;
+  stroke-width: 2.25;
+}
+
+.context-usage__track {
+  stroke: var(--line-strong);
+}
+
+.context-usage__fill {
+  stroke: var(--text-2);
+  stroke-linecap: round;
+  stroke-dasharray: var(--context-used) 100;
+  /* --dur-med does not exist: the ring used to snap between percentages. */
+  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
+}
+
+.context-usage__tooltip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 40;
+  display: grid;
+  width: max-content;
+  max-width: 190px;
+  gap: 1px;
+  padding: 5px 8px;
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-flyout);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 90ms var(--ease-out);
+}
+
+.context-usage__tooltip strong {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 550;
+}
+
+.context-usage:focus-visible .context-usage__tooltip {
+  opacity: 1;
+  transition: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .context-usage:hover .context-usage__tooltip {
+    opacity: 1;
+    transition-duration: 140ms;
+  }
+}
