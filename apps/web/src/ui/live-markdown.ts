@@ -79,14 +79,15 @@ const TABLE_DELIMITER_CELL = /^(:?)-+(:?)$/
 const LINK_DESTINATION =
   /^[ \t]*(?:<([^<>\n]*)>|([^\s<]*))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/
 
-/** Characters a GFM delimiter row (`| --- | :-: |`) is made of. */
+/** Characters a GFM delimiter row (`| --- | :-: |`) is made of, CRLF line end included. */
 function isTableDelimiterCharacter(character: string): boolean {
   return (
     character === '|' ||
     character === '-' ||
     character === ':' ||
     character === ' ' ||
-    character === '\t'
+    character === '\t' ||
+    character === '\r'
   )
 }
 
