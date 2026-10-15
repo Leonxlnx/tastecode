@@ -251,6 +251,21 @@ function WorkspacePanelComponent(props: {
     props.onClose()
   }, [props.onClose, props.onProviderLoginClose])
 
+  // The right panel's X hides it like the layout toggle: every tab, browser
+  // page and running terminal stays mounted and comes back on the next open.
+  // A provider login is not one of the user's tabs; its owner closes it, and
+  // the sign-in keeps running without it.
+  const hidePanel = useCallback(() => {
+    const hadFocus = Boolean(panelElement.current?.contains(document.activeElement))
+    for (const tab of tabsRef.current) {
+      if (tab.kind === 'provider-login') props.onProviderLoginClose?.(tab.requestId)
+    }
+    props.onClose()
+    // The hidden panel turns inert, which would drop focus to the page. Hand
+    // it to the toggle that brings the panel back.
+    if (hadFocus) document.querySelector<HTMLElement>('.panel-toggles__workspace')?.focus()
+  }, [props.onClose, props.onProviderLoginClose])
+
   const closeTab = useCallback(
     (id: string) => {
       const current = tabsRef.current.find((tab) => tab.id === id)
@@ -377,8 +392,9 @@ function WorkspacePanelComponent(props: {
       <button
         type="button"
         className="workspace-panel__close"
-        aria-label={bottom ? 'Close bottom panel' : 'Close right panel'}
-        onClick={closeTool}
+        aria-label={bottom ? 'Close bottom panel' : 'Hide right panel'}
+        title={bottom ? undefined : 'Hide panel'}
+        onClick={bottom ? closeTool : hidePanel}
       >
         <X size={16} aria-hidden />
       </button>
