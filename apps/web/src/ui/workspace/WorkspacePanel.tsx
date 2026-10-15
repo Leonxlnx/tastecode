@@ -530,10 +530,7 @@ function WorkspacePanelComponent(props: {
 }
 
 /** The sizes a panel can take inside its host right now: the chat keeps its minimum width. */
-function panelSizeBounds(
-  layout: HTMLElement | null,
-  bottom: boolean,
-): { min: number; max: number } {
+function panelSizeBounds(layout: HTMLElement | null, bottom: boolean) {
   if (bottom) {
     return {
       min: 200,
