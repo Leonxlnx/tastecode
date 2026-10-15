@@ -8,11 +8,14 @@ import {
   type MethodName,
   type ProviderHistorySource,
   type ProviderId,
+  type ProviderStatus,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
+import type { FeedbackConfig } from './feedback-config.js'
+import { FeedbackService } from './feedback.js'
 import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
@@ -64,6 +67,8 @@ export function startServer(
     host?: string
     accessToken?: string | undefined
     rendererOrigin?: string
+    /** Resolved by the entry point, which also removes it from the environment. */
+    feedback?: FeedbackConfig
   } = {},
 ) {
   applyDesktopPath()
@@ -171,6 +176,26 @@ export function startServer(
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
   })
   reportStartupMilestone('server-orchestrator-ready')
+  let providerStatuses: readonly ProviderStatus[] = []
+  const feedback = new FeedbackService({
+    config: options.feedback,
+    ledger: {
+      read: () => store.feedbackLedger(),
+      write: (value) => store.setFeedbackLedger(value),
+    },
+    appVersion: process.env['HARNESS_APP_VERSION'],
+    knownPaths: (threadId) => {
+      const thread = threadId ? store.thread(threadId) : undefined
+      return [
+        ...store.projects().map((project) => project.path),
+        ...(thread?.worktreePath ? [thread.worktreePath] : []),
+      ]
+    },
+    providerLabel: (provider) => {
+      const status = providerStatuses.find((entry) => entry.id === provider)
+      return status ? [status.displayName, status.version].filter(Boolean).join(' ') : undefined
+    },
+  })
   const checkpointProtection = orchestrator.protectStoredCheckpoints()
   const projectList = createProjectListProjector({
     includeDefaults: process.env['HARNESS_PROJECT_LIST_INCLUDE_DEFAULTS'] === '1',
@@ -421,6 +446,15 @@ export function startServer(
       case 'system.updateCheck':
         return checkForUpdates()
 
+      case 'feedback.status':
+        return feedback.status()
+
+      case 'feedback.preview':
+        return feedback.preview(parseParams(method, params))
+
+      case 'feedback.submit':
+        return feedback.submit(parseParams(method, params))
+
       case 'search.sessions':
         return store.searchSessions(parseParams(method, params))
 
@@ -478,8 +512,11 @@ export function startServer(
       case 'pullRequests.image':
         return (await pullRequestService()).images.image(parseParams(method, params).url)
 
-      case 'providers.list':
-        return { providers: await (await providerService).detectProviders() }
+      case 'providers.list': {
+        const providers = await (await providerService).detectProviders()
+        providerStatuses = providers
+        return { providers }
+      }
 
       case 'providers.contextSettings':
         return orchestrator.contextSettings()
