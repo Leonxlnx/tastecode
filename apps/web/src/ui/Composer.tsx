@@ -460,6 +460,10 @@ function ComposerComponent(props: {
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
   modelId: string | undefined
+  /** The choice a send uses. The picker shows it instead of resolving `modelId` again. */
+  modelChoice?: ModelChoice | undefined
+  /** The preferred source has not listed its models, so no model is known yet. */
+  modelPending?: boolean
   effort: string | undefined
   serviceTier: string | undefined
   usage?: Usage | undefined
@@ -2022,11 +2026,14 @@ function ComposerComponent(props: {
                   <ContextUsage usage={props.usage} />
                 ) : null}
 
-                {voiceState === 'idle' && props.models.length > 0 ? (
+                {voiceState === 'idle' && props.modelPending ? (
+                  <ModelTriggerSkeleton />
+                ) : voiceState === 'idle' && props.models.length > 0 ? (
                   <Suspense fallback={<ModelTriggerSkeleton />}>
                     <ModelSelector
                       models={props.models}
                       modelId={props.modelId}
+                      choice={props.modelChoice}
                       effort={props.effort}
                       serviceTier={props.serviceTier}
                       // The active turn already captured its settings. Changes
@@ -2091,7 +2098,15 @@ function ComposerComponent(props: {
                         }`}
                         onClick={showStop ? props.onInterrupt : () => submit()}
                         disabled={showStop ? Boolean(props.stopping) : sendDisabled}
-                        title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
+                        title={
+                          showStop
+                            ? props.stopping
+                              ? 'Stopping…'
+                              : 'Stop'
+                            : props.modelPending
+                              ? 'Loading models…'
+                              : submitLabel
+                        }
                         aria-label={
                           showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
                         }
