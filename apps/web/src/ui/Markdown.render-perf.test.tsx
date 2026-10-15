@@ -163,6 +163,85 @@ describe('streamed Markdown renders', () => {
     expect(rendered.container.querySelector('pre')?.textContent).toBe('x'.repeat(64 * 1024) + 'y')
   })
 
+  it('streams a long table row by row without rebuilding finished rows', () => {
+    const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
+    const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')
+    let text = '| id | name | state |\n| --- | --- | ---: |\n'
+    let version = 0
+    const rendered = render(<Markdown text={text} streaming />)
+    const stream = (delta: string) => {
+      text += delta
+      version += 1
+      rendered.rerender(
+        <Markdown
+          text={text}
+          streaming
+          liveUpdate={{ kind: 'append', text: delta }}
+          updateVersion={version}
+        />,
+      )
+    }
+    const root = rendered.container.querySelector('[data-streaming-markdown]')!
+    expect(root.querySelectorAll('thead th')).toHaveLength(3)
+
+    replace.mockClear()
+    let firstRow: Element | undefined
+    for (let row = 0; row < 300; row += 1) {
+      stream(`| ${row} | item`)
+      stream(` ${row} | ok`)
+      // A row whose line has not ended yet is held back, never shown as pipes.
+      expect(root.querySelectorAll('tbody tr')).toHaveLength(row)
+      expect(root.textContent).not.toContain('|')
+      stream(' |\n')
+      const rows = root.querySelectorAll('tbody tr')
+      expect(rows).toHaveLength(row + 1)
+      firstRow ??= rows[0]
+      expect(rows[0]).toBe(firstRow)
+      expect(rows[row]?.textContent).toBe(`${row}item ${row}ok`)
+    }
+
+    expect(append).toHaveBeenCalledTimes(900)
+    expect(replace).not.toHaveBeenCalled()
+    for (const [index, result] of append.mock.results.entries()) {
+      expect(result.value.scannedCharacters).toBe(append.mock.calls[index]![0].length)
+    }
+    expect(root.querySelector('td:last-child')?.getAttribute('style')).toContain('right')
+    expect(streamdownRender).not.toHaveBeenCalled()
+    expect(shikiHighlight).not.toHaveBeenCalled()
+  })
+
+  it('shows a streamed web link only once it is complete', () => {
+    const rendered = render(<Markdown text="See [the docs](https://docs.exa" streaming />)
+    expect(rendered.container.textContent).toBe('See ')
+    expect(rendered.container.querySelector('a')).toBeNull()
+
+    rendered.rerender(
+      <Markdown
+        text="See [the docs](https://docs.example.com) now"
+        streaming
+        liveUpdate={{ kind: 'append', text: 'mple.com) now' }}
+        updateVersion={1}
+      />,
+    )
+    const link = rendered.container.querySelector('a')
+    expect(link?.getAttribute('href')).toBe('https://docs.example.com')
+    expect(link?.getAttribute('target')).toBe('_blank')
+    expect(link?.getAttribute('rel')).toBe('noreferrer')
+    expect(link?.textContent).toBe('the docs')
+    expect(rendered.container.textContent).toBe('See the docs now')
+  })
+
+  it('renders streamed task markers as disabled checkboxes', () => {
+    const rendered = render(<Markdown text={'- [x] reviewed\n- [ ] deploy\n'} streaming />)
+    const boxes = [...rendered.container.querySelectorAll<HTMLInputElement>('li > input')]
+    expect(boxes.map((box) => [box.type, box.disabled, box.checked])).toEqual([
+      ['checkbox', true, true],
+      ['checkbox', true, false],
+    ])
+    expect(rendered.container.querySelector('ul')?.className).toBe('contains-task-list')
+    expect(rendered.container.textContent).toBe(' reviewed deploy')
+  })
+
   it('applies each version once and resets mismatched reconciliation', () => {
     const append = vi.spyOn(LiveMarkdownParser.prototype, 'append')
     const replace = vi.spyOn(LiveMarkdownParser.prototype, 'replace')

@@ -131,7 +131,28 @@ const LIVE_NODE_TAG = {
   strong: 'strong',
   emphasis: 'em',
   'inline-code': 'code',
-} satisfies Record<Exclude<LiveMarkdownNode, 'code-block'>, keyof HTMLElementTagNameMap>
+  'table-head': 'thead',
+  'table-body': 'tbody',
+  'table-row': 'tr',
+  'table-header-cell': 'th',
+  'table-cell': 'td',
+  link: 'a',
+} satisfies Record<Exclude<LiveMarkdownNode, 'code-block' | 'table'>, keyof HTMLElementTagNameMap>
+
+/** The completed renderer's markers, so a live table is styled as the finished one. */
+function liveTablePart(node: LiveMarkdownNode): string | undefined {
+  switch (node) {
+    case 'table-head':
+      return 'table-header'
+    case 'table-body':
+    case 'table-row':
+    case 'table-header-cell':
+    case 'table-cell':
+      return node
+    default:
+      return undefined
+  }
+}
 
 function mountLiveMarkdownLeaf(parent: HTMLElement, text = ''): HTMLElement {
   const span = document.createElement('span')
@@ -163,9 +184,45 @@ function openLiveMarkdownNode(
     return
   }
 
+  if (operation.node === 'table') {
+    // The completed table's wrapper: a controls row above a scroller. The
+    // controls row is empty while streaming but keeps its height, so the
+    // finished table lands exactly where the live one was.
+    const wrapper = document.createElement('div')
+    const controls = document.createElement('div')
+    const scroller = document.createElement('div')
+    const table = document.createElement('table')
+    wrapper.dataset.streamdown = 'table-wrapper'
+    table.dataset.streamdown = 'table'
+    scroller.append(table)
+    wrapper.append(controls, scroller)
+    parent.append(wrapper)
+    dom.stack.push(table)
+    return
+  }
+
   const element = document.createElement(LIVE_NODE_TAG[operation.node])
+  const part = liveTablePart(operation.node)
+  if (part) element.dataset.streamdown = part
+  if (operation.align) element.style.textAlign = operation.align
+  if (operation.node === 'link' && operation.href && element instanceof HTMLAnchorElement) {
+    element.href = operation.href
+    element.target = '_blank'
+    element.rel = 'noreferrer'
+  }
   parent.append(element)
   dom.stack.push(element)
+}
+
+/** A GFM task marker: the same disabled checkbox the completed list renders. */
+function mountLiveTaskMarker(parent: HTMLElement, checked: boolean): void {
+  const input = document.createElement('input')
+  input.type = 'checkbox'
+  input.disabled = true
+  input.checked = checked
+  parent.append(input, ' ')
+  parent.classList.add('task-list-item')
+  parent.parentElement?.classList.add('contains-task-list')
 }
 
 function applyAnimatedLiveMarkdown(
@@ -188,6 +245,10 @@ function applyAnimatedLiveMarkdown(
     }
     if (operation.type === 'node.close') {
       dom.stack.pop()
+      continue
+    }
+    if (operation.type === 'task') {
+      mountLiveTaskMarker(parent, operation.checked)
       continue
     }
     if (operation.type === 'leaf.bulk') {
@@ -257,6 +318,11 @@ function applyBufferedLiveMarkdown(
     if (operation.type === 'node.close') {
       flushText()
       dom.stack.pop()
+      continue
+    }
+    if (operation.type === 'task') {
+      flushText()
+      mountLiveTaskMarker(parent, operation.checked)
       continue
     }
     if (operation.type === 'leaf.bulk') {
