@@ -185,6 +185,8 @@ describe('Composer loading controls', () => {
     const button = screen.getByRole('button', { name: 'Permissions' }) as HTMLButtonElement
     const status = expectSkeleton('Loading permissions', 'composer-skeleton-permission')
     expect(button.contains(status)).toBe(true)
+    // The compact composer hides the label; this icon keeps the chip from being an empty square.
+    expect(status.querySelector('svg.composer-skeleton-permission__glyph')).not.toBeNull()
     expect(button.disabled).toBe(true)
     fireEvent.click(button)
     expect(screen.queryByRole('menu')).toBeNull()

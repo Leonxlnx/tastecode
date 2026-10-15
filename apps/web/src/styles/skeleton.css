@@ -269,8 +269,70 @@
 }
 
 .composer-skeleton-permission__icon {
+  display: grid;
   flex: none;
   width: 13px;
+  color: var(--text-3);
+}
+
+.composer-skeleton-permission__glyph {
+  display: none;
+}
+
+/* Where the composer hides the permission label (app.css: a stage of 620px or
+   less, a window of 520px or less) the icon skeleton is all that is left, and
+   it has the chip's own colour: an empty grey square. Draw the mode's icon,
+   dimmed, so the chip still says what it is while the mode loads. */
+@container chat-stage (max-width: 620px) {
+  .tools .composer-skeleton-permission__icon > .skeleton {
+    display: none;
+  }
+
+  .tools .composer-skeleton-permission__glyph {
+    display: block;
+    opacity: 0.55;
+  }
+}
+
+@media (max-width: 520px) {
+  .tools .composer-skeleton-permission__icon > .skeleton {
+    display: none;
+  }
+
+  .tools .composer-skeleton-permission__glyph {
+    display: block;
+    opacity: 0.55;
+  }
+}
+
+.composer-skeleton-permission__glyph {
+  display: none;
+}
+
+/* Where the composer hides the permission label (app.css: a stage of 620px or
+   less, a window of 520px or less) the icon skeleton is all that is left, and
+   it has the chip's own colour: an empty grey square. Draw the mode's icon,
+   dimmed, so the chip still says what it is while the mode loads. */
+@container chat-stage (max-width: 620px) {
+  .tools .composer-skeleton-permission__icon > .skeleton {
+    display: none;
+  }
+
+  .tools .composer-skeleton-permission__glyph {
+    display: block;
+    opacity: 0.55;
+  }
+}
+
+@media (max-width: 520px) {
+  .tools .composer-skeleton-permission__icon > .skeleton {
+    display: none;
+  }
+
+  .tools .composer-skeleton-permission__glyph {
+    display: block;
+    opacity: 0.55;
+  }
 }
 
 /* Reserve the actual permission label's width instead of guessing each mode. */

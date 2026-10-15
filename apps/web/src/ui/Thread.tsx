@@ -135,6 +135,10 @@ export interface ThreadProps {
   errorsInComposer?: boolean
   frameStore: ThreadFrameStore
   loading?: boolean
+  /** Why the transcript could not be read; an empty thread is then not a new chat. */
+  loadFailure?: string | undefined
+  /** Read the transcript again after `loadFailure`; needs a stable identity. */
+  onRetryLoad?: (() => void) | undefined
   projectPath?: string | undefined
   stopping?: boolean | undefined
   threadId?: string | undefined
@@ -606,6 +610,18 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         {thread.items.length === 0 && !running ? (
           props.loading ? (
             <ThreadSkeleton className="thread__empty" />
+          ) : props.loadFailure !== undefined ? (
+            <div className="empty thread__empty" role="alert">
+              <div className="empty__prompt" role="heading" aria-level={1}>
+                This chat could not be loaded.
+              </div>
+              {props.loadFailure ? <p className="empty__detail">{props.loadFailure}</p> : null}
+              {props.onRetryLoad ? (
+                <button className="btn" type="button" onClick={props.onRetryLoad}>
+                  Retry
+                </button>
+              ) : null}
+            </div>
           ) : (
             <div className="empty thread__empty">
               <div className="empty__prompt" role="heading" aria-level={1}>

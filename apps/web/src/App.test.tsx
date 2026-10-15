@@ -195,6 +195,11 @@ vi.mock('./ui/Thread.js', async () => {
             </span>
           ))}
           {frame.running && !props.stopping && frame.activeTurn ? <span>Working</span> : null}
+          {props.loadFailure !== undefined ? (
+            <button type="button" onClick={props.onRetryLoad}>
+              Retry loading: {props.loadFailure}
+            </button>
+          ) : null}
         </div>
       )
     },
@@ -1749,6 +1754,84 @@ describe('web client', () => {
     )
     expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
+  })
+
+  it('never starts a chat on another provider than the picker names while its source loads', async () => {
+    const capabilities = {
+      steer: false,
+      fork: false,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: false,
+      images: false,
+    }
+    serverProviders = [
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'authenticated',
+        capabilities,
+      },
+      { id: 'grok', displayName: 'Grok', installed: true, auth: 'authenticated', capabilities },
+    ]
+    // No stored model yet, and the stored provider is still listing its models.
+    localStorage.setItem('harness.provider', 'claude-code')
+    const listed = (id: string) => ({
+      id,
+      displayName: id,
+      isDefault: true,
+      reasoningEfforts: ['low', 'high'],
+      defaultReasoningEffort: 'high',
+      serviceTiers: [],
+    })
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseClaude!: (value: unknown) => void
+    const claudeModels = new Promise((resolve) => {
+      releaseClaude = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'models.list') return request(method, params)
+      return methods['models.list'].params.parse(params).provider === 'claude-code'
+        ? claudeModels
+        : Promise.resolve({ models: [listed('grok-4.7')] })
+    })
+
+    render(<App />)
+    const composer = (await screen.findByPlaceholderText('Do anything')) as HTMLTextAreaElement
+
+    // Grok has answered and Claude Code has not. The picker must not name the
+    // Grok default while a send would start Claude Code without a model.
+    await waitFor(() =>
+      expect(composerProps().models.map((choice) => choice.key)).toContain('grok:grok-4.7'),
+    )
+    expect(composerProps().modelPending).toBe(true)
+    expect(screen.queryByRole('button', { name: 'Model and reasoning' })).toBeNull()
+    expect(document.querySelector('.composer-skeleton-model')).toBeTruthy()
+    fireEvent.change(composer, { target: { value: 'Wait for the model' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(screen.getByRole('button', { name: 'Send' }).getAttribute('title')).toBe(
+      'Loading models…',
+    )
+    expect(transport.request).not.toHaveBeenCalledWith('thread.start', expect.anything())
+
+    await act(async () => {
+      releaseClaude({ models: [listed('opus')] })
+      await claudeModels
+    })
+
+    const trigger = await screen.findByRole('button', { name: 'Model and reasoning' })
+    expect(trigger.textContent).toContain('opus')
+    expect(composerProps().modelChoice?.key).toBe('claude-code:opus')
+    expect(composer.value).toBe('Wait for the model')
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.start',
+        expect.objectContaining({ provider: 'claude-code', model: 'opus' }),
+      ),
+    )
   })
 
   it.each(['failed', 'empty'] as const)(
@@ -6790,6 +6873,72 @@ describe('new chats', () => {
     await act(async () => resolveHistory?.({ events: [], running: false, approval: 'full' }))
     await waitFor(() => expect(permissions.textContent).toContain('Full access'))
     expect(localStorage.getItem('harness.approvalByProvider')).toBe('{"codex":"ask"}')
+  })
+
+  it('falls back to Ask first and offers a retry when a chat cannot be read', async () => {
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      reads += 1
+      return reads === 1
+        ? Promise.reject(new Error('request timed out'))
+        : Promise.resolve({
+            events: [completedHistoryEvent(1, 'base', 'Existing message')],
+            running: false,
+            approval: 'full',
+          })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+
+    const retry = await screen.findByRole('button', { name: 'Retry loading: request timed out' })
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    expect(within(permissions).queryByRole('status')).toBeNull()
+    expect(permissions.textContent).toContain('Ask first')
+    expect(permissions.hasAttribute('disabled')).toBe(false)
+    expect(screen.queryByText('request timed out')).toBeNull()
+
+    fireEvent.click(retry)
+    expect(await screen.findByText('Existing message')).toBeTruthy()
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    expect(screen.queryByRole('button', { name: /^Retry loading/ })).toBeNull()
+    expect(reads).toBe(2)
+  })
+
+  it('reopens a chat with its last access mode while its history reloads', async () => {
+    serverProjects[0]!.sessions.push({
+      id: 'second-thread',
+      title: 'Second session',
+      provider: 'codex',
+      createdAt: 1,
+      running: false,
+    })
+    const request = transport.request.getMockImplementation()!
+    let hold = false
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method !== 'thread.history') return request(method, params)
+      const { threadId } = methods['thread.history'].params.parse(params)
+      if (hold) return new Promise(() => undefined)
+      return Promise.resolve({
+        events: [],
+        running: false,
+        approval: threadId === 'untouched-thread' ? 'full' : 'ask',
+      })
+    })
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    const permissions = screen.getByRole('button', { name: 'Permissions' })
+    await waitFor(() => expect(permissions.textContent).toContain('Full access'))
+    fireEvent.click(screen.getByRole('button', { name: /^Second session,/ }))
+    await waitFor(() => expect(permissions.textContent).toContain('Ask first'))
+
+    hold = true
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(within(permissions).queryByRole('status')).toBeNull()
+    expect(permissions.textContent).toContain('Full access')
   })
 
   it('waits for the provider list before showing the default access mode', async () => {
