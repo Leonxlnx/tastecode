@@ -204,6 +204,20 @@ export function threadItems(state: ThreadState): Item[] {
   return materializeItems(state)
 }
 
+/**
+ * The newest prompt with text the user sent in this thread, which its Edit
+ * action would open. Prompts are never streamed, so the structural items are
+ * enough. Read on a key press only, never per delta.
+ */
+export function lastSentPrompt(state: ThreadState): string | undefined {
+  const { items } = state
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]!
+    if (item.type === 'message' && item.role === 'user' && item.text) return item.text
+  }
+  return undefined
+}
+
 function settleLiveItems(state: ThreadState): ThreadState {
   return state.liveItems.size === 0
     ? state
