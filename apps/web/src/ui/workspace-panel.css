@@ -68,7 +68,7 @@
   content: '';
   position: absolute;
   inset: 0 3px;
-  border-radius: 1px;
+  border-radius: var(--r-pill);
   background: var(--focus-ring-color);
 }
 
