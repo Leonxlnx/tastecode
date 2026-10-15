@@ -190,9 +190,8 @@
   transform: translateX(0);
 }
 
-/* Showing and retracting the flyout run at their own quicker pace; entering
-   the collapsed state for real keeps the deliberate fold. is-reveal-out is set for the
-   length of the retract, since by then the revealed class is already gone. */
+/* The flyout shows and retracts faster than the real collapse fold;
+   is-reveal-out covers the retract, after the revealed class is gone. */
 .rail-slot.is-collapsed.is-revealed .rail,
 .rail-slot.is-collapsed.is-reveal-out .rail {
   transition: transform var(--dur-reveal) var(--ease-rail);
@@ -490,9 +489,8 @@
   cursor: grabbing;
 }
 
-/* ::after, not ::before: the active-session accent tick is a ::before on the
-   same element and is declared later, so it won the cascade and the drop line
-   vanished — dragging onto the row you are already in showed nothing. */
+/* ::after: the active row's accent tick is a later ::before and would hide
+   the drop line on the row you are already in. */
 .sessrow[data-drop-position]::after {
   content: '';
   position: absolute;
@@ -892,11 +890,9 @@
   min-height: 0;
 }
 
-/* The guide drops from just under the folder mark (13px + half a pixel is
-   the mark's centre) to the middle of the last row. It hangs on the project
-   rather than the list so the drawer's clip cannot cut its top, and it grows
-   and shrinks with the drawer for free: once the drawer is shorter than the
-   offsets, the box has no height and nothing paints. */
+/* The guide runs from under the folder mark (centre 13.5px) to the middle of
+   the last row. It hangs on the project so the drawer's clip cannot cut it,
+   and paints nothing once the drawer is shorter than the offsets. */
 .proj::after {
   content: '';
   position: absolute;
@@ -1474,10 +1470,8 @@
   right: 44px;
 }
 
-/* The toggles are fixed siblings, so the header cannot lay out around them.
-   While the workspace panel is closed they float over the header's right
-   edge; reserve their inset, 28px buttons and 8px gaps so a long title
-   truncates before it reaches them. */
+/* The fixed toggles float over the header's right edge while the workspace
+   panel is closed: reserve their width so a long title truncates first. */
 .shell:has(> .panel-toggles:not(.is-workspace-open)) .stagehead {
   padding-right: 44px;
 }
@@ -2672,9 +2666,8 @@
 }
 
 .menu--settings {
-  /* Flush with the account trigger: Menu aligns the left edges and publishes
-     the trigger's width. The fallback only covers the frame before the first
-     measurement, and min-width yields so the base .menu minimum cannot win. */
+  /* Flush with the account trigger, whose width Menu publishes; the fallback
+     covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
