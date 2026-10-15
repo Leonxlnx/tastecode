@@ -19,13 +19,13 @@ const state = vi.hoisted(() => ({
   historyClosed: Promise.resolve(),
   historySources: [] as string[][],
   historyLoads: [] as string[],
-  historyRefreshed: Promise.resolve(),
-  historyChanged: false,
   invalidated: [] as string[],
   failGrokHistory: false,
   failHistoryService: false,
   historyRewritten: false,
   historyReads: [] as number[],
+  historyRefresh: Promise.resolve() as Promise<void>,
+  historyChanged: new Set<string>(),
 }))
 const temporary: string[] = []
 
@@ -100,12 +100,12 @@ vi.mock('./provider-history.js', () => ({
       if (state.failHistoryService) throw new Error('history service failed')
       state.historySources.push(sources.map(({ provider }) => provider))
     }
-    async refresh() {
-      await state.historyRefreshed
+    refresh() {
+      return state.historyRefresh
     }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
-      return state.historyChanged
+      return state.historyChanged.has(threadId)
     }
     async close() {
       state.shutdown.push('history')
@@ -149,13 +149,13 @@ afterEach(async () => {
   state.historyClosed = Promise.resolve()
   state.historySources.length = 0
   state.historyLoads.length = 0
-  state.historyRefreshed = Promise.resolve()
-  state.historyChanged = false
   state.invalidated.length = 0
   state.failGrokHistory = false
   state.failHistoryService = false
   state.historyRewritten = false
   state.historyReads.length = 0
+  state.historyRefresh = Promise.resolve()
+  state.historyChanged.clear()
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -542,8 +542,8 @@ describe('unavailable provider history', () => {
 
   it('opens a local chat before the startup history scan finishes', async () => {
     let finishScan!: () => void
-    state.historyRefreshed = new Promise((resolve) => (finishScan = resolve))
-    state.historyChanged = true
+    state.historyRefresh = new Promise((resolve) => (finishScan = resolve))
+    state.historyChanged.add('local')
     state.historyPage.mockResolvedValue(opened.result)
     const { port } = await listen()
     const client = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -590,6 +590,92 @@ describe('unavailable provider history', () => {
     expect(
       await request(port, 'thread.history', { threadId: 'external:codex:s', page: {} }),
     ).toMatchObject({ error: { message: 'history service failed' } })
+  })
+})
+
+describe('chat history during the first provider scan', () => {
+  async function connect(port: number) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    const messages: Array<{ id?: string; channel?: string; data?: unknown; result?: unknown }> = []
+    client.on('message', (message) => messages.push(JSON.parse(String(message))))
+    await once(client, 'message')
+    return { client, messages }
+  }
+  const opened = { events: [], page: { olderCursor: null, snapshotSeq: 0 } }
+
+  it('answers a native chat before the scan ends and imports it right after', async () => {
+    let finishScan!: () => void
+    state.historyRefresh = new Promise<void>((resolve) => {
+      finishScan = resolve
+    })
+    state.historyChanged.add('local')
+    state.historyPage.mockResolvedValue(opened)
+    const { port } = await listen()
+    const viewer = await connect(port)
+    try {
+      viewer.client.send(
+        JSON.stringify({
+          id: 'local',
+          method: 'thread.history',
+          params: { threadId: 'local', page: {} },
+        }),
+      )
+      viewer.client.send(
+        JSON.stringify({
+          id: 'imported',
+          method: 'thread.history',
+          params: { threadId: 'external:codex:s', page: {} },
+        }),
+      )
+      // The native chat opens from the store while the scan still runs.
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({ id: 'local', result: expect.objectContaining({ events: [] }) }),
+        ),
+      )
+      expect(state.historyLoads).toEqual([])
+      // An imported chat is the import, so it still waits for the scan.
+      expect(viewer.messages.some((message) => message.id === 'imported')).toBe(false)
+
+      finishScan()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'imported' })),
+      )
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(
+          expect.objectContaining({
+            channel: 'providerHistory.changed',
+            data: { threadIds: ['local'] },
+          }),
+        ),
+      )
+      expect(state.historyLoads).toEqual(expect.arrayContaining(['local', 'external:codex:s']))
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it('imports before reading once the scan is done, as before', async () => {
+    state.historyPage.mockResolvedValue(opened)
+    const { port } = await listen()
+    const reader = await connect(port)
+    try {
+      // Let the already-resolved scan settle.
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      reader.client.send(
+        JSON.stringify({
+          id: 'local',
+          method: 'thread.history',
+          params: { threadId: 'local', page: {} },
+        }),
+      )
+      await vi.waitFor(() =>
+        expect(reader.messages).toContainEqual(expect.objectContaining({ id: 'local' })),
+      )
+      expect(state.historyLoads).toEqual(['local'])
+    } finally {
+      reader.client.terminate()
+    }
   })
 })
 

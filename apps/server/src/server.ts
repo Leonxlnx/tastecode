@@ -250,31 +250,45 @@ export function startServer(
     await history.refresh()
     return history
   })
+  // That first scan reads every saved provider session and can take seconds
+  // (about 10 s on a large ~/.claude). A native chat's transcript is already
+  // in the store, so reading it does not wait: the import a read would have
+  // run is queued here, runs once the scan is done, and announces a changed
+  // chat so open clients reload it.
   let initialProviderHistorySettled = false
+  const importsAfterInitialScan = new Set<string>()
   void initialProviderHistory
-    .catch(() => undefined)
-    .finally(() => {
+    .then(async (history) => {
       initialProviderHistorySettled = true
+      const changed: string[] = []
+      for (const threadId of importsAfterInitialScan) {
+        importsAfterInitialScan.delete(threadId)
+        try {
+          if (await history.load(threadId)) {
+            orchestrator.invalidateImportedHistory(threadId)
+            changed.push(threadId)
+          }
+        } catch {
+          // The chat's next read or turn retries the import.
+        }
+      }
+      if (changed.length && !historyClosing) {
+        lifecycleScheduler.changed()
+        push.broadcast('providerHistory.changed', { threadIds: changed })
+      }
+    })
+    .catch(() => {
+      initialProviderHistorySettled = true
+      importsAfterInitialScan.clear()
     })
 
-  /**
-   * Opening a chat must not wait for the startup scan of every provider's saved
-   * sessions, which takes seconds against a large shared history. Only an
-   * imported chat needs the scan for its transcript and ownership; a local chat
-   * answers from the store, and an outside change found by the scan is merged
-   * afterwards and announced like any other provider history change.
-   */
-  async function openProviderHistory(threadId: string): Promise<void> {
-    if (initialProviderHistorySettled || threadId.startsWith('external:'))
-      return loadProviderHistory(threadId)
-    void initialProviderHistory
-      .then(async (history) => {
-        if (await history.load(threadId)) {
-          orchestrator.invalidateImportedHistory(threadId)
-          if (!historyClosing) push.broadcast('providerHistory.changed', { threadIds: [threadId] })
-        }
-      })
-      .catch(() => undefined)
+  /** Import outside changes before a history read, without holding a native chat on the first scan. */
+  async function loadProviderHistoryForRead(threadId: string): Promise<void> {
+    if (!initialProviderHistorySettled && !threadId.startsWith('external:')) {
+      importsAfterInitialScan.add(threadId)
+      return
+    }
+    await loadProviderHistory(threadId)
   }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
@@ -846,7 +860,7 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
-        await openProviderHistory(p.threadId)
+        await loadProviderHistoryForRead(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
           const running = orchestrator.isTurnRunning(p.threadId)
