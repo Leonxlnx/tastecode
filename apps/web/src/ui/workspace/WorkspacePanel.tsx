@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type MouseEvent,
   type PointerEvent,
 } from 'react'
 import {
@@ -22,10 +23,10 @@ import {
   IconPlus as Plus,
   type TablerIcon,
 } from '@tabler/icons-react'
-import { prepareAppHaptics } from '../../haptics.js'
+import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
-import { beginPanelResize } from '../panel-resize.js'
+import { beginPanelResize, settlePanelSize } from '../panel-resize.js'
 import type {
   SideChatParentStatus,
   SideChatPromptRequest,
@@ -34,7 +35,11 @@ import type {
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
 import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
-import { MIN_WORKSPACE_PANEL_WIDTH } from './workspace-panel-width.js'
+import {
+  DEFAULT_BOTTOM_PANEL_HEIGHT,
+  DEFAULT_WORKSPACE_PANEL_WIDTH,
+  MIN_WORKSPACE_PANEL_WIDTH,
+} from './workspace-panel-width.js'
 import { Menu, MenuItem } from '../Menu.js'
 import { RowIssue } from '../RowIssue.js'
 import { Skeleton, SkeletonRows, SkeletonStatus } from '../Skeleton.js'
@@ -372,6 +377,32 @@ function WorkspacePanelComponent(props: {
     })
   }
 
+  // Double-clicking the edge restores the default size, as split views in
+  // editors do. It eases there from the size drawn now, which is smaller than
+  // the saved one when the window clamps the panel.
+  const resetSize = (event: MouseEvent<HTMLDivElement>) => {
+    if (props.expanded) return
+    resizeCleanup.current()
+    const target = bottom ? DEFAULT_BOTTOM_PANEL_HEIGHT : DEFAULT_WORKSPACE_PANEL_WIDTH
+    const layout = event.currentTarget.closest<HTMLElement>(
+      bottom ? '.bottom-terminal' : '.workspace-layout',
+    )
+    const drawn = bottom
+      ? layout?.getBoundingClientRect().height
+      : panelElement.current?.getBoundingClientRect().width
+    performAppHaptic('alignment')
+    resizeCleanup.current = settlePanelSize({
+      from: drawn || props.width,
+      to: target,
+      style: layout?.style,
+      property: bottom ? 'height' : '--workspace-panel-w',
+      onFinish: () => {
+        resizeCleanup.current = () => {}
+        props.onWidthChange(target)
+      },
+    })
+  }
+
   return (
     <aside
       ref={panelElement}
@@ -389,6 +420,7 @@ function WorkspacePanelComponent(props: {
           if (!props.expanded) prepareAppHaptics()
         }}
         onPointerDown={beginResize}
+        onDoubleClick={resetSize}
       />
       <button
         type="button"
