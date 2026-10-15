@@ -9,6 +9,9 @@ export const MIN_WORKSPACE_PANEL_WIDTH = 300
 /** Width the right workspace panel opens at until the user resizes it. */
 export const DEFAULT_WORKSPACE_PANEL_WIDTH = 520
 
+/** Height the bottom panel opens at until the user resizes it. */
+export const DEFAULT_BOTTOM_PANEL_HEIGHT = 260
+
 /**
  * Restores a stored right-panel width. Anything unreadable or below the
  * minimum falls back to the default, and a width saved on a larger screen is

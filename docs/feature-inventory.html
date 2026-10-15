@@ -919,10 +919,14 @@
                   toasts open above the docked composer and its Jump to latest lane, right-aligned
                   with the composer box, instead of over the model button and Send; the in-pane
                   header names the current session or New chat and exposes the shared session menu
-                  plus direct Workspace and Terminal controls; each newly submitted queued turn gets
-                  a stable transcript anchor; the prompt takes focus only for a new focus request,
-                  so a finished Stop no longer pulls focus back from the terminal, a rename field or
-                  find</span
+                  plus direct Workspace and Terminal controls, and its Rename opens a visible
+                  bordered field with the title selected, handing focus back to the chat menu
+                  afterwards; the Design chip takes the same hover tint as the other composer chips
+                  instead of fading; Arrow Up in an empty composer puts the last prompt sent in the
+                  chat back to edit, and Escape clears it again; each newly submitted queued turn
+                  gets a stable transcript anchor; the prompt takes focus only for a new focus
+                  request, so a finished Stop no longer pulls focus back from the terminal, a rename
+                  field or find</span
                 ></span
               ></label
             >
@@ -1051,7 +1055,9 @@
                 compatible current-context numerator
                 <span class="d"
                   >Codex cumulative thread accounting stays available without producing a false
-                  full-context ring, including when legacy history replays</span
+                  full-context ring, including when legacy history replays; the meter draws a full
+                  faint track, the used arc and the percentage, takes keyboard focus with a tooltip
+                  naming the tokens used, and keeps only the ring in a narrow composer</span
                 ></span
               ></label
             >
@@ -1247,17 +1253,20 @@
                 >Streaming markdown with syntax highlighting
                 <span class="d"
                   >the visible live tail applies each versioned suffix once through the bounded
-                  incremental parser; full Markdown and syntax highlighting run from the exact
-                  source at completion; patched Mermaid and DOMPurify releases leave the production
-                  dependency audit clear; assistant prose uses denser type and spacing without
-                  changing prompts, headings, or code; renderer and worker share curated grammars,
-                  with plain-text fallback for other languages; code block copy and download
-                  controls sit on the language header row, leaving no gap above the code; a
+                  incremental parser; while a reply streams, a table shows each row once its line is
+                  complete, a link appears once it closes, task lists show their boxes and file
+                  names get their reference box; full Markdown and syntax highlighting run from the
+                  exact source at completion; patched Mermaid and DOMPurify releases leave the
+                  production dependency audit clear; assistant prose uses denser type and spacing
+                  without changing prompts, headings, or code; renderer and worker share curated
+                  grammars, with plain-text fallback for other languages; code block copy and
+                  download controls sit on the language header row, leaving no gap above the code; a
                   completing rich reply keeps its live rendering until the rich renderer has loaded
                   and then swaps in one commit, so it never collapses into plain paragraphs; code
                   blocks render at their real height in the frame they mount, without Streamdown's
                   200 px placeholder, so rows below no longer jump; reply times come from one shared
-                  formatter</span
+                  formatter; a Wrap toggle beside Copy soft-wraps long lines in every code block,
+                  streaming ones too, and remembers the choice</span
                 ></span
               ></label
             >
@@ -1330,7 +1339,8 @@
                   >the timer reserves space above live messages and tool rows, counts from the turn
                   start, and stops at completion; completed tool details remain in the work summary;
                   between tool calls the live row says Thinking even when the model sends no
-                  reasoning summary</span
+                  reasoning summary; a turn the user stopped settles as Stopped after with its work
+                  summary and ends with a Stopped by you marker</span
                 ></span
               ></label
             >
@@ -1377,7 +1387,9 @@
               ><input type="checkbox" /><span
                 >Persistent Copy and Revert on agent replies; compact hover Copy, Edit as new
                 prompt, and Revert on user messages without layout movement; a draft that Edit as
-                new prompt replaces comes back with Ctrl/Command+Z or the notice's Restore</span
+                new prompt replaces comes back with Ctrl/Command+Z or the notice's Restore; restore
+                buttons draw a history clock and say what they restore, to before this prompt or
+                this turn</span
               ></label
             >
           </li>
@@ -1470,7 +1482,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Approval cards with command and working directory, answerable mid-turn</span
+                >Approval cards with command and working directory, answerable mid-turn; Allow once
+                is the only primary button, beside secondary Deny, Stop the turn and Always this
+                session</span
               ></label
             >
           </li>
@@ -1704,43 +1718,48 @@
                 <span class="d"
                   >compact 2-by-2-plus-one picker for Review, Terminal, Browser, Files, and
                   Temporary chat that stacks into one column in a narrow right panel. Each panel has
-                  independent tool tabs, a + menu, and an upper-right close button. Tabs fade on add
-                  and close; neighbouring tabs slide into place, and closing a tab that holds focus
-                  hands focus to the tab selected next. Tabs support drag reordering and
-                  Alt+Left/Right with the app haptic preference. Closing the panel returns to the
-                  picker, and removing the active project no longer reopens the bottom terminal in
-                  the next one. A terminal that reattaches after a chat switch, New chat or
-                  reconnect takes focus only when nothing else holds it, so the composer keeps it;
-                  opening the terminal, reopening the panel and Restart still focus it. No manual
-                  expansion. Bottom and right terminals have separate shells; closing one, its chat
-                  or project, or the app also ends its foreground job after a grace period to shut
-                  down cleanly, and a shell that ignores SIGHUP. Jobs put in the background from the
-                  prompt, nohup and disown included, stay the shell's; the &amp; children of a
-                  foreground script or one-shot command are ended with it. Edge resizing takes the
-                  right panel down to 300 px, and both panels lay their tools out by the panel's own
-                  width: the Browser address takes its own row below 420 px in either panel, while
-                  only the full-height right panel moves the Review and Files tree underneath below
-                  500 px (the short bottom panel keeps them side by side), and right tabs stop short
-                  of the floating panel toggles. Tabs keep full labels while they fit and shrink
-                  only to a five-character prefix and an ellipsis; when even that does not fit,
-                  inactive tabs reduce to icons whose close button appears on hover or keyboard
-                  focus, while the active tab keeps its label. Only a strip that still overflows
-                  scrolls, keeping the active tab in view and fading its start edge, and every tab
-                  names itself in full on hover. Each Browser tab is labelled by its page title,
-                  else its host, else New tab; a Browser tab the user opens (Ctrl/Command+T or the +
-                  menu) focuses its address, and an address sent before the guest is ready loads
-                  once it is. Dragging the right panel edge restyles only the layout grid, not the
-                  chat and Browser beside it. CSP-safe compact terminals with link detection,
-                  distinct desktop/tablet/mobile Browser controls, lazy file trees and side chat;
-                  queued and steered Side-chat turns keep their own channel across runtime restart,
-                  while a full app restart still purges temporary Side chats; New chat terminals use
-                  the selected project's current checkout, while active chats use their exact
-                  session checkout; one fixed in-chat toggle opens and closes the panel by swapping
-                  its icon in place, staying visible throughout the closing transition. Aligned
-                  square dividers and the 42 px sidebar titlebar edge stay below native window
-                  chrome, resizing keeps at least 360 px for the center chat with or without the
-                  left sidebar, missing workspace items fail without raw paths, and 390 px layouts
-                  do not overflow</span
+                  independent tool tabs, a + menu, and an upper-right X; the right panel's X hides
+                  the panel and keeps every tab, Browser page and running terminal for the next
+                  open, while the bottom X still closes its tabs, and below 900 px the right panel
+                  header leads with Back to chat. Tabs fade on add and close; neighbouring tabs
+                  slide into place, and closing a tab that holds focus hands focus to the tab
+                  selected next. Tabs support drag reordering and Alt+Left/Right with the app haptic
+                  preference. Closing the last tab returns to the picker, and removing the active
+                  project no longer reopens the bottom terminal in the next one. A terminal that
+                  reattaches after a chat switch, New chat or reconnect takes focus only when
+                  nothing else holds it, so the composer keeps it; opening the terminal, reopening
+                  the panel and Restart still focus it. No manual expansion. Bottom and right
+                  terminals have separate shells; closing one, its chat or project, or the app also
+                  ends its foreground job after a grace period to shut down cleanly, and a shell
+                  that ignores SIGHUP. Jobs put in the background from the prompt, nohup and disown
+                  included, stay the shell's; the &amp; children of a foreground script or one-shot
+                  command are ended with it. Edge resizing takes the right panel down to 300 px, a
+                  double-click on either edge restores its default size, and a focused edge resizes
+                  with the arrow keys (Shift for larger steps), Home and End, while Enter restores
+                  the default, and both panels lay their tools out by the panel's own width: the
+                  Browser address takes its own row below 420 px in either panel, while only the
+                  full-height right panel moves the Review and Files tree underneath below 500 px
+                  (the short bottom panel keeps them side by side), and right tabs stop short of the
+                  floating panel toggles. Tabs keep full labels while they fit and shrink only to a
+                  five-character prefix and an ellipsis; when even that does not fit, inactive tabs
+                  reduce to icons whose close button appears on hover or keyboard focus, while the
+                  active tab keeps its label. Only a strip that still overflows scrolls, keeping the
+                  active tab in view and fading its start edge, and every tab names itself in full
+                  on hover. Each Browser tab is labelled by its page title, else its host, else New
+                  tab; a Browser tab the user opens (Ctrl/Command+T or the + menu) focuses its
+                  address, and an address sent before the guest is ready loads once it is. Dragging
+                  the right panel edge restyles only the layout grid, not the chat and Browser
+                  beside it. CSP-safe compact terminals with link detection, distinct
+                  desktop/tablet/mobile Browser controls, lazy file trees and side chat; queued and
+                  steered Side-chat turns keep their own channel across runtime restart, while a
+                  full app restart still purges temporary Side chats; New chat terminals use the
+                  selected project's current checkout, while active chats use their exact session
+                  checkout; one fixed in-chat toggle opens and closes the panel by swapping its icon
+                  in place, staying visible throughout the closing transition. Aligned square
+                  dividers and the 42 px sidebar titlebar edge stay below native window chrome,
+                  resizing keeps at least 360 px for the center chat with or without the left
+                  sidebar, missing workspace items fail without raw paths, and 390 px layouts do not
+                  overflow</span
                 ></span
               ></label
             >
@@ -2396,10 +2415,12 @@
                   disabled, renderer error reports are bounded, and project-file reveals check
                   resolved paths; spawned commands use a private per-user runtime directory on POSIX
                   and exclude current-directory executable lookup on Windows; Windows child-process
-                  cleanup waits for Node to observe exit after taskkill succeeds (#1394); media
-                  access requires explicit audio-only details from the owning main renderer and main
-                  frame, with malformed, mixed, unknown, camera and subframe requests denied in both
-                  Chromium checks and permission requests</span
+                  cleanup runs taskkill asynchronously, so stopping a process tree no longer blocks
+                  the server for about half a second (#1556), and waits for Node to observe exit
+                  after taskkill succeeds (#1394); media access requires explicit audio-only details
+                  from the owning main renderer and main frame, with malformed, mixed, unknown,
+                  camera and subframe requests denied in both Chromium checks and permission
+                  requests</span
                 ></span
               ></label
             >
@@ -2475,16 +2496,19 @@
                 <span class="d"
                   >dedicated persistent site session, top-level HTTPS and loopback HTTP navigation,
                   programmatic navigation checked before its request proceeds, denied permissions,
-                  sandboxing with Node disabled, back and forward history, and new-window navigation
-                  retained inside the guest; HTTP localhost and IPv6 loopback addresses normalize to
-                  127.0.0.1; Design capture requests open or reuse one dedicated tab and repair
-                  requests reload it, while exact review evidence stays in a separate hidden
-                  Electron window; the DOM-owned host follows workspace layout, with 1280 × 800, 768
-                  × 1024 and 390 × 844 presets scaled to fit without stretching, plus an explicit
-                  system-browser handoff; the canvas takes the theme background; a failed load shows
-                  a calm view in the canvas with the host, one plain sentence, Retry and Edit
-                  address, reported once and not at all after Stop, while a refused address says
-                  why; loads after the first page keep it visible under a thin progress line</span
+                  sandboxing with Node disabled, back and forward history, browser shortcuts from
+                  the toolbar and from inside the page (Alt+Left/Right, Ctrl/Command+R or F5,
+                  Ctrl/Command+L, Ctrl/Command+W closes the Browser tab, Esc restores an edited
+                  address), and new-window navigation retained inside the guest; HTTP localhost and
+                  IPv6 loopback addresses normalize to 127.0.0.1; Design capture requests open or
+                  reuse one dedicated tab and repair requests reload it, while exact review evidence
+                  stays in a separate hidden Electron window; the DOM-owned host follows workspace
+                  layout, with 1280 × 800, 768 × 1024 and 390 × 844 presets scaled to fit without
+                  stretching, plus an explicit system-browser handoff; the canvas takes the theme
+                  background; a failed load shows a calm view in the canvas with the host, one plain
+                  sentence, Retry and Edit address, reported once and not at all after Stop, while a
+                  refused address says why; loads after the first page keep it visible under a thin
+                  progress line</span
                 ></span
               ></label
             >

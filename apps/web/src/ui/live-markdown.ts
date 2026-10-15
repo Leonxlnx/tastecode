@@ -1,5 +1,10 @@
 const LIVE_MARKDOWN_LEAF_LIMIT = 256
 const LIVE_MARKDOWN_CARRY_LIMIT = 64
+/** A line that starts with a pipe is held until it ends; past this it is prose. */
+const LIVE_MARKDOWN_TABLE_LINE_LIMIT = 4 * 1024
+/** A link is held until its closing parenthesis; past these it is literal text. */
+const LIVE_MARKDOWN_LINK_LABEL_LIMIT = 512
+const LIVE_MARKDOWN_LINK_URL_LIMIT = 2 * 1024
 export const LIVE_MARKDOWN_SOURCE_CHUNK_LIMIT = 256
 export const LIVE_MARKDOWN_BULK_TEXT_MIN = 8 * 1024
 
@@ -15,11 +20,27 @@ export type LiveMarkdownNode =
   | 'emphasis'
   | 'inline-code'
   | 'code-block'
+  | 'table'
+  | 'table-head'
+  | 'table-body'
+  | 'table-row'
+  | 'table-header-cell'
+  | 'table-cell'
+  | 'link'
+
+export type LiveMarkdownAlign = 'left' | 'center' | 'right'
 
 export type LiveMarkdownOperation =
   | { type: 'reset' }
-  | { type: 'node.open'; node: LiveMarkdownNode; language?: string }
+  | {
+      type: 'node.open'
+      node: LiveMarkdownNode
+      language?: string
+      align?: LiveMarkdownAlign
+      href?: string
+    }
   | { type: 'node.close'; node: LiveMarkdownNode }
+  | { type: 'task'; checked: boolean }
   | { type: 'leaf.bulk'; text: string }
   | { type: 'leaf.open'; id: number }
   | { type: 'leaf.append'; id: number; text: string }
@@ -35,6 +56,14 @@ export type LiveMarkdownUpdate = {
   bufferedSourceChunks: number
 }
 
+type PendingLink = {
+  stage: 'label' | 'after-label' | 'destination'
+  label: string
+  destination: string
+  /** Open brackets inside the label, then open parentheses inside the destination. */
+  depth: number
+}
+
 const HEADING_NODES = [
   'heading-1',
   'heading-2',
@@ -43,8 +72,87 @@ const HEADING_NODES = [
   'heading-5',
   'heading-6',
 ] as const
-const FLOW_SPECIAL_CHARACTER = /[\n`*_]/g
+const TASK_MARKERS = ['[ ] ', '[x] ', '[X] '] as const
+const FLOW_SPECIAL_CHARACTER = /[\n`*_[]/g
 const INLINE_CODE_SPECIAL_CHARACTER = /[\n`]/g
+const TABLE_DELIMITER_CELL = /^(:?)-+(:?)$/
+const LINK_DESTINATION =
+  /^[ \t]*(?:<([^<>\n]*)>|([^\s<]*))(?:[ \t]+(?:"[^"]*"|'[^']*'|\([^)]*\)))?[ \t]*$/
+
+/** Characters a GFM delimiter row (`| --- | :-: |`) is made of, CRLF line end included. */
+function isTableDelimiterCharacter(character: string): boolean {
+  return (
+    character === '|' ||
+    character === '-' ||
+    character === ':' ||
+    character === ' ' ||
+    character === '\t' ||
+    character === '\r'
+  )
+}
+
+/** Splits a GFM table row on unescaped pipes; an escaped pipe is cell text. */
+function tableCells(line: string): string[] {
+  let text = line.trim()
+  if (text.startsWith('|')) text = text.slice(1)
+  if (text.endsWith('|') && !text.endsWith('\\|')) text = text.slice(0, -1)
+  const cells: string[] = []
+  let cell = ''
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index]!
+    if (character === '\\' && text[index + 1] === '|') {
+      cell += '|'
+      index += 1
+    } else if (character === '|') {
+      cells.push(cell.trim())
+      cell = ''
+    } else cell += character
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
+/** The column alignments a delimiter row declares, or undefined when it is not one. */
+function tableAlignment(
+  line: string,
+  columns: number,
+): Array<LiveMarkdownAlign | undefined> | undefined {
+  if (!line.includes('-')) return undefined
+  const cells = tableCells(line)
+  if (cells.length !== columns) return undefined
+  const alignment: Array<LiveMarkdownAlign | undefined> = []
+  for (const cell of cells) {
+    const match = TABLE_DELIMITER_CELL.exec(cell)
+    if (!match) return undefined
+    const [, left, right] = match
+    alignment.push(left && right ? 'center' : right ? 'right' : left ? 'left' : undefined)
+  }
+  return alignment
+}
+
+/** The source characters a pending link holds back: `[label](destination`. */
+function heldLinkCharacters(link: PendingLink | undefined): number {
+  if (!link) return 0
+  return (
+    1 +
+    link.label.length +
+    (link.stage === 'label' ? 0 : 1) +
+    (link.stage === 'destination' ? 1 + link.destination.length : 0)
+  )
+}
+
+/** Live links open only web and mail destinations; anything else stays its label. */
+function safeLinkHref(destination: string): string | undefined {
+  if (!/^(?:https?:\/\/|mailto:)/i.test(destination)) return undefined
+  try {
+    const { protocol } = new URL(destination)
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:'
+      ? destination
+      : undefined
+  } catch {
+    return undefined
+  }
+}
 
 export class LiveMarkdownParser {
   private sourceSegments: string[] = []
@@ -54,7 +162,7 @@ export class LiveMarkdownParser {
   private block: LiveMarkdownNode | undefined
   private inline: LiveMarkdownNode[] = []
   private listOpen = false
-  private mode: 'flow' | 'fence-info' | 'code' = 'flow'
+  private mode: 'flow' | 'fence-info' | 'code' | 'table-line' = 'flow'
   private atLineStart = true
   private prefix = ''
   private pendingStar = false
@@ -62,6 +170,19 @@ export class LiveMarkdownParser {
   private leafLength = 0
   private totalScanned = 0
   private completed = false
+  /** The line being held while it might be, or is, a table row. */
+  private tableLine = ''
+  /** A complete first table line, waiting for the delimiter row that confirms it. */
+  private tableHeader: string | undefined
+  private tableAlign: Array<LiveMarkdownAlign | undefined> = []
+  private tableBodyOpen = false
+  /** Set while a held line is replayed as prose, so it cannot start a table again. */
+  private tablesSuppressed = false
+  private link: PendingLink | undefined
+  private inLinkLabel = false
+  /** The characters after a list marker while they may still be `[ ] `. */
+  private task: string | undefined
+  private previous = ''
 
   append(delta: string): LiveMarkdownUpdate {
     if (this.completed) throw new Error('Cannot append after Markdown completion')
@@ -141,7 +262,13 @@ export class LiveMarkdownParser {
       scannedCharacters,
       sourceLength: this.sourceLength,
       mutableLeafCharacters: this.leafLength,
-      carryCharacters: this.prefix.length + Number(this.pendingStar),
+      carryCharacters:
+        this.prefix.length +
+        Number(this.pendingStar) +
+        this.tableLine.length +
+        (this.tableHeader?.length ?? 0) +
+        heldLinkCharacters(this.link) +
+        (this.task?.length ?? 0),
       bufferedSourceChunks: this.sourceChunks.length,
     }
   }
@@ -161,6 +288,26 @@ export class LiveMarkdownParser {
     this.leafLength = 0
     this.totalScanned = 0
     this.completed = false
+    this.tableLine = ''
+    this.tableHeader = undefined
+    this.tableAlign = []
+    this.tableBodyOpen = false
+    this.tablesSuppressed = false
+    this.link = undefined
+    this.inLinkLabel = false
+    this.task = undefined
+    this.previous = ''
+  }
+
+  /** Plain runs skip per-character dispatch; held links and task markers do not. */
+  private canWriteRun(): boolean {
+    return (
+      this.mode === 'flow' &&
+      !this.atLineStart &&
+      !this.pendingStar &&
+      this.link === undefined &&
+      this.task === undefined
+    )
   }
 
   private consumeText(text: string): void {
@@ -183,16 +330,32 @@ export class LiveMarkdownParser {
         continue
       }
 
-      if (this.mode === 'flow' && !this.atLineStart && !this.pendingStar) {
+      if (this.mode === 'table-line' && this.tableHeader === undefined) {
+        const end = text.indexOf('\n', index)
+        const stop = end < 0 ? text.length : end
+        if (stop > index) {
+          this.holdTableLine(text.slice(index, stop))
+          index = stop
+          continue
+        }
+      }
+
+      if (this.canWriteRun()) {
         const inlineCode = this.inline.at(-1) === 'inline-code'
         let end = index
         while (end < text.length) {
           const code = text.charCodeAt(end)
-          if (code === 10 || code === 96 || (!inlineCode && (code === 42 || code === 95))) break
+          if (
+            code === 10 ||
+            code === 96 ||
+            (!inlineCode && (code === 42 || code === 95 || code === 91))
+          )
+            break
           end += 1
         }
         if (end > index) {
           this.write(index === 0 && end === text.length ? text : text.slice(index, end))
+          this.previous = text[end - 1]!
           index = end
           continue
         }
@@ -218,7 +381,17 @@ export class LiveMarkdownParser {
         continue
       }
 
-      if (this.mode === 'flow' && !this.atLineStart && !this.pendingStar) {
+      if (this.mode === 'table-line' && this.tableHeader === undefined) {
+        const end = text.indexOf('\n', index)
+        const stop = end < 0 ? text.length : end
+        if (stop > index) {
+          this.holdTableLine(text.slice(index, stop))
+          index = stop
+          continue
+        }
+      }
+
+      if (this.canWriteRun()) {
         const special =
           this.inline.at(-1) === 'inline-code'
             ? INLINE_CODE_SPECIAL_CHARACTER
@@ -227,6 +400,7 @@ export class LiveMarkdownParser {
         const end = special.exec(text)?.index ?? text.length
         if (end > index) {
           this.writeLarge(index === 0 && end === text.length ? text : text.slice(index, end))
+          this.previous = text[end - 1]!
           index = end
           continue
         }
@@ -251,6 +425,10 @@ export class LiveMarkdownParser {
       this.consumeCode(character)
       return
     }
+    if (this.mode === 'table-line') {
+      this.consumeTableLine(character)
+      return
+    }
     if (this.atLineStart) {
       this.consumePrefix(character)
       return
@@ -259,6 +437,7 @@ export class LiveMarkdownParser {
       this.consumeInline(character)
       return
     }
+    this.settleInline()
     this.flushPendingStar()
     if (this.block?.startsWith('heading-')) this.closeBlock()
     else if (this.block === 'list-item') this.closeBlock(true)
@@ -267,6 +446,23 @@ export class LiveMarkdownParser {
   }
 
   private consumePrefix(character: string): void {
+    if (this.prefix === '') {
+      // A table ends at the first line that is not one of its rows.
+      if (this.block === 'table' && character !== '|') this.closeBlock()
+      if (this.tableHeader !== undefined) {
+        if (character !== '\n' && isTableDelimiterCharacter(character)) {
+          this.mode = 'table-line'
+          this.tableLine = character
+          return
+        }
+        this.rejectTableHeader()
+      }
+      if (character === '|' && !this.tablesSuppressed) {
+        this.mode = 'table-line'
+        this.tableLine = character
+        return
+      }
+    }
     if (character === '\n') {
       this.flushPendingStar()
       this.closeBlock()
@@ -296,6 +492,7 @@ export class LiveMarkdownParser {
     if (this.prefix === '- ' || this.prefix === '* ') {
       this.openListItem()
       this.finishPrefix()
+      this.task = ''
       return
     }
     if (this.prefix === '> ') {
@@ -308,6 +505,107 @@ export class LiveMarkdownParser {
     const buffered = this.prefix
     this.finishPrefix()
     this.consumeInline(buffered)
+  }
+
+  /**
+   * A line that starts with a pipe stays hidden until it ends. The first such
+   * line becomes a table header only once the delimiter row below it is
+   * complete; until then neither line is shown, so a table never appears as
+   * raw pipes. Each later row renders whole when its line ends.
+   */
+  private consumeTableLine(character: string): void {
+    if (character !== '\n') {
+      if (this.tableHeader !== undefined && !isTableDelimiterCharacter(character)) {
+        const held = this.tableLine
+        this.tableLine = ''
+        this.mode = 'flow'
+        this.rejectTableHeader()
+        this.consumeText(held + character)
+        return
+      }
+      this.holdTableLine(character)
+      return
+    }
+
+    const line = this.tableLine
+    this.tableLine = ''
+    this.mode = 'flow'
+    this.atLineStart = true
+    if (this.block === 'table') {
+      this.emitTableRow(tableCells(line))
+      return
+    }
+    if (this.tableHeader === undefined) {
+      this.tableHeader = line
+      return
+    }
+    const header = tableCells(this.tableHeader)
+    const alignment = tableAlignment(line, header.length)
+    if (!alignment) {
+      this.rejectTableHeader()
+      this.consumeText(`${line}\n`)
+      return
+    }
+    this.tableHeader = undefined
+    this.closeBlock()
+    this.operations.push({ type: 'node.open', node: 'table' })
+    this.block = 'table'
+    this.tableAlign = alignment
+    this.tableBodyOpen = false
+    this.operations.push({ type: 'node.open', node: 'table-head' })
+    this.emitTableCells('table-header-cell', header)
+    this.closeNode('table-head')
+  }
+
+  private holdTableLine(text: string): void {
+    this.tableLine += text
+    if (this.tableLine.length <= LIVE_MARKDOWN_TABLE_LINE_LIMIT) return
+    // Too long to be a row worth waiting for: show it as prose from here on.
+    const held = this.tableLine
+    this.tableLine = ''
+    this.mode = 'flow'
+    if (this.block === 'table') this.closeBlock()
+    this.rejectTableHeader()
+    this.replayAsProse(held)
+  }
+
+  /** The held first line was prose after all: it continues as a paragraph line. */
+  private rejectTableHeader(): void {
+    const header = this.tableHeader
+    if (header === undefined) return
+    this.tableHeader = undefined
+    this.replayAsProse(`${header}\n`)
+  }
+
+  private replayAsProse(text: string): void {
+    const suppressed = this.tablesSuppressed
+    this.tablesSuppressed = true
+    this.consumeText(text)
+    this.tablesSuppressed = suppressed
+  }
+
+  private emitTableRow(cells: string[]): void {
+    if (!this.tableBodyOpen) {
+      this.operations.push({ type: 'node.open', node: 'table-body' })
+      this.tableBodyOpen = true
+    }
+    this.emitTableCells('table-cell', cells)
+  }
+
+  private emitTableCells(node: 'table-header-cell' | 'table-cell', cells: string[]): void {
+    this.operations.push({ type: 'node.open', node: 'table-row' })
+    for (let column = 0; column < this.tableAlign.length; column += 1) {
+      const align = this.tableAlign[column]
+      this.operations.push({ type: 'node.open', node, ...(align ? { align } : {}) })
+      this.previous = ''
+      const text = cells[column]
+      if (text) this.consumeInline(text)
+      this.settleInline()
+      this.flushPendingStar()
+      while (this.inline.length) this.closeNode(this.inline.pop()!)
+      this.closeNode(node)
+    }
+    this.closeNode('table-row')
   }
 
   private consumeCode(character: string): void {
@@ -340,8 +638,14 @@ export class LiveMarkdownParser {
 
   private consumeInline(value: string): void {
     for (const character of value) {
+      if (this.task !== undefined && this.consumeTaskMarker(character)) continue
+      if (this.link) {
+        this.consumeLink(character)
+        continue
+      }
       if (this.inline.at(-1) === 'inline-code' && character !== '`') {
         this.write(character)
+        this.previous = character
         continue
       }
       if (character === '*') {
@@ -349,15 +653,118 @@ export class LiveMarkdownParser {
           this.pendingStar = false
           this.toggleInline('strong', '**')
         } else this.pendingStar = true
+        this.previous = character
         continue
       }
       if (this.pendingStar) {
         this.pendingStar = false
         this.toggleInline('emphasis', '*')
       }
-      if (character === '_') this.toggleInline('emphasis', '_')
+      if (character === '[' && this.previous !== '!' && !this.inLinkLabel) {
+        this.link = { stage: 'label', label: '', destination: '', depth: 0 }
+      } else if (character === '_') this.toggleInline('emphasis', '_')
       else if (character === '`') this.toggleInline('inline-code', '`')
       else this.write(character)
+      this.previous = character
+    }
+  }
+
+  /** True when the character belongs to a possible `[ ] ` marker or replayed it. */
+  private consumeTaskMarker(character: string): boolean {
+    const marker = this.task + character
+    if (TASK_MARKERS.some((candidate) => candidate.startsWith(marker))) {
+      if (marker.length === 4) {
+        this.task = undefined
+        this.operations.push({ type: 'task', checked: marker[1] !== ' ' })
+      } else this.task = marker
+      return true
+    }
+    this.task = undefined
+    if (marker.length === 1) return false
+    this.consumeInline(marker)
+    return true
+  }
+
+  private consumeLink(character: string): void {
+    const link = this.link!
+    if (link.stage === 'label') {
+      if (character === ']' && link.depth === 0) {
+        link.stage = 'after-label'
+        return
+      }
+      if (character === '[') link.depth += 1
+      else if (character === ']') link.depth -= 1
+      link.label += character
+      if (link.label.length > LIVE_MARKDOWN_LINK_LABEL_LIMIT) this.abandonLink()
+      return
+    }
+    if (link.stage === 'after-label') {
+      if (character === '(') {
+        link.stage = 'destination'
+        return
+      }
+      this.abandonLink()
+      this.consumeInline(character)
+      return
+    }
+    if (character === ')' && link.depth === 0) {
+      this.resolveLink()
+      return
+    }
+    if (character === '(') link.depth += 1
+    else if (character === ')') link.depth -= 1
+    link.destination += character
+    if (link.destination.length > LIVE_MARKDOWN_LINK_URL_LIMIT) this.abandonLink()
+  }
+
+  /** Not a link after all: its held source is ordinary text. */
+  private abandonLink(closing = ''): void {
+    const link = this.link
+    if (!link) return
+    this.link = undefined
+    this.write('[')
+    this.previous = '['
+    let held = link.label
+    if (link.stage !== 'label') held += ']'
+    if (link.stage === 'destination') held += `(${link.destination}${closing}`
+    this.consumeInline(held)
+  }
+
+  private resolveLink(): void {
+    const link = this.link!
+    const match = LINK_DESTINATION.exec(link.destination)
+    if (!match) {
+      this.abandonLink(')')
+      return
+    }
+    this.link = undefined
+    const href = safeLinkHref(match[1] ?? match[2] ?? '')
+    const depth = this.inline.length
+    if (href) {
+      this.ensureParagraph()
+      this.sealLeaf()
+      this.operations.push({ type: 'node.open', node: 'link', href })
+      this.inline.push('link')
+    }
+    this.inLinkLabel = true
+    this.previous = ''
+    this.consumeInline(link.label)
+    this.inLinkLabel = false
+    if (href) {
+      this.flushPendingStar()
+      while (this.inline.length > depth) this.closeNode(this.inline.pop()!)
+    }
+    this.previous = ')'
+  }
+
+  /** Releases a held link or task marker as text before its line or block ends. */
+  private settleInline(): void {
+    while (this.task !== undefined || this.link) {
+      if (this.task !== undefined) {
+        const marker = this.task
+        this.task = undefined
+        this.consumeInline(marker)
+      } else this.abandonLink()
     }
   }
 
@@ -396,9 +803,12 @@ export class LiveMarkdownParser {
   }
 
   private closeBlock(keepList = false): void {
+    this.settleInline()
     this.flushPendingStar()
     while (this.inline.length) this.closeNode(this.inline.pop()!)
     this.sealLeaf()
+    if (this.block === 'table' && this.tableBodyOpen) this.closeNode('table-body')
+    this.tableBodyOpen = false
     if (this.block) this.closeNode(this.block)
     this.block = undefined
     if (this.listOpen && !keepList) {

@@ -6,12 +6,15 @@ import {
   useEffect,
   useMemo,
   useState,
+  useSyncExternalStore,
   type ComponentPropsWithoutRef,
   type CSSProperties,
   type ReactNode,
 } from 'react'
+import { IconTextWrap as TextWrap } from '@tabler/icons-react'
 import {
   Block,
+  CodeBlock,
   CodeBlockContainer,
   CodeBlockCopyButton,
   CodeBlockDownloadButton,
@@ -20,13 +23,104 @@ import {
   useIsCodeFenceIncomplete,
   type HighlightOptions,
   type BlockProps,
+  type StreamdownContextType,
 } from 'streamdown'
+import { readCodeWrap, subscribeCodeWrap, writeCodeWrap } from '../code-wrap.js'
 import { shikiPlugin } from './highlighter.js'
 import type { HighlightResult } from './highlighter-protocol.js'
 
 const LARGE_CODE_CHARACTERS = 32 * 1024
 const CHUNK_LINES = 12
+const CODE_LANGUAGE = /language-([^\s]+)/u
+const START_LINE = /startLine=(\d+)/u
+const NO_LINE_NUMBERS = /\bnoLineNumbers\b/u
 type Token = HighlightResult['tokens'][number][number]
+
+/** Which of Streamdown's code block buttons its `controls` setting shows. */
+function codeBlockControls(controls: StreamdownContextType['controls']) {
+  const code = typeof controls === 'boolean' ? controls : controls.code
+  return {
+    copy: code !== false && (code === true || code?.copy !== false),
+    download: code !== false && (code === true || code?.download !== false),
+  }
+}
+
+/**
+ * Soft-wraps long lines in every code block. The choice lives on the document
+ * root, so pressing it re-renders this button only: no block and no
+ * highlighted token renders again.
+ */
+export function CodeWrapButton() {
+  const wrap = useSyncExternalStore(subscribeCodeWrap, readCodeWrap)
+  return (
+    <button
+      type="button"
+      aria-label="Wrap lines"
+      aria-pressed={wrap}
+      title="Wrap lines"
+      onClick={() => writeCodeWrap(!wrap)}
+    >
+      <TextWrap size={14} aria-hidden />
+    </button>
+  )
+}
+
+type MarkdownCodeProps = ComponentPropsWithoutRef<'code'> & {
+  node?: { properties?: Record<string, unknown> } | undefined
+}
+
+function fenceText(children: ReactNode): string {
+  if (typeof children === 'string') return children
+  if (
+    isValidElement<{ children?: unknown }>(children) &&
+    typeof children.props.children === 'string'
+  )
+    return children.props.children
+  return ''
+}
+
+/**
+ * Streamdown's block code renderer with the Wrap toggle beside its download
+ * and copy buttons; Streamdown takes no extra code block actions. This keeps
+ * its language, `startLine` and `noLineNumbers` handling. The app registers no
+ * Mermaid or custom renderers, so those branches of the original never apply.
+ * Inline code never arrives here: Streamdown routes it to `inlineCode`.
+ */
+export const MarkdownCode = memo(
+  function MarkdownCode({ node, className, children }: MarkdownCodeProps) {
+    const { controls, lineNumbers } = useContext(StreamdownContext)
+    const incomplete = useIsCodeFenceIncomplete()
+    const language = CODE_LANGUAGE.exec(className ?? '')?.[1] ?? ''
+    const meta =
+      typeof node?.properties?.['metastring'] === 'string' ? node.properties['metastring'] : ''
+    const startLine = Number.parseInt(START_LINE.exec(meta)?.[1] ?? '', 10)
+    const code = fenceText(children)
+    const shown = codeBlockControls(controls)
+    const showControls = typeof controls === 'boolean' ? controls : controls.code !== false
+    return (
+      <CodeBlock
+        className={className}
+        code={code}
+        isIncomplete={incomplete}
+        language={language}
+        lineNumbers={!NO_LINE_NUMBERS.test(meta) && lineNumbers !== false}
+        {...(startLine >= 1 ? { startLine } : {})}
+      >
+        {showControls ? (
+          <>
+            <CodeWrapButton />
+            {shown.download ? <CodeBlockDownloadButton code={code} language={language} /> : null}
+            {shown.copy ? <CodeBlockCopyButton /> : null}
+          </>
+        ) : null}
+      </CodeBlock>
+    )
+  },
+  (previous, next) =>
+    previous.className === next.className &&
+    previous.node?.properties?.['metastring'] === next.node?.properties?.['metastring'] &&
+    fenceText(previous.children) === fenceText(next.children),
+)
 
 /** A simple complete fence needs no HTML/Markdown AST; keep complex syntax on Streamdown. */
 export const MarkdownBlock = memo(function MarkdownBlock(props: BlockProps) {
@@ -208,10 +302,7 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
     frame = requestAnimationFrame(paint)
     return () => cancelAnimationFrame(frame)
   }, [chunks.length, hasColors, result])
-  const codeControls = typeof controls === 'boolean' ? controls : controls.code
-  const showCopy = codeControls !== false && (codeControls === true || codeControls?.copy !== false)
-  const showDownload =
-    codeControls !== false && (codeControls === true || codeControls?.download !== false)
+  const { copy: showCopy, download: showDownload } = codeBlockControls(controls)
   return (
     <CodeBlockContainer
       language={language}
@@ -222,6 +313,7 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
       {showCopy || showDownload ? (
         <div>
           <div data-streamdown="code-block-actions">
+            <CodeWrapButton />
             {showDownload ? <CodeBlockDownloadButton code={code} language={language} /> : null}
             {showCopy ? <CodeBlockCopyButton code={code} /> : null}
           </div>

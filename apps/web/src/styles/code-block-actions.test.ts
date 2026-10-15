@@ -19,4 +19,16 @@ describe('code block controls layout', () => {
       /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*position: absolute;[^}]*top: 1px;[^}]*right: 2px;/s,
     )
   })
+
+  it('wraps code through white-space on the root choice', () => {
+    expect(markdownCss).toMatch(
+      /:root\[data-code-wrap='on'\] \.md pre code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/s,
+    )
+  })
+
+  it('shows a pressed Wrap toggle', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] button\[aria-pressed='true'\] \{[^}]*background: var\(--control-pressed\);[^}]*color: var\(--text\);/s,
+    )
+  })
 })

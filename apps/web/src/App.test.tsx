@@ -1289,6 +1289,48 @@ describe('web client', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(composer.value).toBe('my unsent draft'))
   })
+  it('puts the last sent prompt back on Arrow Up in an empty composer', async () => {
+    const fallback = transport.request.getMockImplementation()!
+    const prompt = (id: string, text: string, createdAt: number) => ({
+      seq: createdAt,
+      event: {
+        type: 'item.completed',
+        item: {
+          id,
+          turnId: id,
+          type: 'message',
+          role: 'user',
+          status: 'completed',
+          text,
+          createdAt,
+        },
+      },
+    })
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.history'
+        ? Promise.resolve({
+            events: [prompt('first', 'Fix the build', 1), prompt('second', 'Now add a test', 2)],
+            running: false,
+          })
+        : fallback(method, params),
+    )
+    await openNewSession()
+    await screen.findByText('Now add a test')
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'typed' } })
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    expect(composer.value).toBe('typed')
+
+    fireEvent.change(composer, { target: { value: '' } })
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    expect(composer.value).toBe('Now add a test')
+    // The composer was empty, so nothing was replaced.
+    expect(screen.queryByText('Your draft was replaced.')).toBeNull()
+
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('')
+  })
   it('keeps an acknowledged access mode when a change is rejected', async () => {
     const request = transport.request.getMockImplementation()!
     let reject!: (error: Error) => void
@@ -2920,7 +2962,11 @@ describe('web client', () => {
     fireEvent.pointerEnter(launcher)
     expect(document.querySelector('.workspace-panel:not(.workspace-panel--bottom)')).toBeNull()
     fireEvent.click(launcher)
-    await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy())
+    // The first open imports the workspace panel chunk, which vitest transforms
+    // cold; that alone can take longer than waitFor's 1 s default.
+    await waitFor(() => expect(document.querySelector('.workspace-panel')).toBeTruthy(), {
+      timeout: 10_000,
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Hide workspace tools' }))
     expect(document.querySelector('.workspace-panel')).toBeTruthy()
