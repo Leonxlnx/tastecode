@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
@@ -74,6 +73,10 @@ const ComposerVoiceControl = lazy(() =>
     default: module.ComposerVoiceControl,
   })),
 )
+// Only chats whose provider reports a context window show the ring.
+const ContextUsage = lazy(() =>
+  import('./ContextUsage.js').then((module) => ({ default: module.ContextUsage })),
+)
 const DRAFT_HAS_CONTENT = /\S/u
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
@@ -115,12 +118,6 @@ function ResourcePickerSkeleton() {
       </div>
     </div>
   )
-}
-
-type ContextUsageStyle = CSSProperties & { '--context-used': number }
-
-function contextUsageStyle(percent: number): ContextUsageStyle {
-  return { '--context-used': percent }
 }
 
 function sameDraftPaths(left: string[], right: string[]): boolean {
@@ -2047,7 +2044,9 @@ function ComposerComponent(props: {
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
                 {voiceState === 'idle' && props.usage?.contextWindow ? (
-                  <ContextUsage usage={props.usage} />
+                  <Suspense fallback={null}>
+                    <ContextUsage usage={props.usage} />
+                  </Suspense>
                 ) : null}
 
                 {voiceState === 'idle' && props.modelPending ? (
@@ -2173,35 +2172,6 @@ function ComposerComponent(props: {
         </Suspense>
       ) : null}
     </>
-  )
-}
-
-function ContextUsage({ usage }: { usage: Usage }) {
-  const contextWindow = usage.contextWindow ?? 0
-  const percent = contextWindow
-    ? Math.min(100, Math.max(0, (usage.totalTokens / contextWindow) * 100))
-    : 0
-  const detail = `${usage.totalTokens.toLocaleString()} of ${contextWindow.toLocaleString()} context tokens used (${Math.round(percent)}%)`
-
-  return (
-    <span
-      className="context-usage"
-      tabIndex={0}
-      role="img"
-      aria-label={detail}
-      style={contextUsageStyle(percent)}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <circle className="context-usage__track" cx="12" cy="12" r="9" />
-        <circle className="context-usage__fill" cx="12" cy="12" r="9" pathLength="100" />
-      </svg>
-      <span className="context-usage__tooltip" role="tooltip">
-        <strong>{Math.round(percent)}% context used</strong>
-        <span>
-          {usage.totalTokens.toLocaleString()} / {contextWindow.toLocaleString()} tokens
-        </span>
-      </span>
-    </span>
   )
 }
 

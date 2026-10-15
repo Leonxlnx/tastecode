@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
@@ -1712,7 +1712,12 @@ describe('Composer height', () => {
 })
 
 describe('Composer context usage', () => {
-  it('shows exact context details on the compact ring', () => {
+  // The ring is lazy; load it once so the first render does not race a cold transform.
+  beforeAll(async () => {
+    await import('./ContextUsage.js')
+  })
+
+  it('shows exact context details on the compact ring', async () => {
     renderComposer(vi.fn(), {
       usage: {
         inputTokens: 12_000,
@@ -1724,7 +1729,7 @@ describe('Composer context usage', () => {
       },
     })
 
-    expect(screen.getByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
+    expect(await screen.findByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
     expect(screen.getByRole('tooltip').textContent).toContain('15% context used')
   })
 
