@@ -32,6 +32,7 @@ import {
   IconLoader2 as LoaderCircle,
   IconPalette as Palette,
   IconPencil as Pencil,
+  IconPlayerStop as Stop,
   IconRotate as RotateCcw,
   IconSearch as Search,
   IconStack2 as Layers,
@@ -1183,16 +1184,27 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     !(nextVisibleItem.type === 'message' && nextVisibleItem.role === 'user')
   const settling = settlingTurnId === item.turnId
   const railAnchor = showWorkingRail && live && presentation?.firstResponseIndex === index
+  const activityComplete = presentation?.complete === true && !live && presentation.design !== true
   const activitySource =
     activityLead && activityGroup
       ? {
           group: activityGroup,
           items,
           liveItems,
-          complete: presentation?.complete === true && !live && presentation.design !== true,
+          complete: activityComplete,
+          stopped: activityComplete && presentation.stopped,
         }
       : undefined
   const liveItemUpdate = liveItems.get(index)
+  // A restart also ends a turn as interrupted; its error row says why, so the
+  // turn does not claim the user stopped it.
+  const stoppedByUser =
+    !live &&
+    presentation?.stopped === true &&
+    presentation.endIndex === index &&
+    threadItemAt(items, liveItems, presentation.lastIndex + 1)?.type !== 'error'
+  // An answer carries its marker under its text, above its actions.
+  const stoppedAnswer = stoppedByUser && item.type === 'message' && item.role === 'assistant'
 
   return (
     <div
@@ -1202,7 +1214,7 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
       style={{ transform: `translateY(${start}px)` }}
     >
       {responseLead && !presentation.design && presentation.activityGroups.length === 0 ? (
-        <TurnDuration elapsedMs={presentation.elapsedMs} />
+        <TurnDuration elapsedMs={presentation.elapsedMs} stopped={presentation.stopped} />
       ) : null}
       <Row
         item={item}
@@ -1219,7 +1231,9 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
         onEditMessage={onEditMessage}
         checkpoint={checkpointForItem(presentation?.prompt ?? item, checkpointIndex, items)}
         onRevertCheckpoint={onRevertCheckpoint}
+        stoppedByUser={stoppedAnswer}
       />
+      {stoppedByUser && !stoppedAnswer ? <TurnStopped /> : null}
     </div>
   )
 })
@@ -1403,6 +1417,7 @@ const Row = memo(function Row({
   onEditMessage,
   checkpoint,
   onRevertCheckpoint,
+  stoppedByUser = false,
 }: {
   item: Item
   liveTextUpdate: LiveItemUpdate['textUpdate'] | undefined
@@ -1418,6 +1433,8 @@ const Row = memo(function Row({
   onEditMessage: ((text: string) => void) | undefined
   checkpoint: Checkpoint | undefined
   onRevertCheckpoint: ((checkpoint: Checkpoint) => void) | undefined
+  /** The answer of a turn the user stopped ends on the stopped marker. */
+  stoppedByUser?: boolean
 }) {
   if (hidden) return null
 
@@ -1503,6 +1520,7 @@ const Row = memo(function Row({
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
         />
+        {stoppedByUser ? <TurnStopped /> : null}
         {finalResponse && !notice && !live && item.status === 'completed' && text ? (
           <ResponseActions
             text={text}
@@ -1582,6 +1600,8 @@ type ActivityRenderSource = {
   items: readonly Item[]
   liveItems: ReadonlyMap<number, LiveItemUpdate>
   complete: boolean
+  /** A settled turn the user stopped: its summary says so instead of "Worked for". */
+  stopped?: boolean | undefined
 }
 
 /**
@@ -2121,12 +2141,13 @@ function ActivityStack({
       : activity.complete || hasWorkNotes
         ? undefined
         : toolTally(operationalActivity, false)
+  const stopped = !live && activity.stopped === true
   const label =
     live && current
       ? liveActivityLabel(current)
       : tally
         ? toolTallyText(tally)
-        : `Worked for ${workedFor(activity.group.elapsedMs)}`
+        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}`
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
   const summaryRef = useRef<HTMLButtonElement>(null)
   const summaryId = summaryItem?.id
@@ -2173,9 +2194,15 @@ function ActivityStack({
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || tally ? (
+        {live || tally || stopped ? (
           <span className="activity__glyph" aria-hidden>
-            {tally ? toolBatchGlyph(operationalActivity) : glyph(summaryItem)}
+            {tally ? (
+              toolBatchGlyph(operationalActivity)
+            ) : stopped ? (
+              <Stop strokeWidth={1.8} />
+            ) : (
+              glyph(summaryItem)
+            )}
           </span>
         ) : null}
         {tally ? (
@@ -2815,22 +2842,40 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
-function TurnDuration(props: { startedAt: number } | { elapsedMs: number }) {
+function TurnDuration(
+  props: { startedAt: number } | { elapsedMs: number; stopped?: boolean | undefined },
+) {
   const working = 'startedAt' in props
+  const stopped = !working && props.stopped === true
   return (
     <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
       <div className="activity__summary">
+        {stopped ? (
+          <span className="activity__glyph" aria-hidden>
+            <Stop strokeWidth={1.8} />
+          </span>
+        ) : null}
         <span className="activity__label">
           {working ? (
             <>
               Working for <WorkingTimer startedAt={props.startedAt} />
             </>
           ) : (
-            `Worked for ${workedFor(props.elapsedMs)}`
+            `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(props.elapsedMs)}`
           )}
         </span>
       </div>
     </div>
+  )
+}
+
+/** The quiet end of a turn the user stopped, under whatever it reached. */
+function TurnStopped() {
+  return (
+    <p className="turn-stopped">
+      <span className="turn-stopped__dot" aria-hidden />
+      Stopped by you
+    </p>
   )
 }
 

@@ -100,6 +100,78 @@ describe('turn boundaries', () => {
     })
   })
 
+  it('settles a stopped turn like a finished one, around the text it reached', () => {
+    const items: Item[] = [
+      { ...item('user', 't1'), role: 'user', createdAt: 1_000 },
+      {
+        ...item('note', 't1'),
+        role: 'assistant',
+        phase: 'commentary',
+        status: 'started',
+        text: 'Reading the handler first.',
+        createdAt: 1_500,
+      },
+      { ...item('command', 't1'), type: 'command', status: 'started', createdAt: 2_000 },
+      {
+        ...item('answer', 't1'),
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'started',
+        text: 'The handler charges before it',
+        createdAt: 3_000,
+      },
+    ]
+    const timing = { t1: { startedAt: 1_000, completedAt: 5_000, interrupted: true as const } }
+
+    expect(presentationsOf(items, timing).get('t1')).toMatchObject({
+      activityGroups: [{ items: [items[1], items[2]], firstIndex: 1, lastIndex: 2 }],
+      responseText: 'The handler charges before it',
+      finalAnswerIndex: 3,
+      elapsedMs: 4_000,
+      complete: true,
+      stopped: true,
+      endIndex: 3,
+      lastIndex: 3,
+    })
+    // While it still runs, the same items stay live and unfolded.
+    expect(
+      projectThreadItems(items, { t1: { startedAt: 1_000 } }, 't1').presentations.get('t1'),
+    ).toMatchObject({ complete: false, stopped: false, finalAnswerIndex: undefined })
+  })
+
+  it('ends a stopped turn at its work or its prompt when no answer came', () => {
+    const timing = { t1: { startedAt: 1_000, completedAt: 3_000, interrupted: true as const } }
+    const working: Item[] = [
+      { ...item('user', 't1'), role: 'user' },
+      {
+        ...item('update', 't1'),
+        role: 'assistant',
+        status: 'started',
+        text: 'Checking the tests.',
+      },
+      { ...item('command', 't1'), type: 'command', status: 'started' },
+    ]
+    // Narration before an interrupted tool call is work, not the answer.
+    expect(presentationsOf(working, timing).get('t1')).toMatchObject({
+      activityGroups: [{ items: [working[1], working[2]], firstIndex: 1 }],
+      finalAnswerIndex: undefined,
+      complete: true,
+      endIndex: 1,
+    })
+
+    const silent: Item[] = [
+      { ...item('user', 't1'), role: 'user' },
+      { ...item('thinking', 't1'), type: 'reasoning', status: 'started' },
+    ]
+    expect(presentationsOf(silent, timing).get('t1')).toMatchObject({
+      activityGroups: [],
+      complete: true,
+      stopped: true,
+      endIndex: 0,
+      lastIndex: 1,
+    })
+  })
+
   it('falls back to item timestamps when a durable boundary is incomplete', () => {
     const items: Item[] = [
       { ...item('user', 't1'), role: 'user', createdAt: 35_000 },

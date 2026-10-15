@@ -1147,6 +1147,26 @@ button.thread__older:hover {
   word-break: break-word;
 }
 
+/* A stopped turn ends on a muted marker right under what it reached, so a
+   cut-off sentence reads as stopped, not as lost. */
+.turn-stopped {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  line-height: 1.5;
+}
+
+.turn-stopped__dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: currentColor;
+}
+
 .working {
   display: flex;
   align-items: center;
