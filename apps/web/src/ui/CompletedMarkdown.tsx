@@ -24,7 +24,7 @@ import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
 import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
-import { MarkdownBlock, MarkdownPre } from './LargeCodeBlock.js'
+import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -160,6 +160,7 @@ function decodeHref(href: string): string {
 
 const STREAMDOWN_COMPONENTS = {
   a: MarkdownLink,
+  code: MarkdownCode,
   inlineCode: InlineCode,
   pre: MarkdownPre,
 } satisfies Components

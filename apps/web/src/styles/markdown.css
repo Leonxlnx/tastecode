@@ -253,6 +253,11 @@
   color: var(--text);
 }
 
+.md [data-streamdown='code-block'] button[aria-pressed='true'] {
+  background: var(--control-pressed);
+  color: var(--text);
+}
+
 .md [data-streamdown='code-block'] button svg {
   width: 13px;
   height: 13px;
