@@ -1,7 +1,7 @@
 /* ---------- model selector ---------- */
 
 .menutrigger--model-selector {
-  max-width: min(270px, 42vw);
+  max-width: min(270px, 42vw, 100%);
   padding: 5px 9px 5px 8px;
 }
 
@@ -33,6 +33,7 @@
 }
 
 .model-selector__trigger-model,
+.model-selector__trigger-name,
 .model-selector__trigger-effort {
   overflow: hidden;
   text-overflow: ellipsis;
