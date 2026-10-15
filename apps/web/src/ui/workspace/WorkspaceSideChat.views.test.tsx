@@ -102,9 +102,9 @@ describe('Temporary chat views', () => {
     )
     await waitFor(() => expect(calls('thread.sendTurn')).toHaveLength(1))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close Temporary chat' }))
     await waitFor(() => expect(calls('sideChat.close')).toEqual([{ threadId: 'side-1' }]))
-    fireEvent.click(screen.getByRole('button', { name: 'Temporary chat' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Temporary chat' }))
     await waitFor(() => expect(calls('thread.history')).toHaveLength(2))
     await settle()
 
@@ -170,7 +170,7 @@ describe('Temporary chat views', () => {
     await settle()
     expect(screen.queryByText(/no such thread/)).toBeNull()
 
-    fireEvent.click(right.getByRole('button', { name: 'Close right panel' }))
+    fireEvent.click(right.getByRole('button', { name: 'Close Temporary chat' }))
     await waitFor(() => expect(calls('sideChat.close')).toEqual([{ threadId: 'side-1' }]))
   })
 
