@@ -27,7 +27,6 @@ import {
   IconPlayerPlay as Play,
   IconPlus as Plus,
   IconServer as Server,
-  IconShield as Shield,
   IconSquare as Square,
   IconTrash as Trash2,
   IconVideo as Video,
@@ -1947,10 +1946,14 @@ function ComposerComponent(props: {
                               label="Loading permissions"
                               className="tool composer-skeleton-permission"
                             >
-                              {/* An icon, not a grey block: with the label hidden at narrow
-                                  widths a block read as an empty square. */}
                               <div className="composer-skeleton-permission__icon">
-                                <Shield size={13} aria-hidden />
+                                <Skeleton className="skeleton--icon" />
+                                {/* Shown instead of the skeleton where the label is hidden. */}
+                                <approval.icon
+                                  className="composer-skeleton-permission__glyph"
+                                  size={13}
+                                  aria-hidden
+                                />
                               </div>
                               <span className="composer-skeleton-permission__label" aria-hidden>
                                 <span>{approval.short}</span>
