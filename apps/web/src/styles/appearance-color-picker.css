@@ -14,8 +14,7 @@
 }
 
 /* A square chip of the colour, edged so near-white and near-black still show. */
-.appearance-color__swatch,
-.color-picker__swatch {
+.appearance-color__swatch {
   width: 10px;
   height: 10px;
   flex: none;
@@ -65,11 +64,7 @@
   --popup-offset: 4px;
 }
 
-.color-picker__presets {
-  display: grid;
-}
-
-.color-picker__preset {
+.color-picker__action {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -87,16 +82,12 @@
   text-align: left;
 }
 
-.color-picker__preset:is(:hover, :focus-visible) {
+.color-picker__action:is(:hover, :focus-visible) {
   background: var(--control-hover);
   color: var(--text);
 }
 
-.color-picker__preset[aria-pressed='true'] {
-  color: var(--text);
-}
-
-.color-picker__preset-name {
+.color-picker__action-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -104,12 +95,7 @@
   white-space: nowrap;
 }
 
-.color-picker__check {
-  flex: none;
-  color: var(--text-2);
-}
-
-/* Wider than a chip, so it sits centred on the chips' column. */
+/* Pulled in so the icon's ink lines up with the Hex label above. */
 .color-picker__sample-icon {
   flex: none;
   margin-inline: -2px;
@@ -288,7 +274,7 @@
   outline-offset: var(--focus-ring-offset);
 }
 
-.color-picker__preset:focus-visible {
+.color-picker__action:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-inset);
 }

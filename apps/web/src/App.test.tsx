@@ -6831,22 +6831,23 @@ describe('new chats', () => {
       hidden: true,
     })
     fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
-    const accentOptions = within(picker).getByRole('group', {
-      name: 'Accent palette presets',
+    const hex = within(picker).getByRole('textbox', {
+      name: 'Accent palette hex color',
       hidden: true,
     })
-    expect(within(accentOptions).getAllByRole('button', { hidden: true })).toHaveLength(7)
-    fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
+    fireEvent.change(hex, { target: { value: '#E11D48' } })
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.accent.light')).toBe('ocean')
-      expect(document.documentElement.dataset.accent).toBe('ocean')
+      expect(localStorage.getItem('harness.accent.light')).toBe('#E11D48')
+      expect(document.documentElement.dataset.accent).toBe('custom')
+      expect(document.documentElement.style.getPropertyValue('--custom-accent')).toBe('#E11D48')
     })
 
     first.unmount()
     render(<App />)
 
-    expect(document.documentElement.dataset.accent).toBe('ocean')
+    expect(document.documentElement.dataset.accent).toBe('custom')
+    expect(document.documentElement.style.getPropertyValue('--custom-accent')).toBe('#E11D48')
   })
 
   it('tracks OS appearance while System is selected', async () => {

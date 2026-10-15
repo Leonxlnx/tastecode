@@ -8,7 +8,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 import { flushSync } from 'react-dom'
-import { IconCheck as Check, IconColorPicker as PickColor } from '@tabler/icons-react'
+import { IconColorPicker as PickColor } from '@tabler/icons-react'
 import {
   hexToHsv,
   hsvToHex,
@@ -44,14 +44,14 @@ type PickerProps<Value extends string> = {
   label: string
   value: Value | HexColor
   color: HexColor
-  options: readonly { value: Value; label: string; color: HexColor }[]
+  options: readonly { value: Value; label: string }[]
   onChange: (value: Value | HexColor) => void
 }
 
 /**
  * A colour value on an Appearance row, opened into the same kind of panel as
- * the font menu beside it: the named presets as menu rows, then a
- * saturation/brightness square with the hue bar under it, then the hex row.
+ * the font menu beside it: a saturation/brightness square with the hue bar
+ * under it, then the hex row, and the screen sampler where the platform has one.
  */
 export function AppearanceColorPicker<Value extends string>(props: PickerProps<Value>) {
   const id = useId()
@@ -94,10 +94,7 @@ export function AppearanceColorPicker<Value extends string>(props: PickerProps<V
     })
     if (!showing(popup)) popup.showPopover?.()
     place()
-    const first =
-      popup.querySelector<HTMLElement>("[aria-pressed='true']") ??
-      popup.querySelector<HTMLElement>('[tabindex="0"]')
-    first?.focus({ preventScroll: true })
+    popup.querySelector<HTMLElement>('[tabindex="0"]')?.focus({ preventScroll: true })
   }
 
   const hide = (restoreFocus: boolean) => {
@@ -283,26 +280,6 @@ function ColorPickerContent<Value extends string>(
     })()
   }
 
-  const pressedIndex = props.options.findIndex((option) => option.value === props.value)
-  const rovingIndex = pressedIndex >= 0 ? pressedIndex : 0
-  const movePresetFocus = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
-    const last = props.options.length - 1
-    const next =
-      event.key === 'ArrowDown'
-        ? Math.min(last, index + 1)
-        : event.key === 'ArrowUp'
-          ? Math.max(0, index - 1)
-          : event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-              ? last
-              : undefined
-    if (next === undefined) return
-    event.preventDefault()
-    const group = event.currentTarget.parentElement
-    group?.querySelectorAll<HTMLButtonElement>('button')[next]?.focus()
-  }
-
   const color = hsvToHex(hsv)
   const fieldDrag = usePointerDrag((event) => {
     const bounds = event.currentTarget.getBoundingClientRect()
@@ -364,35 +341,6 @@ function ColorPickerContent<Value extends string>(
 
   return (
     <>
-      {props.options.length > 0 ? (
-        <>
-          <div className="color-picker__presets" role="group" aria-label={`${props.label} presets`}>
-            {props.options.map((option, index) => {
-              const pressed = props.value === option.value
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  className="color-picker__preset"
-                  aria-pressed={pressed}
-                  tabIndex={index === rovingIndex ? 0 : -1}
-                  onClick={() => props.onChange(option.value)}
-                  onKeyDown={(event) => movePresetFocus(event, index)}
-                >
-                  <span
-                    className="color-picker__swatch"
-                    style={{ backgroundColor: option.color }}
-                    aria-hidden
-                  />
-                  <span className="color-picker__preset-name">{option.label}</span>
-                  {pressed ? <Check className="color-picker__check" size={13} aria-hidden /> : null}
-                </button>
-              )
-            })}
-          </div>
-          <div className="color-picker__rule" aria-hidden />
-        </>
-      ) : null}
       <div className="color-picker__picker">
         <div
           className="color-picker__field"
@@ -480,14 +428,14 @@ function ColorPickerContent<Value extends string>(
       {dropper ? (
         <>
           <div className="color-picker__rule" aria-hidden />
-          <button className="color-picker__preset" type="button" onClick={sampleScreen}>
+          <button className="color-picker__action" type="button" onClick={sampleScreen}>
             <PickColor
               className="color-picker__sample-icon"
               size={14}
               strokeWidth={1.8}
               aria-hidden
             />
-            <span className="color-picker__preset-name">Pick from screen</span>
+            <span className="color-picker__action-name">Pick from screen</span>
           </button>
         </>
       ) : null}

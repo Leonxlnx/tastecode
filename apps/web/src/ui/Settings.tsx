@@ -1534,10 +1534,7 @@ function AppearanceEditor(props: {
           label="Accent palette"
           value={props.preference.accent}
           color={accentColor(props.preference.accent, light)}
-          options={ACCENT_OPTIONS.map((option) => ({
-            ...option,
-            color: accentColor(option.value, light),
-          }))}
+          options={ACCENT_OPTIONS}
           onChange={(accent) => props.onChange({ accent })}
         />
       </AppearanceRow>
@@ -1546,10 +1543,7 @@ function AppearanceEditor(props: {
           label="Background"
           value={props.preference.backdrop}
           color={backdropColor(props.preference.backdrop, light)}
-          options={BACKDROP_OPTIONS.map((option) => ({
-            ...option,
-            color: backdropColor(option.value, light),
-          }))}
+          options={BACKDROP_OPTIONS}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
       </AppearanceRow>
