@@ -1,7 +1,12 @@
 import { randomUUID } from 'node:crypto'
 import type { FeedbackDraft } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
-import { FEEDBACK_LIMITS, FeedbackService, type FeedbackServiceOptions } from './feedback.js'
+import {
+  FEEDBACK_LIMITS,
+  FeedbackService,
+  providerVersionLabel,
+  type FeedbackServiceOptions,
+} from './feedback.js'
 
 // Fake values only. A real inbox key must never appear in this repository.
 const KEY = 'fb_test_000'
@@ -181,6 +186,16 @@ describe('feedback payload', () => {
       redactions: 0,
     })
     expect(fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('provider labels', () => {
+  it('keeps only the version number from a CLI version line', () => {
+    expect(providerVersionLabel('Codex', 'codex-cli 0.154.0')).toBe('Codex 0.154.0')
+    expect(providerVersionLabel('Claude Code', '2.1.296 (Claude Code)')).toBe('Claude Code 2.1.296')
+    expect(providerVersionLabel('Grok', '1.2.0-beta.3')).toBe('Grok 1.2.0-beta.3')
+    expect(providerVersionLabel('Grok', undefined)).toBe('Grok')
+    expect(providerVersionLabel('Grok', 'unknown')).toBe('Grok')
   })
 })
 

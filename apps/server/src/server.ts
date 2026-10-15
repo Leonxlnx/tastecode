@@ -15,7 +15,7 @@ import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
 import type { FeedbackConfig } from './feedback-config.js'
-import { FeedbackService } from './feedback.js'
+import { FeedbackService, providerVersionLabel } from './feedback.js'
 import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
@@ -193,7 +193,7 @@ export function startServer(
     },
     providerLabel: (provider) => {
       const status = providerStatuses.find((entry) => entry.id === provider)
-      return status ? [status.displayName, status.version].filter(Boolean).join(' ') : undefined
+      return status ? providerVersionLabel(status.displayName, status.version) : undefined
     },
   })
   const checkpointProtection = orchestrator.protectStoredCheckpoints()

@@ -150,6 +150,15 @@ function platformLabel(platform: NodeJS.Platform, release: string, arch: string)
   return `${platform} ${release} ${arch}`
 }
 
+/**
+ * "Codex 0.48.0" from a CLI's own version line, which may repeat the product
+ * name ("codex-cli 0.48.0", "2.1.3 (Claude Code)").
+ */
+export function providerVersionLabel(displayName: string, version: string | undefined): string {
+  const semver = version?.match(/\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.]+)?/)?.[0]
+  return semver ? `${displayName} ${semver}` : displayName
+}
+
 function normalizedHash(body: Body): string {
   const normalized = `${body.kind}\n${body.message.trim().toLowerCase().replace(/\s+/g, ' ')}`
   return createHash('sha256').update(normalized).digest('hex').slice(0, 16)
