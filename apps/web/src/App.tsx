@@ -601,6 +601,9 @@ export function App() {
     [threadFrameStore],
   )
   const [loadingThreadId, setLoadingThreadId] = useState<string | undefined>()
+  const [historyFailure, setHistoryFailure] = useState<
+    { threadId: string; message: string } | undefined
+  >()
   const composerDraftKeyRef = useRef(NEW_CHAT_DRAFT_KEY)
   const injectedDraftTransition = useRef(false)
   const pendingSession = useRef<
@@ -719,6 +722,12 @@ export function App() {
   const providerDefaultsRef = useRef(providerDefaults)
   providerDefaultsRef.current = providerDefaults
   const [activeThreadApproval, setActiveThreadApproval] = useState<ApprovalMode | undefined>()
+  /** The last mode each opened chat showed, so reopening it never waits on history. */
+  const threadApprovals = useRef(new Map<string, ApprovalMode>())
+  useEffect(() => {
+    if (activeId && activeThreadApproval)
+      threadApprovals.current.set(activeId, activeThreadApproval)
+  }, [activeId, activeThreadApproval])
   const pendingThreadApprovals = useRef(new Map<string, ApprovalMode>())
   const approvalChanges = useRef(new Map<string, Promise<void>>())
   const [collapsed, setCollapsed] = useState(
@@ -2273,6 +2282,7 @@ export function App() {
         const loaded = await threadController.loadHistory(threadId, afterSeq)
         if (loaded && activeIdRef.current === threadId) {
           setActiveThreadApproval(loaded.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === threadId ? undefined : current))
           setProjects((current) => updateSession(current, threadId, markSessionRead))
         }
         return loaded?.authority
@@ -2281,6 +2291,27 @@ export function App() {
       }
     },
     [threadController, pruneThreadStateCache],
+  )
+
+  /** Read an opened chat's transcript. An empty failed read is shown in the thread. */
+  const readOpenedHistory = useCallback(
+    async (id: string, afterSeq: number | undefined) => {
+      setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+      setLoadingThreadId(id)
+      try {
+        await loadHistory(id, afterSeq)
+      } catch (error) {
+        if (activeIdRef.current !== id) return
+        const message = error instanceof Error ? error.message : String(error)
+        // Without its history the mode is unknown; the server's default is Ask.
+        setActiveThreadApproval((current) => current ?? 'ask')
+        if (threadController.snapshot(id)?.items.length) reportError(message)
+        else setHistoryFailure({ threadId: id, message })
+      } finally {
+        setLoadingThreadId((current) => (current === id ? undefined : current))
+      }
+    },
+    [loadHistory, reportError, threadController],
   )
 
   resync.current = (retry = true) => {
@@ -2336,7 +2367,10 @@ export function App() {
       if (activeIdRef.current === id) {
         setQueuedTurns(state.items)
         setCanSteerQueue(state.canSteer)
-        if (loaded) setActiveThreadApproval(recovered.approval ?? 'ask')
+        if (loaded) {
+          setActiveThreadApproval(recovered.approval ?? 'ask')
+          setHistoryFailure((current) => (current?.threadId === id ? undefined : current))
+        }
       }
       if (!loaded) {
         workspaceIdleProbe.current.unknownQueues.add(id)
@@ -3810,7 +3844,8 @@ export function App() {
       setUndoRestore(undefined)
       setRollbackOpen(false)
       activeIdRef.current = id
-      setActiveThreadApproval(undefined)
+      setActiveThreadApproval(threadApprovals.current.get(id))
+      setHistoryFailure(undefined)
       setActiveId(id)
       setComposerFocusRequest((request) => request + 1)
       setThreadRevealRequest((request) => request + 1)
@@ -3833,25 +3868,22 @@ export function App() {
       // know, so asking for its history fails. The start adopts the real id.
       if (id.startsWith('pending:')) return
 
-      setLoadingThreadId(id)
-      try {
-        await loadHistory(id, cached ? threadController.cursor(id) : undefined)
-      } catch (error) {
-        if (activeIdRef.current === id)
-          reportError(error instanceof Error ? error.message : String(error))
-      } finally {
-        setLoadingThreadId((current) => (current === id ? undefined : current))
-      }
+      await readOpenedHistory(id, cached ? threadController.cursor(id) : undefined)
     },
     [
       visibleModels,
       selectedModelChoice,
       commitModelChoice,
-      loadHistory,
+      readOpenedHistory,
       transport,
       cancelQueuedArchive,
     ],
   )
+
+  const retryOpenedHistory = useCallback(() => {
+    const id = activeIdRef.current
+    if (id && !id.startsWith('pending:')) void readOpenedHistory(id, undefined)
+  }, [readOpenedHistory])
 
   const inspectCheckpoint = useCallback(
     async (checkpoint: Checkpoint) => {
@@ -5309,6 +5341,12 @@ export function App() {
                           errorsInComposer
                           stopping={stopping}
                           loading={loadingThreadId === activeId}
+                          loadFailure={
+                            historyFailure?.threadId === activeId
+                              ? historyFailure.message
+                              : undefined
+                          }
+                          onRetryLoad={retryOpenedHistory}
                           projectPath={activePath}
                           threadId={activeId}
                           transport={transport}
