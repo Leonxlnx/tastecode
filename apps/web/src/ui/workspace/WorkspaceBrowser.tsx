@@ -17,8 +17,13 @@ import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import {
+  browserLoadFailureView,
+  loadRejectionFailure,
+  type BrowserLoadFailureView,
+} from './browser-load-error.js'
 import type { BrowserPageInfo } from './browser-page.js'
-import { browserUrl } from './browser-url.js'
+import { browserAddress } from './browser-url.js'
 import {
   BROWSER_VIEWPORTS,
   fitBrowserViewport,
@@ -69,6 +74,7 @@ const LoadFailureEventSchema = z.object({
   errorCode: z.number().optional(),
   errorDescription: z.string().optional(),
   isMainFrame: z.boolean().optional(),
+  validatedURL: z.string().optional(),
 })
 const RendererGoneEventSchema = z.object({
   details: z.object({ reason: z.string().optional() }).optional(),
@@ -107,12 +113,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   const lastNavigationRequest = useRef<string | undefined>(undefined)
   // Page navigation must not overwrite an address the user is still typing.
   const editingAddress = useRef(false)
+  // A load that fails before it commits leaves the guest on the previous page;
+  // the address keeps the one that failed so the user can correct it.
+  const failedAddress = useRef<string | undefined>(undefined)
+  // did-fail-load already explained this navigation; its loadURL rejection repeats it.
+  const failureReported = useRef(false)
+  // Stop cancels the load on purpose: its failure is not an error to show.
+  const stopRequested = useRef(false)
+  const navigationSequence = useRef(0)
   const [guestReadyRevision, setGuestReadyRevision] = useState(0)
   const [address, setAddress] = useState('')
   const [state, setState] = useState<BrowserState>(EMPTY_STATE)
   const [hasRenderedPage, setHasRenderedPage] = useState(false)
   const [viewport, setViewport] = useState<BrowserViewportId>('fluid')
+  // A notice about the toolbar: an address it refused, a native call that failed.
   const [error, setError] = useState<string>()
+  // A page that failed to load or stopped; the canvas shows it instead of the guest.
+  const [failure, setFailure] = useState<BrowserLoadFailureView>()
+  const addressInput = useRef<HTMLInputElement>(null)
   // Read through a ref: the report below runs when the page changes, never
   // because the owner handed over a new function (#283).
   const pageInfoListener = useRef(onPageInfo)
@@ -135,7 +153,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         canGoBack: view.canGoBack(),
         canGoForward: view.canGoForward(),
       })
-      if (currentUrl && !editingAddress.current) setAddress(currentUrl)
+      const shownAddress = failedAddress.current ?? currentUrl
+      if (shownAddress && !editingAddress.current) setAddress(shownAddress)
       if (currentUrl && pageReady) setHasRenderedPage(true)
     } catch {
       // The guest can detach between an event and this state read. Its next
@@ -165,7 +184,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       syncGuestState(true)
     }
     const onStart = () => {
+      stopRequested.current = false
       setError(undefined)
+      setFailure(undefined)
       setState((current) => ({ ...current, loading: true }))
     }
     const onStop = () => syncGuestState(true)
@@ -173,6 +194,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       const navigation = NavigationEventSchema.safeParse(event)
       const url = webPageUrl(navigation.success ? navigation.data.url : undefined)
       if (url) {
+        failedAddress.current = undefined
         if (!editingAddress.current) setAddress(url)
         setState((current) => ({ ...current, url }))
       }
@@ -188,15 +210,28 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     }
     const onFail = (event: Event) => {
       const failure = LoadFailureEventSchema.safeParse(event)
-      if (failure.success && failure.data.isMainFrame !== false && failure.data.errorCode !== -3) {
-        setError(failure.data.errorDescription || 'The page could not be loaded.')
+      if (failure.success && failure.data.isMainFrame !== false && !stopRequested.current) {
+        const url = webPageUrl(failure.data.validatedURL)
+        const failedView = browserLoadFailureView({
+          code: failure.data.errorCode,
+          name: failure.data.errorDescription,
+          url,
+        })
+        if (failedView) {
+          failureReported.current = true
+          if (url) failedAddress.current = url
+          setFailure(failedView)
+        }
       }
       syncGuestState()
     }
     const onRendererGone = (event: Event) => {
       const stopped = RendererGoneEventSchema.safeParse(event)
       const reason = stopped.success ? stopped.data.details?.reason : undefined
-      setError(`Page renderer stopped${reason ? `: ${reason}` : '.'}`)
+      setFailure({
+        title: 'This page stopped',
+        detail: `Its renderer ended${reason ? ` (${reason})` : ''}. Retry to load it again.`,
+      })
       syncGuestState()
     }
 
@@ -272,9 +307,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
 
   const navigate = useCallback(
     (value: string) => {
-      const url = browserUrl(value)
+      const { url, error: invalid } = browserAddress(value)
       if (!url) {
-        setError('Enter a valid HTTP or HTTPS URL.')
+        setError(invalid)
         return false
       }
       const view = guest.current
@@ -288,11 +323,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
       }
 
       editingAddress.current = false
+      failedAddress.current = undefined
+      failureReported.current = false
+      stopRequested.current = false
+      const sequence = ++navigationSequence.current
       setAddress(url)
       setState((current) => ({ ...current, url, loading: true }))
       setError(undefined)
+      setFailure(undefined)
       void view.loadURL(url).catch((cause: unknown) => {
-        if (!isAbortedNavigation(cause)) setError(errorMessage(cause))
+        // A newer navigation replaced this one and reports for itself.
+        if (sequence !== navigationSequence.current) return
+        if (!failureReported.current && !stopRequested.current) {
+          const failedView = browserLoadFailureView(loadRejectionFailure(cause, url))
+          if (failedView) {
+            failedAddress.current = url
+            setFailure(failedView)
+          }
+        }
         syncGuestState()
       })
       return true
@@ -313,15 +361,32 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     try {
       if (nextAction === 'back' && view.canGoBack()) view.goBack()
       else if (nextAction === 'forward' && view.canGoForward()) view.goForward()
-      else if (nextAction === 'reload' && state.url) view.reload()
-      else if (nextAction === 'stop') view.stop()
+      // Reload retries the address that failed, not the page still shown under it.
+      else if (nextAction === 'reload' && failedAddress.current) {
+        navigate(failedAddress.current)
+        return
+      } else if (nextAction === 'reload' && state.url) view.reload()
+      else if (nextAction === 'stop') {
+        stopRequested.current = true
+        failedAddress.current = undefined
+        view.stop()
+      }
       syncGuestState()
     } catch (cause) {
       setError(errorMessage(cause))
     }
   }
 
-  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !error
+  const editAddress = () => {
+    const input = addressInput.current
+    if (!input) return
+    input.focus()
+    input.select()
+  }
+
+  const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
+  // Later loads keep the current page visible under a thin progress line.
+  const loadingLaterPage = state.loading && hasRenderedPage && !failure
 
   return (
     <div className="workspace-browser">
@@ -362,6 +427,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         >
           <Globe2 size={14} aria-hidden />
           <input
+            ref={addressInput}
             value={address}
             placeholder="Enter a URL"
             aria-label="Browser address"
@@ -412,12 +478,13 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         ref={canvas}
         className="workspace-browser__canvas"
         data-viewport={viewport}
-        aria-busy={state.loading && !error}
+        aria-busy={state.loading && !failure}
       >
+        {loadingLaterPage ? <div className="workspace-browser__progress" aria-hidden /> : null}
         <div
           ref={host}
           className="workspace-browser__guest-host"
-          data-visible={Boolean(state.url)}
+          data-visible={Boolean(state.url) && !failure}
           aria-hidden={!active}
         >
           {loadingFirstPage ? (
@@ -435,7 +502,24 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             </SkeletonStatus>
           ) : null}
         </div>
-        {!state.url ? (
+        {failure ? (
+          <div className="workspace-browser__failure" role="alert">
+            <WorkspaceEmptyState
+              kind="browser-failed"
+              title={failure.title}
+              detail={failure.detail}
+            >
+              <div className="workspace-browser__failure-actions">
+                <button type="button" className="btn" onClick={() => action('reload')}>
+                  Retry
+                </button>
+                <button type="button" className="ghost" onClick={editAddress}>
+                  Edit address
+                </button>
+              </div>
+            </WorkspaceEmptyState>
+          </div>
+        ) : !state.url ? (
           <div className="workspace-browser__placeholder">
             <WorkspaceEmptyState
               kind="browser"
@@ -466,8 +550,4 @@ function webPageUrl(value: unknown): string {
   } catch {
     return ''
   }
-}
-
-function isAbortedNavigation(cause: unknown): boolean {
-  return cause instanceof Error && /ERR_ABORTED|\(-3\)/i.test(cause.message)
 }
