@@ -470,6 +470,25 @@ describe('empty thread', () => {
     expect(screen.queryByRole('heading')).toBeNull()
     expect(screen.getByRole('status').textContent).toContain('Loading conversation')
   })
+
+  it('offers a retry instead of the new chat prompt when the transcript could not be read', () => {
+    const onRetryLoad = vi.fn()
+    render(
+      <Thread
+        frameStore={new ThreadFrameStore(emptyThread)}
+        loadFailure="request timed out"
+        onRetryLoad={onRetryLoad}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('heading').textContent).toBe('This chat could not be loaded.')
+    expect(screen.getByText('request timed out')).toBeTruthy()
+    expect(screen.queryByText(/Tell the agent/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetryLoad).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('completed activity disclosure', () => {
@@ -2033,7 +2052,7 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit as new prompt' }))
     expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
   })
 
