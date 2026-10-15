@@ -2052,7 +2052,7 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit as new prompt' }))
     expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
   })
 
