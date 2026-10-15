@@ -285,6 +285,32 @@ function WorkspacePanelComponent(props: {
     [forgetBrowserPage, props.onClose, props.onProviderLoginClose],
   )
 
+  // Ctrl+W in a Browser tab removes the surface that had focus. Hand focus to
+  // the tab shown next, as a tab's own X does, or to the toggle that reopens
+  // the panel when that was the last tab.
+  const focusAfterShortcutClose = useRef(false)
+  const closeTabByShortcut = useCallback(
+    (id: string) => {
+      focusAfterShortcutClose.current = true
+      closeTab(id)
+    },
+    [closeTab],
+  )
+  useLayoutEffect(() => {
+    if (!focusAfterShortcutClose.current) return
+    focusAfterShortcutClose.current = false
+    const next = panelElement.current?.querySelector<HTMLElement>(
+      '.workspace-tabs__tab.is-active [role="tab"]',
+    )
+    if (next) next.focus()
+    else
+      document
+        .querySelector<HTMLElement>(
+          bottom ? '.panel-toggles__terminal' : '.panel-toggles__workspace',
+        )
+        ?.focus()
+  })
+
   useEffect(() => {
     const request = props.terminalToggleRequest ?? 0
     if (!request || request === handledTerminalRequest.current) return
@@ -540,6 +566,7 @@ function WorkspacePanelComponent(props: {
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
                   onBrowserPage={updateBrowserPage}
+                  onCloseTab={closeTabByShortcut}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -587,6 +614,8 @@ function WorkspaceToolSurface(props: {
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
+  /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
+  onCloseTab: (tabId: string) => void
   onClose: () => void
 }) {
   if (props.tab.kind === 'provider-login') {
@@ -632,6 +661,7 @@ function WorkspaceToolSurface(props: {
         focusAddressOnOpen={props.tab.userOpened}
         tabId={props.tab.id}
         onPageInfo={props.onBrowserPage}
+        onClose={props.onCloseTab}
       />
     )
   }
