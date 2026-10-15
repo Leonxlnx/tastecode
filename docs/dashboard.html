@@ -291,12 +291,22 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-14 nightly 2a6c7e1c · includes main 16b95be9</span>
+        <span class="meta">2026-10-15 nightly a8b85315 · includes main b003509f</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 15 on nightly (a8b85315): main is synchronized through b003509f by two sync PRs,
+          with every nightly provider, API connection and the usage history kept, bringing main's
+          October 15 merges below: the round-5 batch through 3c7168fb (PR #1581) and the streaming,
+          GPT short name, toast and test fixes with main's docs update (PR #1586). In PR #1581 the
+          app shell kept nightly's full provider roster, its preferred-source default-model fallback
+          and its send-availability inputs while taking main's draft notice and its loading state
+          for a model choice whose source is still listing. PR #1586 changed no nightly-only code;
+          only the two docs pages needed a hand merge.
+        </p>
         <p>
           October 14 on nightly (2a6c7e1c): main is synchronized through 16b95be9 with every nightly
           provider, API connection and the usage history kept, bringing main's October 12 to 14
