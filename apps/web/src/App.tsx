@@ -5317,13 +5317,34 @@ export function App() {
           ? 'design'
           : 'chat',
   }
+  /** Lets the person send an error they saw to the team. Opening the dialog sends nothing. */
+  const reportable = <T extends ComposerError>(
+    error: T,
+    kind: NonNullable<FeedbackRequest['context']['error']>['kind'],
+  ): T =>
+    feedback.status.enabled
+      ? {
+          ...error,
+          report: () =>
+            openFeedback('error_report', {
+              error: { kind, message: error.message.slice(0, 4000) },
+            }),
+        }
+      : error
   const composerErrors: ComposerError[] = [
-    ...(actionError ? [{ ...actionError, dismiss: () => setActionError(undefined) }] : []),
+    ...(actionError
+      ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
+      : []),
     ...(thread.error && activeId
-      ? [{ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }]
+      ? [reportable({ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }, 'turn')]
       : []),
     ...(currentModelError
-      ? [{ ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } }]
+      ? [
+          reportable(
+            { ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } },
+            'models',
+          ),
+        ]
       : []),
     ...(offlineError ? [offlineError] : []),
   ]
@@ -5501,7 +5522,11 @@ export function App() {
                       sendAvailability={sendAvailability}
                       errors={composerErrors}
                       errorsVisible={!settingsOpen && surface === 'chat'}
-                      providerError={composerProviderError}
+                      providerError={
+                        composerProviderError
+                          ? reportable(composerProviderError, 'provider')
+                          : undefined
+                      }
                       providerSignInRequired={providerStatuses.some(
                         (status) => status.id === provider && status.installed,
                       )}
