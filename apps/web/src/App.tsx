@@ -53,6 +53,7 @@ import {
   beginOptimisticTurn,
   createOptimisticMessageId,
   emptyThread,
+  lastSentPrompt,
   removeOptimisticMessage,
   type ThreadState,
 } from './thread-store.js'
@@ -3988,6 +3989,13 @@ export function App() {
       setNotice(DRAFT_REPLACED_NOTICE)
     }
   }, [])
+  // Arrow Up in an empty composer takes the same path as the Edit action.
+  const recallLastPrompt = useCallback(() => {
+    if (!activeIdRef.current) return undefined
+    const text = lastSentPrompt(threadFrameStore.getStructureSnapshot())
+    if (text !== undefined) editMessage(text)
+    return text
+  }, [editMessage, threadFrameStore])
   const restoreReplacedDraft = useCallback(() => {
     const replaced = replacedDraft
     setNotice(undefined)
@@ -5450,6 +5458,7 @@ export function App() {
                       onPendingAttachment={keepPendingAttachment}
                       onPendingQueuedEdit={keepQueuedEdit}
                       onResourcesChange={updateComposerDraftResources}
+                      onRecallLastPrompt={recallLastPrompt}
                       onReady={handleComposerReady}
                       queuedTurns={queuedTurns}
                       canSteerQueue={canSteerQueue}

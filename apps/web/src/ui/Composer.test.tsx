@@ -1973,6 +1973,86 @@ describe('Composer focus requests', () => {
   })
 })
 
+describe('Composer prompt recall', () => {
+  function recallSetup(overrides: Partial<Parameters<typeof Composer>[0]> = {}) {
+    const onDraftChange = vi.fn()
+    const onRecallLastPrompt = vi.fn(() => 'Earlier prompt' as string | undefined)
+    const view = renderComposer(vi.fn(), { onDraftChange, onRecallLastPrompt, ...overrides })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    // The owner answers a recall the way it answers the Edit action: a draft request.
+    const answerRecall = (request: number) =>
+      view.rerenderComposer({ draftRequest: { text: 'Earlier prompt', undoable: true, request } })
+    return { view, composer, onDraftChange, onRecallLastPrompt, answerRecall }
+  }
+
+  it('asks for the last prompt on Arrow Up and empties the composer again on Escape', () => {
+    const { composer, onDraftChange, onRecallLastPrompt, answerRecall } = recallSetup()
+
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(false)
+    expect(onRecallLastPrompt).toHaveBeenCalledOnce()
+    answerRecall(1)
+    expect(composer.value).toBe('Earlier prompt')
+
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(false)
+    expect(composer.value).toBe('')
+    expect(onDraftChange).toHaveBeenLastCalledWith('')
+  })
+
+  it('leaves Arrow Up to the caret when the composer is not empty or a modifier is held', () => {
+    const { composer, onRecallLastPrompt } = recallSetup()
+
+    for (const modifier of ['shiftKey', 'altKey', 'ctrlKey', 'metaKey'] as const) {
+      expect(fireEvent.keyDown(composer, { key: 'ArrowUp', [modifier]: true })).toBe(true)
+    }
+    fireEvent.change(composer, { target: { value: 'my draft' } })
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(true)
+    expect(onRecallLastPrompt).not.toHaveBeenCalled()
+    expect(composer.value).toBe('my draft')
+  })
+
+  it('lets Arrow Up move on when the chat has no prompt to bring back', () => {
+    const onRecallLastPrompt = vi.fn(() => undefined)
+    const { composer } = recallSetup({ onRecallLastPrompt })
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(true)
+    expect(onRecallLastPrompt).toHaveBeenCalledOnce()
+    expect(composer.value).toBe('')
+  })
+
+  it('cancels a recalled prompt with Escape before Escape interrupts the running turn', () => {
+    const onInterrupt = vi.fn()
+    const { composer, answerRecall } = recallSetup({ running: true, onInterrupt })
+
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    answerRecall(1)
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('')
+    expect(onInterrupt).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(onInterrupt).toHaveBeenCalledOnce()
+  })
+
+  it('keeps text on Escape once the recalled prompt was sent or replaced', () => {
+    const onSend = vi.fn()
+    const { composer, answerRecall, view } = recallSetup({ onSend })
+
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    answerRecall(1)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('Earlier prompt', [])
+    fireEvent.change(composer, { target: { value: 'a new thought' } })
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('a new thought')
+
+    fireEvent.change(composer, { target: { value: '' } })
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    // Another chat's draft arrives before the recall is answered.
+    view.rerenderComposer({ draftRequest: { text: 'other chat draft', request: 2 } })
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('other chat draft')
+  })
+})
+
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
   overrides: Partial<Parameters<typeof Composer>[0]> = {},
