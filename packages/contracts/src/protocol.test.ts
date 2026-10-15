@@ -4,6 +4,7 @@ import {
   channels,
   DiffFileSchema,
   ErrorCode,
+  FEEDBACK_MESSAGE_MAX,
   McpCapabilitiesSchema,
   McpServerConfigSchema,
   McpServerSchema,
@@ -1483,5 +1484,105 @@ describe('backward history page contract', () => {
     expect(() =>
       schema.parse({ events: [], running: false, page: { olderCursor: null, snapshotSeq: -1 } }),
     ).toThrow()
+  })
+})
+
+describe('feedback contracts', () => {
+  const draft = {
+    kind: 'bug',
+    message: 'The export button does nothing.',
+    includeError: true,
+    includeDiagnostics: true,
+    context: {
+      source: 'error_report',
+      threadId: 'th1',
+      provider: 'codex',
+      model: 'gpt-5-codex',
+      surface: 'chat',
+      error: { kind: 'turn', message: 'Codex exited unexpectedly' },
+    },
+  } as const
+
+  it('accepts a bounded draft and rejects unknown kinds, sources and oversize text', () => {
+    expect(methods['feedback.preview'].params.parse(draft)).toEqual(draft)
+    expect(
+      methods['feedback.preview'].params.parse({
+        kind: 'idea',
+        message: '',
+        includeError: false,
+        includeDiagnostics: false,
+        context: { source: 'account_menu' },
+      }),
+    ).toMatchObject({ kind: 'idea' })
+    expect(() =>
+      methods['feedback.preview'].params.parse({ ...draft, kind: 'complaint' }),
+    ).toThrow()
+    expect(() =>
+      methods['feedback.preview'].params.parse({
+        ...draft,
+        context: { ...draft.context, source: 'background' },
+      }),
+    ).toThrow()
+    expect(() =>
+      methods['feedback.preview'].params.parse({
+        ...draft,
+        message: 'x'.repeat(FEEDBACK_MESSAGE_MAX + 1),
+      }),
+    ).toThrow()
+    expect(() =>
+      methods['feedback.preview'].params.parse({ ...draft, email: `${'a'.repeat(250)}@x.io` }),
+    ).toThrow()
+    expect(() =>
+      methods['feedback.preview'].params.parse({
+        ...draft,
+        context: {
+          ...draft.context,
+          error: { kind: 'turn', message: 'x'.repeat(FEEDBACK_MESSAGE_MAX + 1) },
+        },
+      }),
+    ).toThrow()
+  })
+
+  it('requires a UUID submission id so a repeated click can be recognised', () => {
+    const submissionId = '7f8c3c1e-3a4b-4c5d-8e9f-0a1b2c3d4e5f'
+    expect(methods['feedback.submit'].params.parse({ ...draft, submissionId })).toMatchObject({
+      submissionId,
+    })
+    expect(() => methods['feedback.submit'].params.parse(draft)).toThrow()
+    expect(() =>
+      methods['feedback.submit'].params.parse({ ...draft, submissionId: 'click-1' }),
+    ).toThrow()
+  })
+
+  it('reports failures as typed results with an optional wait', () => {
+    const result = methods['feedback.submit'].result
+    expect(result.parse({ ok: true })).toEqual({ ok: true })
+    expect(
+      result.parse({
+        ok: false,
+        code: 'rate_limited',
+        message: 'Too many reports. Try again in a minute.',
+        retryAfterMs: 60_000,
+      }),
+    ).toMatchObject({ code: 'rate_limited', retryAfterMs: 60_000 })
+    expect(() => result.parse({ ok: false, code: 'teapot', message: 'no' })).toThrow()
+    expect(() => result.parse({ ok: false, code: 'network', message: 'x'.repeat(301) })).toThrow()
+  })
+
+  it('describes a disabled build without exposing configuration', () => {
+    const status = methods['feedback.status'].result
+    expect(status.parse({ enabled: false, reason: 'not_configured' })).toEqual({
+      enabled: false,
+      reason: 'not_configured',
+    })
+    expect(status.parse({ enabled: true, retryAfterMs: 12_000 })).toEqual({
+      enabled: true,
+      retryAfterMs: 12_000,
+    })
+    expect(() => status.parse({ enabled: true, retryAfterMs: -1 })).toThrow()
+    expect(methods['feedback.preview'].result.parse({ payload: '{}', redactions: 2 })).toEqual({
+      payload: '{}',
+      redactions: 2,
+    })
   })
 })

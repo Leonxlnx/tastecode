@@ -558,6 +558,111 @@ const UsageSummaryResultSchema = z
     }
   })
 
+// ---------------------------------------------------------------------------
+// User feedback
+// ---------------------------------------------------------------------------
+
+/** The kinds the TasteCode feedback inbox sorts by. */
+export const FeedbackKindSchema = z.enum(['bug', 'idea', 'question', 'praise', 'other'])
+export type FeedbackKind = z.infer<typeof FeedbackKindSchema>
+
+/** Where the user opened the feedback dialog. Sent only as a short label. */
+export const FeedbackSourceSchema = z.enum([
+  'account_menu',
+  'command_palette',
+  'slash_command',
+  'error_report',
+  'native_menu',
+])
+export type FeedbackSource = z.infer<typeof FeedbackSourceSchema>
+
+export const FEEDBACK_MESSAGE_MAX = 4000
+
+/**
+ * What the dialog shows the user before anything is sent. The server builds
+ * the outgoing payload from this draft alone, redacts it and returns it from
+ * `feedback.preview`, so the preview is exactly what `feedback.submit` sends.
+ * Nothing here is a prompt, transcript or file: `threadId` is used on the
+ * server only to strip that chat's workspace path from attached error text.
+ */
+export const FeedbackDraftSchema = z.object({
+  kind: FeedbackKindSchema,
+  /** May be empty only when an error is attached and included. */
+  message: z.string().max(FEEDBACK_MESSAGE_MAX),
+  /** Only what the user typed; never prefilled. */
+  email: z.string().max(254).optional(),
+  includeError: z.boolean(),
+  includeDiagnostics: z.boolean(),
+  context: z.object({
+    source: FeedbackSourceSchema,
+    threadId: z.string().min(1).max(200).optional(),
+    provider: ProviderIdSchema.optional(),
+    /** A custom harness; its name is never sent. */
+    custom: z.boolean().optional(),
+    model: z.string().max(200).optional(),
+    surface: z.enum(['chat', 'design', 'pull_requests', 'settings']).optional(),
+    error: z
+      .object({
+        kind: z.enum(['turn', 'action', 'provider', 'models']),
+        message: z.string().max(FEEDBACK_MESSAGE_MAX),
+      })
+      .optional(),
+  }),
+})
+export type FeedbackDraft = z.infer<typeof FeedbackDraftSchema>
+
+/**
+ * Why a submission was not delivered. The first group is TasteCode's own
+ * limits; the rest map the inbox's answers and transport failures.
+ */
+export const FeedbackFailureCodeSchema = z.enum([
+  'not_configured',
+  'empty',
+  'cooldown',
+  'daily_limit',
+  'duplicate',
+  'busy',
+  /** The inbox refused the payload (400, 413, 422). */
+  'rejected',
+  /** The inbox rate-limited this install or address (429). */
+  'rate_limited',
+  /** The inbox owner paused feedback (403). */
+  'paused',
+  /** The inbox is not reachable for this build (401, 5xx, unreadable answers). */
+  'unavailable',
+  'network',
+  'timeout',
+])
+export type FeedbackFailureCode = z.infer<typeof FeedbackFailureCodeSchema>
+
+export const FeedbackStatusSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.enum(['not_configured', 'paused', 'unavailable']).optional(),
+  /** Milliseconds until the next send is allowed, when a wait is in force. */
+  retryAfterMs: z.number().int().nonnegative().optional(),
+})
+export type FeedbackStatus = z.infer<typeof FeedbackStatusSchema>
+
+export const FeedbackPreviewSchema = z.object({
+  /** The exact JSON body that would be sent, pretty-printed. Never holds the key. */
+  payload: z.string(),
+  /** How many secret- or path-shaped strings were replaced. */
+  redactions: z.number().int().nonnegative(),
+})
+export type FeedbackPreview = z.infer<typeof FeedbackPreviewSchema>
+
+export const FeedbackSubmitResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    code: FeedbackFailureCodeSchema,
+    /** A sentence the dialog can show as plain text. */
+    message: z.string().max(300),
+    retryAfterMs: z.number().int().nonnegative().optional(),
+  }),
+])
+export type FeedbackSubmitResult = z.infer<typeof FeedbackSubmitResultSchema>
+
 /**
  * Method table. Adding a method means adding it here first — this object is the
  * single source of truth that the server routes against and the client calls.
@@ -603,6 +708,30 @@ export const methods = {
       upToDate: z.boolean().optional(),
       error: z.string().optional(),
     }),
+  },
+  /**
+   * Whether this build can send feedback. Builds without an inbox key report
+   * `enabled: false`, and every entry point stays hidden. A server that
+   * predates these methods answers `unknown method`, which means the same.
+   */
+  'feedback.status': {
+    params: z.object({}),
+    result: FeedbackStatusSchema,
+  },
+  /** Builds and redacts the payload without sending anything. */
+  'feedback.preview': {
+    params: FeedbackDraftSchema,
+    result: FeedbackPreviewSchema,
+  },
+  /**
+   * Sends one user-confirmed submission through the local server, which owns
+   * the key and the abuse limits. Failures are results, not RPC errors, so
+   * the dialog can show the reason and keep the text. A repeated
+   * `submissionId` returns the earlier result instead of sending twice.
+   */
+  'feedback.submit': {
+    params: FeedbackDraftSchema.extend({ submissionId: z.string().uuid() }),
+    result: FeedbackSubmitResultSchema,
   },
   'providers.list': {
     params: z.object({}),
