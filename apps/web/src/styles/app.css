@@ -3447,8 +3447,9 @@
   /* Above every modal surface (settings 60, palette 70, image viewer 100) —
      an error raised while one of them is open must still be visible. */
   z-index: 110;
-  bottom: 18px;
-  right: 18px;
+  /* Set while a composer is docked (NoticePresence). */
+  bottom: var(--notice-bottom, 18px);
+  right: var(--notice-right, 18px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3513,8 +3514,8 @@
 
 @media (max-width: 700px) {
   .notice {
-    right: 12px;
-    bottom: 12px;
+    right: var(--notice-right, 12px);
+    bottom: var(--notice-bottom, 12px);
     max-width: calc(100vw - 24px);
   }
 
