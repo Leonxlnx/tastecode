@@ -9,7 +9,6 @@
   flex: none;
   place-items: center;
   border-radius: var(--r-circle);
-  outline: none;
 }
 
 .context-usage svg {
