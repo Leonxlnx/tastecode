@@ -250,7 +250,7 @@ describe('Sidebar chat actions', () => {
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
   })
 
-  it('draws the card avatar as the photo, else the generated seal for the name', () => {
+  it('draws the card avatar as the photo, else the generated seal for the profile', () => {
     const view = (profileIdentity: ProfileIdentityPreferences | undefined) => (
       <Sidebar
         projects={[]}
@@ -285,9 +285,15 @@ describe('Sidebar chat actions', () => {
     expect(avatar().textContent).toBe('')
     const alex = seal()!.innerHTML
 
+    // The card strikes the same seal as the profile page: the chosen seed wins over the name.
+    rendered.rerender(view({ displayName: 'Alex Rivera', avatarSeed: 'tide' }))
+    expect(seal()!.innerHTML).not.toBe(alex)
+
     // Another name draws another seal; a profile without one still gets a seal.
     rendered.rerender(view({ displayName: 'Leon' }))
     expect(seal()!.innerHTML).not.toBe(alex)
+    rendered.rerender(view({ displayName: '' }))
+    expect(seal()).not.toBeNull()
     rendered.rerender(view(undefined))
     expect(seal()).not.toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
