@@ -4,6 +4,8 @@ import {
   emptyThread,
   type LiveItemUpdate,
   type ThreadState,
+  type TurnLifecycle,
+  type TurnTiming,
 } from './thread-state.js'
 
 export { emptyThread } from './thread-state.js'
@@ -257,6 +259,30 @@ function settleThreadError(state: ThreadState, items: Item[]): ThreadState {
   }
 }
 
+type TurnCompletedEvent = Extract<DomainEvent, { type: 'turn.completed' }>
+
+/** The lifecycle a finished turn leaves behind: when it ended and whether it was stopped. */
+function settledTurnLifecycle(
+  timing: TurnLifecycle | undefined,
+  event: TurnCompletedEvent,
+): TurnLifecycle {
+  return {
+    ...timing,
+    ...(event.completedAt !== undefined
+      ? { completedAt: timing?.completedAt ?? event.completedAt }
+      : {}),
+    ...(event.status === 'interrupted' ? { interrupted: true as const } : {}),
+  }
+}
+
+function settleTurnTiming(turnTiming: TurnTiming, event: TurnCompletedEvent): TurnTiming {
+  if (event.completedAt === undefined && event.status !== 'interrupted') return turnTiming
+  return {
+    ...turnTiming,
+    [event.turnId]: settledTurnLifecycle(turnTiming[event.turnId], event),
+  }
+}
+
 export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
   switch (event.type) {
     case 'turn.started': {
@@ -289,23 +315,13 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
       // fix). userInputs stay: design-briefing questions legitimately outlive
       // their turn and are answered to start the next one.
       const current = settleLiveItems(state)
-      const timing = current.turnTiming[event.turnId]
       return {
         ...current,
         running: false,
         liveStart: current.items.length,
         activeTurn: undefined,
         approvals: [],
-        turnTiming:
-          event.completedAt === undefined
-            ? current.turnTiming
-            : {
-                ...current.turnTiming,
-                [event.turnId]: {
-                  ...timing,
-                  completedAt: timing?.completedAt ?? event.completedAt,
-                },
-              },
+        turnTiming: settleTurnTiming(current.turnTiming, event),
       }
     }
 
@@ -710,7 +726,7 @@ export function reduceEventLog(
   let deltaChunksByItem:
     Map<string, { chunks: string[]; itemId: string; turnId: string }> | undefined
   let replayItems: ReplayItems | undefined
-  let replayTurnTiming: Record<string, { startedAt?: number; completedAt?: number }> | undefined
+  let replayTurnTiming: Record<string, TurnLifecycle> | undefined
 
   // Replayed state is private until this function returns. Claim one shallow
   // copy lazily, then update its top-level fields instead of allocating a new
@@ -838,13 +854,9 @@ export function reduceEventLog(
     }
     if (event.type === 'turn.completed') {
       let timing = next.turnTiming
-      if (event.completedAt !== undefined) {
+      if (event.completedAt !== undefined || event.status === 'interrupted') {
         const mutable = mutableTurnTiming()
-        const previous = mutable[event.turnId]
-        mutable[event.turnId] = {
-          ...previous,
-          completedAt: previous?.completedAt ?? event.completedAt,
-        }
+        mutable[event.turnId] = settledTurnLifecycle(mutable[event.turnId], event)
         timing = mutable
       }
       const mutable = mutableState()

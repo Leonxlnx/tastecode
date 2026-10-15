@@ -407,6 +407,40 @@ describe('thread reducer', () => {
     expect(started.turnTiming.current).toEqual({ startedAt: 10 })
   })
 
+  it('records a stopped turn on its lifecycle, live and after replay', () => {
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 1_000 },
+      },
+      { type: 'item.started', item: item({ id: 'a1', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'Half an ans' },
+      { type: 'turn.completed', turnId: 't1', status: 'interrupted', completedAt: 5_000 },
+      {
+        type: 'turn.started',
+        turn: { id: 't2', threadId: 'th1', status: 'running', createdAt: 6_000 },
+      },
+      { type: 'turn.completed', turnId: 't2', status: 'interrupted' },
+    ]
+
+    const live = apply(events)
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(live.turnTiming).toEqual({
+      t1: { startedAt: 1_000, completedAt: 5_000, interrupted: true },
+      t2: { startedAt: 6_000, interrupted: true },
+    })
+    expect(replayed.turnTiming).toEqual(live.turnTiming)
+    const completed = apply([
+      events[0]!,
+      { type: 'turn.completed', turnId: 't1', status: 'completed', completedAt: 5_000 },
+    ])
+    expect(completed.turnTiming.t1).toEqual({ startedAt: 1_000, completedAt: 5_000 })
+  })
+
   it('projects the same elapsed time live and after replay', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const submissionId = 'local:submission-1'
