@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type MouseEvent,
+  type KeyboardEvent,
   type PointerEvent,
 } from 'react'
 import {
@@ -373,16 +373,17 @@ function WorkspacePanelComponent(props: {
     })
   }
 
+  const hostOf = (handle: HTMLElement) =>
+    handle.closest<HTMLElement>(bottom ? '.bottom-terminal' : '.workspace-layout')
+
   // Double-clicking the edge restores the default size, as split views in
   // editors do. It eases there from the size drawn now, which is smaller than
   // the saved one when the window clamps the panel.
-  const resetSize = (event: MouseEvent<HTMLDivElement>) => {
+  const resetSize = (handle: HTMLElement) => {
     if (props.expanded) return
     resizeCleanup.current()
     const target = bottom ? DEFAULT_BOTTOM_PANEL_HEIGHT : DEFAULT_WORKSPACE_PANEL_WIDTH
-    const layout = event.currentTarget.closest<HTMLElement>(
-      bottom ? '.bottom-terminal' : '.workspace-layout',
-    )
+    const layout = hostOf(handle)
     const drawn = bottom
       ? layout?.getBoundingClientRect().height
       : panelElement.current?.getBoundingClientRect().width
@@ -399,6 +400,41 @@ function WorkspacePanelComponent(props: {
     })
   }
 
+  // The edge also takes focus, so the panel can be sized without a pointer:
+  // Left and Right (Up and Down at the bottom) step 16px, 64px with Shift,
+  // Home and End go to the limits and Enter restores the default size.
+  const [sizeLimit, setSizeLimit] = useState<number>()
+  const resizeByKey = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (props.expanded || event.altKey || event.ctrlKey || event.metaKey) return
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      resetSize(event.currentTarget)
+      return
+    }
+    const layout = hostOf(event.currentTarget)
+    const bounds = panelSizeBounds(layout, bottom)
+    const current = Math.min(bounds.max, Math.max(bounds.min, props.width))
+    const step = event.shiftKey ? 64 : 16
+    const next =
+      event.key === (bottom ? 'ArrowUp' : 'ArrowLeft')
+        ? current + step
+        : event.key === (bottom ? 'ArrowDown' : 'ArrowRight')
+          ? current - step
+          : event.key === 'Home'
+            ? bounds.min
+            : event.key === 'End'
+              ? bounds.max
+              : undefined
+    if (next === undefined) return
+    event.preventDefault()
+    resizeCleanup.current()
+    setSizeLimit(bounds.max)
+    const size = Math.round(Math.min(bounds.max, Math.max(bounds.min, next)))
+    layout?.style.setProperty(bottom ? 'height' : '--workspace-panel-w', `${size}px`)
+    props.onWidthChange(size)
+  }
+  const sizeNow = Math.round(sizeLimit ? Math.min(sizeLimit, props.width) : props.width)
+
   return (
     <aside
       ref={panelElement}
@@ -412,11 +448,18 @@ function WorkspacePanelComponent(props: {
         role="separator"
         aria-label={bottom ? 'Resize bottom workspace tools' : 'Resize workspace tools'}
         aria-orientation={bottom ? 'horizontal' : 'vertical'}
+        aria-valuenow={sizeNow}
+        aria-valuemin={panelSizeBounds(null, bottom).min}
+        aria-valuemax={sizeLimit}
+        aria-valuetext={`${sizeNow} pixels ${bottom ? 'tall' : 'wide'}`}
+        tabIndex={props.expanded ? -1 : 0}
         onPointerEnter={() => {
           if (!props.expanded) prepareAppHaptics()
         }}
         onPointerDown={beginResize}
-        onDoubleClick={resetSize}
+        onDoubleClick={(event) => resetSize(event.currentTarget)}
+        onFocus={(event) => setSizeLimit(panelSizeBounds(hostOf(event.currentTarget), bottom).max)}
+        onKeyDown={resizeByKey}
       />
       <button
         type="button"
