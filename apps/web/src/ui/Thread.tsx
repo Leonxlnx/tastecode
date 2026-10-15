@@ -27,6 +27,7 @@ import {
   IconHelpCircle as CircleQuestionMark,
   IconCopy as Copy,
   IconFilePencil as FilePenLine,
+  IconHistory as History,
   IconLibraryPhoto as Images,
   IconListCheck as ListChecks,
   IconLoader2 as LoaderCircle,
@@ -1482,7 +1483,7 @@ const Row = memo(function Row({
                 aria-label="Revert to before prompt"
                 title="Revert"
               >
-                <RotateCcw aria-hidden />
+                <History aria-hidden />
               </button>
             ) : null}
           </div>
@@ -2762,7 +2763,7 @@ function ResponseActions({
           aria-label="Revert to before response"
           title="Revert"
         >
-          <RotateCcw aria-hidden />
+          <History aria-hidden />
         </button>
       ) : null}
       <time dateTime={new Date(createdAt).toISOString()}>{RESPONSE_TIME.format(createdAt)}</time>

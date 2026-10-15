@@ -1793,7 +1793,11 @@ describe('completed activity disclosure', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before response' }))
+    const restore = screen.getByRole('button', { name: 'Revert to before response' })
+    // A history clock, not the circular arrow that reads as "regenerate".
+    expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
+    expect(restore.querySelector('.tabler-icon-rotate')).toBeNull()
+    fireEvent.click(restore)
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
@@ -2089,7 +2093,9 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
+    const restore = screen.getByRole('button', { name: 'Revert to before prompt' })
+    expect(restore.querySelector('.tabler-icon-history')).toBeTruthy()
+    fireEvent.click(restore)
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
   })
 
