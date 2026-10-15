@@ -4,6 +4,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -67,7 +68,12 @@ export type WorkspaceProviderLoginRequest = {
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
 
 type WorkspaceTab =
-  | { id: string; kind: WorkspaceTool }
+  | {
+      id: string
+      kind: WorkspaceTool
+      /** Opened by the user, not restored or opened for them: take focus. */
+      userOpened?: boolean
+    }
   | {
       id: string
       kind: 'provider-login'
@@ -194,22 +200,45 @@ function WorkspacePanelComponent(props: {
   const surfaces = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : 1)), [tabs])
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
   const toolRef = useRef(tool)
+  const panelElement = useRef<HTMLElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
   const handledTerminalRequest = useRef(0)
   const handledExternalRequest = useRef(0)
   const handledPreviewRequest = useRef<string | undefined>(undefined)
   toolRef.current = tool
 
+  // A Browser tab the user just opened, whose surface may still be loading.
+  const focusNewBrowserTab = useRef<string | undefined>(undefined)
   const openTool = useCallback(
     (kind: WorkspaceTool) => {
-      showTool({
-        id: ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind,
-        kind,
-      })
+      const id = ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind
+      if (kind === 'browser') focusNewBrowserTab.current = id
+      showTool({ id, kind, userOpened: true })
       props.onOpen()
     },
     [props.onOpen, showTool],
   )
+  // The first Browser tab loads its module lazily, which can take a moment.
+  // Until its address can take focus, park focus on the new tab so a URL typed
+  // meanwhile cannot land in the chat composer and be sent as a message. A
+  // surface that already mounted has focused its address; leave that alone.
+  // Runs after children, so after the Browser's own focus and any menu's.
+  useLayoutEffect(() => {
+    const id = focusNewBrowserTab.current
+    if (!id) return
+    focusNewBrowserTab.current = undefined
+    const panel = panelElement.current
+    if (
+      panel
+        ?.querySelector('.workspace-panel__surface:not([hidden])')
+        ?.contains(document.activeElement)
+    )
+      return
+    const tab = Array.from(panel?.querySelectorAll<HTMLElement>('[data-tab-motion-id]') ?? []).find(
+      (element) => element.dataset['tabMotionId'] === id,
+    )
+    tab?.querySelector<HTMLElement>('[role="tab"]')?.focus()
+  })
 
   const closeTool = useCallback(() => {
     const current = tabsRef.current
@@ -329,6 +358,7 @@ function WorkspacePanelComponent(props: {
 
   return (
     <aside
+      ref={panelElement}
       className={`workspace-panel${tool ? ' has-tool' : ''}${bottom ? ' workspace-panel--bottom' : ''}${props.open ? ' is-open' : ''}${props.expanded ? ' is-expanded' : ''}`}
       aria-label={bottom ? 'Bottom workspace tools' : 'Workspace tools'}
       aria-hidden={!props.open}
@@ -487,6 +517,7 @@ function WorkspaceToolSurface(props: {
       <WorkspaceBrowser
         active={props.active}
         navigation={props.browserNavigation}
+        focusAddressOnOpen={props.tab.userOpened}
         tabId={props.tab.id}
         onPageInfo={props.onBrowserPage}
       />

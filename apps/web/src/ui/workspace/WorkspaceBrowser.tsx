@@ -96,11 +96,14 @@ export type BrowserNavigationRequest = {
 export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   active,
   navigation,
+  focusAddressOnOpen,
   tabId,
   onPageInfo,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
+  /** The user opened this tab to type a URL: focus the address once it mounts. */
+  focusAddressOnOpen?: boolean | undefined
   /** Passed back to onPageInfo, so one stable owner callback serves every tab. */
   tabId?: string | undefined
   /** The page's URL and title whenever either changes, for the tab label. */
@@ -131,6 +134,18 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   // A page that failed to load or stopped; the canvas shows it instead of the guest.
   const [failure, setFailure] = useState<BrowserLoadFailureView>()
   const addressInput = useRef<HTMLInputElement>(null)
+  const focusedOnOpen = useRef(false)
+  // An address entered before the guest finished starting, loaded once it has.
+  const pendingAddress = useRef<string | undefined>(undefined)
+
+  // After any menu that opened the tab has handed focus back, which happens
+  // earlier in the same commit, so a typed URL lands in the address.
+  useLayoutEffect(() => {
+    if (!focusAddressOnOpen || focusedOnOpen.current) return
+    focusedOnOpen.current = true
+    addressInput.current?.focus()
+  }, [focusAddressOnOpen])
+
   // Read through a ref: the report below runs when the page changes, never
   // because the owner handed over a new function (#283).
   const pageInfoListener = useRef(onPageInfo)
@@ -313,14 +328,19 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         return false
       }
       const view = guest.current
-      if (!view || typeof view.loadURL !== 'function' || readyGuest.current !== view) {
-        setError(
-          view && typeof view.loadURL === 'function'
-            ? 'The in-app browser is still starting.'
-            : 'The in-app browser is unavailable in this window.',
-        )
+      if (!view || typeof view.loadURL !== 'function') {
+        setError('The in-app browser is unavailable in this window.')
         return false
       }
+      if (readyGuest.current !== view) {
+        // Typed into a tab that opened a moment ago: load it as soon as the guest is ready.
+        pendingAddress.current = url
+        editingAddress.current = false
+        setAddress(url)
+        setError(undefined)
+        return true
+      }
+      pendingAddress.current = undefined
 
       editingAddress.current = false
       failedAddress.current = undefined
@@ -347,6 +367,12 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     },
     [syncGuestState],
   )
+
+  useLayoutEffect(() => {
+    const pending = pendingAddress.current
+    if (!pending || !guest.current || readyGuest.current !== guest.current) return
+    navigate(pending)
+  }, [guestReadyRevision, navigate])
 
   useLayoutEffect(() => {
     if (!navigation || lastNavigationRequest.current === navigation.requestId) return
