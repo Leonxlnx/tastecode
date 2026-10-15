@@ -9,6 +9,12 @@ export const EFFORT_THUMB_SIZE = 24
 export type ModelSelectorProps = {
   models: ModelChoice[]
   modelId: string | undefined
+  /**
+   * The choice the next request uses, resolved once by the owner. When set, the
+   * trigger and the checked row show it, even if it is not in `models`, so the
+   * label can never name another model than the one a send starts.
+   */
+  choice?: ModelChoice | undefined
   effort: string | undefined
   serviceTier: string | undefined
   disabled: boolean

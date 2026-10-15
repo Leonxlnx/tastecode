@@ -187,6 +187,33 @@ describe('ModelSelector', () => {
     expect(getFriendlyEffortLabel('ultracode')).toBe('Ultracode')
   })
 
+  it('names the choice its owner resolved, even when the list would fall back elsewhere', async () => {
+    const placeholder: ModelChoice = {
+      key: 'claude-code:',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: providerMark('claude-code'),
+      model: {
+        id: '',
+        displayName: 'Provider default',
+        description: 'The model this provider is configured to use',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    const { onModelChange } = renderSelector({ modelId: placeholder.key, choice: placeholder })
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(trigger.textContent).toContain('Provider default')
+    expect(trigger.textContent).not.toContain('5.6 Sol')
+
+    // The list default is not the current choice, so picking it must commit.
+    await openSelector()
+    fireEvent.click(await screen.findByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-sol')
+  })
+
   it('shows active fast mode in the compact trigger', async () => {
     renderSelector({ serviceTier: 'priority' })
 

@@ -39,6 +39,7 @@ type Bridge = {
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
+  setWindowChrome?: (chrome: WindowChrome) => Promise<void>
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
@@ -295,6 +296,22 @@ export function setAppZoom(action: ZoomAction): Promise<void> {
 
 export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
   return bridge?.setTheme(preference) ?? Promise.resolve()
+}
+
+/**
+ * The colours the page paints where native window chrome meets it, as #rrggbb.
+ * The desktop shell colours the caption buttons with them and opens the next
+ * launch in them. Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
+ */
+export type WindowChrome = {
+  theme: 'light' | 'dark'
+  background: string
+  caption: string
+  symbol: string
+}
+
+export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {
+  return bridge?.setWindowChrome?.(chrome) ?? Promise.resolve()
 }
 
 export function prepareNativeHaptics(): void {
