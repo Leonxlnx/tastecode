@@ -399,16 +399,18 @@
   --error: #be123c;
   --success: #16803c;
 
-  /* Light: a white thumb with a dark dot on a grey fill. */
-  --effort-track: color-mix(in srgb, var(--text) 6%, var(--bg-prompt));
-  --effort-track-line: color-mix(in srgb, var(--text) 9%, transparent);
-  --effort-fill: color-mix(in srgb, var(--text) 27%, var(--bg-prompt));
-  --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
-  --effort-dot-lit: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
-  --effort-thumb-bg: var(--bg-prompt);
-  --effort-thumb-dot: var(--text);
-  --effort-thumb-shadow: 0 1px 3px rgb(24 24 27 / 22%), 0 0 0 0.5px rgb(24 24 27 / 20%);
-  --effort-ring: color-mix(in srgb, var(--text) 40%, transparent);
+  /* Light: the same active language as a switch. The empty part is a
+     groove, the chosen range is ink, and the thumb is paper. A mid-grey
+     fill on the near-white menu read as unfinished. */
+  --effort-track: var(--surface-3);
+  --effort-track-line: color-mix(in srgb, var(--text) 16%, transparent);
+  --effort-fill: var(--light);
+  --effort-dot: color-mix(in srgb, var(--text) 42%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--on-light) 78%, transparent);
+  --effort-thumb-bg: var(--on-light);
+  --effort-thumb-dot: var(--light);
+  --effort-thumb-shadow: 0 0 0 0.5px rgb(24 24 27 / 22%), 0 1px 1.5px rgb(24 24 27 / 12%);
+  --effort-ring: color-mix(in srgb, var(--text) 34%, transparent);
   --effort-mark-empty: color-mix(in srgb, var(--text) 20%, transparent);
 }
 
