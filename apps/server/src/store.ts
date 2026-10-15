@@ -47,6 +47,7 @@ import {
 
 const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
+const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -1988,6 +1989,15 @@ export class Store {
     this.#writeAppSetting.run(PROVIDER_CONTEXT_SETTING, JSON.stringify(next))
     this.#providerContextSettingsCache = Object.freeze(next)
     return this.#providerContextSettingsCache
+  }
+
+  /** Send timestamps and short hashes only; feedback text is never stored. */
+  feedbackLedger(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, FEEDBACK_LEDGER_SETTING)?.value
+  }
+
+  setFeedbackLedger(value: string): void {
+    this.#writeAppSetting.run(FEEDBACK_LEDGER_SETTING, value)
   }
 
   #updateThread(
