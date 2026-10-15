@@ -1946,7 +1946,11 @@ describe('web client', () => {
       ],
     })
 
-    await waitFor(() => expect(screen.getByText('GPT-5.5')).toBeTruthy())
+    // The composer button names GPT-5.5 too once it is the visible choice, so
+    // look for the Settings row by its switch.
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: 'Include GPT-5.5 in model picker' })).toBeTruthy(),
+    )
     expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
   })
 
