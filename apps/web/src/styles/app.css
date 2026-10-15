@@ -2617,16 +2617,6 @@
   animation: design-label-shimmer 2.4s linear infinite;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .composer__design:hover > span {
-    background: linear-gradient(90deg, #b9a7ff, #87c7d8, #e2a6bc, #b9a7ff);
-    background-clip: text;
-    background-size: 200% 100%;
-    color: transparent;
-    animation: design-label-shimmer 2.4s linear infinite;
-  }
-}
-
 @keyframes design-label-shimmer {
   to {
     background-position: -200% 0;
@@ -3215,8 +3205,10 @@
     box-shadow: var(--composer-action-shadow-hover);
   }
 
-  .tools .composer__design:hover:not(:disabled) {
-    border-color: var(--composer-design-border-hover);
+  /* Hover inks the label like every other chip instead of fading it. */
+  .tools .composer__design:hover:not(:disabled),
+  .tools .composer__design:hover:not(:disabled) svg {
+    color: var(--text);
   }
 
   .tools .composer__design.is-active:hover:not(:disabled) {
