@@ -72,6 +72,49 @@ describe('StageHeader', () => {
     expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Polished landing page')
   })
 
+  it('returns focus to the chat menu when Enter or Escape ends a rename', () => {
+    const stage = props()
+    render(<StageHeader {...stage} />)
+    const menu = screen.getByRole('button', { name: 'Options for Build the landing page' })
+
+    for (const key of ['Escape', 'Enter']) {
+      fireEvent.click(menu)
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+      const rename = screen.getByRole('textbox', { name: 'Rename chat' }) as HTMLInputElement
+      // happy-dom runs the closing menu's focus return after the field took
+      // focus; a browser leaves the field focused. The title is selected either way.
+      rename.focus()
+      expect(rename.selectionStart).toBe(0)
+      expect(rename.selectionEnd).toBe('Build the landing page'.length)
+      fireEvent.change(rename, { target: { value: `Renamed with ${key}` } })
+      // A cancelled key is not followed by a keypress that would open the menu again.
+      expect(fireEvent.keyDown(rename, { key })).toBe(false)
+      expect(screen.queryByRole('textbox', { name: 'Rename chat' })).toBeNull()
+      expect(document.activeElement).toBe(menu)
+    }
+    expect(stage.onRenameSession).toHaveBeenCalledOnce()
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Renamed with Enter')
+  })
+
+  it('leaves focus where the user went when a rename ends on blur', () => {
+    const stage = props()
+    render(
+      <>
+        <StageHeader {...stage} />
+        <button type="button">Elsewhere</button>
+      </>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
+    const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    fireEvent.change(rename, { target: { value: 'Saved on blur' } })
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' })
+    elsewhere.focus()
+    fireEvent.blur(rename)
+    expect(stage.onRenameSession).toHaveBeenCalledWith('thread-1', 'Saved on blur')
+    expect(document.activeElement).toBe(elsewhere)
+  })
+
   it('saves a rename to the chat it was typed for when a shortcut switches chats', () => {
     const stage = props()
     const view = render(<StageHeader {...stage} sessionId="thread-a" title="Chat A" />)
