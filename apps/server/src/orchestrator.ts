@@ -47,6 +47,7 @@ import {
 import { readWorkspace, switchWorkspaceBranch } from './workspace.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { decodeHistoryCursor, readHistoryPage, type HistoryPage } from './history-page.js'
+import { readIndexedNewestHistoryPage } from './history-tail.js'
 import {
   DESIGN_PHASE_NOTICE,
   RESTORE_CONTEXT_NOTICE,
@@ -70,6 +71,7 @@ import type {
   BackgroundModelPreference,
   BackgroundModelSettings,
   BackgroundModelSource,
+  CustomHarness,
   DiffDecision,
   DomainEvent,
   McpCapabilities,
@@ -113,9 +115,11 @@ import {
   cleanGeneratedTitle,
   commitMessagePrompt,
   resolveBackgroundModel,
+  resolveBackgroundModelFrom,
   runBackgroundCompletion,
   titlePrompt,
   type AvailableBackgroundModelSource,
+  type BackgroundModelSourceLoader,
 } from './background-model.js'
 import { VoiceService, type VoiceTranscriber } from './voice.js'
 import {
@@ -184,6 +188,11 @@ type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type PendingTurnStart = { acceptedAt: number; submission?: UserSubmission }
 type QueueDrain = { queueId: string; completedTurnId?: string }
 type TurnStartBarrier = { done: Promise<void>; release: () => void; turnCompleted?: boolean }
+type BackgroundSourceEntry = {
+  reading: Promise<AvailableBackgroundModelSource | undefined>
+  /** Infinite while the read is in flight. */
+  expiresAt: number
+}
 type AttachedThreadRuntime = {
   thread: Thread
   session: AgentSession
@@ -530,6 +539,13 @@ const PROJECT_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   cancelOAuth: false,
 }
 const MAX_SIDEBAR_STATUS_CHANGES = 2_048
+const BACKGROUND_SOURCE_TTL_MS = 60_000
+/** Background model sources in source order; custom harnesses follow them. */
+const BACKGROUND_PROVIDERS = [
+  ['claude-code', 'Claude Code'],
+  ['codex', 'Codex'],
+  ['grok', 'Grok'],
+] as const
 const EMPTY_QUEUE_CACHE_LIMIT = 128
 
 /**
@@ -649,9 +665,8 @@ export class Orchestrator {
   #sidebarStatusChanges: Array<{ revision: number; threadId: string }> = []
   #mcpConfig: McpConfigStore
   #customHarnesses: CustomHarnessStore
-  #backgroundSourcesCache:
-    { expiresAt: number; sources: AvailableBackgroundModelSource[] } | undefined
-  #backgroundSourcesStarting: Promise<AvailableBackgroundModelSource[]> | undefined
+  /** Keyed by source id. */
+  #backgroundSources = new Map<string, BackgroundSourceEntry>()
   #backgroundSourcesRevision = 0
   #readCredential: (reference: string) => string
   #voice: VoiceService
@@ -823,7 +838,10 @@ export class Orchestrator {
 
   async backgroundModelSettings(): Promise<BackgroundModelSettings> {
     const preference = this.#store.backgroundModelPreference()
-    const available = await this.#backgroundModelSources()
+    const loaded = await Promise.all(this.#backgroundSourceLoaders().map((loader) => loader.load()))
+    const available = loaded.filter(
+      (source): source is AvailableBackgroundModelSource => source !== undefined,
+    )
     const resolved = resolveBackgroundModel(preference, available)
     const sources: BackgroundModelSource[] = available.map((source) => ({
       id: source.id,
@@ -866,107 +884,119 @@ export class Orchestrator {
   }
 
   async #runBackgroundTask(prompt: string): Promise<string> {
-    const settings = await this.backgroundModelSettings()
-    if (!settings.resolved) {
+    const preference = this.#store.backgroundModelPreference()
+    // Each source read can start vendor processes; read only what this choice needs.
+    const resolved = await resolveBackgroundModelFrom(preference, this.#backgroundSourceLoaders())
+    if (!resolved) {
       throw new Error(
-        settings.preference.mode === 'manual'
+        preference.mode === 'manual'
           ? 'The selected background model is unavailable. Choose another one in Settings.'
           : 'Connect a provider with an available model before using background writing.',
       )
     }
-    const runtime = this.#runtimeFor(settings.resolved.provider, this.#onLog)
+    const runtime = this.#runtimeFor(resolved.provider, this.#onLog)
     return runBackgroundCompletion({
       runtime,
-      selection: settings.resolved,
+      selection: resolved,
       prompt,
       onCleanupError: (error) =>
         this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
     })
   }
 
-  async #backgroundModelSources(): Promise<AvailableBackgroundModelSource[]> {
-    const cached = this.#backgroundSourcesCache
-    if (cached && cached.expiresAt > Date.now()) return cached.sources
-    if (this.#backgroundSourcesStarting) return this.#backgroundSourcesStarting
-
-    const revision = this.#backgroundSourcesRevision
-    const starting = this.#discoverBackgroundModelSources()
-      .then((sources) => {
-        if (this.#backgroundSourcesRevision === revision) {
-          this.#backgroundSourcesCache = { expiresAt: Date.now() + 60_000, sources }
-        }
-        return sources
-      })
-      .finally(() => {
-        if (this.#backgroundSourcesStarting === starting) {
-          this.#backgroundSourcesStarting = undefined
-        }
-      })
-    this.#backgroundSourcesStarting = starting
-    return starting
+  #backgroundSourceLoaders(): BackgroundModelSourceLoader[] {
+    const builtIns = BACKGROUND_PROVIDERS.map(([provider, displayName]) => ({
+      provider,
+      load: () =>
+        this.#backgroundSource(provider, () => this.#discoverProviderSource(provider, displayName)),
+    }))
+    const custom = this.#customHarnesses.list().map((harness) => ({
+      provider: harness.provider,
+      agent: harness.id,
+      load: () =>
+        this.#backgroundSource(`${harness.provider}:${harness.id}`, () =>
+          this.#discoverHarnessSource(harness),
+        ),
+    }))
+    return [...builtIns, ...custom]
   }
 
-  async #discoverBackgroundModelSources(): Promise<AvailableBackgroundModelSource[]> {
-    const builtIns = await Promise.all(
-      (
-        [
-          ['claude-code', 'Claude Code'],
-          ['codex', 'Codex'],
-          ['grok', 'Grok'],
-        ] as const
-      ).map(async ([provider, displayName]) => {
-        try {
-          const account = await this.account(provider)
-          if (!account.signedIn) return undefined
-          const models = await this.listModels(provider)
-          if (models.length === 0) return undefined
-          return {
-            id: provider,
-            displayName,
-            provider,
-            models,
-            ...(provider === 'codex'
-              ? {
-                  codexSubscription: Boolean(
-                    account.plan && account.plan.toLowerCase() !== 'api key',
-                  ),
-                }
-              : {}),
-          } satisfies AvailableBackgroundModelSource
-        } catch {
-          return undefined
-        }
-      }),
-    )
+  /** One read per source serves concurrent callers and, for a minute, later ones. */
+  #backgroundSource(
+    id: string,
+    discover: () => Promise<AvailableBackgroundModelSource | undefined>,
+  ): Promise<AvailableBackgroundModelSource | undefined> {
+    const current = this.#backgroundSources.get(id)
+    if (current && current.expiresAt > Date.now()) return current.reading
 
-    const custom = await Promise.all(
-      this.#customHarnesses.list().map(async (harness) => {
-        try {
-          const models = await this.listModels(harness.provider, harness.id)
-          if (models.length === 0) return undefined
-          return {
-            id: `${harness.provider}:${harness.id}`,
-            displayName: harness.displayName,
-            provider: harness.provider,
-            agent: harness.id,
-            models,
-          } satisfies AvailableBackgroundModelSource
-        } catch {
-          return undefined
-        }
-      }),
+    const revision = this.#backgroundSourcesRevision
+    const entry: BackgroundSourceEntry = {
+      reading: discover(),
+      expiresAt: Number.POSITIVE_INFINITY,
+    }
+    this.#backgroundSources.set(id, entry)
+    // A read an invalidation overtook still answers its callers, but nobody later.
+    const settle = (succeeded: boolean) => {
+      if (this.#backgroundSources.get(id) !== entry) return
+      if (succeeded && this.#backgroundSourcesRevision === revision) {
+        entry.expiresAt = Date.now() + BACKGROUND_SOURCE_TTL_MS
+      } else {
+        this.#backgroundSources.delete(id)
+      }
+    }
+    void entry.reading.then(
+      () => settle(true),
+      () => settle(false),
     )
+    return entry.reading
+  }
 
-    const sources: Array<AvailableBackgroundModelSource | undefined> = [...builtIns, ...custom]
-    return sources.filter(
-      (source): source is AvailableBackgroundModelSource => source !== undefined,
-    )
+  async #discoverProviderSource(
+    provider: (typeof BACKGROUND_PROVIDERS)[number][0],
+    displayName: string,
+  ): Promise<AvailableBackgroundModelSource | undefined> {
+    try {
+      const account = await this.account(provider)
+      if (!account.signedIn) return undefined
+      const models = await this.listModels(provider)
+      if (models.length === 0) return undefined
+      return {
+        id: provider,
+        displayName,
+        provider,
+        models,
+        ...(provider === 'codex'
+          ? {
+              codexSubscription: Boolean(account.plan && account.plan.toLowerCase() !== 'api key'),
+            }
+          : {}),
+      } satisfies AvailableBackgroundModelSource
+    } catch {
+      return undefined
+    }
+  }
+
+  async #discoverHarnessSource(
+    harness: CustomHarness,
+  ): Promise<AvailableBackgroundModelSource | undefined> {
+    try {
+      const models = await this.listModels(harness.provider, harness.id)
+      if (models.length === 0) return undefined
+      return {
+        id: `${harness.provider}:${harness.id}`,
+        displayName: harness.displayName,
+        provider: harness.provider,
+        agent: harness.id,
+        models,
+      } satisfies AvailableBackgroundModelSource
+    } catch {
+      return undefined
+    }
   }
 
   #invalidateBackgroundSources(): void {
     this.#backgroundSourcesRevision += 1
-    this.#backgroundSourcesCache = undefined
-    this.#backgroundSourcesStarting = undefined
+    this.#backgroundSources.clear()
   }
 
   async listMcpServers(
@@ -2185,6 +2215,9 @@ export class Orchestrator {
         // A restart's newest page comes from the current replay, not the cursor's.
         if (!page.reset) return page
       }
+    } else {
+      const page = await this.#readNewestHistoryPage(threadId, request.turnLimit)
+      if (page) return page
     }
     const { events } = await this.#readHistory(threadId, 0)
     return readHistoryPage(threadId, events, {
@@ -2195,6 +2228,21 @@ export class Orchestrator {
       isStale: (cursor, snapshotSeq) =>
         cursor.seq > snapshotSeq || this.#store.providerHistoryChangedAfter(threadId, cursor.seq),
     })
+  }
+
+  /**
+   * A cold open reads only the end of the event log when the history index
+   * can vouch for it. A replay still held in memory is cheaper to cut.
+   */
+  async #readNewestHistoryPage(
+    threadId: string,
+    turnLimit: number | undefined,
+  ): Promise<HistoryPage | undefined> {
+    await this.#restoringThreads.get(threadId)
+    this.#touchThreadRuntime(threadId)
+    this.#recordedDeltas.flush(threadId)
+    if (this.#store.hasTailReplaySnapshotInMemory(threadId)) return undefined
+    return readIndexedNewestHistoryPage(this.#store, threadId, turnLimit)
   }
 
   async #readHistory(threadId: string, afterSeq: number): Promise<HistoryRead> {
@@ -2211,6 +2259,8 @@ export class Orchestrator {
       }
       const base = this.#store.replaySnapshotBase(threadId)
       const tail = this.#store.history(threadId, base?.seq ?? 0)
+      // A thread that predates the history index gets it from this full read.
+      if (!base) this.#store.backfillHistoryIndex(threadId, tail)
       const compacted = compactHistoryReplay(base ? [...base.entries, ...tail] : tail)
       const seq = tail.at(-1)?.seq ?? base?.seq ?? 0
       // History skips unreadable and retired rows, so `seq` can name an older
@@ -3410,9 +3460,7 @@ export class Orchestrator {
     this.#inboxProjections.clear()
     this.#inboxProjectionsLoaded = false
     this.#staleInboxProjectionThreads.clear()
-    this.#backgroundSourcesCache = undefined
-    this.#backgroundSourcesStarting = undefined
-    this.#backgroundSourcesRevision += 1
+    this.#invalidateBackgroundSources()
     await Promise.allSettled([...this.#designPreviewTasks.values()].flatMap((tasks) => [...tasks]))
     const previewResults = await Promise.allSettled([
       ...previewsStopped,

@@ -892,6 +892,10 @@ function sidebarProps() {
   >
 }
 
+function terminalOpenRequests() {
+  return transport.request.mock.calls.filter(([method]) => method === 'terminal.open').length
+}
+
 async function openCheckpointHistory() {
   const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
     typeof import('./ui/StageHeader.js').StageHeader
@@ -1578,6 +1582,48 @@ describe('web client', () => {
       })
     },
   )
+
+  it('keeps a chat queued for deletion out of chat search', async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const contentHit = (threadId: string, threadTitle: string) => ({
+      projectPath: '/work/project',
+      projectName: 'project',
+      threadId,
+      threadTitle,
+      turnId: `turn-in-${threadId}`,
+      provider: 'codex',
+      createdAt: 0,
+      snippet: [{ text: 'Doomed', highlighted: true }],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              contentHit('doomed-thread', 'Doomed chat'),
+              contentHit('untouched-thread', 'New session'),
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'Doomed' },
+    })
+    // The kept chat's hit shows that the server's results have arrived.
+    expect(await screen.findByRole('option', { name: /^New session, project,/ })).toBeTruthy()
+    expect(screen.queryAllByRole('option', { name: /^Doomed chat,/ })).toHaveLength(0)
+
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'doomed-thread',
+    })
+  })
 
   it('does not open a chat queued for deletion after settling the active chat', async () => {
     serverProjects[0]!.sessions.push(
@@ -8942,6 +8988,66 @@ describe('global shortcuts', () => {
     expect(screen.queryByTestId('terminal-pane')).toBeNull()
   }, 20_000)
 
+  it('keeps a parked bottom panel parked behind the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+    const panel = screen.getByTestId('bottom-terminal')
+    const opens = terminalOpenRequests()
+
+    // The pull requests view covers the stage; the bottom panel waits behind it.
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    expect(panel.isConnected).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(true)
+
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByTestId('bottom-terminal')).toBe(panel)
+    expect(panel.classList.contains('is-parked')).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(false)
+    expect(terminalOpenRequests()).toBe(opens)
+  }, 20_000)
+
+  it('keeps an open bottom terminal and its shell across the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    const pane = await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    const opens = terminalOpenRequests()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByTestId('terminal-pane')).toBe(pane)
+    expect(screen.getByTestId('bottom-terminal').classList.contains('is-open')).toBe(true)
+    expect(terminalOpenRequests()).toBe(opens)
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
@@ -10330,6 +10436,54 @@ describe('live sessions', () => {
     fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
     await waitFor(() => expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' }))
     expect(threadCallbacks.searchJump!.request).not.toBe(jump!.request)
+  })
+
+  it('drops a search jump when the user leaves the chat before it lands', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'chat-a', title: 'Chat A' },
+        { id: 'chat-b', title: 'Chat B' },
+      ]),
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              {
+                projectPath: '/work/project',
+                projectName: 'project',
+                threadId: 'chat-a',
+                threadTitle: 'Chat A',
+                turnId: 'turn-old',
+                provider: 'codex',
+                createdAt: 0,
+                snippet: [{ text: 'needle', highlighted: true }],
+              },
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Chat A,/ })
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' })
+
+    // The thread is still reading older turns when the user moves on.
+    fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-b'))
+    fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+
+    // Coming back later is a fresh entry, not the abandoned jump.
+    expect(threadCallbacks.searchJump).toBeUndefined()
   })
 
   it('keeps app shortcuts from acting behind chat search', async () => {

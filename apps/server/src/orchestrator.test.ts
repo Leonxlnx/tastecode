@@ -45,7 +45,8 @@ import {
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
 } from '@harness/design-agent'
-import { encodeHistoryCursor } from './history-page.js'
+import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
+import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { StartupCleanupError } from './provider-session.js'
@@ -2130,6 +2131,75 @@ describe('history replay', () => {
       expect(turnIds(restarted.events)).toEqual(['turn-3', 'turn-4'])
       expect(restarted.page.snapshotSeq).toBe(store.lastSeq(thread.id))
       await orchestrator.disposeAll()
+    })
+
+    it('opens a long thread from the end of its event log', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 150; index += 1) appendTurn(store, thread.id, index)
+      const history = vi.spyOn(store, 'history')
+      const save = vi.spyOn(store, 'saveReplaySnapshot')
+
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+      expect(history).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      history.mockRestore()
+      expect(newest).toEqual(
+        readHistoryPage(thread.id, compactHistoryReplay(store.history(thread.id)), {
+          turnLimit: 10,
+        }),
+      )
+
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 20,
+      })
+      expect(older.reset).toBeUndefined()
+      expect(turnIds(older.events)).toEqual(
+        Array.from({ length: 20 }, (_, index) => `turn-${120 + index}`),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('indexes a thread another build wrote to on its next full read', async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-history-index-'))
+      const database = path.join(directory, 'state.db')
+      try {
+        const first = new Store(database)
+        const { orchestrator: writer } = harness(undefined, first)
+        const thread = await writer.startThread('codex', '/repo')
+        for (let index = 0; index < 150; index += 1) appendTurn(first, thread.id, index)
+        await writer.disposeAll()
+        first.close()
+        const raw = new DatabaseSync(database)
+        raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`).run(
+          thread.id,
+          0,
+          JSON.stringify({
+            type: 'turn.started',
+            turn: { id: 'elsewhere', threadId: thread.id, status: 'running', createdAt: 0 },
+          }),
+        )
+        raw.close()
+
+        const store = new Store(database)
+        const { orchestrator } = harness(undefined, store)
+        expect(store.historyIndexed(thread.id)).toBe(false)
+        const history = vi.spyOn(store, 'history')
+        await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+        expect(history).toHaveBeenCalledTimes(1)
+        expect(store.historyIndexed(thread.id)).toBe(true)
+
+        appendTurn(store, thread.id, 150)
+        history.mockClear()
+        const newest = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+        expect(history).not.toHaveBeenCalled()
+        expect(turnIds(newest.events).at(-1)).toBe('turn-150')
+        await orchestrator.disposeAll()
+        store.close()
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
     })
 
     it('keeps a replay that read past an unreadable newest row for warm opens', async () => {

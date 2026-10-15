@@ -134,12 +134,7 @@ const OLDER_CLAUDE_MODELS: Model[] = [
     'high',
     'max',
   ]),
-  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', [
-    'low',
-    'medium',
-    'high',
-    'max',
-  ]),
+  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', ['low', 'medium', 'high']),
   claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Older Sonnet generation', [
     'low',
     'medium',
