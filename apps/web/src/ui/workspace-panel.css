@@ -58,6 +58,24 @@
   display: none;
 }
 
+/* The edge takes focus for keyboard resizing; reached by keyboard it shows
+   as a 2px line on the panel's border instead of a box around a thin strip. */
+.workspace-panel__resize:focus-visible {
+  outline: 0;
+}
+
+.workspace-panel__resize:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  border-radius: 1px;
+  background: var(--focus-ring-color);
+}
+
+.workspace-panel--bottom > .workspace-panel__resize:focus-visible::after {
+  inset: 2px 0;
+}
+
 .workspace-panel__body {
   min-width: 0;
   min-height: 0;

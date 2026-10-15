@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { TestTransport } from '../../test-transport.js'
 import { WorkspacePanel } from './WorkspacePanel.js'
@@ -86,4 +86,64 @@ it('leaves an expanded panel alone', () => {
   renderIn('workspace-layout', { ...base, expanded: true })
   fireEvent.doubleClick(screen.getByRole('separator', { hidden: true }))
   expect(base.onWidthChange).not.toHaveBeenCalled()
+})
+
+it('resizes the right panel from the keyboard within its limits', () => {
+  reduceMotion(true)
+  const base = props()
+  const { container, rerender } = renderIn('workspace-layout', { ...base, width: 500 })
+  const edge = screen.getByRole('separator')
+  expect(edge.tabIndex).toBe(0)
+  act(() => edge.focus())
+  expect(edge.getAttribute('aria-valuenow')).toBe('500')
+  expect(edge.getAttribute('aria-valuemin')).toBe('300')
+  // 1200px of room keeps 360px for the chat.
+  expect(edge.getAttribute('aria-valuemax')).toBe('840')
+  expect(edge.getAttribute('aria-valuetext')).toBe('500 pixels wide')
+
+  fireEvent.keyDown(edge, { key: 'ArrowLeft' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(516)
+  expect(container.style.getPropertyValue('--workspace-panel-w')).toBe('516px')
+  fireEvent.keyDown(edge, { key: 'ArrowRight', shiftKey: true })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(436)
+  fireEvent.keyDown(edge, { key: 'End' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(840)
+  fireEvent.keyDown(edge, { key: 'Home' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(300)
+
+  rerender(<WorkspacePanel {...base} width={300} />)
+  fireEvent.keyDown(edge, { key: 'ArrowRight' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(300)
+  fireEvent.keyDown(edge, { key: 'Enter' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(DEFAULT_WORKSPACE_PANEL_WIDTH)
+
+  const calls = base.onWidthChange.mock.calls.length
+  fireEvent.keyDown(edge, { key: 'ArrowLeft', ctrlKey: true })
+  fireEvent.keyDown(edge, { key: 'a' })
+  expect(base.onWidthChange).toHaveBeenCalledTimes(calls)
+})
+
+it('resizes the bottom panel with Up and Down', () => {
+  reduceMotion(true)
+  const base = props()
+  const { container } = renderIn('bottom-terminal', { ...base, placement: 'bottom', width: 260 })
+  Object.defineProperty(container.parentElement!, 'clientHeight', {
+    configurable: true,
+    value: 800,
+  })
+  const edge = screen.getByRole('separator')
+  expect(edge.getAttribute('aria-valuetext')).toBe('260 pixels tall')
+  fireEvent.keyDown(edge, { key: 'ArrowUp' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(276)
+  expect(container.style.getPropertyValue('height')).toBe('276px')
+  // From the 260px it is drawn at, 64px down stops at the 200px minimum.
+  fireEvent.keyDown(edge, { key: 'ArrowDown', shiftKey: true })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(200)
+  fireEvent.keyDown(edge, { key: 'End' })
+  expect(base.onWidthChange).toHaveBeenLastCalledWith(720)
+})
+
+it('keeps the edge of an expanded panel out of the tab order', () => {
+  renderIn('workspace-layout', { ...props(), expanded: true })
+  expect(screen.getByRole('separator', { hidden: true }).tabIndex).toBe(-1)
 })
