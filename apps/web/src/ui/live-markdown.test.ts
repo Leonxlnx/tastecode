@@ -224,6 +224,28 @@ describe('LiveMarkdownParser', () => {
     expect(delimiterLike.append('\n').carryCharacters).toBe(0)
   })
 
+  it('confirms a table whose lines end in CRLF', () => {
+    const parser = new LiveMarkdownParser()
+    const update = parser.append('| Suite | After |\r\n| --- | ---: |\r\n| api | 19 |\r\n')
+    expect(nodes(update.operations)).toEqual([
+      'table',
+      'table-head',
+      'table-row',
+      'table-header-cell',
+      'table-header-cell',
+      'table-body',
+      'table-row',
+      'table-cell',
+      'table-cell',
+    ])
+    expect(update.operations).toContainEqual({
+      type: 'node.open',
+      node: 'table-cell',
+      align: 'right',
+    })
+    expect(leafText(update.operations)).toBe('SuiteAfterapi19')
+  })
+
   it('opens a web link once its closing parenthesis arrives', () => {
     const parser = new LiveMarkdownParser()
     const open = parser.append('See [the **docs**](https://docs.exa')
