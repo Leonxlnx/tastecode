@@ -107,19 +107,16 @@ it('drags the hue bar', () => {
   expect(hue.getAttribute('aria-valuenow')).toBe('180')
 })
 
-it('shows preset names and marks the chosen one', () => {
+it('opens on the colour square with no preset list', () => {
   render(<Controlled initial="ocean" />)
   openPicker()
 
-  const ocean = screen.getByRole('button', { name: 'Ocean', hidden: true })
-  expect(ocean.getAttribute('aria-pressed')).toBe('true')
-  expect(document.activeElement).toBe(ocean)
-  expect(
-    screen.getByRole('button', { name: 'Neutral', hidden: true }).getAttribute('aria-pressed'),
-  ).toBe('false')
-
-  fireEvent.keyDown(ocean, { key: 'ArrowUp' })
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Neutral', hidden: true }))
+  expect(screen.getByRole('button', { name: /^Accent:/ }).textContent).toBe('Ocean')
+  expect(screen.queryByRole('group', { name: 'Accent presets', hidden: true })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Neutral', hidden: true })).toBeNull()
+  expect(document.activeElement).toBe(
+    screen.getByRole('slider', { name: 'Saturation and brightness', hidden: true }),
+  )
 })
 
 it('steps the square and the hue from the keyboard', () => {
@@ -163,11 +160,9 @@ it('closes on Escape and on a press outside, and returns focus on Escape', () =>
   render(<Controlled initial="neutral" />)
   const trigger = screen.getByRole('button', { name: /^Accent:/ })
 
-  openPicker()
+  const picker = openPicker()
   expect(trigger.getAttribute('aria-expanded')).toBe('true')
-  fireEvent.keyDown(screen.getByRole('button', { name: 'Neutral', hidden: true }), {
-    key: 'Escape',
-  })
+  fireEvent.keyDown(picker, { key: 'Escape' })
   expect(trigger.getAttribute('aria-expanded')).toBe('false')
   expect(document.activeElement).toBe(trigger)
 
