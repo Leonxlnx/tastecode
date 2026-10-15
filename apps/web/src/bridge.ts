@@ -39,6 +39,7 @@ type Bridge = {
   writeClipboardText?: (text: string) => Promise<void>
   setZoom: (action: ZoomAction) => Promise<void>
   setTheme: (preference: AppThemePreference) => Promise<void>
+  setWindowChrome?: (chrome: WindowChrome) => Promise<void>
   prepareHaptics?: () => void
   performHaptic?: (pattern: NativeHapticPattern) => void
   capturePreview: (request: PreviewCaptureRequest) => Promise<PreviewCaptureResult>
@@ -59,6 +60,9 @@ type Bridge = {
   ) => () => void
   suspendMenuShortcuts?: (suspended: boolean) => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
+  onBrowserShortcut?: (
+    listener: (guestId: number, action: BrowserShortcutAction) => void,
+  ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   isDesktop: true
@@ -87,6 +91,8 @@ declare global {
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
+/** A Browser key pressed inside a Browser tab's page. Mirrors apps/desktop/src/browser-shortcuts.ts. */
+export type BrowserShortcutAction = 'back' | 'forward' | 'reload' | 'address' | 'close'
 type AppTheme = 'light' | 'dark' | 'codex'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
@@ -297,6 +303,22 @@ export function setDesktopTheme(preference: AppThemePreference): Promise<void> {
   return bridge?.setTheme(preference) ?? Promise.resolve()
 }
 
+/**
+ * The colours the page paints where native window chrome meets it, as #rrggbb.
+ * The desktop shell colours the caption buttons with them and opens the next
+ * launch in them. Mirrors WindowChrome in apps/desktop/src/window-theme.ts.
+ */
+export type WindowChrome = {
+  theme: 'light' | 'dark'
+  background: string
+  caption: string
+  symbol: string
+}
+
+export function setDesktopWindowChrome(chrome: WindowChrome): Promise<void> {
+  return bridge?.setWindowChrome?.(chrome) ?? Promise.resolve()
+}
+
 export function prepareNativeHaptics(): void {
   bridge?.prepareHaptics?.()
 }
@@ -307,6 +329,30 @@ export function performNativeHaptic(pattern: NativeHapticPattern): void {
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
+}
+
+type BrowserShortcutListener = (guestId: number, action: BrowserShortcutAction) => void
+const browserShortcutListeners = new Set<BrowserShortcutListener>()
+let stopBrowserShortcuts: (() => void) | undefined
+
+/**
+ * Browser keys the desktop shell took from a focused Browser page. Every
+ * Browser tab listens, so one native subscription fans out to all of them
+ * instead of one IPC listener per tab.
+ */
+export function onBrowserShortcut(listener: BrowserShortcutListener): () => void {
+  const subscribe = bridge?.onBrowserShortcut
+  if (!subscribe) return () => undefined
+  browserShortcutListeners.add(listener)
+  stopBrowserShortcuts ??= subscribe((guestId, action) => {
+    for (const current of browserShortcutListeners) current(guestId, action)
+  })
+  return () => {
+    browserShortcutListeners.delete(listener)
+    if (browserShortcutListeners.size) return
+    stopBrowserShortcuts?.()
+    stopBrowserShortcuts = undefined
+  }
 }
 
 export function syncNativeMenuShortcuts(keybindings: Keybindings): void {

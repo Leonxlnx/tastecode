@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { emptyThread, reduce } from '../thread-store.js'
 import type { Transport } from '../transport.js'
@@ -185,6 +185,8 @@ describe('Composer loading controls', () => {
     const button = screen.getByRole('button', { name: 'Permissions' }) as HTMLButtonElement
     const status = expectSkeleton('Loading permissions', 'composer-skeleton-permission')
     expect(button.contains(status)).toBe(true)
+    // The compact composer hides the label; this icon keeps the chip from being an empty square.
+    expect(status.querySelector('svg.composer-skeleton-permission__glyph')).not.toBeNull()
     expect(button.disabled).toBe(true)
     fireEvent.click(button)
     expect(screen.queryByRole('menu')).toBeNull()
@@ -428,6 +430,28 @@ describe('Composer media attachments', () => {
     expect(bridge.savePastedFile).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(onSend).toHaveBeenCalledWith('', ['/work/large.zip'])
+  })
+
+  it('names a drop, not a paste, when the web build cannot save the file', async () => {
+    bridge.savePastedFile.mockResolvedValueOnce(undefined)
+    renderComposer(vi.fn())
+    fireEvent.drop(document.querySelector('.composer__box')!, {
+      dataTransfer: { files: [new File(['notes'], 'notes.txt')], types: ['Files'] },
+    })
+    expect(await screen.findByText('Dropping files is available in the desktop app.')).toBeTruthy()
+
+    bridge.savePastedFile.mockResolvedValueOnce(undefined)
+    fireEvent.paste(screen.getByPlaceholderText('Do anything'), {
+      clipboardData: { files: [new File(['notes'], 'notes.txt')] },
+    })
+    expect(await screen.findByText('Pasting files is available in the desktop app.')).toBeTruthy()
+  })
+
+  it('shows the placeholder its owner gives while it is disabled', () => {
+    const view = renderComposer(vi.fn())
+    view.rerenderComposer({ disabled: true, placeholder: 'Stopping…' })
+    expect(screen.getByPlaceholderText('Stopping…')).toBeTruthy()
+    expect(screen.queryByPlaceholderText('Add a project folder first')).toBeNull()
   })
 
   it('keeps a pasted file registered with its original draft while saving', async () => {
@@ -1688,7 +1712,12 @@ describe('Composer height', () => {
 })
 
 describe('Composer context usage', () => {
-  it('shows exact context details on the compact ring', () => {
+  // The ring is lazy; load it once so the first render does not race a cold transform.
+  beforeAll(async () => {
+    await import('./ContextUsage.js')
+  })
+
+  it('shows exact context details on the compact ring', async () => {
     renderComposer(vi.fn(), {
       usage: {
         inputTokens: 12_000,
@@ -1700,8 +1729,28 @@ describe('Composer context usage', () => {
       },
     })
 
-    expect(screen.getByRole('img', { name: /context tokens used \(15%\)/ })).toBeTruthy()
+    const meter = await screen.findByRole('img', { name: /context tokens used \(15%\)/ })
     expect(screen.getByRole('tooltip').textContent).toContain('15% context used')
+    // The number sits next to the ring so it reads as usage, not as a spinner.
+    expect(meter.querySelector('.context-usage__track')).toBeTruthy()
+    expect(meter.querySelector('.context-usage__value')?.textContent).toBe('15%')
+  })
+
+  it('never shows 0% once the chat has used some context', async () => {
+    renderComposer(vi.fn(), {
+      usage: {
+        inputTokens: 400,
+        cachedInputTokens: 0,
+        outputTokens: 100,
+        reasoningTokens: 0,
+        totalTokens: 500,
+        contextWindow: 200_000,
+      },
+    })
+
+    const meter = await screen.findByRole('img', { name: /context tokens used \(<1%\)/ })
+    expect(meter.querySelector('.context-usage__value')?.textContent).toBe('<1%')
+    expect(screen.getByRole('tooltip').textContent).toContain('<1% context used')
   })
 
   it('does not render a false ring restored from cumulative accounting', () => {
@@ -1946,6 +1995,86 @@ describe('Composer focus requests', () => {
     view.rerenderComposer({ disabled: false })
 
     expect(document.activeElement).toBe(screen.getByPlaceholderText('Do anything'))
+  })
+})
+
+describe('Composer prompt recall', () => {
+  function recallSetup(overrides: Partial<Parameters<typeof Composer>[0]> = {}) {
+    const onDraftChange = vi.fn()
+    const onRecallLastPrompt = vi.fn(() => 'Earlier prompt' as string | undefined)
+    const view = renderComposer(vi.fn(), { onDraftChange, onRecallLastPrompt, ...overrides })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    // The owner answers a recall the way it answers the Edit action: a draft request.
+    const answerRecall = (request: number) =>
+      view.rerenderComposer({ draftRequest: { text: 'Earlier prompt', undoable: true, request } })
+    return { view, composer, onDraftChange, onRecallLastPrompt, answerRecall }
+  }
+
+  it('asks for the last prompt on Arrow Up and empties the composer again on Escape', () => {
+    const { composer, onDraftChange, onRecallLastPrompt, answerRecall } = recallSetup()
+
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(false)
+    expect(onRecallLastPrompt).toHaveBeenCalledOnce()
+    answerRecall(1)
+    expect(composer.value).toBe('Earlier prompt')
+
+    expect(fireEvent.keyDown(composer, { key: 'Escape' })).toBe(false)
+    expect(composer.value).toBe('')
+    expect(onDraftChange).toHaveBeenLastCalledWith('')
+  })
+
+  it('leaves Arrow Up to the caret when the composer is not empty or a modifier is held', () => {
+    const { composer, onRecallLastPrompt } = recallSetup()
+
+    for (const modifier of ['shiftKey', 'altKey', 'ctrlKey', 'metaKey'] as const) {
+      expect(fireEvent.keyDown(composer, { key: 'ArrowUp', [modifier]: true })).toBe(true)
+    }
+    fireEvent.change(composer, { target: { value: 'my draft' } })
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(true)
+    expect(onRecallLastPrompt).not.toHaveBeenCalled()
+    expect(composer.value).toBe('my draft')
+  })
+
+  it('lets Arrow Up move on when the chat has no prompt to bring back', () => {
+    const onRecallLastPrompt = vi.fn(() => undefined)
+    const { composer } = recallSetup({ onRecallLastPrompt })
+    expect(fireEvent.keyDown(composer, { key: 'ArrowUp' })).toBe(true)
+    expect(onRecallLastPrompt).toHaveBeenCalledOnce()
+    expect(composer.value).toBe('')
+  })
+
+  it('cancels a recalled prompt with Escape before Escape interrupts the running turn', () => {
+    const onInterrupt = vi.fn()
+    const { composer, answerRecall } = recallSetup({ running: true, onInterrupt })
+
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    answerRecall(1)
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('')
+    expect(onInterrupt).not.toHaveBeenCalled()
+
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(onInterrupt).toHaveBeenCalledOnce()
+  })
+
+  it('keeps text on Escape once the recalled prompt was sent or replaced', () => {
+    const onSend = vi.fn()
+    const { composer, answerRecall, view } = recallSetup({ onSend })
+
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    answerRecall(1)
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('Earlier prompt', [])
+    fireEvent.change(composer, { target: { value: 'a new thought' } })
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('a new thought')
+
+    fireEvent.change(composer, { target: { value: '' } })
+    fireEvent.keyDown(composer, { key: 'ArrowUp' })
+    // Another chat's draft arrives before the recall is answered.
+    view.rerenderComposer({ draftRequest: { text: 'other chat draft', request: 2 } })
+    fireEvent.keyDown(composer, { key: 'Escape' })
+    expect(composer.value).toBe('other chat draft')
   })
 })
 

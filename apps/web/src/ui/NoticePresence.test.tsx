@@ -289,6 +289,98 @@ describe('NoticePresence', () => {
     expect(screen.getByRole('alert')).toBeTruthy()
   })
 
+  describe('over a docked composer', () => {
+    const windowSize = { width: window.innerWidth, height: window.innerHeight }
+    const setWindow = (width: number, height: number) => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: width })
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: height })
+    }
+    const dockComposer = (options: { newSession?: boolean } = {}) => {
+      const conversation = document.createElement('div')
+      conversation.className = `stage__conversation${options.newSession ? ' is-new-session' : ''}`
+      const composer = document.createElement('div')
+      composer.className = 'composer'
+      const box = document.createElement('div')
+      box.className = 'composer__box'
+      composer.append(box)
+      conversation.append(composer)
+      document.body.append(conversation)
+      const place = (rect: { top: number; left: number; width: number; height: number }) => {
+        composer.getBoundingClientRect = () =>
+          ({
+            ...rect,
+            x: rect.left,
+            y: rect.top,
+            right: rect.left + rect.width,
+            bottom: rect.top + rect.height,
+            toJSON: () => rect,
+          }) as DOMRect
+      }
+      // An 800px column, 24px of composer padding, a 720px box.
+      place({ top: 700, left: 300, width: 800, height: 160 })
+      Object.defineProperty(box, 'offsetLeft', { configurable: true, value: 24 })
+      Object.defineProperty(box, 'offsetWidth', { configurable: true, value: 720 })
+      return { conversation, place }
+    }
+
+    afterEach(() => {
+      document.querySelectorAll('.stage__conversation').forEach((node) => node.remove())
+      setWindow(windowSize.width, windowSize.height)
+    })
+
+    it('lifts an open toast above the composer and right-aligns it with the box', () => {
+      setWindow(1280, 860)
+      dockComposer()
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Your draft was replaced.
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('alert')
+      // 160px of composer, then the Jump to latest lane.
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('216px')
+      // 1280 - (300 + 24 + 720): the toast ends where the box ends, not over Send.
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('236px')
+    })
+
+    it('follows the composer when the window resizes', () => {
+      setWindow(1280, 860)
+      const { place } = dockComposer()
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Your draft was replaced.
+        </NoticePresence>,
+      )
+
+      // A narrow window: the box fills the column and the composer grows.
+      setWindow(727, 640)
+      place({ top: 420, left: 0, width: 727, height: 220 })
+      act(() => {
+        window.dispatchEvent(new Event('resize'))
+      })
+
+      const notice = screen.getByRole('alert')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('276px')
+      // Never closer than 12px to the window edge.
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('12px')
+    })
+
+    it('keeps the window corner when no composer is docked', () => {
+      setWindow(1280, 860)
+      dockComposer({ newSession: true })
+      render(
+        <NoticePresence className="notice" role="alert" visible>
+          Changes undone.
+        </NoticePresence>,
+      )
+
+      const notice = screen.getByRole('alert')
+      expect(notice.style.getPropertyValue('--notice-bottom')).toBe('')
+      expect(notice.style.getPropertyValue('--notice-right')).toBe('')
+    })
+  })
+
   it('keeps reduced motion notice handoff to opacity only', () => {
     expect(css).toMatch(
       /@media \(prefers-reduced-motion: reduce\) \{[\s\S]*?\.notice \{[\s\S]*?transform: none !important;[\s\S]*?transition: opacity var\(--dur-fast\) var\(--ease-out\) !important;/s,

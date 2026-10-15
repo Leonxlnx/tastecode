@@ -290,12 +290,55 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-14 main f47782bc · Identity card, effort pill, Ultracode</span>
+        <span class="meta">2026-10-15 main 6361163f · Design picks, non-blocking taskkill</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 15, evening (main 6361163f): Leon's design picks landed. The right panel's X hides
+          the panel and keeps every tab, Browser page and running terminal for the next open, and
+          below 900 px the panel header leads with Back to chat (PR #1589). Double-clicking a panel
+          edge restores its default size, and a focused edge resizes from the keyboard (PR #1593).
+          The Browser tab takes Alt+Left/Right, Ctrl/Command+R or F5, Ctrl/Command+L, Ctrl/Command+W
+          and Esc, also from inside the page (PR #1594). While a reply streams, tables, links and
+          task lists render as their lines complete (PR #1600), and a stopped reply settles with a
+          Stopped after summary and a Stopped by you marker (PR #1599). Restore points use a history
+          clock (PR #1595), Allow once is the only primary button on an approval card (PR #1596),
+          the Design chip takes the shared composer hover (PR #1597) and the context meter shows a
+          full track with its percentage (PR #1598). Arrow Up in an empty composer puts the last
+          prompt back (PR #1601), code blocks get a Wrap toggle beside Copy (PR #1602), and renaming
+          a chat shows a visible field (PR #1603). On Windows, stopping a process tree runs taskkill
+          asynchronously, so it no longer freezes every open answer for about half a second (PR
+          #1556).
+        </p>
+        <p>
+          October 15 (main c1d46aae): replies stay steady while they finish. A completing rich reply
+          keeps its live rendering until the rich renderer is ready instead of collapsing into plain
+          paragraphs (PR #1561), code blocks mount at their real height instead of a 200 px
+          placeholder (PR #1562), Jump to latest lands at the end of an answer that is still growing
+          and follows it again (PR #1566), and reply times share one formatter (PR #1571). The
+          composer model button keeps the GPT family, so GPT-6-Astra reads GPT-6 Astra (PR #1582),
+          and toasts such as "Your draft was replaced" open above the docked composer instead of
+          over Send (PR #1583). A render test now waits for the rich renderer's cold import instead
+          of timing out after 1 s (PR #1584).
+        </p>
+        <p>
+          Merged earlier on October 15: the Browser tab paints its canvas with the theme (PR #1557),
+          explains failed and refused addresses in plain words (PR #1559), shows a failed page as a
+          calm view with Retry and later loads as a thin progress line (PR #1572), labels tabs by
+          page title or host (PR #1573) and focuses the address of a tab the user opens (PR #1574).
+          Chats open without waiting for the provider history scan, also during the first scan after
+          a server start (PRs #1558, #1577), and an opened chat never stays on skeletons or a grey
+          chip (PRs #1567, #1576, #1580). The model picker names the model a send will use while its
+          source is still listing (PR #1560). In the composer, controls stay whole in a narrow
+          column (PR #1564), the transcript no longer shows under the floating composer (PR #1565),
+          its copy says what it is doing (PR #1568), and Edit as new prompt keeps an unsent draft
+          for Ctrl/Command+Z or Restore (PR #1569). The account card draws the generated seal again
+          (PRs #1563, #1575), the window caption buttons take the colour the app paints (PR #1578),
+          and resizing the right panel restyles only the layout grid (PR #1579).
+        </p>
         <p>
           October 14 (main f47782bc): the shared source label no longer shaves the edge off its
           first and last letter at fractional display scaling, in the model picker, session search,
@@ -850,11 +893,16 @@
                     chips follow each source's declared capability; file-only prompts send and name
                     new sessions from their attachments; permission and Design actions compact
                     before a narrow toolbar can overlap, and the permission chip keeps its icon; one
-                    smooth effort pill, with the level shown as dots on the composer model button;
-                    plus an in-pane session header with shared rename, pin, delete, checkpoint,
-                    Workspace, and Terminal actions; the idle voice control stays flat; Stop
-                    immediately restores the idle presentation while provider interruption finishes
-                    in the background</span
+                    smooth effort pill, with the level shown as dots on the composer model button,
+                    and a context meter with its percentage; streamed tables, links and task lists
+                    render live, a stopped reply ends with its own summary and a Stopped by you
+                    marker, Arrow Up in an empty composer recalls the last prompt, and code blocks
+                    wrap on demand; completing replies and their code blocks keep their height, Jump
+                    to latest lands at the moving end, and toasts open above the docked composer;
+                    plus an in-pane session header with shared rename in a visible field, pin,
+                    delete, checkpoint, Workspace, and Terminal actions; the idle voice control
+                    stays flat; Stop immediately restores the idle presentation while provider
+                    interruption finishes in the background</span
                   >
                 </span>
               </li>
@@ -863,8 +911,9 @@
                 <span
                   >Review and safety
                   <span class="d"
-                    >per-hunk diff review, exact edit-block undo, approvals, validated checkpoints,
-                    modal keyboard isolation, modes</span
+                    >per-hunk diff review, exact edit-block undo, approvals with one primary Allow
+                    once, validated checkpoints marked by a history clock, modal keyboard isolation,
+                    modes</span
                   >
                 </span>
               </li>
@@ -876,17 +925,22 @@
                     >resizable Review, independent middle-click-closeable Terminal, Browser, and
                     Files tabs, CSP-safe compact terminals with link detection, distinct Browser
                     viewport controls, and Design captures open or reuse one dedicated Browser tab;
-                    repair captures reload that tab after the guest is ready, and HTTP loopback
-                    input normalizes to 127.0.0.1. Lazy file trees and Temporary chat use the active
-                    session checkout; Temporary chat presents the normal thread and composer without
-                    a duplicate parent-status header and erases its transcript when its last tab
-                    closes; one fixed in-chat toggle opens a 2-by-2-plus-one icon launcher and swaps
-                    its icon in place to close; it stays visible throughout the closing transition.
-                    Closing a focused tab hands focus to the next tab, a reattached terminal leaves
-                    focus in the composer, and removing the active project does not reopen the
-                    bottom terminal. The right panel resizes from 300 px and there stacks its
-                    launcher and its Review and Files trees; both panels reflow their tools by the
-                    panel's own width. Aligned dividers stay square, resizing preserves a 360 px
+                    Browser tabs carry page titles, focus their address when opened, and show failed
+                    loads as a calm view with Retry; repair captures reload that tab after the guest
+                    is ready, and HTTP loopback input normalizes to 127.0.0.1. Lazy file trees and
+                    Temporary chat use the active session checkout; Temporary chat presents the
+                    normal thread and composer without a duplicate parent-status header and erases
+                    its transcript when its last tab closes; one fixed in-chat toggle opens a
+                    2-by-2-plus-one icon launcher and swaps its icon in place to close; it stays
+                    visible throughout the closing transition. Closing a focused tab hands focus to
+                    the next tab, a reattached terminal leaves focus in the composer, and removing
+                    the active project does not reopen the bottom terminal. The right panel's X
+                    hides it with every tab and running terminal kept, Back to chat leads its header
+                    below 900 px, a double-click or the keyboard restores an edge's default size,
+                    and the Browser tab takes back, forward, reload, address and close shortcuts,
+                    also from inside the page. The right panel resizes from 300 px and there stacks
+                    its launcher and its Review and Files trees; both panels reflow their tools by
+                    the panel's own width. Aligned dividers stay square, resizing preserves a 360 px
                     center chat with or without the left sidebar, missing workspace items fail
                     without exposing raw paths, startup is bounded, and 390 px layouts do not
                     overflow</span

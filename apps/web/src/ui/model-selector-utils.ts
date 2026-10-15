@@ -9,6 +9,12 @@ export const EFFORT_THUMB_SIZE = 24
 export type ModelSelectorProps = {
   models: ModelChoice[]
   modelId: string | undefined
+  /**
+   * The choice the next request uses, resolved once by the owner. When set, the
+   * trigger and the checked row show it, even if it is not in `models`, so the
+   * label can never name another model than the one a send starts.
+   */
+  choice?: ModelChoice | undefined
   effort: string | undefined
   serviceTier: string | undefined
   disabled: boolean
@@ -25,12 +31,20 @@ export type ModelGroup = {
   entries: ModelChoice[]
 }
 
+const GPT_MODEL_NAME = /^gpt(?:[-\s]*(\d[\w.]*))?(?:[-\s]+(.+))?$/i
+
+/**
+ * Codex lists names such as `GPT-6-Astra`. The family keeps its version
+ * (`GPT-6 Astra`), so the composer never shows a bare number like `6 Astra`.
+ */
 export function getCompactModelName(displayName: string | undefined): string {
-  if (!displayName) return 'Model'
-  return displayName
-    .replace(/^gpt[-\s]*/i, '')
-    .replace(/-/g, ' ')
-    .trim()
+  const name = displayName?.trim()
+  if (!name) return 'Model'
+  const gpt = GPT_MODEL_NAME.exec(name)
+  if (!gpt) return name.replace(/-/g, ' ').trim()
+  const version = gpt[1] ? `-${gpt[1]}` : ''
+  const rest = gpt[2]?.replace(/-/g, ' ').trim()
+  return `GPT${version}${rest ? ` ${rest}` : ''}`
 }
 
 export function getFriendlyEffortLabel(value: string | undefined): string {

@@ -190,9 +190,8 @@
   transform: translateX(0);
 }
 
-/* Showing and retracting the flyout run at their own quicker pace; entering
-   the collapsed state for real keeps the deliberate fold. is-reveal-out is set for the
-   length of the retract, since by then the revealed class is already gone. */
+/* The flyout shows and retracts faster than the real collapse fold;
+   is-reveal-out covers the retract, after the revealed class is gone. */
 .rail-slot.is-collapsed.is-revealed .rail,
 .rail-slot.is-collapsed.is-reveal-out .rail {
   transition: transform var(--dur-reveal) var(--ease-rail);
@@ -422,17 +421,24 @@
   border-color: var(--text-3);
 }
 
-/* Inline rename, sized to sit exactly where the label was. */
+/* Inline rename: a focused field over the label, never mistaken for it. */
 .rename {
   width: 100%;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border: 1px solid var(--text-3);
   border-radius: var(--r-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+  caret-color: AccentColor;
   color: var(--rail-text);
   font: inherit;
   font-size: var(--t-sm);
   outline: none;
   padding: 4px 8px;
+}
+
+.rename::selection {
+  background: AccentColor;
+  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .sessrow {
@@ -490,9 +496,8 @@
   cursor: grabbing;
 }
 
-/* ::after, not ::before: the active-session accent tick is a ::before on the
-   same element and is declared later, so it won the cascade and the drop line
-   vanished — dragging onto the row you are already in showed nothing. */
+/* ::after: the active row's accent tick is a later ::before and would hide
+   the drop line on the row you are already in. */
 .sessrow[data-drop-position]::after {
   content: '';
   position: absolute;
@@ -892,11 +897,9 @@
   min-height: 0;
 }
 
-/* The guide drops from just under the folder mark (13px + half a pixel is
-   the mark's centre) to the middle of the last row. It hangs on the project
-   rather than the list so the drawer's clip cannot cut its top, and it grows
-   and shrinks with the drawer for free: once the drawer is shorter than the
-   offsets, the box has no height and nothing paints. */
+/* The guide runs from under the folder mark (centre 13.5px) to the middle of
+   the last row. It hangs on the project so the drawer's clip cannot cut it,
+   and paints nothing once the drawer is shorter than the offsets. */
 .proj::after {
   content: '';
   position: absolute;
@@ -1010,10 +1013,12 @@
 }
 
 .sessrow > .rename--session {
-  height: 28px;
-  /* The field's text starts where the title did: indent + mark + gap. */
-  padding: 0 12px 0 calc(var(--sess-indent) + 21px);
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  /* The text starts where the title did: indent + mark + gap. */
+  margin: 0 4px 0 calc(var(--sess-indent) + 14px);
+  padding: 0 6px;
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
@@ -1160,6 +1165,15 @@
 
 /* ---------- stage ---------- */
 
+/* The right panel width is written inline on .workspace-layout on every frame
+   of a resize drag, and only that grid reads it. Left inheritable, each write
+   restyled the whole chat and Browser subtree under it (about 9 ms a frame next
+   to a long chat); not inherited, it restyles one element. */
+@property --workspace-panel-w {
+  syntax: '*';
+  inherits: false;
+}
+
 .workspace-layout {
   position: relative;
   display: grid;
@@ -1263,6 +1277,16 @@
   bottom: 0;
   left: 0;
   z-index: 2;
+  pointer-events: none;
+}
+
+/* Hide the transcript under the floating composer; keep the scrollbar clear. */
+.stage__conversation:not(.is-new-session) > .composer::before {
+  position: absolute;
+  inset: 0 10px 0 0;
+  z-index: -1;
+  background: linear-gradient(to bottom, transparent, var(--bg) 12px);
+  content: '';
   pointer-events: none;
 }
 
@@ -1388,37 +1412,17 @@
   white-space: nowrap;
 }
 
+/* The field's text starts where the title did: border + padding = 8px. */
 .stagehead__rename {
   width: auto;
   min-width: 6ch;
   max-width: min(320px, 45vw);
-  height: 28px;
-  padding: 0;
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 7px;
   field-sizing: content;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  outline: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--t-sm);
+  color: var(--text);
   font-weight: 550;
-}
-
-.rename--chat,
-.stagehead__rename {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
-  caret-color: AccentColor;
-}
-
-.rename--chat::selection,
-.stagehead__rename::selection {
-  background: AccentColor;
-  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .stagehead__menu-trigger,
@@ -1468,10 +1472,8 @@
   right: 44px;
 }
 
-/* The toggles are fixed siblings, so the header cannot lay out around them.
-   While the workspace panel is closed they float over the header's right
-   edge; reserve their inset, 28px buttons and 8px gaps so a long title
-   truncates before it reaches them. */
+/* The fixed toggles float over the header's right edge while the workspace
+   panel is closed: reserve their width so a long title truncates first. */
 .shell:has(> .panel-toggles:not(.is-workspace-open)) .stagehead {
   padding-right: 44px;
 }
@@ -2330,6 +2332,19 @@
   min-width: 0;
 }
 
+/* In a narrow composer only the model name gives way. */
+.tools > .composer__add,
+.tools > .composer__dictation-options:not([data-hidden]),
+.model-selector__trigger-model > svg {
+  flex-shrink: 0;
+}
+
+@container chat-stage (max-width: 420px) {
+  .model-selector__trigger-level + .model-selector__trigger-effort {
+    display: none;
+  }
+}
+
 .tool span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2349,80 +2364,6 @@
 
 .tools__spacer {
   flex: 1;
-}
-
-.context-usage {
-  position: relative;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  place-items: center;
-  border-radius: var(--r-circle);
-  outline: none;
-}
-
-.context-usage svg {
-  width: 24px;
-  height: 24px;
-  overflow: visible;
-  transform: rotate(-90deg);
-}
-
-.context-usage circle {
-  fill: none;
-  stroke-width: 2.25;
-}
-
-.context-usage__track {
-  stroke: var(--line-strong);
-}
-
-.context-usage__fill {
-  stroke: var(--text-2);
-  stroke-linecap: round;
-  stroke-dasharray: var(--context-used) 100;
-  /* --dur-med does not exist: the ring used to snap between percentages. */
-  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
-}
-
-.context-usage__tooltip {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  z-index: 40;
-  display: grid;
-  width: max-content;
-  max-width: 190px;
-  gap: 1px;
-  padding: 5px 8px;
-  background: var(--surface-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-flyout);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 90ms var(--ease-out);
-}
-
-.context-usage__tooltip strong {
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 550;
-}
-
-.context-usage:focus-visible .context-usage__tooltip {
-  opacity: 1;
-  transition: none;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .context-usage:hover .context-usage__tooltip {
-    opacity: 1;
-    transition-duration: 140ms;
-  }
 }
 
 .tool {
@@ -2595,16 +2536,6 @@
   animation: design-label-shimmer 2.4s linear infinite;
 }
 
-@media (hover: hover) and (pointer: fine) {
-  .composer__design:hover > span {
-    background: linear-gradient(90deg, #b9a7ff, #87c7d8, #e2a6bc, #b9a7ff);
-    background-clip: text;
-    background-size: 200% 100%;
-    color: transparent;
-    animation: design-label-shimmer 2.4s linear infinite;
-  }
-}
-
 @keyframes design-label-shimmer {
   to {
     background-position: -200% 0;
@@ -2666,9 +2597,8 @@
 }
 
 .menu--settings {
-  /* Flush with the account trigger: Menu aligns the left edges and publishes
-     the trigger's width. The fallback only covers the frame before the first
-     measurement, and min-width yields so the base .menu minimum cannot win. */
+  /* Flush with the account trigger, whose width Menu publishes; the fallback
+     covers the first frame, and min-width: 0 beats the base .menu minimum. */
   min-width: 0;
   width: min(var(--menu-trigger-w, 224px), calc(100vw - 16px));
   max-height: min(500px, calc(100vh - 24px));
@@ -3194,8 +3124,10 @@
     box-shadow: var(--composer-action-shadow-hover);
   }
 
-  .tools .composer__design:hover:not(:disabled) {
-    border-color: var(--composer-design-border-hover);
+  /* Hover inks the label like every other chip instead of fading it. */
+  .tools .composer__design:hover:not(:disabled),
+  .tools .composer__design:hover:not(:disabled) svg {
+    color: var(--text);
   }
 
   .tools .composer__design.is-active:hover:not(:disabled) {
@@ -3412,13 +3344,23 @@
   text-align: center;
 }
 
+.empty__detail {
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  margin: -6px 0 0;
+  max-width: min(46ch, 100%);
+  overflow-wrap: anywhere;
+  text-align: center;
+}
+
 .notice {
   position: fixed;
   /* Above every modal surface (settings 60, palette 70, image viewer 100) —
      an error raised while one of them is open must still be visible. */
   z-index: 110;
-  bottom: 18px;
-  right: 18px;
+  /* Set while a composer is docked (NoticePresence). */
+  bottom: var(--notice-bottom, 18px);
+  right: var(--notice-right, 18px);
   display: flex;
   align-items: center;
   gap: 8px;
@@ -3483,8 +3425,8 @@
 
 @media (max-width: 700px) {
   .notice {
-    right: 12px;
-    bottom: 12px;
+    right: var(--notice-right, 12px);
+    bottom: var(--notice-bottom, 12px);
     max-width: calc(100vw - 24px);
   }
 

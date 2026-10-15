@@ -43,6 +43,7 @@ import {
 import { createApplicationMenuTemplate } from './app-menu.js'
 import { clipboardText } from './clipboard-text.js'
 import { droppedFolderPaths, MAX_DROPPED_PROJECT_PATHS } from './dropped-folder-paths.js'
+import { forwardBrowserShortcuts } from './browser-shortcuts.js'
 import { browserGuestUrl, configureEmbeddedBrowser } from './embedded-browser.js'
 import { configureImageContextMenu } from './image-context-menu.js'
 import { isMacHapticPattern, MacOSHaptics } from './macos-haptics.js'
@@ -79,7 +80,14 @@ import {
   saveMainWindowState,
   type MainWindowStatePersistence,
 } from './window-state.js'
-import { windowThemeOptions, windowThemeSource } from './window-theme.js'
+import {
+  loadWindowChrome,
+  parseWindowChrome,
+  saveWindowChrome,
+  windowChromeOptions,
+  windowThemeOptions,
+  windowThemeSource,
+} from './window-theme.js'
 import {
   DEFAULT_ZOOM_FACTOR,
   isZoomAction,
@@ -110,6 +118,9 @@ const productDataPath = process.env['HARNESS_DESKTOP_DATA_DIR']
   ? path.resolve(process.env['HARNESS_DESKTOP_DATA_DIR'])
   : path.join(app.getPath('appData'), 'TasteCode')
 const mainWindowStatePath = path.join(productDataPath, 'window-state.json')
+const windowChromePath = path.join(productDataPath, 'window-chrome.json')
+/** What window-chrome.json holds, so an unchanged report does not rewrite it. */
+let savedWindowChrome: string | undefined
 const defaultMainWindowSize = { width: 1180, height: 820 }
 const minimumMainWindowSize = { width: 720, height: 520 }
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -430,7 +441,11 @@ function createWindow(): void {
     return
   }
 
-  const initialTheme = windowThemeOptions('dark')
+  // The last colours the renderer reported, so a light app does not open as a
+  // dark window and caption strip for the first frames. Dark until it has.
+  const lastChrome = loadWindowChrome(windowChromePath)
+  savedWindowChrome = lastChrome ? JSON.stringify(lastChrome) : undefined
+  const initialTheme = lastChrome ? windowChromeOptions(lastChrome) : windowThemeOptions('dark')
   const savedWindowState = loadMainWindowState(mainWindowStatePath)
   const restoredWindowState = restoreMainWindowState(
     savedWindowState,
@@ -493,6 +508,7 @@ function createWindow(): void {
   configureImageContextMenu(window.webContents, window)
   window.webContents.on('did-attach-webview', (_event, guest) => {
     configureImageContextMenu(guest, window)
+    forwardBrowserShortcuts(guest, window.webContents)
   })
   restoreMainWindowPresence(process.platform, app, window)
   const windowStatePersistence = persistMainWindowState(
@@ -786,11 +802,20 @@ ipcMain.handle('harness:installUpdate', (event) => {
 
 ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   requireOwnRenderer(event.sender)
-  const window = BrowserWindow.fromWebContents(event.sender)
-  if (!window) throw new Error('No window for theme change')
   nativeTheme.themeSource = windowThemeSource(preference)
-  const theme = nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
-  const options = windowThemeOptions(theme)
+})
+
+// The renderer reports the colours it actually paints where the native chrome
+// meets it after every theme, backdrop or surface change. Deriving them from
+// nativeTheme put a black caption strip on a light app whenever the two
+// disagreed (an emulated colour scheme), and a lighter box on tinted rails and
+// on the Settings title bar.
+ipcMain.handle('harness:setWindowChrome', (event, value: unknown) => {
+  requireOwnRenderer(event.sender)
+  const window = BrowserWindow.fromWebContents(event.sender)
+  if (!window) throw new Error('No window for chrome change')
+  const chrome = parseWindowChrome(value)
+  const options = windowChromeOptions(chrome)
   // Repainting an opaque background would sit on top of the acrylic/vibrancy
   // material and kill the sidebar glass; on those platforms the material owns
   // the window background and only the caption colours follow the theme.
@@ -799,6 +824,14 @@ ipcMain.handle('harness:setTheme', (event, preference: unknown) => {
   }
   if (process.platform === 'win32' || process.platform === 'linux') {
     window.setTitleBarOverlay(options.titleBarOverlay)
+  }
+  const serialized = JSON.stringify(chrome)
+  if (serialized === savedWindowChrome) return
+  savedWindowChrome = serialized
+  try {
+    saveWindowChrome(windowChromePath, chrome)
+  } catch {
+    // Only the next launch's first frames depend on it.
   }
 })
 

@@ -20,19 +20,14 @@ import {
   preservedRelativeLink,
   projectFileReference,
 } from '../project-file-link.js'
-import { FileTypeIcon, isFileReference } from './FileTypeIcon.js'
+import { isFileReference, isInlineFileReference } from './file-reference.js'
+import { FileTypeIcon } from './FileTypeIcon.js'
 import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
 import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
-import { MarkdownBlock, MarkdownPre } from './LargeCodeBlock.js'
+import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
-
-// A command (`cat package.json`) or member access (`process.env`) is code, not a file.
-// A dotenv file is `.env` itself or sits in a folder.
-function isInlineFileReference(text: string): boolean {
-  return !/\s/.test(text) && !/^[^/\\]+\.env$/i.test(text) && isFileReference(text)
-}
 
 function InlineCode({ children, node: _node, ...props }: InlineCodeProps) {
   const reference = typeof children === 'string' && isInlineFileReference(children)
@@ -160,6 +155,7 @@ function decodeHref(href: string): string {
 
 const STREAMDOWN_COMPONENTS = {
   a: MarkdownLink,
+  code: MarkdownCode,
   inlineCode: InlineCode,
   pre: MarkdownPre,
 } satisfies Components

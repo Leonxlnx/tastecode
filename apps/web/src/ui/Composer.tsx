@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
@@ -74,6 +73,10 @@ const ComposerVoiceControl = lazy(() =>
     default: module.ComposerVoiceControl,
   })),
 )
+// Only chats whose provider reports a context window show the ring.
+const ContextUsage = lazy(() =>
+  import('./ContextUsage.js').then((module) => ({ default: module.ContextUsage })),
+)
 const DRAFT_HAS_CONTENT = /\S/u
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
@@ -115,12 +118,6 @@ function ResourcePickerSkeleton() {
       </div>
     </div>
   )
-}
-
-type ContextUsageStyle = CSSProperties & { '--context-used': number }
-
-function contextUsageStyle(percent: number): ContextUsageStyle {
-  return { '--context-used': percent }
 }
 
 function sameDraftPaths(left: string[], right: string[]): boolean {
@@ -460,6 +457,10 @@ function ComposerComponent(props: {
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
   modelId: string | undefined
+  /** The choice a send uses. The picker shows it instead of resolving `modelId` again. */
+  modelChoice?: ModelChoice | undefined
+  /** The preferred source has not listed its models, so no model is known yet. */
+  modelPending?: boolean
   effort: string | undefined
   serviceTier: string | undefined
   usage?: Usage | undefined
@@ -471,6 +472,8 @@ function ComposerComponent(props: {
   voiceAvailable: boolean
   voiceLoading?: boolean
   disabled: boolean
+  /** Replaces "Do anything" while the composer cannot be used, e.g. while a turn stops. */
+  placeholder?: string | undefined
   sendAvailability: SendAvailability
   providerSignInRequired?: boolean
   errors?: readonly ComposerError[] | undefined
@@ -487,6 +490,8 @@ function ComposerComponent(props: {
         text: string
         attachments?: string[] | undefined
         resources?: ComposerResource[] | undefined
+        /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
+        undoable?: boolean | undefined
         request: number
       }
     | undefined
@@ -506,6 +511,11 @@ function ComposerComponent(props: {
   onPendingQueuedEdit?:
     ((removed: Promise<Pick<QueuedTurn, 'text' | 'attachments'> | undefined>) => void) | undefined
   onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
+  /**
+   * Puts the chat's last sent prompt back into the composer for editing, the
+   * way its Edit action does. Returns that prompt, or undefined when there is none.
+   */
+  onRecallLastPrompt?: (() => string | undefined) | undefined
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
@@ -565,6 +575,8 @@ function ComposerComponent(props: {
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const sendAvailabilityRef = useRef(props.sendAvailability)
   const textRef = useRef('')
+  /** The prompt Arrow Up put back, until it is sent, cleared or replaced. */
+  const recalledPrompt = useRef<string | undefined>(undefined)
   const hasDraftTextRef = useRef(false)
   const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
@@ -949,6 +961,7 @@ function ComposerComponent(props: {
 
   const updateText = (value: string, syncArea = true, notify = true) => {
     textRef.current = value
+    if (value === '') recalledPrompt.current = undefined
     if (syncArea && area.current && area.current.value !== value) area.current.value = value
     const nextHasDraftText = DRAFT_HAS_CONTENT.test(value)
     if (nextHasDraftText !== hasDraftTextRef.current) {
@@ -967,6 +980,33 @@ function ComposerComponent(props: {
     })
   }
 
+  /** Replace the whole text through the editor, which keeps it on the native undo stack. */
+  const insertUndoably = (value: string): boolean => {
+    const el = area.current
+    if (!el || el.disabled || typeof document.execCommand !== 'function') return false
+    el.focus()
+    el.select()
+    // The input event this fires runs onChange, which records the new text.
+    const inserted = value
+      ? document.execCommand('insertText', false, value)
+      : document.execCommand('delete')
+    return inserted && el.value === value
+  }
+
+  /** Arrow Up may only replace nothing: no text, files or skills, and the caret at the start. */
+  const composerEmptyAtStart = (el: HTMLTextAreaElement) =>
+    el.value === '' &&
+    el.selectionStart === 0 &&
+    el.selectionEnd === 0 &&
+    attachments.length === 0 &&
+    selectedResources.length === 0
+
+  /** Escape after Arrow Up: back to the empty composer, which Ctrl+Z can undo. */
+  const cancelRecalledPrompt = () => {
+    recalledPrompt.current = undefined
+    if (!insertUndoably('')) setValue('')
+  }
+
   const replaceDraft = (value: string) => {
     updateText(value, true, false)
     setResourceTrigger(undefined)
@@ -982,9 +1022,12 @@ function ComposerComponent(props: {
 
   useEffect(() => {
     if (!props.draftRequest) return
+    // Only the request Arrow Up made keeps Escape's way back to an empty box.
+    if (props.draftRequest.text !== recalledPrompt.current) recalledPrompt.current = undefined
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish.
-    replaceDraft(props.draftRequest.text)
+    if (!props.draftRequest.undoable || !insertUndoably(props.draftRequest.text))
+      replaceDraft(props.draftRequest.text)
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
@@ -1073,7 +1116,7 @@ function ComposerComponent(props: {
     addFiles(files)
   }
 
-  const addPastedFiles = (files: File[]) => {
+  const addPastedFiles = (files: File[], source: 'paste' | 'drop') => {
     const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
@@ -1102,7 +1145,9 @@ function ComposerComponent(props: {
           if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
           if (!saved) {
             removeAttachment(id, previewUrl)
-            setAttachmentError('Pasting files is available in the desktop app.')
+            setAttachmentError(
+              `${source === 'drop' ? 'Dropping' : 'Pasting'} files is available in the desktop app.`,
+            )
             return undefined
           }
           const picked = saved
@@ -1187,7 +1232,7 @@ function ComposerComponent(props: {
       })
     }
     attachFiles(picked)
-    addPastedFiles(materialized)
+    addPastedFiles(materialized, 'drop')
   }
 
   useEffect(() => {
@@ -1856,6 +1901,29 @@ function ComposerComponent(props: {
                         return
                       }
                     }
+                    // Arrow Up in an empty composer brings the last prompt back
+                    // to edit, as in a shell; Escape puts the empty box back.
+                    if (
+                      e.key === 'ArrowUp' &&
+                      !e.shiftKey &&
+                      !e.altKey &&
+                      !e.ctrlKey &&
+                      !e.metaKey &&
+                      props.onRecallLastPrompt &&
+                      composerEmptyAtStart(e.currentTarget)
+                    ) {
+                      const recalled = props.onRecallLastPrompt()
+                      if (recalled !== undefined) {
+                        e.preventDefault()
+                        recalledPrompt.current = recalled
+                      }
+                      return
+                    }
+                    if (e.key === 'Escape' && recalledPrompt.current !== undefined) {
+                      e.preventDefault()
+                      cancelRecalledPrompt()
+                      return
+                    }
                     // Typing turns the orb into Queue, which made the agent
                     // unstoppable mid-draft. Esc stays the brake.
                     if (e.key === 'Escape' && props.running) {
@@ -1898,10 +1966,10 @@ function ComposerComponent(props: {
                         return
                       }
                       attachFiles(paths)
-                      addPastedFiles(materialized)
+                      addPastedFiles(materialized, 'paste')
                     }
                   }}
-                  placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+                  placeholder={props.placeholder ?? 'Do anything'}
                 />
               </div>
 
@@ -1948,6 +2016,12 @@ function ComposerComponent(props: {
                             >
                               <div className="composer-skeleton-permission__icon">
                                 <Skeleton className="skeleton--icon" />
+                                {/* Shown instead of the skeleton where the label is hidden. */}
+                                <approval.icon
+                                  className="composer-skeleton-permission__glyph"
+                                  size={13}
+                                  aria-hidden
+                                />
                               </div>
                               <span className="composer-skeleton-permission__label" aria-hidden>
                                 <span>{approval.short}</span>
@@ -2019,14 +2093,19 @@ function ComposerComponent(props: {
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
                 {voiceState === 'idle' && props.usage?.contextWindow ? (
-                  <ContextUsage usage={props.usage} />
+                  <Suspense fallback={null}>
+                    <ContextUsage usage={props.usage} />
+                  </Suspense>
                 ) : null}
 
-                {voiceState === 'idle' && props.models.length > 0 ? (
+                {voiceState === 'idle' && props.modelPending ? (
+                  <ModelTriggerSkeleton />
+                ) : voiceState === 'idle' && props.models.length > 0 ? (
                   <Suspense fallback={<ModelTriggerSkeleton />}>
                     <ModelSelector
                       models={props.models}
                       modelId={props.modelId}
+                      choice={props.modelChoice}
                       effort={props.effort}
                       serviceTier={props.serviceTier}
                       // The active turn already captured its settings. Changes
@@ -2091,7 +2170,15 @@ function ComposerComponent(props: {
                         }`}
                         onClick={showStop ? props.onInterrupt : () => submit()}
                         disabled={showStop ? Boolean(props.stopping) : sendDisabled}
-                        title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
+                        title={
+                          showStop
+                            ? props.stopping
+                              ? 'Stopping…'
+                              : 'Stop'
+                            : props.modelPending
+                              ? 'Loading models…'
+                              : submitLabel
+                        }
                         aria-label={
                           showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
                         }
@@ -2134,35 +2221,6 @@ function ComposerComponent(props: {
         </Suspense>
       ) : null}
     </>
-  )
-}
-
-function ContextUsage({ usage }: { usage: Usage }) {
-  const contextWindow = usage.contextWindow ?? 0
-  const percent = contextWindow
-    ? Math.min(100, Math.max(0, (usage.totalTokens / contextWindow) * 100))
-    : 0
-  const detail = `${usage.totalTokens.toLocaleString()} of ${contextWindow.toLocaleString()} context tokens used (${Math.round(percent)}%)`
-
-  return (
-    <span
-      className="context-usage"
-      tabIndex={0}
-      role="img"
-      aria-label={detail}
-      style={contextUsageStyle(percent)}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <circle className="context-usage__track" cx="12" cy="12" r="9" />
-        <circle className="context-usage__fill" cx="12" cy="12" r="9" pathLength="100" />
-      </svg>
-      <span className="context-usage__tooltip" role="tooltip">
-        <strong>{Math.round(percent)}% context used</strong>
-        <span>
-          {usage.totalTokens.toLocaleString()} / {contextWindow.toLocaleString()} tokens
-        </span>
-      </span>
-    </span>
   )
 }
 

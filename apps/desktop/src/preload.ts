@@ -1,9 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import type { PreviewCaptureRequest, PreviewCaptureResult } from '@harness/contracts'
 import type { AppUpdateState } from './app-updater.js'
+import { isBrowserShortcutMessage, type BrowserShortcutAction } from './browser-shortcuts.js'
 import { clipboardText } from './clipboard-text.js'
 import { isNativeMenuActionMessage, type NativeMenuActionSource } from './menu-contract.js'
 import { droppedFilePath, isAppUpdateState, isFiniteNumber } from './preload-validation.js'
+import type { WindowChrome } from './window-theme.js'
 
 type PickedAttachment = {
   path: string
@@ -60,6 +62,8 @@ const api = {
     ipcRenderer.invoke('harness:setZoom', action),
   setTheme: (preference: 'system' | 'light' | 'dark'): Promise<void> =>
     ipcRenderer.invoke('harness:setTheme', preference),
+  setWindowChrome: (chrome: WindowChrome): Promise<void> =>
+    ipcRenderer.invoke('harness:setWindowChrome', chrome),
   prepareHaptics: (): void => ipcRenderer.send('harness:hapticsPrepare'),
   performHaptic: (pattern: NativeHapticPattern): void =>
     ipcRenderer.send('harness:hapticFeedback', pattern),
@@ -101,6 +105,16 @@ const api = {
     }
     ipcRenderer.on('harness:updateState', handler)
     return () => ipcRenderer.removeListener('harness:updateState', handler)
+  },
+  /** Browser keys pressed inside an in-app Browser page, with the guest they came from. */
+  onBrowserShortcut: (
+    listener: (guestId: number, action: BrowserShortcutAction) => void,
+  ): (() => void) => {
+    const handler = (_event: IpcRendererEvent, message: unknown) => {
+      if (isBrowserShortcutMessage(message)) listener(message.guestId, message.action)
+    }
+    ipcRenderer.on('harness:browserShortcut', handler)
+    return () => ipcRenderer.removeListener('harness:browserShortcut', handler)
   },
   onZoomChange: (listener: (factor: number) => void): (() => void) => {
     const handler = (_event: IpcRendererEvent, factor: unknown) => {

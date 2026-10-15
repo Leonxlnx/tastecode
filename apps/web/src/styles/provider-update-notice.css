@@ -16,7 +16,8 @@
 .notice--provider-update {
   display: block;
   width: min(312px, calc(100vw - 36px));
-  max-height: min(520px, calc(100dvh - 36px));
+  /* Lifted above a docked composer, it still ends below the window top. */
+  max-height: min(520px, calc(100dvh - var(--notice-bottom, 18px) - 18px));
   overflow-y: auto;
   padding: 6px 8px 8px 12px;
   background: var(--menu-bg);
