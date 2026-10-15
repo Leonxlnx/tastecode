@@ -11,6 +11,8 @@ import { IconShieldExclamation as ShieldAlert } from '@tabler/icons-react'
  *
  * - The exact command and working directory are shown, never a paraphrase.
  * - Approve is not focused by default. A held-down Enter must not answer it.
+ * - Allow once is the only filled button. The narrowest grant is the one
+ *   clear answer; Deny, Stop and the session-wide grant stay secondary.
  * - The reason is the agent's own words, quoted as theirs rather than ours.
  * - Nothing times out into a yes. Codex blocks until answered, and so do we.
  */
@@ -50,7 +52,7 @@ export function Approval(props: {
 
       <div className="approval__actions">
         <div className="approval__action-group">
-          <button className="btn btn--quiet" onClick={() => props.onDecide('deny')}>
+          <button className="approval__secondary-action" onClick={() => props.onDecide('deny')}>
             Deny
           </button>
           <button className="approval__secondary-action" onClick={() => props.onDecide('abort')}>
