@@ -5,7 +5,12 @@ import {
   type LiveMarkdownNode,
   type LiveMarkdownOperation,
 } from './live-markdown.js'
+import { applyCodeWrap } from '../code-wrap.js'
 import '../styles/markdown.css'
+
+// Code blocks read the wrap choice from the document root; set it before the
+// first block, streaming or completed, renders.
+applyCodeWrap()
 
 type CompletedMarkdownModule = typeof import('./CompletedMarkdown.js')
 

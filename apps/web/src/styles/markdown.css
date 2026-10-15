@@ -424,6 +424,14 @@
   min-height: 1lh;
 }
 
+/* The Wrap toggle on a code block soft-wraps long lines in every block,
+   streaming ones too. Only white-space changes, so toggling never renders or
+   highlights a block again. */
+:root[data-code-wrap='on'] .md pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Block chunks keep late token layout local while retaining normal selection and overflow. */
 .md pre code > .md-code-chunk {
   display: block;
