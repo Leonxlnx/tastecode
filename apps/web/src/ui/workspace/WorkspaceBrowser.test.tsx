@@ -132,6 +132,41 @@ describe('WorkspaceBrowser', () => {
     expect(nativeBrowser.openExternal).toHaveBeenCalledWith('https://example.com/docs')
   })
 
+  it('reports the page URL and title for its tab label, once per change', async () => {
+    const onPageInfo = vi.fn()
+    const { rerender } = render(<WorkspaceBrowser active tabId="tab-1" onPageInfo={onPageInfo} />)
+    const view = guests[0]!
+    expect(onPageInfo).toHaveBeenLastCalledWith('tab-1', { url: '', title: '' })
+    act(() => view.dispatchEvent(new Event('dom-ready')))
+
+    const address = screen.getByLabelText('Browser address')
+    fireEvent.change(address, { target: { value: 'example.com/docs' } })
+    fireEvent.submit(address.closest('form')!)
+    await waitFor(() =>
+      expect(onPageInfo).toHaveBeenLastCalledWith('tab-1', {
+        url: 'https://example.com/docs',
+        title: 'Example',
+      }),
+    )
+    act(() => dispatchGuestEvent(view, 'page-title-updated', { title: 'Docs · Example' }))
+    expect(onPageInfo).toHaveBeenLastCalledWith('tab-1', {
+      url: 'https://example.com/docs',
+      title: 'Docs · Example',
+    })
+
+    // A new owner callback is not a page change and must not report again (#283).
+    const calls = onPageInfo.mock.calls.length
+    const nextOwner = vi.fn()
+    rerender(<WorkspaceBrowser active tabId="tab-1" onPageInfo={nextOwner} />)
+    expect(onPageInfo).toHaveBeenCalledTimes(calls)
+    expect(nextOwner).not.toHaveBeenCalled()
+    act(() => dispatchGuestEvent(view, 'page-title-updated', { title: 'Docs' }))
+    expect(nextOwner).toHaveBeenCalledWith('tab-1', {
+      url: 'https://example.com/docs',
+      title: 'Docs',
+    })
+  })
+
   it('opens a design preview and reloads the same URL for a later review pass', async () => {
     const first = {
       requestId: '00000000-0000-4000-8000-000000000001',
