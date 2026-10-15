@@ -291,12 +291,20 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-15 nightly a8b85315 · includes main b003509f</span>
+        <span class="meta">2026-10-15 nightly 98bb0fba · includes main f8425b39</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 15, evening on nightly (98bb0fba): main is synchronized through f8425b39 by two
+          more sync PRs, with every nightly provider, API connection and the usage history kept: the
+          non-blocking Windows taskkill (PR #1588, main's PR #1556) and Leon's design picks with
+          main's docs update (PR #1609). Neither sync changed nightly-only code; PR #1609 needed a
+          hand merge only in the two docs pages. The picks are shared UI, so they reach every
+          nightly provider without provider-specific code.
+        </p>
         <p>
           October 15 on nightly (a8b85315): main is synchronized through b003509f by two sync PRs,
           with every nightly provider, API connection and the usage history kept, bringing main's
