@@ -62,6 +62,8 @@ describe('StageHeader', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Options for Build the landing page' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Rename chat' }))
     const rename = screen.getByRole('textbox', { name: 'Rename chat' })
+    // The shared .rename field box makes editing visible; the title text is selected.
+    expect(rename.classList.contains('rename')).toBe(true)
     expect(rename.classList.contains('rename--chat')).toBe(true)
     fireEvent.change(rename, { target: { value: 'Polished landing page' } })
     fireEvent.keyDown(rename, { key: 'Enter', isComposing: true })
