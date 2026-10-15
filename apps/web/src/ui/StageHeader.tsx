@@ -141,6 +141,9 @@ function StageHeaderComponent(props: {
   const [renameTarget, setRenameTarget] = useState<RenameTarget>()
   const [draft, setDraft] = useState(props.title ?? '')
   const renameInput = useRef<HTMLInputElement>(null)
+  const identity = useRef<HTMLDivElement>(null)
+  /** Set when Enter or Escape ends the rename, which unmounts the focused field. */
+  const returnFocus = useRef(false)
   const renaming =
     renameTarget !== undefined &&
     (renameTarget.id === props.sessionId || startedAs(renameTarget, props.sessionId, props.title))
@@ -151,6 +154,15 @@ function StageHeaderComponent(props: {
 
   useEffect(() => {
     if (renaming) renameInput.current?.select()
+  }, [renaming])
+
+  // Like a sidebar rename, a keyboard rename hands focus back to where it
+  // started (the chat's menu) instead of dropping it on the page. A rename
+  // that ends on blur leaves focus where the user went.
+  useEffect(() => {
+    if (renaming || !returnFocus.current) return
+    returnFocus.current = false
+    identity.current?.querySelector<HTMLButtonElement>('.stagehead__menu-trigger')?.focus()
   }, [renaming])
 
   const commitRename = () => {
@@ -171,7 +183,7 @@ function StageHeaderComponent(props: {
   return (
     <header className="stagehead">
       <span className="stagehead__drag-region" aria-hidden />
-      <div className="stagehead__identity">
+      <div className="stagehead__identity" ref={identity}>
         {renaming ? (
           <input
             ref={renameInput}
@@ -182,8 +194,18 @@ function StageHeaderComponent(props: {
             onBlur={commitRename}
             onKeyDown={(event) => {
               if (isComposingKey(event)) return
-              if (isConfirmEnter(event)) commitRename()
-              if (event.key === 'Escape') setRenameTarget(undefined)
+              // Without preventDefault the Enter keypress that follows lands
+              // on the menu button focus just returned to, and opens it.
+              if (isConfirmEnter(event)) {
+                event.preventDefault()
+                returnFocus.current = true
+                commitRename()
+              }
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                returnFocus.current = true
+                setRenameTarget(undefined)
+              }
             }}
           />
         ) : (
