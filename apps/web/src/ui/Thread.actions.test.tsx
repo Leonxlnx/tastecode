@@ -563,6 +563,140 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Planning manual multi-package checks')).toBeTruthy()
   })
 
+  describe('a turn the user stopped', () => {
+    const stoppedItems: Item[] = [
+      {
+        id: 'prompt-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'user',
+        status: 'completed',
+        text: 'Fix the duplicate charge',
+        createdAt: 1_000,
+      },
+      {
+        id: 'command-1',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'completed',
+        command: 'pnpm test',
+        createdAt: 1_500,
+      },
+      {
+        id: 'command-2',
+        turnId: 'turn-1',
+        type: 'command',
+        status: 'started',
+        command: 'pnpm vitest run',
+        createdAt: 2_000,
+      },
+      {
+        id: 'answer-1',
+        turnId: 'turn-1',
+        type: 'message',
+        role: 'assistant',
+        phase: 'final_answer',
+        status: 'started',
+        text: 'The handler charges the card before it',
+        createdAt: 3_000,
+      },
+    ]
+    const stoppedTiming = {
+      'turn-1': { startedAt: 1_000, completedAt: 5_000, interrupted: true as const },
+    }
+
+    it('settles with a stopped summary and ends on a stopped marker', () => {
+      const { container } = render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({ ...emptyThread, items: stoppedItems, turnTiming: stoppedTiming })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const summary = screen.getByRole('button', { name: 'Stopped after 4s' })
+      expect(summary.getAttribute('aria-expanded')).toBe('false')
+      expect(summary.querySelector('.activity__glyph svg')).toBeTruthy()
+      expect(screen.queryByText('Worked for 4s')).toBeNull()
+      const answer = screen.getByText('The handler charges the card before it')
+      const marker = screen.getByText('Stopped by you')
+      expect(marker.closest('.reply')).toBe(answer.closest('.reply'))
+      expect(container.querySelectorAll('.turn-stopped')).toHaveLength(1)
+    })
+
+    it('puts the stopped marker between a settled answer and its actions', () => {
+      const settled = stoppedItems.map((item) =>
+        item.id === 'answer-1' ? { ...item, status: 'completed' as const } : item,
+      )
+      const { container } = render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({ ...emptyThread, items: settled, turnTiming: stoppedTiming })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const reply = container.querySelector('.reply')!
+      expect([...reply.children].map((child) => child.className)).toEqual([
+        expect.stringContaining('md'),
+        'turn-stopped',
+        expect.stringContaining('response-actions'),
+      ])
+    })
+
+    it('does not credit the user with an interruption a restart explains', () => {
+      const restart: Item = {
+        id: 'error:restart',
+        turnId: '',
+        type: 'error',
+        status: 'completed',
+        text: 'Turn interrupted: TasteCode restarted. Send a new message to continue.',
+        createdAt: 6_000,
+      }
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [...stoppedItems, restart],
+              turnTiming: stoppedTiming,
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      expect(screen.getByRole('button', { name: 'Stopped after 4s' })).toBeTruthy()
+      expect(screen.queryByText('Stopped by you')).toBeNull()
+    })
+
+    it('marks the prompt when the turn stopped before any output', () => {
+      render(
+        <Thread
+          frameStore={
+            new ThreadFrameStore({
+              ...emptyThread,
+              items: [stoppedItems[0]!],
+              turnTiming: stoppedTiming,
+            })
+          }
+          onDecide={() => undefined}
+          onAnswerUserInput={() => undefined}
+        />,
+      )
+
+      const prompt = screen.getByText('Fix the duplicate charge')
+      expect(screen.getByText('Stopped by you').closest('.thread__row')).toBe(
+        prompt.closest('.thread__row'),
+      )
+    })
+  })
+
   it('keeps the content mounted while toggling the animated reveal state', () => {
     const items: Item[] = [
       {
