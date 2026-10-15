@@ -13,6 +13,52 @@ type NoticePresenceProps = {
 
 type NoticePhase = 'open' | 'closing'
 
+const DOCKED_COMPOSER = '.stage__conversation:not(.is-new-session) > .composer'
+/** Clears the Jump to latest pill: 14px above the composer, 34px tall, plus 8px. */
+export const NOTICE_COMPOSER_CLEARANCE = 56
+const NOTICE_EDGE = 12
+
+/**
+ * Toasts are fixed to the window corner, which is where the docked composer
+ * keeps Send. While a toast is open it sits above that composer instead,
+ * right-aligned with the composer box. The values land on the toast itself,
+ * so measuring never restyles the rest of the document.
+ */
+export function placeNoticeAboveComposer(notice: HTMLElement): void {
+  const composer = document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+  const rect = composer?.getBoundingClientRect()
+  if (!composer || !rect || rect.height <= 0) {
+    notice.style.removeProperty('--notice-bottom')
+    notice.style.removeProperty('--notice-right')
+    return
+  }
+  // Layout offsets, not the box's rect: the dock FLIP transforms the box.
+  const box = composer.querySelector<HTMLElement>(':scope > .composer__box')
+  const right = box ? rect.left + box.offsetLeft + box.offsetWidth : rect.right
+  const bottom = window.innerHeight - rect.top + NOTICE_COMPOSER_CLEARANCE
+  notice.style.setProperty('--notice-bottom', `${Math.round(bottom)}px`)
+  notice.style.setProperty(
+    '--notice-right',
+    `${Math.max(NOTICE_EDGE, Math.round(window.innerWidth - right))}px`,
+  )
+}
+
+function keepNoticeAboveComposer(notice: HTMLElement): () => void {
+  const place = () => placeNoticeAboveComposer(notice)
+  place()
+  const composer = document.querySelector<HTMLElement>(DOCKED_COMPOSER)
+  const ResizeObserverConstructor = globalThis.ResizeObserver
+  const observer =
+    composer && ResizeObserverConstructor ? new ResizeObserverConstructor(place) : undefined
+  if (composer) observer?.observe(composer)
+  if (composer?.parentElement) observer?.observe(composer.parentElement)
+  window.addEventListener('resize', place)
+  return () => {
+    observer?.disconnect()
+    window.removeEventListener('resize', place)
+  }
+}
+
 export function NoticePresence(props: NoticePresenceProps) {
   const snapshot = useRef({
     className: props.className,
@@ -32,6 +78,11 @@ export function NoticePresence(props: NoticePresenceProps) {
     if (!mounted) return
     reportStartupMilestone('notice-open')
     return () => reportStartupMilestone('notice-closed')
+  }, [mounted])
+  useLayoutEffect(() => {
+    const element = root.current
+    if (!mounted || !element) return
+    return keepNoticeAboveComposer(element)
   }, [mounted])
   const canDismiss = Boolean(props.onDismiss)
   useEffect(() => {

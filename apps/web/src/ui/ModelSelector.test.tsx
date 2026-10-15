@@ -177,14 +177,62 @@ describe('ModelSelector', () => {
     renderSelector()
     const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
 
-    expect(trigger.textContent).toContain('5.6 Sol')
+    expect(trigger.querySelector('.model-selector__trigger-name')?.textContent).toBe('GPT-5.6 Sol')
     expect(trigger.textContent).toContain('Extra High')
     expect(trigger.querySelector('.model-selector__trigger-fast')).toBeNull()
-    expect(getCompactModelName('GPT-5.6 Sol')).toBe('5.6 Sol')
+    expect(getCompactModelName('GPT-5.6 Sol')).toBe('GPT-5.6 Sol')
     expect(getFriendlyEffortLabel('xhigh')).toBe('Extra High')
     // The top levels Codex (ultra) and Claude Code (ultracode) advertise.
     expect(getFriendlyEffortLabel('ultra')).toBe('Ultra')
     expect(getFriendlyEffortLabel('ultracode')).toBe('Ultracode')
+  })
+
+  it('keeps the GPT family on Codex names and leaves Claude and Grok names whole', () => {
+    // Names as Codex 0.154, Claude Code 2.1 and the Grok adapter report them.
+    const names: Array<[string, string]> = [
+      ['GPT-6-Astra', 'GPT-6 Astra'],
+      ['GPT-5.6-Sol', 'GPT-5.6 Sol'],
+      ['GPT-5.6-Terra', 'GPT-5.6 Terra'],
+      ['GPT-5.5', 'GPT-5.5'],
+      ['GPT-5.3-Codex-Spark', 'GPT-5.3 Codex Spark'],
+      ['gpt-5.4-mini', 'GPT-5.4 mini'],
+      ['gpt-oss-120b', 'GPT oss 120b'],
+      ['Fable 5.1', 'Fable 5.1'],
+      ['Sonnet 5.5', 'Sonnet 5.5'],
+      ['Opus 5', 'Opus 5'],
+      ['Grok 4.5', 'Grok 4.5'],
+      ['Grok Code Fast 1', 'Grok Code Fast 1'],
+    ]
+    for (const [name, compact] of names) expect(getCompactModelName(name)).toBe(compact)
+    expect(getCompactModelName(undefined)).toBe('Model')
+    expect(getCompactModelName('  ')).toBe('Model')
+  })
+
+  it('names the choice its owner resolved, even when the list would fall back elsewhere', async () => {
+    const placeholder: ModelChoice = {
+      key: 'claude-code:',
+      provider: 'claude-code',
+      sourceName: 'Claude Code',
+      mark: providerMark('claude-code'),
+      model: {
+        id: '',
+        displayName: 'Provider default',
+        description: 'The model this provider is configured to use',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+      },
+    }
+    const { onModelChange } = renderSelector({ modelId: placeholder.key, choice: placeholder })
+
+    const trigger = screen.getByRole('button', { name: 'Model and reasoning' })
+    expect(trigger.textContent).toContain('Provider default')
+    expect(trigger.textContent).not.toContain('5.6 Sol')
+
+    // The list default is not the current choice, so picking it must commit.
+    await openSelector()
+    fireEvent.click(await screen.findByRole('button', { name: 'Use GPT-5.6 Sol through Codex' }))
+    expect(onModelChange).toHaveBeenCalledWith('codex:gpt-5.6-sol')
   })
 
   it('shows active fast mode in the compact trigger', async () => {

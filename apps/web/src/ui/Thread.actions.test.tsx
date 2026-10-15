@@ -470,6 +470,25 @@ describe('empty thread', () => {
     expect(screen.queryByRole('heading')).toBeNull()
     expect(screen.getByRole('status').textContent).toContain('Loading conversation')
   })
+
+  it('offers a retry instead of the new chat prompt when the transcript could not be read', () => {
+    const onRetryLoad = vi.fn()
+    render(
+      <Thread
+        frameStore={new ThreadFrameStore(emptyThread)}
+        loadFailure="request timed out"
+        onRetryLoad={onRetryLoad}
+        onDecide={() => undefined}
+        onAnswerUserInput={() => undefined}
+      />,
+    )
+
+    expect(screen.getByRole('heading').textContent).toBe('This chat could not be loaded.')
+    expect(screen.getByText('request timed out')).toBeTruthy()
+    expect(screen.queryByText(/Tell the agent/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetryLoad).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('completed activity disclosure', () => {
@@ -2033,7 +2052,7 @@ describe('thread message actions', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'Edit prompt' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit as new prompt' }))
     expect(onEditMessage).toHaveBeenCalledWith('Revise this prompt')
   })
 
@@ -2110,5 +2129,36 @@ describe('thread message actions', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Revert to before prompt' }))
     expect(onRevertCheckpoint).toHaveBeenCalledWith(checkpoint)
+  })
+})
+
+describe('long chat paging cost', () => {
+  it('formats every reply time without building a formatter per row', () => {
+    const localeTime = vi.spyOn(Date.prototype, 'toLocaleTimeString')
+    const items: Item[] = []
+    for (let turn = 0; turn < 40; turn++) {
+      const createdAt = Date.UTC(2026, 9, 14, 8, turn)
+      items.push(
+        turnItem(`prompt-${turn}`, createdAt, {
+          turnId: `turn-${turn}`,
+          role: 'user',
+          text: 'Next',
+        }),
+        turnItem(`answer-${turn}`, createdAt + 1, {
+          turnId: `turn-${turn}`,
+          role: 'assistant',
+          phase: 'final_answer',
+          text: `Answer ${turn}`,
+        }),
+      )
+    }
+    const view = renderCompleted(items)
+
+    const times = [...view.container.querySelectorAll('.response-actions time')]
+    expect(times).toHaveLength(40)
+    const expected = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+    expect(times[7]?.textContent).toBe(expected.format(Date.UTC(2026, 9, 14, 8, 7) + 1))
+    expect(localeTime).not.toHaveBeenCalled()
+    localeTime.mockRestore()
   })
 })

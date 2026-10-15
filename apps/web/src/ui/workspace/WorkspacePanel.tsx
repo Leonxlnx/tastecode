@@ -4,6 +4,7 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -30,6 +31,7 @@ import type {
   SideChatStartOptions,
 } from './WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './WorkspaceBrowser.js'
+import { browserPageLabel, type BrowserPageInfo } from './browser-page.js'
 import { WorkspaceTabs } from './WorkspaceTabs.js'
 import { MIN_WORKSPACE_PANEL_WIDTH } from './workspace-panel-width.js'
 import { Menu, MenuItem } from '../Menu.js'
@@ -66,7 +68,12 @@ export type WorkspaceProviderLoginRequest = {
 export type WorkspaceTool = 'review' | 'terminal' | 'browser' | 'files' | 'side-chat'
 
 type WorkspaceTab =
-  | { id: string; kind: WorkspaceTool }
+  | {
+      id: string
+      kind: WorkspaceTool
+      /** Opened by the user, not restored or opened for them: take focus. */
+      userOpened?: boolean
+    }
   | {
       id: string
       kind: 'provider-login'
@@ -145,11 +152,41 @@ function WorkspacePanelComponent(props: {
     setTabs((current) => [...current.filter((tab) => tab.id !== next.id), next])
     setActiveId(next.id)
   }, [])
+  // Each Browser tab's page, keyed by tab id, so two tabs never both read "Browser".
+  const [browserPages, setBrowserPages] = useState<ReadonlyMap<string, BrowserPageInfo>>(
+    () => new Map(),
+  )
+  const updateBrowserPage = useCallback((id: string, page: BrowserPageInfo) => {
+    setBrowserPages((current) => {
+      const previous = current.get(id)
+      if (previous?.url === page.url && previous.title === page.title) return current
+      return new Map(current).set(id, page)
+    })
+  }, [])
+  const forgetBrowserPage = useCallback((id: string) => {
+    setBrowserPages((current) => {
+      if (!current.has(id)) return current
+      const next = new Map(current)
+      next.delete(id)
+      return next
+    })
+  }, [])
   const tabLabels = useMemo(() => {
     let terminalNumber = 0
     return tabs.map((tab) => {
       const definition = TOOLS.find((item) => item.kind === tab.kind) ?? TOOLS[1]!
       const Icon = definition.Icon
+      if (tab.kind === 'browser') {
+        const page = browserPages.get(tab.id)
+        const title = browserPageLabel(page)
+        return {
+          id: tab.id,
+          title,
+          icon: <Icon size={14} aria-hidden />,
+          tooltip: page?.url || title,
+          accessibleName: `Browser: ${title}`,
+        }
+      }
       const title =
         tab.kind === 'provider-login'
           ? tab.title
@@ -158,32 +195,56 @@ function WorkspacePanelComponent(props: {
             : definition.title
       return { id: tab.id, title, icon: <Icon size={14} aria-hidden /> }
     })
-  }, [tabs])
+  }, [tabs, browserPages])
   // Surfaces keep an order no tab move changes; React moving an iframe or webview reloads it.
   const surfaces = useMemo(() => [...tabs].sort((a, b) => (a.id < b.id ? -1 : 1)), [tabs])
   const [designPreview, setDesignPreview] = useState<BrowserNavigationRequest>()
   const toolRef = useRef(tool)
+  const panelElement = useRef<HTMLElement>(null)
   const resizeCleanup = useRef<() => void>(() => {})
   const handledTerminalRequest = useRef(0)
   const handledExternalRequest = useRef(0)
   const handledPreviewRequest = useRef<string | undefined>(undefined)
   toolRef.current = tool
 
+  // A Browser tab the user just opened, whose surface may still be loading.
+  const focusNewBrowserTab = useRef<string | undefined>(undefined)
   const openTool = useCallback(
     (kind: WorkspaceTool) => {
-      showTool({
-        id: ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind,
-        kind,
-      })
+      const id = ['terminal', 'browser', 'files'].includes(kind) ? crypto.randomUUID() : kind
+      if (kind === 'browser') focusNewBrowserTab.current = id
+      showTool({ id, kind, userOpened: true })
       props.onOpen()
     },
     [props.onOpen, showTool],
   )
+  // The first Browser tab loads its module lazily, which can take a moment.
+  // Until its address can take focus, park focus on the new tab so a URL typed
+  // meanwhile cannot land in the chat composer and be sent as a message. A
+  // surface that already mounted has focused its address; leave that alone.
+  // Runs after children, so after the Browser's own focus and any menu's.
+  useLayoutEffect(() => {
+    const id = focusNewBrowserTab.current
+    if (!id) return
+    focusNewBrowserTab.current = undefined
+    const panel = panelElement.current
+    if (
+      panel
+        ?.querySelector('.workspace-panel__surface:not([hidden])')
+        ?.contains(document.activeElement)
+    )
+      return
+    const tab = Array.from(panel?.querySelectorAll<HTMLElement>('[data-tab-motion-id]') ?? []).find(
+      (element) => element.dataset['tabMotionId'] === id,
+    )
+    tab?.querySelector<HTMLElement>('[role="tab"]')?.focus()
+  })
 
   const closeTool = useCallback(() => {
     const current = tabsRef.current
     setTabs([])
     setActiveId(undefined)
+    setBrowserPages(new Map())
     for (const tab of current) {
       if (tab.kind === 'provider-login') props.onProviderLoginClose?.(tab.requestId)
     }
@@ -196,10 +257,11 @@ function WorkspacePanelComponent(props: {
       if (!current) return
       const remaining = tabsRef.current.filter((tab) => tab.id !== id)
       setTabs(remaining)
+      forgetBrowserPage(id)
       if (current?.kind === 'provider-login') props.onProviderLoginClose?.(current.requestId)
       else if (!remaining.length) props.onClose()
     },
-    [props.onClose, props.onProviderLoginClose],
+    [forgetBrowserPage, props.onClose, props.onProviderLoginClose],
   )
 
   useEffect(() => {
@@ -296,6 +358,7 @@ function WorkspacePanelComponent(props: {
 
   return (
     <aside
+      ref={panelElement}
       className={`workspace-panel${tool ? ' has-tool' : ''}${bottom ? ' workspace-panel--bottom' : ''}${props.open ? ' is-open' : ''}${props.expanded ? ' is-expanded' : ''}`}
       aria-label={bottom ? 'Bottom workspace tools' : 'Workspace tools'}
       aria-hidden={!props.open}
@@ -381,6 +444,7 @@ function WorkspacePanelComponent(props: {
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
+                  onBrowserPage={updateBrowserPage}
                   onClose={() => closeTab(tab.id)}
                 />
               </Suspense>
@@ -410,6 +474,7 @@ function WorkspaceToolSurface(props: {
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
+  onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   onClose: () => void
 }) {
   if (props.tab.kind === 'provider-login') {
@@ -448,7 +513,15 @@ function WorkspaceToolSurface(props: {
     )
   }
   if (props.tab.kind === 'browser') {
-    return <WorkspaceBrowser active={props.active} navigation={props.browserNavigation} />
+    return (
+      <WorkspaceBrowser
+        active={props.active}
+        navigation={props.browserNavigation}
+        focusAddressOnOpen={props.tab.userOpened}
+        tabId={props.tab.id}
+        onPageInfo={props.onBrowserPage}
+      />
+    )
   }
   if (props.tab.kind === 'files') {
     return (

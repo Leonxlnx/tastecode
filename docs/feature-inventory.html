@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-14 main f47782bc · Identity card, effort pill, Ultracode</span>
+        <span class="meta">2026-10-15 main c1d46aae · Steady replies, calm Browser errors</span>
       </div>
     </div>
 
@@ -820,12 +820,19 @@
                   >Thread, New chat, and composer controls respond to their pane width rather than
                   the whole window, remaining usable beside workspace tools down to 332 px;
                   permission and Design labels compact at a 620 px chat pane before toolbar controls
-                  can overlap, and the permission chip keeps its icon when its label is hidden; the
-                  in-pane header names the current session or New chat and exposes the shared
-                  session menu plus direct Workspace and Terminal controls; each newly submitted
-                  queued turn gets a stable transcript anchor; the prompt takes focus only for a new
-                  focus request, so a finished Stop no longer pulls focus back from the terminal, a
-                  rename field or find</span
+                  can overlap, and the permission chip keeps its icon when its label is hidden, also
+                  while the chat's mode is still loading; in a narrow chat column + and the Design
+                  chip keep their size, the model button stops short of Send with its name ending in
+                  an ellipsis, and below a 420 px column the level dots carry the effort alone; the
+                  floating composer's dock paints the pane background, so the transcript never shows
+                  under or beside it; the placeholder says Stopping… while a turn stops; window
+                  toasts open above the docked composer and its Jump to latest lane, right-aligned
+                  with the composer box, instead of over the model button and Send; the in-pane
+                  header names the current session or New chat and exposes the shared session menu
+                  plus direct Workspace and Terminal controls; each newly submitted queued turn gets
+                  a stable transcript anchor; the prompt takes focus only for a new focus request,
+                  so a finished Stop no longer pulls focus back from the terminal, a rename field or
+                  find</span
                 ></span
               ></label
             >
@@ -875,18 +882,20 @@
                 threshold; groups keep one order (Claude Code, Codex, Grok, then custom harnesses)
                 while models load, and a first launch without a stored provider starts on Claude
                 Code; the flat list is the first-run layout, while both layouts share full-catalog
-                search, arrow-key entry into filtered results, and selection preservation; new-chat
-                source changes keep readiness checks silent; default visibility hides GPT 5.6
-                variants, GPT-5.5 and every Claude generation older than Fable 5.1, Opus 5.5, Sonnet
-                5.5 and Haiku 5.5; GPT 6.1 Sol, Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5
-                lineup including Haiku 5.5 stay enabled when discovered; on a profile without saved
-                visibility, each source's older models hide as soon as that source answers, so an
-                open picker does not drop rows under the pointer; new models start enabled unless
-                they are an older generation, and a defaults update moves only the models whose
-                default changed (the one-time Claude Code reset moves every stock Claude Code row),
-                each row once as soon as it is cached or listed, from the first paint and even while
-                another source fails discovery, so other saved visibility choices and later edits
-                persist</span
+                search, arrow-key entry into filtered results, and selection preservation; the
+                button and the checked row name exactly the model a send will use, and while the
+                preferred source is still listing its models the picker shows its loading state and
+                Send waits with the draft kept; new-chat source changes keep readiness checks
+                silent; default visibility hides GPT 5.6 variants, GPT-5.5 and every Claude
+                generation older than Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5; GPT 6.1 Sol,
+                Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5 lineup including Haiku 5.5 stay
+                enabled when discovered; on a profile without saved visibility, each source's older
+                models hide as soon as that source answers, so an open picker does not drop rows
+                under the pointer; new models start enabled unless they are an older generation, and
+                a defaults update moves only the models whose default changed (the one-time Claude
+                Code reset moves every stock Claude Code row), each row once as soon as it is cached
+                or listed, from the first paint and even while another source fails discovery, so
+                other saved visibility choices and later edits persist</span
               ></label
             >
           </li>
@@ -898,7 +907,8 @@
                 <span class="d"
                   >the composer model button shows one dot per level the model offers, filled
                   through the current level, then the level word, for example four dots for Grok and
-                  six for GPT-6-Astra</span
+                  six for GPT-6-Astra; its short model name keeps the GPT family and version (GPT-6
+                  Astra, GPT-5.6 Sol), while Claude and Grok names show as listed</span
                 ></span
               ></label
             >
@@ -960,8 +970,9 @@
               ><input type="checkbox" /><span
                 >Permission mode selector
                 <span class="d"
-                  >ask, auto, auto-review, and full; each provider remembers its own last
-                  choice</span
+                  >ask, auto, auto-review, and full; each provider remembers its own last choice;
+                  Auto-review says a reviewer checks elevated actions without naming a
+                  provider</span
                 ></span
               ></label
             >
@@ -978,7 +989,8 @@
                 context menu; links offer a native Open, separator, and Copy Link menu; selected
                 images reach ACP image blocks only after the agent advertises image prompts;
                 attachments can send without typed text and name a new session from their filenames,
-                while rejected sends restore the original draft and attachment set</span
+                while rejected sends restore the original draft and attachment set; in the web build
+                a drop or a paste says by name that it needs the desktop app</span
               ></label
             >
           </li>
@@ -1109,7 +1121,12 @@
                   dependency audit clear; assistant prose uses denser type and spacing without
                   changing prompts, headings, or code; renderer and worker share curated grammars,
                   with plain-text fallback for other languages; code block copy and download
-                  controls sit on the language header row, leaving no gap above the code</span
+                  controls sit on the language header row, leaving no gap above the code; a
+                  completing rich reply keeps its live rendering until the rich renderer has loaded
+                  and then swaps in one commit, so it never collapses into plain paragraphs; code
+                  blocks render at their real height in the frame they mount, without Streamdown's
+                  200 px placeholder, so rows below no longer jump; reply times come from one shared
+                  formatter</span
                 ></span
               ></label
             >
@@ -1212,7 +1229,8 @@
                 >Turn navigation, jump between turns
                 <span class="d"
                   >saved chats open at the bottom and stay there as content loads or changes size;
-                  scrolling up stops automatic following</span
+                  scrolling up stops automatic following; Jump to latest chases the end of an answer
+                  that is still growing, lands there and follows it again</span
                 ></span
               ></label
             >
@@ -1226,8 +1244,9 @@
           <li>
             <label
               ><input type="checkbox" /><span
-                >Persistent Copy and Revert on agent replies; compact hover Copy, Edit, and Revert
-                on user messages without layout movement</span
+                >Persistent Copy and Revert on agent replies; compact hover Copy, Edit as new
+                prompt, and Revert on user messages without layout movement; a draft that Edit as
+                new prompt replaces comes back with Ctrl/Command+Z or the notice's Restore</span
               ></label
             >
           </li>
@@ -1379,7 +1398,9 @@
                   helper sessions stay internal; old read-only reviewer copies are cleaned up while
                   active chats and locally authored replies remain intact. A history source that
                   fails to load affects only that provider's imported chats; local and native chats
-                  keep opening and sending.</span
+                  keep opening and sending. Local and native chats also open from the store at once
+                  while the first provider history scan after a server start is still running; what
+                  the scan changes arrives in the background and open chats reload it.</span
                 ></span
               ></label
             >
@@ -1427,8 +1448,10 @@
                 >Multiple concurrent sessions per project with live status
                 <span class="d"
                   >conversation loading is distinct from a true zero-turn thread, whose composer
-                  remains available;
-                  <a href="./screenshots/empty-thread.png">production evidence</a></span
+                  remains available; a chat whose transcript read fails says it could not be loaded,
+                  with the reason and Retry, instead of the new-chat prompt; the permission chip
+                  shows each reopened chat's last mode at once and falls back to Ask first when the
+                  read fails; <a href="./screenshots/empty-thread.png">production evidence</a></span
                 ></span
               ></label
             >
@@ -1570,7 +1593,11 @@
                   inactive tabs reduce to icons whose close button appears on hover or keyboard
                   focus, while the active tab keeps its label. Only a strip that still overflows
                   scrolls, keeping the active tab in view and fading its start edge, and every tab
-                  names itself in full on hover. CSP-safe compact terminals with link detection,
+                  names itself in full on hover. Each Browser tab is labelled by its page title,
+                  else its host, else New tab; a Browser tab the user opens (Ctrl/Command+T or the +
+                  menu) focuses its address, and an address sent before the guest is ready loads
+                  once it is. Dragging the right panel edge restyles only the layout grid, not the
+                  chat and Browser beside it. CSP-safe compact terminals with link detection,
                   distinct desktop/tablet/mobile Browser controls, lazy file trees and side chat;
                   queued and steered Side-chat turns keep their own channel across runtime restart,
                   while a full app restart still purges temporary Side chats; New chat terminals use
@@ -1743,9 +1770,9 @@
                 >Account popup exactly as wide as its button
                 <span class="d"
                   >the rail ends in one raised, rounded identity card with a 32 px avatar (the
-                  photo, or the name's initials on a tint of the seal's hue), the name, a 3 px usage
-                  meter with the provider it measures, and a gear that opens Settings; the popup
-                  opens flush above the card with the same width and corner radius and shows
+                  photo, or the generated seal struck from the profile coin's seed), the name, a 3
+                  px usage meter with the provider it measures, and a gear that opens Settings; the
+                  popup opens flush above the card with the same width and corner radius and shows
                   prefetched limit windows at once in one soft well, then Edit profile and
                   Settings</span
                 ></span
@@ -2052,13 +2079,13 @@
                   letters that laid each tile, the rest steps back, and four notes tied to the rim
                   read the colour, ground, symmetry and tile rules for the word; words without
                   letters are hashed. The seal is minted when the page opens and re-struck from the
-                  centre out once typing pauses; the sidebar card shows the name's initials on a
-                  tint of the seal's hue, or a person mark without a name. The other face holds a
-                  PNG, JPEG or WebP photo up to 1 MB: Turn over for a photo flips the coin and opens
-                  the file picker, dragging a photo onto the page turns it to the empty face, Turn
-                  back returns to the seal and keeps the photo for this session. Brushing the cursor
-                  across the coin nudges it on a damped spring. Settings › Debug has an avatar
-                  generator lab for previewing names at every shipped size</span
+                  centre out once typing pauses; the sidebar card draws the same seal unless a photo
+                  is set. The other face holds a PNG, JPEG or WebP photo up to 1 MB: Turn over for a
+                  photo flips the coin and opens the file picker, dragging a photo onto the page
+                  turns it to the empty face, Turn back returns to the seal and keeps the photo for
+                  this session. Brushing the cursor across the coin nudges it on a damped spring.
+                  Settings › Debug has an avatar generator lab for previewing names at every shipped
+                  size</span
                 ></span
               ></label
             >
@@ -2286,8 +2313,10 @@
               ><input type="checkbox" /><span
                 >Windows title bar via the real Window Controls Overlay
                 <span class="d"
-                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and
-                  README</span
+                  >TasteCode icon in the window, taskbar, tray, macOS Dock, package, and README; the
+                  caption buttons take the colour the app paints beside them, live in light and
+                  dark, on tinted backdrops and in Settings, and the next launch opens in the last
+                  colours</span
                 ></span
               ></label
             >
@@ -2319,7 +2348,10 @@
                   requests reload it, while exact review evidence stays in a separate hidden
                   Electron window; the DOM-owned host follows workspace layout, with 1280 × 800, 768
                   × 1024 and 390 × 844 presets scaled to fit without stretching, plus an explicit
-                  system-browser handoff</span
+                  system-browser handoff; the canvas takes the theme background; a failed load shows
+                  a calm view in the canvas with the host, one plain sentence, Retry and Edit
+                  address, reported once and not at all after Stop, while a refused address says
+                  why; loads after the first page keep it visible under a thin progress line</span
                 ></span
               ></label
             >
