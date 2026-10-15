@@ -460,6 +460,10 @@ function ComposerComponent(props: {
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
   modelId: string | undefined
+  /** The choice a send uses. The picker shows it instead of resolving `modelId` again. */
+  modelChoice?: ModelChoice | undefined
+  /** The preferred source has not listed its models, so no model is known yet. */
+  modelPending?: boolean
   effort: string | undefined
   serviceTier: string | undefined
   usage?: Usage | undefined
@@ -471,6 +475,8 @@ function ComposerComponent(props: {
   voiceAvailable: boolean
   voiceLoading?: boolean
   disabled: boolean
+  /** Replaces "Do anything" while the composer cannot be used, e.g. while a turn stops. */
+  placeholder?: string | undefined
   sendAvailability: SendAvailability
   providerSignInRequired?: boolean
   errors?: readonly ComposerError[] | undefined
@@ -487,6 +493,8 @@ function ComposerComponent(props: {
         text: string
         attachments?: string[] | undefined
         resources?: ComposerResource[] | undefined
+        /** Insert the text as one native edit, so Ctrl+Z brings back what it replaced. */
+        undoable?: boolean | undefined
         request: number
       }
     | undefined
@@ -967,6 +975,17 @@ function ComposerComponent(props: {
     })
   }
 
+  /** Replace the whole text through the editor, which keeps it on the native undo stack. */
+  const insertUndoably = (value: string): boolean => {
+    const el = area.current
+    if (!el || el.disabled || typeof document.execCommand !== 'function') return false
+    el.focus()
+    el.select()
+    // The input event this fires runs onChange, which records the new text.
+    if (!document.execCommand('insertText', false, value)) return false
+    return el.value === value
+  }
+
   const replaceDraft = (value: string) => {
     updateText(value, true, false)
     setResourceTrigger(undefined)
@@ -984,7 +1003,8 @@ function ComposerComponent(props: {
     if (!props.draftRequest) return
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish.
-    replaceDraft(props.draftRequest.text)
+    if (!props.draftRequest.undoable || !insertUndoably(props.draftRequest.text))
+      replaceDraft(props.draftRequest.text)
     if (props.draftRequest.attachments !== undefined) {
       for (const attachment of attachments) releasePreview(attachment.previewUrl)
       setViewingMedia(undefined)
@@ -1073,7 +1093,7 @@ function ComposerComponent(props: {
     addFiles(files)
   }
 
-  const addPastedFiles = (files: File[]) => {
+  const addPastedFiles = (files: File[], source: 'paste' | 'drop') => {
     const owner = draftRequestRef.current?.request
     setAttachmentError(undefined)
     for (const file of files) {
@@ -1102,7 +1122,9 @@ function ComposerComponent(props: {
           if (!mounted.current || draftRequestRef.current?.request !== owner) return saved?.path
           if (!saved) {
             removeAttachment(id, previewUrl)
-            setAttachmentError('Pasting files is available in the desktop app.')
+            setAttachmentError(
+              `${source === 'drop' ? 'Dropping' : 'Pasting'} files is available in the desktop app.`,
+            )
             return undefined
           }
           const picked = saved
@@ -1187,7 +1209,7 @@ function ComposerComponent(props: {
       })
     }
     attachFiles(picked)
-    addPastedFiles(materialized)
+    addPastedFiles(materialized, 'drop')
   }
 
   useEffect(() => {
@@ -1898,10 +1920,10 @@ function ComposerComponent(props: {
                         return
                       }
                       attachFiles(paths)
-                      addPastedFiles(materialized)
+                      addPastedFiles(materialized, 'paste')
                     }
                   }}
-                  placeholder={props.disabled ? 'Add a project folder first' : 'Do anything'}
+                  placeholder={props.placeholder ?? 'Do anything'}
                 />
               </div>
 
@@ -1948,6 +1970,12 @@ function ComposerComponent(props: {
                             >
                               <div className="composer-skeleton-permission__icon">
                                 <Skeleton className="skeleton--icon" />
+                                {/* Shown instead of the skeleton where the label is hidden. */}
+                                <approval.icon
+                                  className="composer-skeleton-permission__glyph"
+                                  size={13}
+                                  aria-hidden
+                                />
                               </div>
                               <span className="composer-skeleton-permission__label" aria-hidden>
                                 <span>{approval.short}</span>
@@ -2022,11 +2050,14 @@ function ComposerComponent(props: {
                   <ContextUsage usage={props.usage} />
                 ) : null}
 
-                {voiceState === 'idle' && props.models.length > 0 ? (
+                {voiceState === 'idle' && props.modelPending ? (
+                  <ModelTriggerSkeleton />
+                ) : voiceState === 'idle' && props.models.length > 0 ? (
                   <Suspense fallback={<ModelTriggerSkeleton />}>
                     <ModelSelector
                       models={props.models}
                       modelId={props.modelId}
+                      choice={props.modelChoice}
                       effort={props.effort}
                       serviceTier={props.serviceTier}
                       // The active turn already captured its settings. Changes
@@ -2091,7 +2122,15 @@ function ComposerComponent(props: {
                         }`}
                         onClick={showStop ? props.onInterrupt : () => submit()}
                         disabled={showStop ? Boolean(props.stopping) : sendDisabled}
-                        title={showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel}
+                        title={
+                          showStop
+                            ? props.stopping
+                              ? 'Stopping…'
+                              : 'Stop'
+                            : props.modelPending
+                              ? 'Loading models…'
+                              : submitLabel
+                        }
                         aria-label={
                           showStop ? (props.stopping ? 'Stopping…' : 'Stop') : submitLabel
                         }
