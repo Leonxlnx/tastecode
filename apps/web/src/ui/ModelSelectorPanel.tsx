@@ -428,7 +428,7 @@ export function ModelSelectorPanel(props: ModelSelectorProps) {
   const [previewEffortIndex, setPreviewEffortIndex] = useState<number | null>(null)
   const [hoverEffortIndex, setHoverEffortIndex] = useState<number | null>(null)
   const pickerLayout = useSyncExternalStore(subscribeModelPickerLayout, readModelPickerLayout)
-  const choice = getSelectedChoice(props.models, props.modelId)
+  const choice = props.choice ?? getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
   const effortOptions = model?.reasoningEfforts ?? []
