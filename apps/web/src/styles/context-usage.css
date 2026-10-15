@@ -1,30 +1,42 @@
-/* The context ring beside the model picker. It only renders once a provider
-   reports a context window, so it loads with its component, not at startup. */
-
+/* The context meter beside the model picker: a full faint track, the used arc
+   and the number, so it reads as an amount and not as a loading spinner. It
+   only renders once a provider reports a context window, so it loads with its
+   component, not at startup. */
 .context-usage {
   position: relative;
-  display: grid;
-  width: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 28px;
   height: 28px;
   flex: none;
-  place-items: center;
-  border-radius: var(--r-circle);
+  padding-inline: 4px 6px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .context-usage svg {
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  flex: none;
   overflow: visible;
   transform: rotate(-90deg);
 }
 
 .context-usage circle {
   fill: none;
-  stroke-width: 2.25;
+  stroke-width: 2.5;
 }
 
 .context-usage__track {
-  stroke: var(--line-strong);
+  stroke: color-mix(in srgb, var(--text-3) 30%, transparent);
+}
+
+.context-usage__value {
+  line-height: 1;
 }
 
 .context-usage__fill {
@@ -71,5 +83,17 @@
   .context-usage:hover .context-usage__tooltip {
     opacity: 1;
     transition-duration: 140ms;
+  }
+}
+
+/* A narrow composer keeps the ring and drops the number; the tooltip still
+   has both. */
+@container chat-stage (max-width: 480px) {
+  .context-usage {
+    padding-inline: 0;
+  }
+
+  .context-usage__value {
+    display: none;
   }
 }
