@@ -7,7 +7,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type DragEvent,
 } from 'react'
 import type { ApprovalMode, ProviderId, QueuedTurn, Usage } from '@harness/contracts'
@@ -74,6 +73,10 @@ const ComposerVoiceControl = lazy(() =>
     default: module.ComposerVoiceControl,
   })),
 )
+// Only chats whose provider reports a context window show the ring.
+const ContextUsage = lazy(() =>
+  import('./ContextUsage.js').then((module) => ({ default: module.ContextUsage })),
+)
 const DRAFT_HAS_CONTENT = /\S/u
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
@@ -115,12 +118,6 @@ function ResourcePickerSkeleton() {
       </div>
     </div>
   )
-}
-
-type ContextUsageStyle = CSSProperties & { '--context-used': number }
-
-function contextUsageStyle(percent: number): ContextUsageStyle {
-  return { '--context-used': percent }
 }
 
 function sameDraftPaths(left: string[], right: string[]): boolean {
@@ -514,6 +511,11 @@ function ComposerComponent(props: {
   onPendingQueuedEdit?:
     ((removed: Promise<Pick<QueuedTurn, 'text' | 'attachments'> | undefined>) => void) | undefined
   onResourcesChange?: ((resources: ComposerResource[]) => void) | undefined
+  /**
+   * Puts the chat's last sent prompt back into the composer for editing, the
+   * way its Edit action does. Returns that prompt, or undefined when there is none.
+   */
+  onRecallLastPrompt?: (() => string | undefined) | undefined
   onReady?: (() => void) | undefined
   queuedTurns: QueuedTurn[]
   canSteerQueue: boolean
@@ -573,6 +575,8 @@ function ComposerComponent(props: {
   const resourcePicker = useRef<ComposerResourcePickerHandle>(null)
   const sendAvailabilityRef = useRef(props.sendAvailability)
   const textRef = useRef('')
+  /** The prompt Arrow Up put back, until it is sent, cleared or replaced. */
+  const recalledPrompt = useRef<string | undefined>(undefined)
   const hasDraftTextRef = useRef(false)
   const attachmentsSupportedRef = useRef(props.attachmentsSupported)
   const previewUrls = useRef(new Set<string>())
@@ -957,6 +961,7 @@ function ComposerComponent(props: {
 
   const updateText = (value: string, syncArea = true, notify = true) => {
     textRef.current = value
+    if (value === '') recalledPrompt.current = undefined
     if (syncArea && area.current && area.current.value !== value) area.current.value = value
     const nextHasDraftText = DRAFT_HAS_CONTENT.test(value)
     if (nextHasDraftText !== hasDraftTextRef.current) {
@@ -982,8 +987,24 @@ function ComposerComponent(props: {
     el.focus()
     el.select()
     // The input event this fires runs onChange, which records the new text.
-    if (!document.execCommand('insertText', false, value)) return false
-    return el.value === value
+    const inserted = value
+      ? document.execCommand('insertText', false, value)
+      : document.execCommand('delete')
+    return inserted && el.value === value
+  }
+
+  /** Arrow Up may only replace nothing: no text, files or skills, and the caret at the start. */
+  const composerEmptyAtStart = (el: HTMLTextAreaElement) =>
+    el.value === '' &&
+    el.selectionStart === 0 &&
+    el.selectionEnd === 0 &&
+    attachments.length === 0 &&
+    selectedResources.length === 0
+
+  /** Escape after Arrow Up: back to the empty composer, which Ctrl+Z can undo. */
+  const cancelRecalledPrompt = () => {
+    recalledPrompt.current = undefined
+    if (!insertUndoably('')) setValue('')
   }
 
   const replaceDraft = (value: string) => {
@@ -1001,6 +1022,8 @@ function ComposerComponent(props: {
 
   useEffect(() => {
     if (!props.draftRequest) return
+    // Only the request Arrow Up made keeps Escape's way back to an empty box.
+    if (props.draftRequest.text !== recalledPrompt.current) recalledPrompt.current = undefined
     // Parent already holds this snapshot. Writing it back would let a stale
     // empty request wipe a draft that was typed after the last publish.
     if (!props.draftRequest.undoable || !insertUndoably(props.draftRequest.text))
@@ -1878,6 +1901,29 @@ function ComposerComponent(props: {
                         return
                       }
                     }
+                    // Arrow Up in an empty composer brings the last prompt back
+                    // to edit, as in a shell; Escape puts the empty box back.
+                    if (
+                      e.key === 'ArrowUp' &&
+                      !e.shiftKey &&
+                      !e.altKey &&
+                      !e.ctrlKey &&
+                      !e.metaKey &&
+                      props.onRecallLastPrompt &&
+                      composerEmptyAtStart(e.currentTarget)
+                    ) {
+                      const recalled = props.onRecallLastPrompt()
+                      if (recalled !== undefined) {
+                        e.preventDefault()
+                        recalledPrompt.current = recalled
+                      }
+                      return
+                    }
+                    if (e.key === 'Escape' && recalledPrompt.current !== undefined) {
+                      e.preventDefault()
+                      cancelRecalledPrompt()
+                      return
+                    }
                     // Typing turns the orb into Queue, which made the agent
                     // unstoppable mid-draft. Esc stays the brake.
                     if (e.key === 'Escape' && props.running) {
@@ -2047,7 +2093,9 @@ function ComposerComponent(props: {
                 {voiceState === 'idle' ? <span className="tools__spacer" /> : null}
 
                 {voiceState === 'idle' && props.usage?.contextWindow ? (
-                  <ContextUsage usage={props.usage} />
+                  <Suspense fallback={null}>
+                    <ContextUsage usage={props.usage} />
+                  </Suspense>
                 ) : null}
 
                 {voiceState === 'idle' && props.modelPending ? (
@@ -2173,35 +2221,6 @@ function ComposerComponent(props: {
         </Suspense>
       ) : null}
     </>
-  )
-}
-
-function ContextUsage({ usage }: { usage: Usage }) {
-  const contextWindow = usage.contextWindow ?? 0
-  const percent = contextWindow
-    ? Math.min(100, Math.max(0, (usage.totalTokens / contextWindow) * 100))
-    : 0
-  const detail = `${usage.totalTokens.toLocaleString()} of ${contextWindow.toLocaleString()} context tokens used (${Math.round(percent)}%)`
-
-  return (
-    <span
-      className="context-usage"
-      tabIndex={0}
-      role="img"
-      aria-label={detail}
-      style={contextUsageStyle(percent)}
-    >
-      <svg viewBox="0 0 24 24" aria-hidden>
-        <circle className="context-usage__track" cx="12" cy="12" r="9" />
-        <circle className="context-usage__fill" cx="12" cy="12" r="9" pathLength="100" />
-      </svg>
-      <span className="context-usage__tooltip" role="tooltip">
-        <strong>{Math.round(percent)}% context used</strong>
-        <span>
-          {usage.totalTokens.toLocaleString()} / {contextWindow.toLocaleString()} tokens
-        </span>
-      </span>
-    </span>
   )
 }
 

@@ -80,7 +80,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--surface-3);
-  --composer-design-border-hover: var(--composer-control-border-hover);
   --composer-design-border-active: var(--composer-control-border-hover);
   --composer-design-beam-stroke-strength: 1;
   --composer-design-beam-inner-strength: 1;
@@ -360,7 +359,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--composer-control-bg);
-  --composer-design-border-hover: #c7c7cd;
   --composer-design-border-active: #b9bac2;
   --composer-design-prompt-border: #bfc0c8;
   --composer-design-beam-stroke-strength: 2.1;

@@ -87,14 +87,19 @@ describe('WorkspacePanel', () => {
       expect(screen.getAllByRole('tab').length).toBeGreaterThan(0)
       fireEvent.click(
         screen.getByRole('button', {
-          name: `Close ${placement === 'bottom' ? 'bottom' : 'right'} panel`,
+          name: placement === 'bottom' ? 'Close bottom panel' : 'Hide right panel',
         }),
       )
       expect(props.onClose).toHaveBeenCalledOnce()
       rerender(<WorkspacePanel {...props} placement={placement} open={false} />)
       rerender(<WorkspacePanel {...props} placement={placement} />)
-      expect(screen.getByRole('button', { name: 'Terminal' })).toBeTruthy()
-      expect(screen.queryByRole('button', { name: 'Exit terminal' })).toBeNull()
+      if (placement === 'bottom') {
+        expect(screen.getByRole('button', { name: 'Terminal' })).toBeTruthy()
+        expect(screen.queryByRole('button', { name: 'Exit terminal' })).toBeNull()
+      } else {
+        // The right panel's X only hides it; the terminal comes back.
+        expect(screen.getByRole('button', { name: 'Exit terminal' })).toBeTruthy()
+      }
     },
   )
 
@@ -175,7 +180,7 @@ describe('WorkspacePanel', () => {
       />,
     )
     await screen.findByTestId('provider-login-terminal')
-    fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right panel' }))
     expect(onProviderLoginClose).toHaveBeenCalledWith(4)
     expect(props.onClose).toHaveBeenCalledOnce()
   })
@@ -194,7 +199,7 @@ describe('WorkspacePanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Add workspace tab' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Terminal' }))
     await screen.findByRole('button', { name: 'Exit terminal' })
-    fireEvent.click(screen.getByRole('button', { name: 'Close right panel' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Hide right panel' }))
     expect(onProviderLoginClose).toHaveBeenCalledWith(4)
     expect(props.onClose).toHaveBeenCalledOnce()
   })
