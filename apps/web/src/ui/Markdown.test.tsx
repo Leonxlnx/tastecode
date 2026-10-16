@@ -257,6 +257,14 @@ describe('Markdown inline references', () => {
 })
 
 describe('Completed Markdown', () => {
+  it('renders bold text as a strong element', async () => {
+    const { container } = render(<Markdown text="Use **bold** here" />)
+
+    await waitFor(() => expect(container.querySelector('[data-streaming-markdown]')).toBeNull())
+    expect(container.querySelector('strong')?.textContent).toBe('bold')
+    expect(container.querySelector('span[data-streamdown="strong"]')).toBeNull()
+  })
+
   it.each(['Match files with **/*.ts in the repo.', 'Hold ^_foo to repeat.', 'Press the ` key.'])(
     'does not repair finished text as if it were cut off: %s',
     (text) => {
