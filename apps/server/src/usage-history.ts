@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { CLAUDE_USAGE_HISTORY } from '@harness/adapter-claude-code'
@@ -25,6 +25,12 @@ const CACHE_VERSION = 8
  * instead of compacted. It is migrated in place so upgrading needs no rescan.
  */
 const UNCOMPACTED_CACHE_VERSION = 7
+/**
+ * A saved index up to this size parses on the event loop in about 100 ms. A
+ * larger one, such as a per-message version 7 index of 50 MB, parses in the
+ * worker so the server keeps answering and streaming meanwhile.
+ */
+const MAIN_THREAD_CACHE_BYTES = 4 * 1024 * 1024
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
@@ -125,6 +131,11 @@ export type UsageScanRunner = (
   signal: AbortSignal,
 ) => Promise<UsageScanResult>
 
+/** A saved index as read back. `current` is false when the file must be saved again as is. */
+export type LoadedUsageCache = { cache: UsageCache; current: boolean }
+
+export type UsageCacheLoader = (filePath: string, signal: AbortSignal) => Promise<LoadedUsageCache>
+
 type UsageHistoryOptions = {
   cacheFile: string
   /** Archive locations by provider in place of each adapter's default; tests use fixtures. */
@@ -132,6 +143,8 @@ type UsageHistoryOptions = {
   harnessUsage?: () => StoredUsageEvent[]
   now?: () => Date
   scanRunner?: UsageScanRunner
+  /** Reads a saved index too large to parse on the event loop; production uses the worker. */
+  largeCacheLoader?: UsageCacheLoader
 }
 
 type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId }
@@ -177,6 +190,9 @@ export class UsageHistoryService {
   readonly #harnessUsage: () => StoredUsageEvent[]
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
+  readonly #largeCacheLoader: UsageCacheLoader
+  /** Aborted on dispose, which stops a saved index still being read in the worker. */
+  readonly #lifetime = new AbortController()
   #cache: UsageCache | undefined
   /** Whether the cache file holds `#cache`; a scan that changes nothing then skips the write. */
   #cacheSaved = false
@@ -209,6 +225,7 @@ export class UsageHistoryService {
     this.#harnessUsage = options.harnessUsage ?? (() => [])
     this.#now = options.now ?? (() => new Date())
     this.#scanRunner = options.scanRunner ?? runUsageScanWorker
+    this.#largeCacheLoader = options.largeCacheLoader ?? loadUsageCacheInWorker
   }
 
   /** Starts indexing without putting it on the server startup or request path. */
@@ -251,6 +268,7 @@ export class UsageHistoryService {
 
   dispose(): void {
     this.#disposed = true
+    this.#lifetime.abort()
     this.#scanAbort?.abort()
     this.#scanAbort = undefined
   }
@@ -279,7 +297,11 @@ export class UsageHistoryService {
   async #loadCache(): Promise<UsageCache> {
     if (this.#cache) return this.#cache
     if (!this.#cacheLoading) {
-      this.#cacheLoading = loadUsageCache(this.#cacheFile).then(({ cache, current }) => {
+      this.#cacheLoading = loadSavedUsageCache(
+        this.#cacheFile,
+        this.#largeCacheLoader,
+        this.#lifetime.signal,
+      ).then(({ cache, current }) => {
         this.#cache = cache
         this.#cacheSaved = current
         this.#generatedAt = cache.generatedAt
@@ -658,8 +680,33 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
   return (await loadUsageCache(filePath)).cache
 }
 
-/** Reads the saved index. `current` is false when the file must be saved again as is. */
-async function loadUsageCache(filePath: string): Promise<{ cache: UsageCache; current: boolean }> {
+/**
+ * Reads the saved index on the event loop when it is small, otherwise with the
+ * large-index loader. If that loader fails, the index is still read here: a
+ * slow read beats discarding it and reparsing every archive.
+ */
+async function loadSavedUsageCache(
+  filePath: string,
+  loadLarge: UsageCacheLoader,
+  signal: AbortSignal,
+): Promise<LoadedUsageCache> {
+  const size = await stat(filePath).then(
+    (stats) => stats.size,
+    () => 0,
+  )
+  if (size <= MAIN_THREAD_CACHE_BYTES) return loadUsageCache(filePath)
+  try {
+    return await loadLarge(filePath, signal)
+  } catch {
+    // Stopped by dispose: nothing reads the index any more, and an empty index
+    // marked as saved can never overwrite the file.
+    if (signal.aborted) return { cache: emptyUsageCache(), current: true }
+    return loadUsageCache(filePath)
+  }
+}
+
+/** Reads the saved index on the calling thread; a missing or damaged file reads as empty. */
+export async function loadUsageCache(filePath: string): Promise<LoadedUsageCache> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
     const uncompacted = value.version === UNCOMPACTED_CACHE_VERSION
@@ -815,12 +862,13 @@ function emptyUsageCache(): UsageCache {
   }
 }
 
-/** One job for the usage worker. */
-export type UsageWorkerJob = { kind: 'scan'; request: UsageScanRequest }
+/** One job for the usage worker: index changed archive files, or read a saved index. */
+export type UsageWorkerJob =
+  { kind: 'scan'; request: UsageScanRequest } | { kind: 'load'; cacheFile: string }
 
 export type UsageWorkerMessage =
   | { type: 'progress'; progress: UsageScanProgress }
-  | { type: 'complete'; result: UsageScanResult }
+  | { type: 'complete'; result: UsageScanResult | LoadedUsageCache }
   | { type: 'error'; message: string }
 
 function runUsageScanWorker(
@@ -829,6 +877,11 @@ function runUsageScanWorker(
   signal: AbortSignal,
 ): Promise<UsageScanResult> {
   return runUsageWorker({ kind: 'scan', request }, signal, onProgress)
+}
+
+/** Parses, validates and compacts the saved index off the event loop; only the result is cloned back. */
+function loadUsageCacheInWorker(cacheFile: string, signal: AbortSignal): Promise<LoadedUsageCache> {
+  return runUsageWorker({ kind: 'load', cacheFile }, signal)
 }
 
 function runUsageWorker<Result>(

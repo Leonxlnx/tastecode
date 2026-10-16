@@ -6,8 +6,10 @@ import type { ProviderId, UsageHistoryRange } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   type CachedUsageFile,
+  loadUsageCache,
   readUsageCache,
   runUsageHistoryScan,
+  type UsageCacheLoader,
   UsageHistoryService,
 } from './usage-history.js'
 
@@ -929,6 +931,81 @@ describe('local usage history', () => {
     expect(saved.generatedAt).toBe(now)
     expect(saved.files.map((file) => file.size)).toEqual([statSync(codexFile).size])
   })
+
+  it('reads a large saved index with the large-index loader and falls back when it fails', async () => {
+    const root = temporaryDirectory()
+    const smallFile = path.join(root, 'small.json')
+    const largeFile = path.join(root, 'large.json')
+    writeFileSync(smallFile, JSON.stringify(cacheFixture(7, uncompactedFixtureFiles(root))))
+    const perMessage = Array.from({ length: 20_000 }, () => ({
+      date: '2026-08-08',
+      model: 'claude-sonnet-4-5',
+      sessionId: 'claude',
+      longContext: false,
+      tokens: {
+        uncachedInputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 1,
+        reasoningTokens: 0,
+        providerReportedCostUsd: 0,
+      },
+    }))
+    const largeIndex = JSON.stringify(
+      cacheFixture(7, [
+        {
+          path: path.join(root, 'claude.jsonl'),
+          provider: 'claude-code',
+          mtimeMs: 1,
+          size: 1,
+          entries: perMessage,
+        },
+      ]),
+    )
+    writeFileSync(largeFile, largeIndex)
+    expect(statSync(largeFile).size).toBeGreaterThan(4 * 1024 * 1024)
+    const loaded: string[] = []
+    const loader: UsageCacheLoader = async (filePath) => {
+      loaded.push(filePath)
+      return loadUsageCache(filePath)
+    }
+
+    expect((await cachedHistory(smallFile, 'all', loader)).sessionCount).toBe(5)
+    expect(loaded).toEqual([])
+
+    const large = await cachedHistory(largeFile, 'all', loader)
+    expect(loaded).toEqual([largeFile])
+    expect(large.totals.processedTokens).toBe(40_000)
+    // The migrated index is saved compacted, so the next start reads it on the event loop.
+    expect(statSync(largeFile).size).toBeLessThan(4 * 1024 * 1024)
+    expect((await readUsageCache(largeFile)).files[0]?.entries).toHaveLength(1)
+
+    writeFileSync(largeFile, largeIndex)
+    let failedLoads = 0
+    const fellBack = await cachedHistory(largeFile, 'all', async () => {
+      failedLoads += 1
+      throw new Error('worker failed')
+    })
+    expect(failedLoads).toBe(1)
+    expect(fellBack.totals).toEqual(large.totals)
+
+    writeFileSync(largeFile, largeIndex)
+    const stopped = new UsageHistoryService({
+      cacheFile: largeFile,
+      largeCacheLoader: (_filePath, signal) =>
+        new Promise((_resolve, reject) => {
+          const stop = () => reject(new Error('stopped'))
+          if (signal.aborted) stop()
+          else signal.addEventListener('abort', stop)
+        }),
+      scanRunner: () => Promise.reject(new Error('no scan after dispose')),
+    })
+    const pending = stopped.history('all')
+    stopped.dispose()
+    expect((await pending).totals.processedTokens).toBe(0)
+    expect(readFileSync(largeFile, 'utf8')).toBe(largeIndex)
+  })
 })
 
 function uncompactedFixtureFiles(root: string) {
@@ -1012,7 +1089,11 @@ function cacheFixture(version: number, files: CachedUsageFile[]) {
   return { version, generatedAt: 123, files, sources: [], warnings: [] }
 }
 
-async function cachedHistory(cacheFile: string, range: UsageHistoryRange) {
+async function cachedHistory(
+  cacheFile: string,
+  range: UsageHistoryRange,
+  largeCacheLoader?: UsageCacheLoader,
+) {
   const cache = await readUsageCache(cacheFile)
   const service = new UsageHistoryService({
     cacheFile,
@@ -1023,6 +1104,7 @@ async function cachedHistory(cacheFile: string, range: UsageHistoryRange) {
       warnings: cache.warnings,
     }),
     now: () => new Date('2026-08-08T12:00:00.000Z'),
+    ...(largeCacheLoader ? { largeCacheLoader } : {}),
   })
   await service.history(range)
   await service.waitForRefresh()
