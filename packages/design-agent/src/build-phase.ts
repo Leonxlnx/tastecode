@@ -24,6 +24,8 @@ const BUILD_PROTOCOL = `When implementation and local checks finish, return JSON
 
 {"status":"complete","summary":"...","files":["relative/path"],"checks":["command — result"]}
 
+A local browser that cannot launch is not a blocker: TasteCode starts the preview and captures desktop and mobile itself after Build. Record each browser check you could not run in checks and return complete.
+
 If a real blocker remains after reasonable repair attempts:
 
 {"status":"failed","error":"specific recoverable blocker","files":["relative/path"],"checks":["command — result"]}`
