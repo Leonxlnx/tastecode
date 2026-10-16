@@ -217,3 +217,126 @@ describe('model list cache', () => {
     await expect(next).resolves.toEqual([model('new-row')])
   })
 })
+
+describe('model lists across launches', () => {
+  function memory(initial?: string) {
+    const saved = { value: initial }
+    return {
+      saved,
+      store: {
+        read: () => saved.value,
+        write: (value: string) => {
+          saved.value = value
+        },
+      },
+    }
+  }
+  const snapshot = (lists: unknown[]) => JSON.stringify({ version: 1, lists })
+
+  it('answers from the last launch at once and reads the source again after launch work', async () => {
+    const launchedAt = Date.now()
+    const { saved, store } = memory(
+      snapshot([
+        { provider: 'codex', listedAt: launchedAt - 3_600_000, models: [model('gpt-6-astra')] },
+      ]),
+    )
+    const { cache, list, reads, onChanged } = setup({
+      snapshot: store,
+      restoredRefreshDelayMs: 200,
+      now: () => Date.now(),
+    })
+
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6-astra')])
+    await expect(cache.list('codex')).resolves.toEqual([model('gpt-6-astra')])
+    await flush()
+    expect(list).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(list).toHaveBeenCalledOnce())
+    expect(Date.now() - launchedAt).toBeGreaterThanOrEqual(190)
+
+    reads[0]!.resolve([model('gpt-6.1-sol'), model('gpt-6-astra')])
+    await vi.waitFor(() => expect(onChanged).toHaveBeenCalledExactlyOnceWith('codex', undefined))
+    const saved1 = JSON.parse(saved.value!) as { lists: { listedAt: number }[] }
+    expect(saved1).toEqual({
+      version: 1,
+      lists: [
+        {
+          provider: 'codex',
+          listedAt: expect.any(Number),
+          models: [model('gpt-6.1-sol'), model('gpt-6-astra')],
+        },
+      ],
+    })
+    expect(saved1.lists[0]!.listedAt).toBeGreaterThanOrEqual(launchedAt + 190)
+    // Read in this launch, it is fresh again.
+    await cache.list('codex')
+    expect(list).toHaveBeenCalledOnce()
+  })
+  it('refreshes a list from the last launch at once when launch work is over', async () => {
+    const { store } = memory(
+      snapshot([{ provider: 'grok', listedAt: 999_000, models: [model('grok-4.7')] }]),
+    )
+    const { cache, list } = setup({ snapshot: store, restoredRefreshDelayMs: 0 })
+    await expect(cache.list('grok')).resolves.toEqual([model('grok-4.7')])
+    await flush()
+    expect(list).toHaveBeenCalledOnce()
+  })
+
+  it('does not wait for launch work once the list is known to be out of date', async () => {
+    const { store } = memory(
+      snapshot([{ provider: 'claude-code', listedAt: 999_000, models: [model('opus')] }]),
+    )
+    const { cache, list } = setup({ snapshot: store, restoredRefreshDelayMs: 60_000 })
+    await cache.list('claude-code')
+    await flush()
+    expect(list).not.toHaveBeenCalled()
+    cache.invalidate('claude-code')
+    await expect(cache.list('claude-code')).resolves.toEqual([model('opus')])
+    await flush()
+    expect(list).toHaveBeenCalledOnce()
+  })
+
+  it('leaves out lists older than a day, lists it cannot read and other formats', async () => {
+    const day = 24 * 60 * 60_000
+    const { store } = memory(
+      snapshot([
+        { provider: 'codex', listedAt: 1_000_000 - day, models: [model('old')] },
+        { provider: 'nope', listedAt: 999_000, models: [model('unknown-provider')] },
+        { provider: 'grok', listedAt: 999_000, models: [{ id: 1 }] },
+        { provider: 'acp', agent: 'kimi', listedAt: 999_000, models: [model('kimi-k3')] },
+      ]),
+    )
+    const { cache, list } = setup({ snapshot: store, restoredRefreshDelayMs: 60_000 })
+    await expect(cache.list('acp', 'kimi')).resolves.toEqual([model('kimi-k3')])
+    void cache.list('codex')
+    void cache.list('grok')
+    await flush()
+    expect(list.mock.calls).toEqual([
+      ['codex', undefined],
+      ['grok', undefined],
+    ])
+
+    for (const raw of ['{', JSON.stringify({ version: 2, lists: [] }), undefined]) {
+      const other = setup({ snapshot: memory(raw).store })
+      void other.cache.list('codex')
+      await flush()
+      expect(other.list).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('keeps a very large list for this launch only and forgets a removed agent', async () => {
+    const { saved, store } = memory()
+    const { cache, reads } = setup({ snapshot: store })
+    const huge = Array.from({ length: 2_001 }, (_, index) => model(`row-${index}`))
+    const reading = [cache.list('opencode'), cache.list('opencode', 'work')]
+    await flush()
+    reads[0]!.resolve(huge)
+    reads[1]!.resolve([model('work-row')])
+    await Promise.all(reading)
+    expect(JSON.parse(saved.value!).lists).toEqual([
+      { provider: 'opencode', agent: 'work', listedAt: 1_000_000, models: [model('work-row')] },
+    ])
+
+    cache.forgetAgent('work')
+    expect(JSON.parse(saved.value!).lists).toEqual([])
+  })
+})

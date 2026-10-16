@@ -833,6 +833,10 @@ export class Orchestrator {
       },
       onChanged: (provider, agent) => this.#onModelsChanged(provider, agent),
       onLog: (line) => this.#onLog(line),
+      snapshot: {
+        read: () => this.#store.modelListSnapshot(),
+        write: (value) => this.#store.setModelListSnapshot(value),
+      },
     })
   }
 
