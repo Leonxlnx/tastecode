@@ -11,7 +11,7 @@ import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
-import { commandVersion, isInstalled } from '@harness/proc/cli'
+import { cliProbe } from './cli-probe.js'
 
 /**
  * What this machine can actually run.
@@ -153,9 +153,16 @@ export type SystemProbe = {
   acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
 }
 
+/**
+ * The model catalog waits for providers.list, so a listing waits only briefly
+ * for a `--version` read; a slow one finishes in the background and the next
+ * listing reports it.
+ */
+const LISTING_VERSION_WAIT_MS = 250
+
 const REAL_SYSTEM: SystemProbe = {
-  isInstalled,
-  version: commandVersion,
+  isInstalled: (command) => cliProbe.installed(command),
+  version: (command) => cliProbe.version(command, { waitMs: LISTING_VERSION_WAIT_MS }),
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
   auth: (provider) =>
     provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
@@ -225,40 +232,20 @@ export async function launchCommandFor(
 }
 
 const providerDetections = new WeakMap<SystemProbe, Promise<ProviderStatus[]>>()
-const PROVIDER_PREWARM_TTL_MS = 30_000
-const prewarmedProviderDetections = new WeakMap<
-  SystemProbe,
-  { detection: Promise<ProviderStatus[]>; expiresAt: number }
->()
 
 /**
- * Start one provider scan before the renderer asks for it. The resolved result
- * is consumed once, so later refreshes still observe installs and login changes.
+ * Start one provider scan before the renderer asks for it, so the version
+ * reads it needs are under way. The first listing joins it while it runs.
  */
 export function prewarmProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  const current = prewarmedProviderDetections.get(system)
-  if (current) return current.detection
-
-  const detection = scanProviders(system)
-  prewarmedProviderDetections.set(system, {
-    detection,
-    expiresAt: Date.now() + PROVIDER_PREWARM_TTL_MS,
-  })
-  void detection.catch(() => {
-    if (prewarmedProviderDetections.get(system)?.detection === detection) {
-      prewarmedProviderDetections.delete(system)
-    }
-  })
-  return detection
+  return scanProviders(system)
 }
 
+/**
+ * Every listing scans again, so installs and sign-ins show up. The scan is
+ * cheap: lookups run in process and versions come from the shared probe.
+ */
 export function detectProviders(system: SystemProbe = REAL_SYSTEM): Promise<ProviderStatus[]> {
-  const prewarmed = prewarmedProviderDetections.get(system)
-  if (prewarmed) {
-    prewarmedProviderDetections.delete(system)
-    if (prewarmed.expiresAt >= Date.now()) return prewarmed.detection
-  }
-
   return scanProviders(system)
 }
 
