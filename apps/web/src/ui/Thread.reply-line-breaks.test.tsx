@@ -127,7 +127,7 @@ describe('chat reply line breaks', () => {
 
     expect(install!.textContent).toBe('Install\nRun the installer.')
     expect(getComputedStyle(install!).whiteSpace).toBe('pre-line')
-    expect(childNodes(second!)).toEqual(['Second\n', 'UL'])
+    expect(childNodes(second!)).toEqual(['Second', 'UL'])
     expect(childNodes(nested!.parentElement!)).toEqual(['LI'])
   })
 
