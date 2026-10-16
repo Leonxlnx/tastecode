@@ -131,6 +131,21 @@ type UsageHistoryOptions = {
 
 type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId }
 
+/** Everything in a usage.history result that is derived from the indexed records. */
+type UsageHistoryFigures = Omit<UsageHistoryResult, 'generatedAt' | 'scan' | 'warnings'>
+
+/**
+ * One range's figures and the inputs they came from. Each input is replaced,
+ * never mutated, so comparing references tells whether the figures still hold.
+ */
+type AggregateMemo = {
+  cache: UsageCache | undefined
+  harness: readonly StoredUsageEvent[]
+  sources: readonly SourceState[]
+  endDate: string
+  figures: UsageHistoryFigures
+}
+
 const emptyTotals = (): UsageHistoryTotals => ({
   uncachedInputTokens: 0,
   cachedInputTokens: 0,
@@ -166,6 +181,8 @@ export class UsageHistoryService {
   #lastRefreshStartedAt: number | undefined
   #harnessUsageLoadedAt = 0
   #harnessUsageCache: StoredUsageEvent[] | undefined
+  /** Pages poll usage.history every 500 ms while a scan runs; most polls change nothing. */
+  readonly #aggregates = new Map<UsageHistoryRange, AggregateMemo>()
   #sources: SourceState[] = emptySources()
   #scanWarnings: string[] = []
   #scan: UsageHistoryResult['scan'] = {
@@ -244,6 +261,7 @@ export class UsageHistoryService {
     this.#lastRefreshStartedAt = undefined
     this.#harnessUsageCache = undefined
     this.#harnessUsageLoadedAt = 0
+    this.#aggregates.clear()
     this.#startRefresh()
   }
 
@@ -303,13 +321,56 @@ export class UsageHistoryService {
   #aggregate(range: UsageHistoryRange): UsageHistoryResult {
     const now = this.#now()
     const endDate = localDateKey(now)
+    const harness = this.#cachedHarnessUsage(now.getTime())
+    let memo = this.#aggregates.get(range)
+    if (
+      !memo ||
+      memo.cache !== this.#cache ||
+      memo.harness !== harness ||
+      memo.sources !== this.#sources ||
+      memo.endDate !== endDate
+    ) {
+      memo = {
+        cache: this.#cache,
+        harness,
+        sources: this.#sources,
+        endDate,
+        figures: this.#figures(range, endDate, harness),
+      }
+      this.#aggregates.set(range, memo)
+    }
+
+    const { figures } = memo
+    const warnings = [...this.#scanWarnings]
+    if (figures.totals.unpricedTokens > 0) {
+      warnings.push('Some token records use models without a known public API price.')
+    }
+    return {
+      range: figures.range,
+      startDate: figures.startDate,
+      endDate: figures.endDate,
+      generatedAt: this.#cache?.generatedAt ?? 0,
+      sessionCount: figures.sessionCount,
+      activeDays: figures.activeDays,
+      totals: figures.totals,
+      providers: figures.providers,
+      models: figures.models,
+      daily: figures.daily,
+      sources: figures.sources,
+      scan: { ...this.#scan },
+      warnings,
+    }
+  }
+
+  #figures(
+    range: UsageHistoryRange,
+    endDate: string,
+    harness: readonly StoredUsageEvent[],
+  ): UsageHistoryFigures {
     const files = this.#cache?.files ?? []
     const richProviders = new Set<ProviderId>()
     for (const file of files) if (file.entries.length > 0) richProviders.add(file.provider)
-    const harnessEntries = harnessUsageRecords(
-      this.#cachedHarnessUsage(now.getTime()),
-      richProviders,
-    )
+    const harnessEntries = harnessUsageRecords(harness, richProviders)
     // 'all' starts at the earliest record, so it only needs the end bound.
     const fixedStartDate = range === 'all' ? undefined : rangeStartDate(range, endDate, undefined)
     let earliestDate: string | undefined
@@ -444,16 +505,11 @@ export class UsageHistoryService {
         sessionCount,
       }
     })
-    const warnings = [...this.#scanWarnings]
-    if (totals.unpricedTokens > 0) {
-      warnings.push('Some token records use models without a known public API price.')
-    }
 
     return {
       range,
       startDate,
       endDate,
-      generatedAt: this.#cache?.generatedAt ?? 0,
       sessionCount: sessions.size,
       activeDays: daily.filter((day) => day.totals.processedTokens > 0).length,
       totals,
@@ -461,8 +517,6 @@ export class UsageHistoryService {
       models,
       daily,
       sources,
-      scan: { ...this.#scan },
-      warnings,
     }
   }
 

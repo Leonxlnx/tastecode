@@ -741,6 +741,46 @@ describe('local usage history', () => {
     expect(raw.totals.providerReportedTokens).toBe(60)
   })
 
+  it('reuses computed figures until the index or the Harness events change', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    mkdirSync(codexRoot, { recursive: true })
+    writeJsonLines(path.join(codexRoot, 'session.jsonl'), [
+      { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+      {
+        timestamp: '2026-08-08T09:00:01.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-luna' },
+      },
+      codexTokenRecord('2026-08-08T09:01:00.000Z', { input_tokens: 1_000, output_tokens: 100 }),
+    ])
+    let harnessReads = 0
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      harnessUsage: () => {
+        harnessReads += 1
+        return []
+      },
+      now: () => new Date(now),
+    })
+
+    const first = await settledHistory(service, '30d')
+    expect(first.totals.processedTokens).toBe(1_100)
+    const repeated = await service.history('30d')
+    expect(repeated.totals).toBe(first.totals)
+    expect(repeated.daily).toBe(first.daily)
+    expect(repeated.scan).not.toBe(first.scan)
+    expect(harnessReads).toBe(1)
+
+    now += 5_000
+    const reloaded = await service.history('30d')
+    expect(harnessReads).toBe(2)
+    expect(reloaded.totals).not.toBe(first.totals)
+    expect(reloaded.totals).toEqual(first.totals)
+  })
+
   it('counts every archived session in sources, not only the selected range', async () => {
     const root = temporaryDirectory()
     const cacheFile = path.join(root, 'usage.json')
