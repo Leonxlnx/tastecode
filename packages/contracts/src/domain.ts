@@ -306,6 +306,28 @@ export const ModelSchema = z.object({
     )
     .default([]),
   defaultServiceTier: z.string().nullable().optional(),
+  /**
+   * Display name of the model's creator, such as "DeepSeek" or "Anthropic".
+   * Groups rows inside one source; a routing provider is not a lab.
+   */
+  lab: z.string().min(1).max(80).optional(),
+  /**
+   * Lineage key, unique within one source, such as "gpt-terra" or
+   * "deepseek-flash". Generations of one family replace each other.
+   */
+  family: z.string().min(1).max(120).optional(),
+  /** Dotted numeric version inside the family, compared part by part ("6.1" > "6"). */
+  generation: z
+    .string()
+    .max(32)
+    .regex(/^\d+(?:\.\d+)*$/, 'expected a dotted numeric version')
+    .optional(),
+  /** Release date as an ISO calendar date (YYYY-MM-DD). */
+  released: z.iso.date().optional(),
+  /** Part of the source's curated set that is visible before the user picks. */
+  recommended: z.boolean().optional(),
+  /** Still listed by the source but superseded or retiring; starts hidden. */
+  deprecated: z.boolean().optional(),
 })
 export type Model = z.infer<typeof ModelSchema>
 
