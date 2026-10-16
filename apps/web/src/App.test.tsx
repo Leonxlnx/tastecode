@@ -1299,6 +1299,70 @@ describe('web client', () => {
     expect(composerProps().approval).toBe('full')
   })
 
+  describe('restore Undo notice', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+    })
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    async function restoreAndOfferUndo() {
+      await openNewSession()
+      await openCheckpointHistory()
+      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      const undo = await screen.findByRole('button', { name: 'Undo restore' })
+      await waitFor(() => expect(rpcCount('thread.checkpoints')).toBe(2))
+      return undo.closest('.notice')!
+    }
+
+    it('keeps offering Undo restore until the user acts', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      act(() => vi.advanceTimersByTime(10_000))
+
+      expect(notice.getAttribute('data-state')).toBe('open')
+      expect(notice.textContent).toContain('Restored to before “Fix the parser”.')
+      expect(screen.getByRole('button', { name: 'Undo restore' })).toBeTruthy()
+    })
+
+    it('ends the Undo restore offer when dismissed', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      fireEvent.click(within(notice as HTMLElement).getByRole('button', { name: 'Dismiss' }))
+
+      expect(notice.getAttribute('data-state')).toBe('closing')
+    })
+
+    it('ends the Undo restore offer when a message is sent', async () => {
+      const notice = await restoreAndOfferUndo()
+
+      act(() => composerProps().onSend('Keep going', []))
+
+      await waitFor(() => expect(notice.getAttribute('data-state')).toBe('closing'))
+    })
+
+    it('ends the Undo restore offer when another chat opens', async () => {
+      serverProjects[0]!.sessions.push({ id: 'second-thread', title: 'Second chat' })
+      const notice = await restoreAndOfferUndo()
+
+      act(() => sidebarProps().onSelectSession('second-thread'))
+
+      await waitFor(() => expect(notice.getAttribute('data-state')).toBe('closing'))
+    })
+
+    it('auto-dismisses the Restore undone notice after five seconds', async () => {
+      await restoreAndOfferUndo()
+      fireEvent.click(screen.getByRole('button', { name: 'Undo restore' }))
+      const notice = (await screen.findByText('Restore undone.')).closest('.notice')!
+
+      act(() => vi.advanceTimersByTime(4_900))
+      expect(notice.getAttribute('data-state')).toBe('open')
+      act(() => vi.advanceTimersByTime(100))
+      expect(notice.getAttribute('data-state')).toBe('closing')
+    })
+  })
+
   it.each(['thread.history', 'thread.checkpoints', 'workspace.info'])(
     'retains restore Undo when %s refresh fails',
     async (failedMethod) => {
