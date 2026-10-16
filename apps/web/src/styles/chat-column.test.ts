@@ -51,7 +51,8 @@ describe('chat column', () => {
       expect(body).toContain(COLUMN_WIDTH)
       expect(body).toContain('margin: 0 auto;')
       // Padding or a max-width would put the content back on its own formula.
-      expect(body).not.toMatch(/padding|max-width/)
+      // Declarations only: the column's comments may name either word.
+      expect(body).not.toMatch(/^\s*(padding|max-width)[a-z-]*:/m)
     }
   })
 
