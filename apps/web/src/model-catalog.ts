@@ -166,7 +166,7 @@ export function unlistedHiddenModels(
  * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
  * above changes for models a saved profile already lists.
  */
-export const MODEL_VISIBILITY_VERSION = '7'
+export const MODEL_VISIBILITY_VERSION = '8'
 
 type VisibilityChange = {
   /** Models, by visibility id, whose default changed. */
@@ -193,6 +193,10 @@ const MODEL_VISIBILITY_CHANGES = new Map<number, VisibilityChange>([
   // Haiku 4.5 row the id list never matched. Claude Code's rows return to
   // the current lineup once; every other source keeps its choices.
   [7, { sources: ['claude-code'] }],
+  // Codex's defaults came from a fixed list that hid every GPT-5.6 tier. They
+  // now follow the generation rule, so Codex rows return to the newest of
+  // each tier once; every other source keeps its choices.
+  [8, { sources: ['codex'] }],
 ])
 const FIRST_INCREMENTAL_VISIBILITY_VERSION = 4
 
