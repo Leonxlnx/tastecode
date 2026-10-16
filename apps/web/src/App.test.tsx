@@ -1010,12 +1010,56 @@ describe('web client', () => {
     await waitFor(() =>
       expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
     )
+    // The settled source reaches the cache on the trailing write.
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).not.toBeNull(), {
+      timeout: 3_000,
+    })
     const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
     expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
       'codex',
     ])
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
     expect(composerProps().modelsLoaded).toBe(true)
+  })
+
+  it('writes the cache once for sources that settle together, then for the full catalog', async () => {
+    for (const id of ['claude-code', 'grok', 'cursor'] as const) {
+      serverProviders.push({ ...serverProviders[0]!, id, displayName: id })
+    }
+    let releaseCursor!: () => void
+    const cursorModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseCursor = () =>
+        resolve({ models: [{ ...cachedCodexChoice().model, id: 'cursor-model' }] })
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'models.list') return request(method, params)
+      const { provider } = methods[method].params.parse(params)
+      if (provider === 'cursor') return cursorModels
+      return Promise.resolve({
+        models: [{ ...cachedCodexChoice().model, id: `${provider}-model` }],
+      })
+    })
+    const setItem = vi.spyOn(localStorage, 'setItem')
+    const cacheWrites = () =>
+      setItem.mock.calls
+        .filter(([key]) => key === 'harness.modelCatalog.v1')
+        .map(([, value]) =>
+          (JSON.parse(value) as { validatedSources: { source: string }[] }).validatedSources
+            .map((entry) => entry.source)
+            .sort(),
+        )
+    try {
+      render(<App />)
+      await waitFor(() => expect(cacheWrites()).toEqual([['claude-code', 'codex', 'grok']]), {
+        timeout: 3_000,
+      })
+      await act(async () => releaseCursor())
+      await waitFor(() => expect(cacheWrites()).toHaveLength(2))
+      expect(cacheWrites()[1]).toEqual(['claude-code', 'codex', 'cursor', 'grok'])
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('does not renew an unresolved source cache when another provider completes', async () => {
