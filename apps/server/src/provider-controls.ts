@@ -73,6 +73,8 @@ export type CodexControlAdapter = Pick<
   | 'account'
   | 'listModels'
   | 'listMcpServers'
+  | 'isMcpLoading'
+  | 'whenMcpServersListed'
   | 'listSkills'
   | 'setSkillEnabled'
   | 'rateLimitSource'
@@ -145,6 +147,8 @@ export type ProviderControlsOptions = {
   onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
   controlIdleMs?: number
+  /** How long an unanswered Codex MCP status load may keep the shared process. */
+  mcpLoadHoldMs?: number
   watchTtlMs?: number
   loginTtlMs?: number
   /** How long a sign-in may take to return its URL before later auth work proceeds. */
@@ -236,6 +240,8 @@ export class ProviderControls {
   readonly #skills: WatchLeases
   readonly #mcp: WatchLeases
   readonly #idleMs: number
+  readonly #mcpLoadHoldMs: number
+  readonly #mcpHolds = new Set<ReturnType<typeof setTimeout>>()
   readonly #loginTtlMs: number
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
@@ -253,6 +259,7 @@ export class ProviderControls {
   constructor(options: ProviderControlsOptions) {
     this.#options = options
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
+    this.#mcpLoadHoldMs = duration(options.mcpLoadHoldMs, 3 * 60_000, 1)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
     this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
     // Codex reports a limit change after nearly every model request, and each
@@ -318,6 +325,8 @@ export class ProviderControls {
     this.#users = 0
     clearTimeout(this.#idleTimer)
     clearTimeout(this.#watchTimer)
+    for (const timer of this.#mcpHolds) clearTimeout(timer)
+    this.#mcpHolds.clear()
     this.#skills.clear()
     this.#mcp.clear()
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
@@ -461,12 +470,17 @@ export class ProviderControls {
         agent
           ? this.#readModels(provider, agent)
           : this.#withShared((adapter) => adapter.listModels()),
-      listMcpServers: (_projectPath, readActive) =>
+      listMcpServers: (projectPath, readActive) =>
         this.#read(async () => {
           const [inventory, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
             readActive
               ? readActive()
-              : this.#withShared(async (adapter) => ({ servers: await adapter.listMcpServers() })),
+              : this.#withShared(async (adapter) => {
+                  const servers = await adapter.listMcpServers()
+                  if (!adapter.isMcpLoading()) return { servers }
+                  this.#holdForMcpLoad(adapter, projectPath)
+                  return { servers, loading: true }
+                }),
             loadCodex(),
           ])
           return { capabilities: CODEX_MCP_CAPABILITIES, ...inventory }
@@ -748,6 +762,35 @@ export class ProviderControls {
         this.#scheduleIdle()
       }
     }
+  }
+
+  /**
+   * Codex answers its MCP status list only after every server started, which
+   * can outlast the idle stop and the 60 s watch lease. The shared process
+   * stays up until the list lands (bounded), and a requester whose lease
+   * lapsed still hears that it changed.
+   */
+  #holdForMcpLoad(adapter: CodexControlAdapter, projectPath: string): void {
+    const generation = this.#generation
+    this.#users += 1
+    let released = false
+    const release = (listed: boolean) => {
+      if (released) return
+      released = true
+      clearTimeout(timer)
+      this.#mcpHolds.delete(timer)
+      if (this.#closed || generation !== this.#generation) return
+      this.#users -= 1
+      this.#scheduleIdle()
+      // A leased project already heard the adapter's own change event.
+      if (listed && ![...this.#mcp].includes(projectPath)) {
+        this.#options.onMcpChanged?.('codex', projectPath)
+      }
+    }
+    const timer = setTimeout(() => release(false), this.#mcpLoadHoldMs)
+    timer.unref?.()
+    this.#mcpHolds.add(timer)
+    void adapter.whenMcpServersListed().then(release, () => release(false))
   }
 
   async #withFresh<T>(operation: (adapter: CodexControlAdapter) => Promise<T>): Promise<T> {

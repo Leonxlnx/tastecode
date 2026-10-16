@@ -1127,9 +1127,13 @@ export class Orchestrator {
           projectPath,
           active
             ? () =>
-                this.#withThreadRuntimeOperation(active[0], async () => ({
-                  servers: await active[1].session.listMcpServers!(active[1].thread.id),
-                }))
+                this.#withThreadRuntimeOperation(active[0], async () => {
+                  const { session, thread } = active[1]
+                  const servers = await session.listMcpServers!(thread.id)
+                  return session.isMcpLoading?.(thread.id)
+                    ? { servers, loading: true }
+                    : { servers }
+                })
             : undefined,
         )
       : { capabilities: PROJECT_MCP_MANAGEMENT_CAPABILITIES, servers: [] }

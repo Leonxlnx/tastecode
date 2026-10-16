@@ -20,6 +20,7 @@ export function mapProviderSession(
     'steer',
     'interrupt',
     'listMcpServers',
+    'isMcpLoading',
     'reloadMcpServers',
     'listCommands',
   ])

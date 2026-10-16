@@ -31,6 +31,8 @@ class FakeCodex extends EventEmitter {
   account = vi.fn(async () => ({ signedIn: true }))
   listModels = vi.fn(async (): Promise<Model[]> => [])
   listMcpServers = vi.fn(async () => [])
+  isMcpLoading = vi.fn(() => false)
+  whenMcpServersListed = vi.fn(async () => true)
   listSkills = vi.fn(async () => ({ skills: [], errors: [] }))
   setSkillEnabled = vi.fn(async () => true)
   rateLimitSource = vi.fn(async (): Promise<{ status: 'ready'; limits: ProviderLimit[] }> => ({
@@ -365,6 +367,50 @@ describe('shared control lifetime', () => {
     expect(adapters[0]!.dispose).toHaveBeenCalledOnce()
     adapters[0]!.emit('skillsChanged')
     expect(hooks.onSkillsChanged).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the process through a slow MCP status load and tells an unleased requester once', async () => {
+    const adapter = new FakeCodex()
+    const listed = deferred<boolean>()
+    adapter.isMcpLoading.mockReturnValue(true)
+    adapter.whenMcpServersListed.mockReturnValue(listed.promise)
+    const { codex, hooks } = setup({ createCodex: () => adapter })
+    codex.watch('/project', ['mcp'])
+    await expect(codex.listMcpServers!('/project')).resolves.toMatchObject({
+      servers: [],
+      loading: true,
+    })
+    // The lease and the idle delay both lapse long before Codex answers.
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(adapter.dispose).not.toHaveBeenCalled()
+    adapter.emit('mcpChanged', {})
+    expect(hooks.onMcpChanged).not.toHaveBeenCalled()
+
+    listed.resolve(true)
+    await flush()
+    expect(hooks.onMcpChanged.mock.calls).toEqual([['codex', '/project']])
+    await vi.advanceTimersByTimeAsync(10)
+    expect(adapter.dispose).toHaveBeenCalledOnce()
+  })
+
+  it('lets a leased requester hear only the adapter event and bounds a stalled load', async () => {
+    const adapter = new FakeCodex()
+    adapter.isMcpLoading.mockReturnValue(true)
+    adapter.whenMcpServersListed.mockReturnValueOnce(Promise.resolve(true))
+    adapter.whenMcpServersListed.mockReturnValueOnce(new Promise<boolean>(() => {}))
+    const { codex, hooks } = setup({ createCodex: () => adapter, mcpLoadHoldMs: 500 })
+    codex.watch('/project', ['mcp'])
+    await codex.listMcpServers!('/project')
+    adapter.emit('mcpChanged', {})
+    await flush()
+    expect(hooks.onMcpChanged.mock.calls).toEqual([['codex', '/project']])
+
+    await codex.listMcpServers!('/other')
+    await vi.advanceTimersByTimeAsync(499)
+    expect(adapter.dispose).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(11)
+    expect(adapter.dispose).toHaveBeenCalledOnce()
+    expect(hooks.onMcpChanged).toHaveBeenCalledOnce()
   })
 
   it('releases removed projects and ignores watches from providers without notifications', async () => {

@@ -212,6 +212,10 @@ class FakeSession implements AgentSession {
   async listMcpServers(): Promise<McpServer[]> {
     return this.mcpServers
   }
+  mcpLoading = false
+  isMcpLoading(): boolean {
+    return this.mcpLoading
+  }
   async reloadMcpServers(
     threadId: string,
     servers: McpServerConfig[],
@@ -7080,6 +7084,11 @@ describe('MCP inventory', () => {
     await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
       capabilities: { inventory: true },
       servers: [{ id: 'docs', startup: { state: 'failed' } }],
+    })
+    expect((await orchestrator.listMcpServers('codex', '/repo')).loading).toBeUndefined()
+    sessions[0]!.mcpLoading = true
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      loading: true,
     })
   })
 

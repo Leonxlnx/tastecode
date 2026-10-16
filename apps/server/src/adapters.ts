@@ -182,6 +182,8 @@ export interface AgentSession {
   steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
   listMcpServers?(threadId?: string): Promise<McpServer[]>
+  /** The MCP answer still holds only configured servers; a change event follows. */
+  isMcpLoading?(threadId?: string): boolean
   reloadMcpServers?(
     threadId: string,
     servers: McpServerConfig[],
