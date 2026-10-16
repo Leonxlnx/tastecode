@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-15 nightly 98bb0fba · includes main f8425b39</span>
+        <span class="meta">2026-10-16 nightly 04580dfe · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -282,11 +282,13 @@
               ><input type="checkbox" /><span
                 >Live model list from the provider
                 <span class="d"
-                  >only models the installed CLI still ships, in Codex's own order: GPT-6-Astra
-                  (default, visible), then GPT-5.6 Sol, Terra and Luna, then the legacy GPT-5.5, all
-                  hidden by default; removed models such as GPT-5.4 and 5.3-Codex-Spark are no
-                  longer re-added, and a chat saved on one still opens and sends with a model Codex
-                  still has</span
+                  >only models the installed CLI still ships, newest generation of each tier first
+                  in tier order (Astra, Sol, Terra, Luna), then older generations newest first and
+                  the legacy GPT-5.5, with no model ids in the ordering: GPT-6-Astra (default,
+                  visible), then GPT-5.6 Sol, Terra and Luna on codex-cli 0.154, older rows hidden
+                  by default; removed models such as GPT-5.4 and 5.3-Codex-Spark are no longer
+                  re-added, and a chat saved on one still opens and sends with a model Codex still
+                  has</span
                 ></span
               ></label
             >
@@ -383,13 +385,14 @@
                 catalog
                 <span class="d"
                   >the current lineup leads in tier order: Fable 5.1, Opus 5.5 (default), Sonnet 5.5
-                  and Haiku 5.5, then older generations newest first; the opus, sonnet and haiku
-                  aliases and 1M-context variants collapse into their resolved row; default
-                  visibility includes that lineup and hides every older generation by version, dated
-                  snapshots such as Haiku 4.5 included, while older rows remain available in
-                  Settings; a model a saved profile never listed starts on its default, a one-time
-                  reset returns saved Claude Code rows to that lineup, and the static fallback lists
-                  the same lineup when discovery fails</span
+                  and Haiku 5.5, then older generations newest first; a release the catalog does not
+                  know yet takes its tier's lead by version and the row it replaces moves down; the
+                  opus, sonnet and haiku aliases and 1M-context variants collapse into their
+                  resolved row; default visibility includes that lineup and hides every older
+                  generation by version, dated snapshots such as Haiku 4.5 included, while older
+                  rows remain available in Settings; a model a saved profile never listed starts on
+                  its default, a one-time reset returns saved Claude Code rows to that lineup, and
+                  the static fallback lists the same lineup when discovery fails</span
                 ></span
               ></label
             >
@@ -981,16 +984,19 @@
                 the checked row name exactly the model a send will use, and while the preferred
                 source is still listing its models the picker shows its loading state and Send waits
                 with the draft kept; new-chat source changes keep readiness checks silent; default
-                visibility hides GPT 5.6 variants, GPT-5.5 and every Claude generation older than
-                Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5; GPT 6.1 Sol, Astra, Luna, Daybreak,
-                Fable 5.1 and the Claude 5.5 lineup including Haiku 5.5 stay enabled when
-                discovered; on a profile without saved visibility, each source's older models hide
-                as soon as that source answers, so an open picker does not drop rows under the
-                pointer; new models start enabled unless they are an older generation, and a
-                defaults update moves only the models whose default changed (the one-time Claude
-                Code reset moves every stock Claude Code row), each row once as soon as it is cached
-                or listed, from the first paint and even while another source such as Cursor fails
-                discovery, so other saved visibility choices and later edits persist</span
+                visibility hides, within each source, every row older than its family's newest
+                generation as read from the display name (GPT-5.5 and older untiered ids stay on a
+                fixed list), so GPT-5.6 Sol hides once GPT-6 Sol is listed and every Claude
+                generation older than Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5 hides; GPT 6.1
+                Sol, Astra, Luna, Daybreak, Fable 5.1 and the Claude 5.5 lineup including Haiku 5.5
+                stay enabled when discovered; on a profile without saved visibility, each source's
+                older models hide as soon as that source answers, so an open picker does not drop
+                rows under the pointer; new models start enabled unless they are an older
+                generation, and a defaults update moves only the models whose default changed (the
+                one-time Claude Code reset moves every stock Claude Code row), each row once as soon
+                as it is cached or listed, from the first paint and even while another source such
+                as Cursor fails discovery, so other saved visibility choices and later edits
+                persist</span
               ></label
             >
           </li>
@@ -1054,10 +1060,13 @@
                 >Context window usage shown beside the picker only when the source supplies a
                 compatible current-context numerator
                 <span class="d"
-                  >Codex cumulative thread accounting stays available without producing a false
-                  full-context ring, including when legacy history replays; the meter draws a full
-                  faint track, the used arc and the percentage, takes keyboard focus with a tooltip
-                  naming the tokens used, and keeps only the ring in a narrow composer</span
+                  >Codex and Claude Code send a separate context reading after each request (the
+                  latest request's tokens over the model's window), so their chats show the ring
+                  after a turn and after reopening; Codex cumulative thread accounting stays
+                  available without producing a false full-context ring, including when legacy
+                  history replays; the meter draws a full faint track, the used arc and the
+                  percentage, takes keyboard focus with a tooltip naming the tokens used, and keeps
+                  only the ring in a narrow composer</span
                 ></span
               ></label
             >
@@ -1259,14 +1268,16 @@
                   exact source at completion; patched Mermaid and DOMPurify releases leave the
                   production dependency audit clear; assistant prose uses denser type and spacing
                   without changing prompts, headings, or code; renderer and worker share curated
-                  grammars, with plain-text fallback for other languages; code block copy and
-                  download controls sit on the language header row, leaving no gap above the code; a
-                  completing rich reply keeps its live rendering until the rich renderer has loaded
-                  and then swaps in one commit, so it never collapses into plain paragraphs; code
-                  blocks render at their real height in the frame they mount, without Streamdown's
-                  200 px placeholder, so rows below no longer jump; reply times come from one shared
-                  formatter; a Wrap toggle beside Copy soft-wraps long lines in every code block,
-                  streaming ones too, and remembers the choice</span
+                  grammars, with plain-text fallback for other languages; replies use the full
+                  transcript width; code block copy and download controls sit on the language header
+                  row with the label on the block's left edge and the controls on its right edge,
+                  leaving no gap above the code; a completing rich reply keeps its live rendering
+                  until the rich renderer has loaded and then swaps in one commit, so it never
+                  collapses into plain paragraphs; code blocks render at their real height in the
+                  frame they mount, without Streamdown's 200 px placeholder, so rows below no longer
+                  jump; reply times come from one shared formatter; a Wrap toggle beside Copy
+                  soft-wraps long lines in every code block, streaming ones too, and remembers the
+                  choice</span
                 ></span
               ></label
             >
@@ -2012,11 +2023,13 @@
                 inspect, per-project scope
                 <span class="d"
                   >a provider selector manages separate Codex, Claude Code, and Grok project
-                  definitions; open Codex chats resume with saved changes, Grok receives selected
-                  servers through ACP, and Claude receives enabled definitions on start and resume
-                  with credentials kept out of process arguments; controls follow the available
-                  capabilities, and Claude rejects unsupported inherited-server hiding before
-                  saving</span
+                  definitions; below them a read-only From Codex settings section lists the servers
+                  Codex already loads, with status, tool counts, Sign in and the per-project off
+                  switch, and one server's unknown auth status no longer discards the list; open
+                  Codex chats resume with saved changes, Grok receives selected servers through ACP,
+                  and Claude receives enabled definitions on start and resume with credentials kept
+                  out of process arguments; controls follow the available capabilities, and Claude
+                  rejects unsupported inherited-server hiding before saving</span
                 ></span
               ></label
             >
