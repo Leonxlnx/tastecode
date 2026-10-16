@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
+const systemCss = readFileSync(new URL('./settings-system.css', import.meta.url), 'utf8')
+const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
@@ -24,6 +26,29 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(/\.model-visibility__source \{[^}]*padding: 6px 14px;/s)
   })
 
+  it('lays every v1 row out as name, leader and value on one 40px rhythm', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-row \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(32px, 1fr\) max-content;[^}]*align-items: center;[^}]*min-height: 40px;[^}]*padding-block: 10px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-row:has\(> \.set-row__value > :is\(button, \.app-select, \.settings__switch-skeleton\)\) \{[^}]*padding-block: 6px;/s,
+    )
+    // One leader for the whole system, coloured through one property.
+    expect(systemCss.match(/radial-gradient\(/g)).toHaveLength(1)
+    expect(systemCss).toMatch(
+      /\.settings \.set-leader \{[^}]*radial-gradient\(circle, var\(--set-leader\) 0\.75px, transparent 1\.15px\)/s,
+    )
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-leader \{[^}]*display: none;/s,
+    )
+  })
+
+  it('spaces v1 pages by the header and section steps', () => {
+    expect(systemCss).toMatch(/\.settings \.set-page__head \{[^}]*margin: 0 0 28px;/s)
+    expect(systemCss).toMatch(
+      /\.settings \.set-section \+ \.set-section,\s*\.settings \.set-row \+ \.set-section \{[^}]*margin-top: 36px;/s,
+    )
+  })
   it('keeps narrow categories on the horizontal axis', () => {
     expect(settingsCss).toMatch(
       /@media \(max-width: 700px\) \{[\s\S]*?\.settings__nav \{[^}]*overflow-x: auto;/s,
@@ -79,9 +104,46 @@ describe('settings viewport CSS', () => {
       /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
     )
     expect(settingsCss).toMatch(/\.provider-row__status \{[^}]*grid-column: 4;[^}]*min-width: 0;/s)
+    expect(settingsCss).toMatch(/\.provider-row \.set-button \{[^}]*min-width: 70px;/s)
+    // Only a quiet action bleeds to the edge; a boxed one keeps its border on it.
     expect(settingsCss).toMatch(
-      /\.provider-row \.settings__action \{[^}]*min-width: 70px;[^}]*min-height: 28px;/s,
+      /\.provider-row__secondary:has\(> \.set-button--quiet\):has\(\+ \.provider-row__primary:empty\) \{[^}]*margin-right: -10px;/s,
     )
+  })
+
+  it('draws every settings button from one 28px set', () => {
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button, \.settings__action\) \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-button--primary \{[^}]*background: var\(--text\);[^}]*color: var\(--bg\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button--danger, \.settings__action\.is-danger\):hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button--quiet, \.settings__action\.is-secondary\) \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
+    )
+    expect(systemCss).toMatch(/\.settings \.set-button--icon \{[^}]*width: 28px;[^}]*padding: 0;/s)
+    // The old per-feature button looks are gone.
+    expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
+    expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
+  })
+
+  it('sizes every settings switch 30x18 with a 12px thumb, in one place', () => {
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch \{[^}]*width: 30px;[^}]*height: 18px;/s,
+    )
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch__thumb \{[^}]*width: 12px;[^}]*height: 12px;/s,
+    )
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch\.is-on \.switch__thumb \{[^}]*translateX\(12px\)/s,
+    )
+    // No tab or panel sizes its own switch any more.
+    for (const css of [settingsCss, systemCss, tuningCss]) {
+      expect(css.match(/\.switch \{[^}]*width:/g) ?? []).toHaveLength(css === systemCss ? 1 : 0)
+    }
   })
 
   it('draws the provider account wire from the link state', () => {

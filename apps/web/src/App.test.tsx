@@ -9597,6 +9597,23 @@ describe('global shortcuts', () => {
     expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
+  it('keeps open Settings from re-rendering when unrelated shell state changes', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    utilityRenders.settings.mockClear()
+    appRenders.mockClear()
+
+    act(() => nativeMenu.listener?.('toggleSidebar'))
+
+    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
+    expect(appRenders).toHaveBeenCalled()
+    expect(utilityRenders.settings).not.toHaveBeenCalled()
+  })
   it('keeps the bottom panel closed when it remounts after the active project is removed', async () => {
     localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     serverProjects.push({
