@@ -253,6 +253,7 @@ type ComposerAttachment = {
   previewUrl?: string
   thumbnailUrl?: string
   mediaType?: 'image' | 'video'
+  previewSettled?: boolean
 }
 
 type RunningSubmission = 'queue' | 'steer'
@@ -1057,31 +1058,34 @@ function ComposerComponent(props: {
 
   const hydrateAttachmentPreview = (reference: string) => {
     void previewViewedImage(reference).then((preview) => {
-      if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
-      const { mediaType, name, previewUrl, thumbnailUrl } = preview
+      if (!mounted.current) return
       setAttachments((current) =>
-        current.map((attachment) =>
-          attachment.path === reference
-            ? {
-                ...attachment,
-                name,
-                mediaType,
-                previewUrl,
-                ...(thumbnailUrl ? { thumbnailUrl } : {}),
-              }
-            : attachment,
-        ),
+        current.map((attachment) => {
+          if (attachment.path !== reference) return attachment
+          if (!preview?.mediaType || !preview.previewUrl)
+            return { ...attachment, previewSettled: true }
+          const { mediaType, name, previewUrl, thumbnailUrl } = preview
+          return {
+            ...attachment,
+            name,
+            mediaType,
+            previewUrl,
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
+          }
+        }),
       )
     })
   }
 
   const addFiles = (files: Array<PickedAttachment | string>) => {
     if (files.length === 0) return
+    const pickedFiles = files.map((file) =>
+      typeof file === 'string' ? { path: file, name: basename(file) } : file,
+    )
     setAttachments((current) => {
       const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
       const additions: ComposerAttachment[] = []
-      for (const file of files) {
-        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
+      for (const picked of pickedFiles) {
         if (attached.has(picked.path)) continue
         attached.add(picked.path)
         const inferredMediaType = previewMediaType('', picked.name)
@@ -1101,8 +1105,12 @@ function ComposerComponent(props: {
       }
       return [...current, ...additions]
     })
-    for (const file of files) {
-      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
+    const attached = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
+    for (const picked of pickedFiles) {
+      if (attached.has(picked.path)) continue
+      attached.add(picked.path)
+      if (!picked.previewUrl && (picked.mediaType ?? previewMediaType('', picked.name)))
+        hydrateAttachmentPreview(picked.path)
     }
   }
 
@@ -1761,7 +1769,9 @@ function ComposerComponent(props: {
                         aria-label={
                           attachment.previewUrl
                             ? `Open ${attachment.name}`
-                            : `Loading preview of ${attachment.name}`
+                            : attachment.previewSettled
+                              ? `Preview unavailable for ${attachment.name}`
+                              : `Loading preview of ${attachment.name}`
                         }
                       >
                         <span className="attachment-preview__fallback" aria-hidden>
