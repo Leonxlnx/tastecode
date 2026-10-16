@@ -165,6 +165,7 @@ type ImageTreeNode = {
   type: string
   tagName?: string
   properties?: Record<string, unknown>
+  value?: string
   children?: ImageTreeNode[]
 }
 
@@ -203,6 +204,62 @@ function preserveRelativeLinks() {
   }
 }
 
+const BLOCK_ELEMENTS = new Set([
+  'blockquote',
+  'div',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'li',
+  'ol',
+  'p',
+  'pre',
+  'table',
+  'ul',
+])
+const COLLAPSIBLE_WHITESPACE = /^[ \t\r\n]+$/
+
+function isBlockElement(node: ImageTreeNode | undefined): boolean {
+  return node?.type === 'element' && BLOCK_ELEMENTS.has(node.tagName ?? '')
+}
+
+/**
+ * Chat replies show line breaks (white-space: pre-line), so the line endings
+ * Markdown writes between blocks and after a hard break's <br> would show as
+ * blank lines. Normal wrapping collapses them, so no other view changes.
+ */
+function dropFormattingLineEndings() {
+  return (tree: ImageTreeNode) => {
+    const pending = [tree]
+    while (pending.length) {
+      const node = pending.pop()!
+      if (!node.children || node.tagName === 'pre') continue
+      const kept: ImageTreeNode[] = []
+      for (const [index, child] of node.children.entries()) {
+        const previous = node.children[index - 1]
+        if (child.type === 'text') {
+          const value =
+            previous?.tagName === 'br' ? child.value?.replace(/^\r?\n/, '') : child.value
+          if (!value) continue
+          if (
+            COLLAPSIBLE_WHITESPACE.test(value) &&
+            (isBlockElement(previous) || isBlockElement(node.children[index + 1]))
+          )
+            continue
+          child.value = value
+        }
+        kept.push(child)
+        pending.push(child)
+      }
+      node.children = kept
+    }
+  }
+}
+
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 const STREAM_ANIMATION = {
@@ -230,6 +287,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
     // before the existing sanitizer/hardener can discard an origin-less URL.
     plugins.splice(1, 0, preserveRelativeLinks)
     if (imageSource) plugins.splice(1, 0, [normalizeImageSources, imageSource.normalize])
+    plugins.push(dropFormattingLineEndings)
     return plugins
   }, [imageSource])
 
