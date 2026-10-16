@@ -47,8 +47,9 @@ export class CliProbe {
 
   /**
    * Starting a CLI for its version blocks the event loop for a moment. The
-   * server passes a wait that holds those reads while a turn streams; a read
-   * that checks a finished update (`fresh`) never waits.
+   * server passes a wait that holds the background re-read of a known version
+   * while a turn streams. A first read, which a listing or an update check is
+   * waiting for, and a read that checks a finished update (`fresh`) never wait.
    */
   waitBeforeReads(wait: (() => Promise<void>) | undefined): void {
     this.#beforeRead = wait
@@ -76,7 +77,8 @@ export class CliProbe {
     const known = entry?.stamp === stamp ? entry : undefined
     const ttl = known?.version === undefined ? MISSING_VERSION_TTL_MS : VERSION_TTL_MS
     if (known && Date.now() - known.readAt < ttl) return known.version
-    const read = this.#read(command, stamp, options.fresh ? undefined : this.#beforeRead)
+    // Only a refresh of a known answer is background work; a first read is awaited.
+    const read = this.#read(command, stamp, known ? this.#beforeRead : undefined)
     // The same binary answered before: serve that while it is asked again.
     if (known) return known.version
     return options.waitMs === undefined ? read : within(read, options.waitMs)
