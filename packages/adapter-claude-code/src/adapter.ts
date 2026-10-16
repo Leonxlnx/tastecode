@@ -442,7 +442,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = options.environment ?? process.env
-    this.#startupTimeoutMs = options.startupTimeoutMs ?? 15_000
+    this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
   }
@@ -798,6 +798,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const effortOptions = claudeEffortOptions(options.effort)
     let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
     let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
+    // One budget covers the whole start; the message names the step that stalled.
+    let phase: ClaudeStartupPhase = 'start'
     try {
       await withTimeout(
         (async () => {
@@ -844,14 +846,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
-          if (bootstrap)
+          if (bootstrap) {
+            phase = 'mcp'
             await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
+          }
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
           if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
         })(),
         this.#startupTimeoutMs,
-        'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
+        () => claudeStartupTimeoutMessage(phase, this.#startupTimeoutMs),
         abort.signal,
       )
     } catch (error) {
@@ -1669,10 +1673,33 @@ function versionedClaudeModelName(id: string): string | undefined {
   return `${family} ${version}`
 }
 
+/**
+ * A session start measured 5-44 s on a busy Windows machine: the native
+ * binary is large and loads settings and plugins before it answers. 15 s
+ * failed sessions that would have started.
+ */
+const CLAUDE_STARTUP_TIMEOUT_MS = 60_000
+
+type ClaudeStartupPhase = 'start' | 'mcp'
+
+function claudeStartupTimeoutMessage(phase: ClaudeStartupPhase, timeoutMs: number): string {
+  const budget = describeDuration(timeoutMs)
+  return phase === 'mcp'
+    ? `Claude Code started, but the project MCP servers did not connect within ${budget}. Check them in Settings, then try again.`
+    : `Claude Code did not start within ${budget}. It may be updating, or the computer is busy. Try again.`
+}
+
+function describeDuration(ms: number): string {
+  if (ms === 60_000) return 'a minute'
+  if (ms > 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minutes`
+  const seconds = Math.max(1, Math.round(ms / 1_000))
+  return seconds === 1 ? '1 second' : `${seconds} seconds`
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  message: string,
+  message: string | (() => string),
   signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1681,7 +1708,10 @@ async function withTimeout<T>(
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer = setTimeout(
+          () => reject(new Error(typeof message === 'function' ? message() : message)),
+          timeoutMs,
+        )
         if (signal) {
           onAbort = () => reject(new Error('Claude session is closed'))
           if (signal.aborted) onAbort()
