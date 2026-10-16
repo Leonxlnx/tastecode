@@ -5,6 +5,7 @@ import {
   ModelConnectionSchema,
 } from './connections.js'
 import {
+  AccountIdSchema,
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
@@ -14,6 +15,8 @@ import {
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderAccountHomeSchema,
+  ProviderAccountSchema,
   ProviderContextSettingsSchema,
   ProviderIdSchema,
   ProviderSetupSchema,
@@ -22,9 +25,12 @@ import {
   UsageSchema,
 } from './domain.js'
 import {
+  CheckoutPullRequestResultSchema,
   GitHubRepositoryNameSchema,
   PullRequestActionResultSchema,
   PullRequestActionSchema,
+  PullRequestCreateResultSchema,
+  PullRequestCreateSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
   PullRequestImageSchema,
@@ -314,8 +320,35 @@ export const McpCapabilitiesSchema = z.object({
   reload: z.boolean(),
   startOAuth: z.boolean(),
   cancelOAuth: z.boolean(),
+  /**
+   * Whether a server inherited from the provider's own configuration can be
+   * hidden for this project. Absent means the legacy rule: `add && inventory`.
+   */
+  hideInherited: z.boolean().optional(),
 })
 export type McpCapabilities = z.infer<typeof McpCapabilitiesSchema>
+
+/**
+ * A slash command or skill the provider itself runs when a message starts with
+ * `/name`. Clients insert the text; the provider expands it.
+ */
+const ProviderCommandNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[^/\s]\S*$/, 'expected a command name without a leading slash or spaces')
+export const ProviderCommandSchema = z.object({
+  /** Name as typed after the slash, such as "context" or "plugin:review". */
+  name: ProviderCommandNameSchema,
+  description: z.string(),
+  /** Short placeholder for the arguments, such as "<file>". */
+  argumentHint: z.string().min(1).max(200).optional(),
+  /** Other names the provider accepts for the same command. */
+  aliases: z.array(ProviderCommandNameSchema).max(20).optional(),
+  /** Absent means a plain command. */
+  kind: z.enum(['command', 'skill']).optional(),
+})
+export type ProviderCommand = z.infer<typeof ProviderCommandSchema>
 
 export const SkillScopeSchema = z.enum(['project', 'user', 'system', 'admin'])
 export type SkillScope = z.infer<typeof SkillScopeSchema>
@@ -516,6 +549,11 @@ export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
 
 export const UsageHistoryProviderSchema = z.object({
   provider: ProviderIdSchema,
+  /**
+   * Present when the server splits a provider's usage by account: one row
+   * per account that has usage. Absent means the provider's usage as a whole.
+   */
+  accountId: AccountIdSchema.optional(),
   sessionCount: z.number().int().nonnegative(),
   totals: UsageHistoryTotalsSchema,
 })
@@ -575,10 +613,18 @@ export const UsageHistoryResultSchema = z.object({
 export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
 
 export const ProviderLimitSchema = z.object({
+  /**
+   * Stable identity of this window within its provider, such as "five_hour"
+   * or "codex:primary". Live updates merge into a snapshot by id; rows
+   * without one are replaced only by a full read.
+   */
+  id: z.string().min(1).max(80).optional(),
   label: z.string().min(1).max(120),
   usedPercent: z.number().min(0).max(100),
   /** Unix time in milliseconds. */
   resetsAt: z.number().int().nonnegative().optional(),
+  /** Length of a rolling window, so clients can place an even-pace marker. */
+  windowMinutes: z.number().int().positive().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
   valueLabel: z.string().min(1).max(160).optional(),
   /** Present when this row can be spent as a one-shot quota reset. */
@@ -595,19 +641,75 @@ export const ProviderLimitSchema = z.object({
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
+const LimitRefreshErrorSchema = z.string().min(1).max(300)
+const UnixMsSchema = z.number().int().nonnegative()
+
 export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
-  z.object({
-    provider: ProviderIdSchema,
-    status: z.literal('ready'),
-    /** A successful source can honestly report no plan limits. */
-    limits: z.array(ProviderLimitSchema),
-  }),
-  z.object({
-    provider: ProviderIdSchema,
-    status: z.literal('unavailable'),
-  }),
+  z
+    .object({
+      provider: ProviderIdSchema,
+      /** The account these limits belong to. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
+      status: z.literal('ready'),
+      /** A successful source can honestly report no plan limits. */
+      limits: z.array(ProviderLimitSchema),
+      /** When the newest values were read or observed, in Unix milliseconds. */
+      checkedAt: UnixMsSchema.optional(),
+      /** `live` values came from a running session; `read` values from a full read. */
+      origin: z.enum(['live', 'read']).optional(),
+      /** The newest refresh failed, so these are the last known values. */
+      stale: z.literal(true).optional(),
+      /** Stable, user-readable reason the newest refresh failed. Only with `stale`. */
+      refreshError: LimitRefreshErrorSchema.optional(),
+      /** When the server tries again on its own, in Unix milliseconds. Only with `stale`. */
+      retryAt: UnixMsSchema.optional(),
+    })
+    .superRefine((source, context) => {
+      for (const key of ['refreshError', 'retryAt'] as const) {
+        if (source[key] !== undefined && !source.stale)
+          context.addIssue({ code: 'custom', path: [key], message: `${key} requires stale` })
+      }
+    }),
+  z
+    .object({
+      provider: ProviderIdSchema,
+      /** The account that was asked. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
+      status: z.literal('unavailable'),
+      /**
+       * `unsupported`: this provider or version reports no limits. `noPlan`:
+       * the account has no plan with limits. `failed`: no read has succeeded
+       * yet. Absent on older servers.
+       */
+      reason: z.enum(['unsupported', 'noPlan', 'failed']).optional(),
+      /** Stable, user-readable reason for a failed read. Only with `failed`. */
+      error: LimitRefreshErrorSchema.optional(),
+      /** When the server tries again on its own, in Unix milliseconds. Only with `failed`. */
+      retryAt: UnixMsSchema.optional(),
+    })
+    .superRefine((source, context) => {
+      for (const key of ['error', 'retryAt'] as const) {
+        if (source[key] !== undefined && source.reason !== 'failed')
+          context.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `${key} requires reason failed`,
+          })
+      }
+    }),
 ])
 export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
+
+/**
+ * Why a client asks for limits, so the server can keep expensive vendor reads
+ * to moments someone is looking. `background`: a passive figure; answer from
+ * held values. `visible`: the limits view is open; a full read is fine when
+ * held values are older than the provider's minimum interval. `retry`: the
+ * user asked again; skip the failure backoff once. Absent keeps the older
+ * behaviour, which servers treat like `visible`.
+ */
+export const UsageReadIntentSchema = z.enum(['background', 'visible', 'retry'])
+export type UsageReadIntent = z.infer<typeof UsageReadIntentSchema>
 
 const UsageSummaryResultSchema = z
   .object({
@@ -642,6 +744,111 @@ const UsageSummaryResultSchema = z
       })
     }
   })
+
+// ---------------------------------------------------------------------------
+// User feedback
+// ---------------------------------------------------------------------------
+
+/** The kinds the TasteCode feedback inbox sorts by. */
+export const FeedbackKindSchema = z.enum(['bug', 'idea', 'question', 'praise', 'other'])
+export type FeedbackKind = z.infer<typeof FeedbackKindSchema>
+
+/** Where the user opened the feedback dialog. Sent only as a short label. */
+export const FeedbackSourceSchema = z.enum([
+  'account_menu',
+  'command_palette',
+  'slash_command',
+  'error_report',
+  'native_menu',
+])
+export type FeedbackSource = z.infer<typeof FeedbackSourceSchema>
+
+export const FEEDBACK_MESSAGE_MAX = 4000
+
+/**
+ * What the dialog shows the user before anything is sent. The server builds
+ * the outgoing payload from this draft alone, redacts it and returns it from
+ * `feedback.preview`, so the preview is exactly what `feedback.submit` sends.
+ * Nothing here is a prompt, transcript or file: `threadId` is used on the
+ * server only to strip that chat's workspace path from attached error text.
+ */
+export const FeedbackDraftSchema = z.object({
+  kind: FeedbackKindSchema,
+  /** May be empty only when an error is attached and included. */
+  message: z.string().max(FEEDBACK_MESSAGE_MAX),
+  /** Only what the user typed; never prefilled. */
+  email: z.string().max(254).optional(),
+  includeError: z.boolean(),
+  includeDiagnostics: z.boolean(),
+  context: z.object({
+    source: FeedbackSourceSchema,
+    threadId: z.string().min(1).max(200).optional(),
+    provider: ProviderIdSchema.optional(),
+    /** A custom harness; its name is never sent. */
+    custom: z.boolean().optional(),
+    model: z.string().max(200).optional(),
+    surface: z.enum(['chat', 'design', 'pull_requests', 'settings']).optional(),
+    error: z
+      .object({
+        kind: z.enum(['turn', 'action', 'provider', 'models']),
+        message: z.string().max(FEEDBACK_MESSAGE_MAX),
+      })
+      .optional(),
+  }),
+})
+export type FeedbackDraft = z.infer<typeof FeedbackDraftSchema>
+
+/**
+ * Why a submission was not delivered. The first group is TasteCode's own
+ * limits; the rest map the inbox's answers and transport failures.
+ */
+export const FeedbackFailureCodeSchema = z.enum([
+  'not_configured',
+  'empty',
+  'cooldown',
+  'daily_limit',
+  'duplicate',
+  'busy',
+  /** The inbox refused the payload (400, 413, 422). */
+  'rejected',
+  /** The inbox rate-limited this install or address (429). */
+  'rate_limited',
+  /** The inbox owner paused feedback (403). */
+  'paused',
+  /** The inbox is not reachable for this build (401, 5xx, unreadable answers). */
+  'unavailable',
+  'network',
+  'timeout',
+])
+export type FeedbackFailureCode = z.infer<typeof FeedbackFailureCodeSchema>
+
+export const FeedbackStatusSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.enum(['not_configured', 'paused', 'unavailable']).optional(),
+  /** Milliseconds until the next send is allowed, when a wait is in force. */
+  retryAfterMs: z.number().int().nonnegative().optional(),
+})
+export type FeedbackStatus = z.infer<typeof FeedbackStatusSchema>
+
+export const FeedbackPreviewSchema = z.object({
+  /** The exact JSON body that would be sent, pretty-printed. Never holds the key. */
+  payload: z.string(),
+  /** How many secret- or path-shaped strings were replaced. */
+  redactions: z.number().int().nonnegative(),
+})
+export type FeedbackPreview = z.infer<typeof FeedbackPreviewSchema>
+
+export const FeedbackSubmitResultSchema = z.discriminatedUnion('ok', [
+  z.object({ ok: z.literal(true) }),
+  z.object({
+    ok: z.literal(false),
+    code: FeedbackFailureCodeSchema,
+    /** A sentence the dialog can show as plain text. */
+    message: z.string().max(300),
+    retryAfterMs: z.number().int().nonnegative().optional(),
+  }),
+])
+export type FeedbackSubmitResult = z.infer<typeof FeedbackSubmitResultSchema>
 
 /**
  * Method table. Adding a method means adding it here first — this object is the
@@ -688,6 +895,30 @@ export const methods = {
       upToDate: z.boolean().optional(),
       error: z.string().optional(),
     }),
+  },
+  /**
+   * Whether this build can send feedback. Builds without an inbox key report
+   * `enabled: false`, and every entry point stays hidden. A server that
+   * predates these methods answers `unknown method`, which means the same.
+   */
+  'feedback.status': {
+    params: z.object({}),
+    result: FeedbackStatusSchema,
+  },
+  /** Builds and redacts the payload without sending anything. */
+  'feedback.preview': {
+    params: FeedbackDraftSchema,
+    result: FeedbackPreviewSchema,
+  },
+  /**
+   * Sends one user-confirmed submission through the local server, which owns
+   * the key and the abuse limits. Failures are results, not RPC errors, so
+   * the dialog can show the reason and keep the text. A repeated
+   * `submissionId` returns the earlier result instead of sending twice.
+   */
+  'feedback.submit': {
+    params: FeedbackDraftSchema.extend({ submissionId: z.string().uuid() }),
+    result: FeedbackSubmitResultSchema,
   },
   'providers.list': {
     params: z.object({}),
@@ -767,6 +998,8 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      /** Sign in as this account: the CLI runs with its config folder. Absent means default. */
+      accountId: AccountIdSchema.optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
@@ -800,6 +1033,28 @@ export const methods = {
     result: z.object({
       capabilities: McpCapabilitiesSchema,
       servers: z.array(McpServerSchema),
+      /**
+       * The provider is still collecting its servers, so an empty or partial
+       * list is not final. An `mcp.changed` push follows when it settles.
+       */
+      loading: z.boolean().optional(),
+    }),
+  },
+  /**
+   * Slash commands and skills the provider runs itself. `threadId` lets the
+   * server answer from that chat's live session. Older servers answer
+   * `unknown method`, which clients treat as no commands.
+   */
+  'commands.list': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      commands: z.array(ProviderCommandSchema),
+      /** Discovery is still running; a `commands.changed` push follows. */
+      loading: z.boolean(),
     }),
   },
   'mcp.add': {
@@ -936,6 +1191,32 @@ export const methods = {
     result: PullRequestActionResultSchema,
   },
   /**
+   * The pull request whose head is a chat's checkout branch: the session's
+   * private worktree when it has one, otherwise the project folder. Answers
+   * from a short server cache unless `refresh`. Older servers answer
+   * `unknown method`, which clients treat as no pull request.
+   */
+  'pullRequests.forCheckout': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      refresh: z.boolean().optional(),
+    }),
+    result: CheckoutPullRequestResultSchema,
+  },
+  /**
+   * Open a pull request from the checkout's pushed branch. The server owns
+   * the gh command line and passes the body on stdin; it refuses the default
+   * branch and a branch without an upstream.
+   */
+  'pullRequests.create': {
+    params: PullRequestCreateSchema.extend({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: PullRequestCreateResultSchema,
+  },
+  /**
    * Load a repository file or upload embedded as an image. The
    * renderer has no GitHub session, so the server fetches the bytes through
    * the authenticated CLI and private repositories render like public ones.
@@ -944,8 +1225,17 @@ export const methods = {
     params: z.object({ url: PullRequestImageUrlSchema }),
     result: PullRequestImageSchema,
   },
+  /**
+   * Every `auth.*` call may name one of the provider's accounts; absent means
+   * the default account. The server runs the vendor CLI with that account's
+   * config folder, so signing in or out of one account leaves the others alone.
+   */
   'auth.status': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: AccountSchema,
   },
   /**
@@ -953,13 +1243,18 @@ export const methods = {
    * signs in on the vendor's own site; completion arrives on `auth.event`.
    */
   'auth.startLogin': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: z.object({ loginId: z.string().min(1), authUrl: HttpUrlSchema.optional() }),
   },
   'auth.cancelLogin': {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
       loginId: z.string().min(1),
     }),
     result: z.object({}),
@@ -968,12 +1263,71 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
       apiKey: z.string().min(1),
     }),
     result: AccountSchema,
   },
   'auth.signOut': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
+    result: z.object({}),
+  },
+  /**
+   * The accounts of every provider that declares `multipleAccounts`, or of
+   * one provider. Each such provider lists its `default` account first.
+   * `active` is the account a new chat starts on; absent means `default`.
+   * Older servers answer `unknown method`, which clients treat as default only.
+   */
+  'accounts.list': {
+    params: z.object({ provider: ProviderIdSchema.optional() }),
+    result: z.object({
+      accounts: z.array(ProviderAccountSchema),
+      active: z.partialRecord(ProviderIdSchema, AccountIdSchema),
+    }),
+  },
+  /**
+   * Register another account. A `managed` home is a new folder under the
+   * TasteCode data folder that starts with copies of the default account's
+   * non-secret settings and never its sign-in. Sign in afterwards with
+   * `auth.startLogin` and the new `accountId`.
+   */
+  'accounts.create': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      label: z.string().trim().min(1).max(80),
+      home: ProviderAccountHomeSchema,
+    }),
+    result: z.object({ account: ProviderAccountSchema }),
+  },
+  'accounts.rename': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      accountId: AccountIdSchema,
+      label: z.string().trim().min(1).max(80),
+    }),
+    result: z.object({ account: ProviderAccountSchema }),
+  },
+  /**
+   * Unregister an account; chats pinned to it can no longer resume. Its folder
+   * stays unless `deleteHome`, the user's separate, explicit request, which
+   * only a managed folder honours: that signs the account out and erases its
+   * local sessions. The default account cannot be removed.
+   */
+  'accounts.remove': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      accountId: AccountIdSchema,
+      deleteHome: z.boolean().optional(),
+    }),
+    result: z.object({}),
+  },
+  /** Choose the account new chats with this provider start on. */
+  'accounts.setActive': {
+    params: z.object({ provider: ProviderIdSchema, accountId: AccountIdSchema }),
     result: z.object({}),
   },
   'workspace.info': {
@@ -1005,6 +1359,42 @@ export const methods = {
       threadId: z.string().min(1).optional(),
     }),
     result: SessionDiffSchema,
+  },
+  /**
+   * Commit every tracked change in the active checkout, plus untracked files
+   * when asked. The message travels on stdin, never as argv. Fails with a
+   * readable detail when there is nothing to commit or a hook refuses.
+   */
+  'workspace.commit': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      message: z
+        .string()
+        .min(1)
+        .max(10_000)
+        .refine((value) => value.trim().length > 0, 'expected a commit message'),
+      includeUntracked: z.boolean(),
+    }),
+    result: z.object({
+      /** Full hash of the new commit. */
+      commit: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/, 'expected a commit hash'),
+      branch: z.string().min(1).optional(),
+    }),
+  },
+  /**
+   * Push the checkout's branch to its remote, setting the upstream on the
+   * first push. Refused on a detached HEAD. Never forces.
+   */
+  'workspace.push': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      branch: z.string().min(1),
+      remote: z.string().min(1),
+    }),
   },
   /** Lazily list one folder in a registered project or a session's isolated checkout. */
   'workspace.listDirectory': {
@@ -1070,8 +1460,13 @@ export const methods = {
       content: z.string().optional(),
     }),
   },
+  /** `accountId` asks as that account, whose plan may offer other models. Absent means default. */
   'models.list': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
   /** Model policy for short product-owned writing tasks. */
@@ -1178,6 +1573,8 @@ export const methods = {
               agent: z.string().optional(),
               /** Server-owned API connection used when restoring this chat. */
               connectionId: z.string().min(1).optional(),
+              /** The provider account this chat is pinned to. Absent means default. */
+              accountId: z.string().min(1).optional(),
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
@@ -1265,7 +1662,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       projectPath: z.string(),
-      targets: z.array(z.enum(['skills', 'mcp'])).max(2),
+      targets: z.array(z.enum(['skills', 'mcp', 'commands'])).max(3),
     }),
     result: z.object({ expiresInMs: z.number().int().positive() }),
   },
@@ -1391,7 +1788,16 @@ export const methods = {
   },
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
-    params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
+    params: z.union([
+      /** A chat's own account is implied by the chat. */
+      z.object({ threadId: z.string(), intent: UsageReadIntentSchema.optional() }),
+      z.object({
+        provider: ProviderIdSchema,
+        /** Absent means the default account. */
+        accountId: AccountIdSchema.optional(),
+        intent: UsageReadIntentSchema.optional(),
+      }),
+    ]),
     result: UsageSummaryResultSchema,
   },
   /**
@@ -1403,6 +1809,8 @@ export const methods = {
     params: z.object({
       range: UsageHistoryRangeSchema,
       refresh: z.boolean().optional(),
+      /** Only this provider account's usage. Absent means every account. */
+      account: z.object({ provider: ProviderIdSchema, accountId: AccountIdSchema }).optional(),
     }),
     result: UsageHistoryResultSchema,
   },
@@ -1419,6 +1827,8 @@ export const methods = {
   'usage.consumeReset': {
     params: z.object({
       provider: ProviderIdSchema,
+      /** The account whose reset is spent. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
       idempotencyKey: z.string().uuid(),
       creditId: z.string().min(1).optional(),
     }),
@@ -1454,6 +1864,17 @@ export const methods = {
         agent: z.string().optional(),
         /** Server-owned model connection selected when `provider` is `api`. */
         connectionId: z.string().min(1).optional(),
+        /**
+         * The provider account to pin this chat to, for providers that
+         * declare `multipleAccounts`. Absent means the provider's active account.
+         */
+        accountId: AccountIdSchema.optional(),
+        /**
+         * An earlier chat this one carries on, such as on another account
+         * after a usage limit. The server gives the new session that chat's
+         * conversation as context and leaves the earlier chat as it was.
+         */
+        continueFrom: z.string().min(1).optional(),
         workspacePath: z.string(),
         model: z.string().optional(),
         serviceTier: z.string().optional(),
@@ -1645,6 +2066,8 @@ export const channels = {
   'auth.event': z.object({
     provider: ProviderIdSchema,
     agent: z.string().min(1).optional(),
+    /** The account that signed in or out. Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
     loginId: z.string().nullable(),
     success: z.boolean(),
     error: z.string().nullable(),
@@ -1665,10 +2088,40 @@ export const channels = {
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
   }),
+  'commands.changed': z.object({
+    provider: ProviderIdSchema,
+    projectPath: z.string().min(1),
+  }),
+  /**
+   * A source's model list changed after `models.list` answered, for example a
+   * background refresh found models a CLI update added. Clients call
+   * `models.list` again with the same provider and agent; `agent` is absent for
+   * the provider's own models. Older clients ignore the push and see the new
+   * list on their next request.
+   */
+  'models.changed': z.object({
+    provider: ProviderIdSchema,
+    agent: z.string().min(1).optional(),
+    /** Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
+  }),
   /** A provider reported that its subscription usage or limits changed. */
   'usage.changed': z.object({
     provider: ProviderIdSchema,
+    /** Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
   }),
+  /**
+   * A provider's accounts, their labels or identities, or its active account
+   * changed. Clients call `accounts.list` again; older clients ignore it.
+   */
+  'accounts.changed': z.object({ provider: ProviderIdSchema }),
+  /**
+   * The server's newest limits for one provider, sent when a live session or
+   * a background read changed them. Clients replace that provider's source
+   * without another request; older clients ignore the push.
+   */
+  'usage.limits': z.object({ source: ProviderLimitSourceSchema }),
   'thread.event': z.object({
     threadId: z.string(),
     event: DomainEventSchema,
