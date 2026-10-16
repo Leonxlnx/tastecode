@@ -269,6 +269,13 @@
   color: var(--text);
 }
 
+/* An icon alone keeps the 28px height and goes square; it pairs with any of
+   the looks above and needs an aria-label. */
+.settings .set-button--icon {
+  width: 28px;
+  padding: 0;
+}
+
 /* Text fields: one 28px field for every form; a textarea starts at 72px. The
    MCP server editor's fields take the same rules until its file uses the
    class. */
