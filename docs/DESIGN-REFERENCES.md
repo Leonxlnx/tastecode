@@ -57,6 +57,19 @@ Each saved deck entry records `site` and `role` (`anchor`, `same-site`, `similar
 `fallback`). Only the anchor carries `style`, a one-line summary of its site's design language and
 likely typefaces. Decks saved before this change, without these fields, still parse and resume.
 
+**Dashboards are parked (owner decision, 2026-10-16).** The first dashboard reference set did not
+meet the design bar, so `DASHBOARD_REFERENCES_ENABLED` in
+`packages/design-agent/src/dashboard-references.ts` is `false` and the 200 dashboard pairs no
+longer ship in the bundled library. While it is off, no library's `dashboard-catalog.json` or
+`dashboard` family entry is loaded, including a configured local library that still has one,
+`isDashboardBrief` routes nothing into dashboard mode, and the Page protocol does not offer the
+`operate_monitor` mode or the `dashboard` family. A request for a dashboard or app screen still
+completes: Briefing records it as a website that presents the product, with its key views as
+native interface sections, and notes in the brief's assumptions that dashboard screens are not
+available. The run never claims a dashboard library and never fails for lack of one. The rules
+below describe the parked dashboard path; they return when the switch is turned back on together
+with a new reviewed asset set in `dashboard-catalog.json`.
+
 Dashboards keep exactly one complete app screen. Instead of a uniform draw, the server scores each
 eligible screen by the domain words it shares with the request, subject, required content and
 explicit answers. Grammar, surface names (app, dashboard, screen) and interface parts every

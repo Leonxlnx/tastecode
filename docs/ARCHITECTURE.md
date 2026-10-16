@@ -634,6 +634,17 @@ manual.
 
 ## Dashboard design references (nightly)
 
+**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
+so Design mode builds websites only until better assets arrive. One switch,
+`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
+whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
+`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
+the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
+normal website run built from website references, with the limitation recorded in the brief's
+assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
+catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked path.
+
 Nightly dashboard support is integrated through
 [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
 [PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
@@ -758,6 +769,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
 | 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
