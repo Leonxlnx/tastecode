@@ -344,6 +344,9 @@ export function validateAssetManifestForPage(
   return manifest
 }
 
+const UNRESOLVED_VISUAL_ASSETS =
+  'meaningful visual assets remain unresolved; Build must fail instead of substituting SVG or generic filler: '
+
 export function validateResolvedDesignAssets(manifest: AssetManifest): AssetManifest {
   const unresolved = manifest.assets
     .filter(
@@ -358,11 +361,28 @@ export function validateResolvedDesignAssets(manifest: AssetManifest): AssetMani
     .map(({ id }) => id)
     .sort()
   if (unresolved.length) {
-    throw new Error(
-      `meaningful visual assets remain unresolved; Build must fail instead of substituting SVG or generic filler: ${unresolved.join(', ')}`,
-    )
+    throw new Error(`${UNRESOLVED_VISUAL_ASSETS}${unresolved.join(', ')}`)
   }
   return manifest
+}
+
+/** The asset IDs named by a `validateResolvedDesignAssets` diagnostic, or undefined for any other error. */
+export function unresolvedDesignAssetIds(diagnostic: string): string[] | undefined {
+  if (!diagnostic.startsWith(UNRESOLVED_VISUAL_ASSETS)) return undefined
+  const ids = diagnostic.slice(UNRESOLVED_VISUAL_ASSETS.length).split(', ').filter(Boolean)
+  return ids.length ? ids : undefined
+}
+
+/**
+ * Whether a later acquisition pass resolved visual assets without opening new ones. Real photo
+ * sourcing often lands a few files per pass; a pass that shrinks the open set is converging.
+ */
+export function isAssetAcquisitionProgress(previous: string | undefined, next: string): boolean {
+  const before = previous === undefined ? undefined : unresolvedDesignAssetIds(previous)
+  const after = unresolvedDesignAssetIds(next)
+  if (!before || !after || after.length >= before.length) return false
+  const open = new Set(before)
+  return after.every((id) => open.has(id))
 }
 
 export function readAssetManifest(workspacePath: string): AssetManifest {
