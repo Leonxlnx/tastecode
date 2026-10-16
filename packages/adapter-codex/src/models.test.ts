@@ -1,6 +1,16 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
+
+/**
+ * The `model/list` result codex-cli 0.163.0's app-server answered, captured
+ * verbatim from an isolated CODEX_HOME. `codex debug models` lists the same
+ * rows with visibility `list`, and adds the hidden ones Codex filters out.
+ */
+const modelList163 = JSON.parse(
+  readFileSync(new URL('./fixtures/model-list-codex-0.163.json', import.meta.url), 'utf8'),
+) as { data: (typeof providerModel)[] }
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
@@ -39,7 +49,46 @@ async function listedModels(data = [providerModel]) {
 }
 
 describe('Codex models', () => {
-  it("orders the current lineup by Codex's own priority without inventing missing ones", async () => {
+  it('lists every model codex-cli 0.163 offers, newest of each tier first', async () => {
+    const models = await listedModels(modelList163.data)
+    expect(models.map((model) => model.id)).toEqual([
+      // The newest generation of each tier, in tier order.
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-5.6-terra',
+      'gpt-6-luna',
+      // Older generations, newest first.
+      'gpt-6-sol',
+      'gpt-5.6-sol',
+      'gpt-5.6-luna',
+      // Untiered rows keep Codex's order.
+      'gpt-5.5',
+    ])
+    expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6.1-sol')
+  })
+
+  it('places a new generation of a tier without being told about it', async () => {
+    const models = await listedModels([
+      ...modelList163.data,
+      { ...providerModel, id: 'gpt-7-terra', displayName: 'GPT-7-Terra', isDefault: false },
+      { ...providerModel, id: 'gpt-7-nova', displayName: 'GPT-7-Nova', isDefault: false },
+    ])
+    expect(models.map((model) => model.id)).toEqual([
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-7-terra',
+      'gpt-6-luna',
+      'gpt-6-sol',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna',
+      // A tier Codex adds later follows the known ones in Codex's order.
+      'gpt-5.5',
+      'gpt-7-nova',
+    ])
+  })
+
+  it('orders the codex-cli 0.154 lineup by tier without inventing missing ones', async () => {
     // The rows codex-cli 0.154 lists, shuffled; Astra is its default.
     const models = await listedModels([
       { ...providerModel, id: 'gpt-5.6-luna', displayName: 'GPT-5.6-Luna', isDefault: false },

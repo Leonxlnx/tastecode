@@ -481,6 +481,9 @@ importers:
 
   packages/design-agent:
     devDependencies:
+      '@harness/proc':
+        specifier: workspace:*
+        version: link:../proc
       '@types/node':
         specifier: ^26.1.1
         version: 26.1.1

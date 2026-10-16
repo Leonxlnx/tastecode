@@ -342,8 +342,16 @@ export function reduce(state: ThreadState, event: DomainEvent): ThreadState {
     case 'plan.updated':
       return { ...state, plan: event.steps }
 
-    case 'usage.updated':
-      return { ...state, usage: withoutIncompatibleContextWindow(event.usage) }
+    case 'usage.updated': {
+      const usage = withoutIncompatibleContextWindow(event.usage)
+      // A report without a window says nothing about the context. Codex and
+      // Claude Code send accounting and a context reading separately, so the
+      // last reading stays until the next one instead of the meter blinking.
+      if (usage.contextWindow === undefined && state.usage?.contextWindow !== undefined) {
+        return state
+      }
+      return { ...state, usage }
+    }
 
     case 'diff.updated':
       return { ...state, diff: event.diff, diffTurnId: event.turnId }

@@ -1679,6 +1679,21 @@
 .workspace-tabs__tab .workspace-tabs__close {
   flex: none;
   padding: 0 5px;
+  border-radius: var(--r-md);
+}
+/* Reached by keyboard, the whole rounded tab carries the ring. The select
+   button inside is square and stops before the close button, so its own ring
+   drew a box that cut through the pill. Inset, so the strip's clipped
+   overflow never trims it. */
+.workspace-tabs__tab > [role='tab']:focus-visible {
+  outline: none;
+}
+.workspace-tabs__tab:has(> [role='tab']:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+.workspace-tabs__tab .workspace-tabs__close:focus-visible {
+  outline-offset: var(--focus-ring-inset);
 }
 .workspace-tabs__add {
   flex: none;

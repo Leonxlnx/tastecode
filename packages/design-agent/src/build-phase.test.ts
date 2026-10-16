@@ -114,6 +114,11 @@ describe('build phase', () => {
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
     expect(prompt).toContain('It may not replace photography, product imagery')
     expect(prompt).toContain('SVG is limited to an explicit functional icon, logo')
+    // Codex's sandbox could not launch Chromium in a real run and failed a finished Build.
+    expect(prompt).toContain('A local browser that cannot launch is not a blocker')
+    expect(designBuildCorrectionPrompt('missing files: index.html')).toContain(
+      'A local browser that cannot launch is not a blocker',
+    )
   })
 
   it('builds every section from one tokens block and the approved font families', () => {
@@ -203,6 +208,25 @@ describe('build phase', () => {
         }),
       ),
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
+  })
+
+  it('accepts reported folders, as Codex lists generated output', () => {
+    const report = (files: string[]) =>
+      JSON.stringify({ status: 'complete', summary: 'Built.', files, checks: [] })
+    const output = parseBuildPhaseOutput(report(['index.html', 'dist/', '.taste\\evidence\\']))
+    expect(output.files).toEqual(['index.html', 'dist', '.taste\\evidence'])
+    expect(() => parseBuildPhaseOutput(report(['../outside/']))).toThrow('relative paths')
+    expect(() => parseBuildPhaseOutput(report(['/']))).toThrow('relative paths')
+
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-reported-folder-'))
+    try {
+      mkdirSync(path.join(workspace, 'dist'))
+      writeFileSync(path.join(workspace, 'dist', 'index.html'), '<main>Roastery</main>')
+      expect(() => validateDesignSourceQuality(workspace, output.files.slice(1, 2))).not.toThrow()
+      expect(() => validateDesignSourceQuality(workspace, ['missing'])).toThrow('does not exist')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
   })
 
   it('rejects generated one-sided card rails before Preview', () => {

@@ -445,6 +445,16 @@ size or modification time changes.
 tools users already trust, identical across every engine. Non-git directories fall back to a
 content-addressed snapshot of touched files only.
 
+A snapshot stages the working tree into a temporary index seeded from a copy of the
+checkout's own index, reset to HEAD with `read-tree --reset -i`, so `add -A` re-reads only
+files whose stat data changed. The copy keeps the source index's timestamp, so git still
+re-checks racily clean entries. An index that marks any entry assume-unchanged or
+skip-worktree falls back to a plain `read-tree`, because `add -A` would trust the mark and
+record HEAD instead of the working file. _Rejected:_ a plain `read-tree` for every snapshot
+(no stat data, so every tracked file was hashed before each turn: `add -A` took 404 ms of a
+451 ms snapshot of a 2,487-file checkout) · listing changes with `git status` against the
+real index (it hides the same marked files and may lock the index the agent is using).
+
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well. Messages are indexed in
@@ -486,11 +496,26 @@ when provider history gained events after that sequence. A truncation that keeps
 and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
 that only retires events is detected only through the re-recorded thread start: the merge records
 `thread.started` again whenever it retires rows. Requests without `page` keep
-the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
-reader bounded before compaction, which is still to do. Until then a thread without a saved
-replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
-events; paging the event log directly also has to keep imported provider turns, which display in
-time order rather than log order, on the right page.
+the full and `afterSeq` responses.
+
+**A cold open reads only the end of the event log.** When no current replay is parsed in memory,
+the newest page is read newest first from the log itself, bounded before compaction (#1363's
+plan). The page must equal the one cut from the compacted whole log, so the reader grows its
+tail until no turn or item in it also occurs in an older row; compacting such a tail alone gives
+the same events, and its blocks after the first are the whole log's blocks. A derived index makes
+that check cheap: `history_keys` stores, per thread, the first row naming each turn and item, and
+`history_state_events` lists the usage, request, answer, turn-end and error rows that decide what
+older rows leave open. Both are written in the event's own transaction; a run of deltas writes
+its keys once, so the per-delta path stays one insert. A thread is trusted only with a complete
+mark: new threads get it at creation, older ones when a full read indexes them, and a start
+that finds rows newer than the recorded watermark (written by a build without the index, or
+just before a crash) drops the mark of those threads. Removed or retired rows leave entries that
+only make the reader read further back. A tail that compaction would leave unchanged says
+nothing about the rows before it, so the reader keeps reading. It falls back to the full read for
+imported provider turns, which display in time order rather than log order, and when it would
+read the whole log anyway; that read also saves the replay older pages are cut from. The
+reader saves no replay itself: the first older page compacts the whole log once.
+On the 10,375-event benchmark a cold newest page takes about 9 ms instead of about 40 ms.
 
 **Streamed turn diffs are stored only when they change.** Providers can resend the same
 working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
@@ -527,10 +552,20 @@ while its process is still stopping. An isolated start receives its base ref dir
 Shared orchestration reads declared capabilities and merges shared local configuration.
 Settings views renew 60-second notification leases; one read cannot hold a control process
 for the whole app lifetime. Usage-limit reads are cached per provider for 60 seconds and shared
-by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale.
+by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale; so
+does an account read that reports a different account, which is how a sign-in or switch made in
+the provider's own CLI reaches the app. An account without plan limits keeps its "unavailable"
+answer for 30 minutes instead, through usage updates: spending usage cannot give it limits, and
+Claude scans its local transcripts for up to a minute to say so. Only an account change or a
+reset discards that answer early. Failed reads are never cached.
 Change notifications to clients are coalesced to one leading and one trailing notice per
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
+Background writing (chat titles, commit messages) reads only the sources its model choice
+needs: a manual target alone, otherwise Codex, then Grok, and every source only for the
+cheapest-model fallback. Each source's account and model read is cached for 60 seconds and
+shared with the Settings listing; a sign-in change or harness edit drops them. Reading every
+source per task was rejected: it started six vendor processes per new chat.
 `ThreadController` owns web transcript, replay, queue, submission
 and draft state, while the frame store still batches streamed deltas for React.
 
@@ -758,6 +793,9 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
+| 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
+| 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
 | 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
 | 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
@@ -804,3 +842,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
 | 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
+| 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |

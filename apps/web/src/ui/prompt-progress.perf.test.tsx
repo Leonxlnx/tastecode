@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup } from '@testing-library/react'
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -34,7 +34,20 @@ vi.mock('@tanstack/react-virtual', () => ({
 import { PROMPT_PROGRESS_SCENARIOS, runPromptProgress } from './prompt-progress.fixture.js'
 import { threadItems } from '../thread-store.js'
 
-afterEach(cleanup)
+/** happy-dom's emulated device. The fixture reads the live reply right after
+ * each delta, so text lands as it arrives instead of being paced over frames. */
+const device = (
+  window as unknown as { happyDOM: { settings: { device: { prefersReducedMotion: string } } } }
+).happyDOM.settings.device
+
+beforeEach(() => {
+  device.prefersReducedMotion = 'reduce'
+})
+
+afterEach(() => {
+  cleanup()
+  device.prefersReducedMotion = 'no-preference'
+})
 
 describe('prompt progress lifecycle', () => {
   it.each(PROMPT_PROGRESS_SCENARIOS)('keeps one stable visible state for $name', (scenario) => {

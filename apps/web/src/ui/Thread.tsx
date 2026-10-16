@@ -2755,8 +2755,16 @@ function webSearchQuery(item: Item): string | undefined {
 function commandLabel(command: string | undefined): string {
   const text = inlineActivityText(command)
   const wrapped = /^(?:\S*[\\/])?(?:ba|z)?sh(?:\.exe)? -l?c (['"])([\s\S]*)\1$/.exec(text)
-  return wrapped?.[2]?.trim() || text
+  const inner = wrapped?.[2]?.trim() || text
+  // Claude Code starts many commands with `cd "<absolute project path>" &&`.
+  // In a one-line row that path used up the width and the part that does the
+  // work was cut off, so the label starts at the command after it. A relative
+  // cd says where in the project the command runs, so it stays.
+  return inner.replace(LEADING_ABSOLUTE_CD, '') || inner
 }
+
+const LEADING_ABSOLUTE_CD =
+  /^cd(?:\s+\/d)?\s+(?:"(?:[a-z]:|[\\/~])[^"]*"|'(?:[a-z]:|[\\/~])[^']*'|(?:[a-z]:|[\\/~])[^\s;&|]*)\s*(?:&&|;)\s*/i
 
 function inlineActivityText(text: string | undefined): string {
   return text?.replace(/\s+/g, ' ').trim() ?? ''

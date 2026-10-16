@@ -550,6 +550,34 @@ describe('thread reducer', () => {
     expect(replayed.usage).toEqual(usage)
   })
 
+  it('keeps the last context reading through accounting reports without a window', () => {
+    const accounting = (totalTokens: number) => ({
+      inputTokens: totalTokens,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens,
+      cumulative: true,
+    })
+    const reading = (totalTokens: number) => ({
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens,
+      contextWindow: 258_400,
+    })
+    const replayed = reduceEventLog(emptyThread, [
+      { seq: 1, event: { type: 'usage.updated', usage: accounting(90_000) } },
+      { seq: 2, event: { type: 'usage.updated', usage: reading(30_000) } },
+      { seq: 3, event: { type: 'usage.updated', usage: accounting(150_000) } },
+    ])
+    expect(replayed.usage).toEqual(reading(30_000))
+
+    const next = reduce(replayed, { type: 'usage.updated', usage: reading(42_000) })
+    expect(next.usage).toEqual(reading(42_000))
+  })
+
   it('rebuilds a whole conversation from a stored event log', () => {
     // What reopening a session does: the server hands back everything that
     // happened, and replaying it has to produce the same thread the user left.

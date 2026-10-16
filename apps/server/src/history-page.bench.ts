@@ -5,6 +5,7 @@ import { afterAll, bench, describe } from 'vitest'
 import type { DomainEvent } from '@harness/contracts'
 import { readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
+import { readIndexedNewestHistoryPage } from './history-tail.js'
 import { Orchestrator } from './orchestrator.js'
 import { Store } from './store.js'
 
@@ -153,6 +154,15 @@ describe(`opening a ${records.length.toLocaleString('en-US')}-event thread`, () 
     'cold: parses every event, compacts and encodes the newest page',
     () => {
       const page = readHistoryPage(THREAD, compactHistoryReplay(store.history(THREAD)), {})
+      encodedCharacters += JSON.stringify(page.events).length
+    },
+    OPTIONS,
+  )
+
+  bench(
+    'cold: reads the newest page from the end of the indexed log',
+    () => {
+      const page = readIndexedNewestHistoryPage(store, THREAD, undefined)!
       encodedCharacters += JSON.stringify(page.events).length
     },
     OPTIONS,

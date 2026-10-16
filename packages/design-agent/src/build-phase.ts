@@ -26,6 +26,8 @@ const BUILD_PROTOCOL = `When implementation and local checks finish, return JSON
 
 {"status":"complete","summary":"...","files":["relative/path"],"checks":["command — result"]}
 
+A local browser that cannot launch is not a blocker: TasteCode starts the preview and captures desktop and mobile itself after Build. Record each browser check you could not run in checks and return complete.
+
 If a real blocker remains after reasonable repair attempts:
 
 {"status":"failed","error":"specific recoverable blocker","files":["relative/path"],"checks":["command — result"]}`
@@ -219,7 +221,12 @@ export function validateExactBuildFiles(
 export function parseBuildPhaseOutput(text: string): BuildPhaseOutput {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text.trim())
   const value = record(JSON.parse(fenced?.[1] ?? text), 'build output')
-  const files = strings(value.files, 'build files')
+  // A report may name a generated folder such as "dist/". The workspace scan is
+  // the authority on its contents, so a trailing separator must not fail an
+  // otherwise finished Build; the path rules still apply to the folder itself.
+  const files = strings(value.files, 'build files').map(
+    (file) => file.replace(/[\\/]+$/u, '') || file,
+  )
   if (files.some((file) => !normalizeWorkspaceFile(file)))
     throw new Error('build files must be relative paths inside the workspace')
   const checks = strings(value.checks, 'build checks')

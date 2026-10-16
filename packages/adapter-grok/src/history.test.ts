@@ -4,7 +4,10 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { createGrokHistorySource } from './history.js'
+
+const canSymlink = canCreateSymlinks()
 
 const roots: string[] = []
 afterEach(async () => {
@@ -115,7 +118,7 @@ describe('Grok native history', () => {
     expect(commands[0]!.id).not.toBe(commands[1]!.id)
   })
 
-  it.skipIf(process.platform === 'win32')(
+  it.skipIf(!canSymlink)(
     'does not read transcript files linked outside their session folder',
     async () => {
       const { source, directory, root } = await fixture()

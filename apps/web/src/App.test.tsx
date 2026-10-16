@@ -972,6 +972,10 @@ function sidebarProps() {
   >
 }
 
+function terminalOpenRequests() {
+  return transport.request.mock.calls.filter(([method]) => method === 'terminal.open').length
+}
+
 async function openCheckpointHistory() {
   const header = shellRenders.stageHeader.mock.lastCall![0] as ComponentProps<
     typeof import('./ui/StageHeader.js').StageHeader
@@ -1661,6 +1665,48 @@ describe('web client', () => {
     },
   )
 
+  it('keeps a chat queued for deletion out of chat search', async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const contentHit = (threadId: string, threadTitle: string) => ({
+      projectPath: '/work/project',
+      projectName: 'project',
+      threadId,
+      threadTitle,
+      turnId: `turn-in-${threadId}`,
+      provider: 'codex',
+      createdAt: 0,
+      snippet: [{ text: 'Doomed', highlighted: true }],
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              contentHit('doomed-thread', 'Doomed chat'),
+              contentHit('untouched-thread', 'New session'),
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    await openNewSession()
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'Doomed' },
+    })
+    // The kept chat's hit shows that the server's results have arrived.
+    expect(await screen.findByRole('option', { name: /^New session, project,/ })).toBeTruthy()
+    expect(screen.queryAllByRole('option', { name: /^Doomed chat,/ })).toHaveLength(0)
+
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    expect(transport.request).toHaveBeenCalledWith('thread.delete', {
+      threadId: 'doomed-thread',
+    })
+  })
+
   it('does not open a chat queued for deletion after settling the active chat', async () => {
     serverProjects[0]!.sessions.push(
       { id: 'kept-thread', title: 'Kept chat', createdAt: 3 },
@@ -1855,9 +1901,14 @@ describe('web client', () => {
         },
       },
     ]
+    // The names the adapters give these rows; the defaults read their generation there.
+    const names = new Map([
+      ['opus', 'Opus 5.5'],
+      ['claude-opus-4-8', 'Opus 4.8'],
+    ])
     const listed = (id: string, isDefault = false) => ({
       id,
-      displayName: id,
+      displayName: names.get(id) ?? id,
       isDefault,
       reasoningEfforts: [],
       serviceTiers: [],
@@ -1896,7 +1947,7 @@ describe('web client', () => {
       ),
     )
     expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
   })
 
   it('never starts a chat on another provider than the picker names while its source loads', async () => {
@@ -2077,7 +2128,10 @@ describe('web client', () => {
     await waitFor(() =>
       expect(screen.getByRole('switch', { name: 'Include GPT-5.5 in model picker' })).toBeTruthy(),
     )
-    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
+    // The edit stays; GPT-5.5, listed only now, takes its default once.
+    expect(localStorage.getItem('harness.hiddenModels')).toBe(
+      '["codex:gpt-6.1-sol","codex:gpt-5.5"]',
+    )
   })
 
   it("keeps a new profile's first choice made while its first discovery is pending", async () => {
@@ -2111,13 +2165,15 @@ describe('web client', () => {
 
     // Every source answered: the profile is current, with the choice kept and
     // the newly listed GPT-5.5 on its default.
-    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
+    )
     expect(savedHiddenModels()).toEqual(['codex:gpt-5.5', 'codex:gpt-6.1-sol'])
   })
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-6.1-sol"]'
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -2189,7 +2245,7 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
   })
 
   it('returns Claude Code to the current lineup for a profile an older build saved', async () => {
@@ -2214,7 +2270,9 @@ describe('web client', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
+    )
     expect(offered('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
     // Codex keeps its saved choices: GPT-5.5 stays hidden, Sol stays shown.
     expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
@@ -2478,7 +2536,7 @@ describe('web client', () => {
     }
   })
 
-  it.each(['4', '5', '6', '7'])(
+  it.each(['4', '5', '6', '7', MODEL_VISIBILITY_VERSION])(
     'brings a profile saved at version %s to the current Claude lineup while Grok fails',
     async (version) => {
       serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
@@ -2486,9 +2544,8 @@ describe('web client', () => {
       localStorage.setItem(
         'harness.hiddenModels',
         JSON.stringify(
-          version === MODEL_VISIBILITY_VERSION
-            ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS
-            : OLDER_BUILD_HIDDEN_MODELS,
+          // Version 7 already moved Claude Code onto its current lineup.
+          Number(version) >= 7 ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS : OLDER_BUILD_HIDDEN_MODELS,
         ),
       )
       localStorage.setItem(
@@ -2584,9 +2641,13 @@ describe('web client', () => {
           },
         },
       ]
+      const names = new Map([
+        ['opus', 'Opus 5.5'],
+        ['claude-opus-5', 'Opus 5'],
+      ])
       const listedModel = (id: string) => ({
         id,
-        displayName: id,
+        displayName: names.get(id) ?? id,
         isDefault: false,
         reasoningEfforts: [],
         serviceTiers: [],
@@ -7465,22 +7526,23 @@ describe('new chats', () => {
       hidden: true,
     })
     fireEvent(picker, Object.assign(new Event('toggle'), { newState: 'open' }))
-    const accentOptions = within(picker).getByRole('group', {
-      name: 'Accent palette presets',
+    const hex = within(picker).getByRole('textbox', {
+      name: 'Accent palette hex color',
       hidden: true,
     })
-    expect(within(accentOptions).getAllByRole('button', { hidden: true })).toHaveLength(7)
-    fireEvent.click(within(accentOptions).getByRole('button', { name: 'Ocean', hidden: true }))
+    fireEvent.change(hex, { target: { value: '#E11D48' } })
 
     await waitFor(() => {
-      expect(localStorage.getItem('harness.accent.light')).toBe('ocean')
-      expect(document.documentElement.dataset.accent).toBe('ocean')
+      expect(localStorage.getItem('harness.accent.light')).toBe('#E11D48')
+      expect(document.documentElement.dataset.accent).toBe('custom')
+      expect(document.documentElement.style.getPropertyValue('--custom-accent')).toBe('#E11D48')
     })
 
     first.unmount()
     render(<App />)
 
-    expect(document.documentElement.dataset.accent).toBe('ocean')
+    expect(document.documentElement.dataset.accent).toBe('custom')
+    expect(document.documentElement.style.getPropertyValue('--custom-accent')).toBe('#E11D48')
   })
 
   it('tracks OS appearance while System is selected', async () => {
@@ -9575,6 +9637,66 @@ describe('global shortcuts', () => {
     expect(screen.queryByTestId('terminal-pane')).toBeNull()
   }, 20_000)
 
+  it('keeps a parked bottom panel parked behind the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    // The first open lazy-loads the panel module.
+    await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    act(() => dispatchTransitionEnd(screen.getByTestId('bottom-terminal'), 'transform'))
+    await waitFor(() =>
+      expect(screen.getByTestId('bottom-terminal').classList.contains('is-parked')).toBe(true),
+    )
+    const panel = screen.getByTestId('bottom-terminal')
+    const opens = terminalOpenRequests()
+
+    // The pull requests view covers the stage; the bottom panel waits behind it.
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    expect(panel.isConnected).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(true)
+
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByTestId('bottom-terminal')).toBe(panel)
+    expect(panel.classList.contains('is-parked')).toBe(true)
+    expect(panel.closest('.stage__body')?.hasAttribute('hidden')).toBe(false)
+    expect(terminalOpenRequests()).toBe(opens)
+  }, 20_000)
+
+  it('keeps an open bottom terminal and its shell across the pull requests view', async () => {
+    localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+
+    act(() => nativeMenu.listener?.('toggleTerminal'))
+    const pane = await screen.findByTestId('terminal-pane', {}, { timeout: 15_000 })
+    const opens = terminalOpenRequests()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Pull requests' }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    expect(screen.getByTestId('terminal-pane')).toBe(pane)
+    expect(screen.getByTestId('bottom-terminal').classList.contains('is-open')).toBe(true)
+    expect(terminalOpenRequests()).toBe(opens)
+  }, 20_000)
+
   it('runs sidebar and terminal actions from the visible top-bar menu', async () => {
     render(<App />)
     await screen.findByRole('button', { name: /^New session,/ })
@@ -10965,6 +11087,54 @@ describe('live sessions', () => {
     expect(threadCallbacks.searchJump!.request).not.toBe(jump!.request)
   })
 
+  it('drops a search jump when the user leaves the chat before it lands', async () => {
+    serverProjects = [
+      serverProject('/work/project', 'project', [
+        { id: 'chat-a', title: 'Chat A' },
+        { id: 'chat-b', title: 'Chat B' },
+      ]),
+    ]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'search.sessions'
+        ? Promise.resolve({
+            results: [
+              {
+                projectPath: '/work/project',
+                projectName: 'project',
+                threadId: 'chat-a',
+                threadTitle: 'Chat A',
+                turnId: 'turn-old',
+                provider: 'codex',
+                createdAt: 0,
+                snippet: [{ text: 'needle', highlighted: true }],
+              },
+            ],
+            nextCursor: null,
+          })
+        : request(method, params),
+    )
+    render(<App />)
+    await screen.findByRole('button', { name: /^Chat A,/ })
+
+    fireEvent.keyDown(window, { key: 'f', metaKey: true, shiftKey: true })
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Search every chat' }), {
+      target: { value: 'needle' },
+    })
+    fireEvent.click(await screen.findByRole('option', { name: /^Chat A, project,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+    expect(threadCallbacks.searchJump).toMatchObject({ turnId: 'turn-old' })
+
+    // The thread is still reading older turns when the user moves on.
+    fireEvent.click(screen.getByRole('button', { name: /^Chat B,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-b'))
+    fireEvent.click(screen.getByRole('button', { name: /^Chat A,/ }))
+    await waitFor(() => expect(threadCallbacks.threadId).toBe('chat-a'))
+
+    // Coming back later is a fresh entry, not the abandoned jump.
+    expect(threadCallbacks.searchJump).toBeUndefined()
+  })
+
   it('keeps app shortcuts from acting behind chat search', async () => {
     render(<App />)
     const composer = await screen.findByPlaceholderText('Do anything')
@@ -11429,7 +11599,7 @@ describe('reopening a session', () => {
   })
 
   it('uses a visible same-source model when the remembered one is hidden', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {

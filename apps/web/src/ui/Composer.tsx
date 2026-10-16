@@ -2005,6 +2005,9 @@ function ComposerComponent(props: {
                     <div className="composer__dictation-options-content">
                       <Menu
                         label="Permissions"
+                        triggerTitle={
+                          props.approvalLoading ? undefined : `Permissions: ${approval.short}`
+                        }
                         disabled={Boolean(props.approvalLoading)}
                         triggerClassName="composer__permission"
                         panelClassName="menu--compact menu--permissions"

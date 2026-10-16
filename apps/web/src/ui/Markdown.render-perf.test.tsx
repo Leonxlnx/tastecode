@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 
@@ -28,11 +28,22 @@ vi.mock('streamdown', () => ({
 import { Markdown, needsRichMarkdown } from './Markdown.js'
 import { LiveMarkdownParser } from './live-markdown.js'
 
+/** happy-dom's emulated device. These count work per append, so text lands
+ * as it arrives instead of being paced over frames. */
+const device = (
+  window as unknown as { happyDOM: { settings: { device: { prefersReducedMotion: string } } } }
+).happyDOM.settings.device
+
+beforeEach(() => {
+  device.prefersReducedMotion = 'reduce'
+})
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   streamdownRender.mockReset()
   shikiHighlight.mockReset()
+  device.prefersReducedMotion = 'no-preference'
 })
 
 describe('streamed Markdown renders', () => {
