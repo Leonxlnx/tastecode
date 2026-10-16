@@ -379,6 +379,11 @@ export class ProviderControls {
   usageChanged(provider: ProviderId, immediate = false): void {
     if (this.#closed) return
     const entry = this.#invalidateLimits(provider, false, immediate)
+    this.#notifyUsageChanged(provider, entry, immediate)
+  }
+
+  /** Forwards a usage-change signal: the first at once, a burst as one trailing signal. */
+  #notifyUsageChanged(provider: ProviderId, entry: LimitEntry, immediate: boolean): void {
     const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
     if (wait <= 0) {
       clearTimeout(entry.notifyTimer)
