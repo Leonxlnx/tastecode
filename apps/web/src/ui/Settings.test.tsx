@@ -532,6 +532,11 @@ describe('settings loading values', () => {
     expect(loading.querySelectorAll('.model-visibility')).toHaveLength(2)
     expect(loading.querySelectorAll('.model-visibility__model')).toHaveLength(7)
     expect(loading.querySelectorAll('.settings__switch-skeleton')).toHaveLength(7)
+    // The placeholder has the one settings switch size.
+    const switchStyle =
+      loading.querySelector('.settings__switch-skeleton .skeleton')?.getAttribute('style') ?? ''
+    expect(switchStyle).toContain('width: 30px')
+    expect(switchStyle).toContain('height: 18px')
     expect(container.querySelector('.model-settings__empty')).toBeNull()
     expect(within(loading as HTMLElement).queryByRole('switch')).toBeNull()
 

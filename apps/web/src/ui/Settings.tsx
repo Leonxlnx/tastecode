@@ -1450,7 +1450,7 @@ function ModelSourcesSkeleton() {
                   }
                 >
                   <span className="settings__switch-skeleton">
-                    <Skeleton width={36} height={22} />
+                    <Skeleton width={30} height={18} />
                   </span>
                 </SettingsRow>
               ))}

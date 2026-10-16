@@ -170,20 +170,6 @@
   line-height: 1.45;
 }
 
-.settings .set-row .switch {
-  width: 30px;
-  height: 18px;
-}
-
-.settings .set-row .switch__thumb {
-  width: 12px;
-  height: 12px;
-}
-
-.settings .set-row .switch.is-on .switch__thumb {
-  transform: translateX(12px);
-}
-
 @container settings-content (max-width: 560px) {
   .settings .set-leader {
     display: none;
@@ -281,6 +267,23 @@
 .settings :is(.set-button--quiet, .settings__action.is-secondary):hover:not(:disabled) {
   background: transparent;
   color: var(--text);
+}
+
+/* One switch size: 30x18 with a 12px thumb, on every tab and in the provider
+   context panel, which opens outside .settings. */
+
+:is(.settings, .tune-panel) .switch {
+  width: 30px;
+  height: 18px;
+}
+
+:is(.settings, .tune-panel) .switch__thumb {
+  width: 12px;
+  height: 12px;
+}
+
+:is(.settings, .tune-panel) .switch.is-on .switch__thumb {
+  transform: translateX(12px);
 }
 
 /* Page-level notice */

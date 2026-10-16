@@ -328,20 +328,6 @@
   font-size: var(--t-sm);
 }
 
-.tune-panel .switch {
-  width: 30px;
-  height: 18px;
-}
-
-.tune-panel .switch__thumb {
-  width: 12px;
-  height: 12px;
-}
-
-.tune-panel .switch.is-on .switch__thumb {
-  transform: translateX(12px);
-}
-
 .tune-panel .switch:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);

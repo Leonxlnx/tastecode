@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const systemCss = readFileSync(new URL('./settings-system.css', import.meta.url), 'utf8')
+const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
@@ -126,6 +127,22 @@ describe('settings viewport CSS', () => {
     // The old per-feature button looks are gone.
     expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
+  })
+
+  it('sizes every settings switch 30x18 with a 12px thumb, in one place', () => {
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch \{[^}]*width: 30px;[^}]*height: 18px;/s,
+    )
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch__thumb \{[^}]*width: 12px;[^}]*height: 12px;/s,
+    )
+    expect(systemCss).toMatch(
+      /:is\(\.settings, \.tune-panel\) \.switch\.is-on \.switch__thumb \{[^}]*translateX\(12px\)/s,
+    )
+    // No tab or panel sizes its own switch any more.
+    for (const css of [settingsCss, systemCss, tuningCss]) {
+      expect(css.match(/\.switch \{[^}]*width:/g) ?? []).toHaveLength(css === systemCss ? 1 : 0)
+    }
   })
 
   it('draws the provider account wire from the link state', () => {
