@@ -1,5 +1,6 @@
 import { type BoundaryRecord, list, record, string } from './parse.js'
 import { parseDesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 export { DESIGN_BRIEF_ATTACHMENT, isDesignBriefAttachment } from './attachment.js'
 
@@ -18,9 +19,18 @@ export type BriefingOutput =
 
 const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one of these shapes:
 
-{"status":"complete","message":"Brief complete.","questions":[],"brief":{"originalRequest":"...","subject":"...","pageType":"...","scope":"...","primaryGoal":"...","audience":"...","offer":"...","primaryAction":"...","requiredContent":[],"constraints":[],"brandInputs":[],"creativeControl":"...","explicitAnswers":[],"assumptions":[],"unresolved":[]}}
+{"status":"complete","message":"Brief complete.","questions":[],"brief":{"originalRequest":"...","subject":"...","pageType":"...","scope":"...","primaryGoal":"...","audience":"...","offer":"...","primaryAction":"...","requiredContent":["Section name: its actual content"],"constraints":[],"brandInputs":[],"creativeControl":"...","assumptions":["..."],"unresolved":[]}}
 
 {"status":"not_design","message":"This request is not a website or interface design task.","questions":[],"brief":null}`
+
+const DASHBOARD_SURFACE_GUIDANCE = `Set pageType to "dashboard" for operating product interfaces such as admin, analytics, finance, health tracking or a customer workspace. Record their actual screens, data views, navigation and user actions in requiredContent; do not impose marketing sections or an eight-section minimum. A marketing website about a dashboard product is still pageType "landing_page" and follows the landing-page guidance; so is a site, one-pager, microsite, homepage, launch page, Webseite or Seite for an app, analytics or admin product.`
+
+/** While dashboards are parked, an app-screen request still finishes as a website run. */
+const PARKED_DASHBOARD_GUIDANCE = `Design mode currently builds websites; dashboard and app screens are not available. When the request asks for an operating product interface such as an admin, analytics, finance or health tracking dashboard, set pageType to "landing_page", design the website that presents that product with its key views as native interface sections, and record in assumptions that dashboard screens are not available in Design mode yet. Never return "not_design" for such a request.`
+
+const SURFACE_GUIDANCE = `${DASHBOARD_REFERENCES_ENABLED ? DASHBOARD_SURFACE_GUIDANCE : PARKED_DASHBOARD_GUIDANCE}
+
+New websites include visible entrance and scroll animations by default.${DASHBOARD_REFERENCES_ENABLED ? ' Dashboards instead include useful transitions for filters, sorting, tabs, navigation, drawers and charts where present.' : ''} Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.`
 
 export function designBriefingPrompt(request: string): string {
   return `You are running TasteCode Design Briefing mode.
@@ -35,11 +45,11 @@ For a valid design request:
 1. Work autonomously. Never ask questions, request confirmation, call a user-input tool, or pause for approval of the brief. Infer missing details and record reasoned assumptions.
 2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. In requiredContent, identify the sections explicitly requested or needed for that goal, using descriptive section names and their actual content. Do not impose a fixed section count or generic landing-page sequence. Record existing colors, typography, logos and visual style in brandInputs when known, with their source. Brand inputs and constraints may be empty; do not invent brand decisions before seeing the selected reference images.
 3. If requirements conflict, prefer the latest specific instruction and record the choice in assumptions. Choose sensible defaults for everything the user delegated or omitted. Do not invent business facts, customer proof, or measured results; omit unsupported claims while still producing a finished page.
-4. Return "complete" with an empty questions array and every core field specific enough for Brand and Page Blueprint. Record explicit answers, reasoned assumptions, and only non-blocking unresolved details. No closing question or confirmation is allowed.
+4. Return "complete" with an empty questions array and every core field specific enough for Brand and Page Blueprint. Record reasoned assumptions and only non-blocking unresolved details. No closing question or confirmation is allowed.
 
 ${LANDING_PAGE_GUIDANCE}
 
-New websites include visible entrance and scroll animations by default. Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.
+${SURFACE_GUIDANCE}
 
 ${DESIGN_CONTENT_GUIDANCE}
 
@@ -62,7 +72,7 @@ Answer immediately from the supplied answers only. Do not inspect the workspace,
 
 Complete every core brief field autonomously. Use the original request and supplied answers; choose reasonable defaults for vague, missing, or contradictory details and record those choices in assumptions. Never ask questions, call a user-input tool, or request confirmation. Return "complete" with an empty questions array.
 
-New websites include visible entrance and scroll animations by default, unless the user explicitly requests no animation.
+${SURFACE_GUIDANCE}
 
 ${LANDING_PAGE_GUIDANCE}
 
@@ -130,7 +140,10 @@ export function parseBriefingOutput(text: string): BriefingOutput {
       status: 'complete',
       message: string(value.message, 'message'),
       questions: [],
-      brief: { ...parseDesignBrief(brief) },
+      // TasteCode records the questions it asked and their answers itself. A
+      // model that lists request facts here is not malformed; the field is
+      // never trusted, so it must not fail an otherwise complete brief.
+      brief: { ...parseDesignBrief({ ...brief, explicitAnswers: [] }) },
     }
   }
   if (

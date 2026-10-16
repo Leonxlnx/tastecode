@@ -16,7 +16,27 @@ describe('code block controls layout', () => {
       /<CodeBlockHeader[^>]*\/>[\s\S]*?<div>\s*<div data-streamdown="code-block-actions">/,
     )
     expect(markdownCss).toMatch(
-      /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*position: absolute;[^}]*top: 1px;[^}]*right: 2px;/s,
+      /\.md \[data-streamdown='code-block'\] > div:has\(> \[data-streamdown='code-block-actions'\]\) \{[^}]*position: absolute;[^}]*top: 3px;[^}]*right: 0;/s,
+    )
+  })
+
+  it('centres the controls on the label row and ends them on the block edge', () => {
+    // A 26px row put the 24px buttons 1px above the block's border, so they
+    // read as tabs on the block while the label floated beside them.
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block-header'\] \{[^}]*height: 30px;[^}]*padding: 0;/s,
+    )
+  })
+
+  it('wraps code through white-space on the root choice', () => {
+    expect(markdownCss).toMatch(
+      /:root\[data-code-wrap='on'\] \.md pre code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/s,
+    )
+  })
+
+  it('shows a pressed Wrap toggle', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block'\] button\[aria-pressed='true'\] \{[^}]*background: var\(--control-pressed\);[^}]*color: var\(--text\);/s,
     )
   })
 })

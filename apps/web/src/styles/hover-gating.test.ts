@@ -29,9 +29,6 @@ describe('hover gating', () => {
     expect(appCss).toMatch(
       /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.menutrigger:hover \.dots \{/s,
     )
-    expect(appCss).toMatch(
-      /@media \(hover: hover\) and \(pointer: fine\) \{[\s\S]*?\.composer__design:hover > span \{/s,
-    )
     expect(inboxCss).toMatch(
       /\.inbox-card:focus-within \.inbox-card__quick \{[^}]*pointer-events: auto;/s,
     )

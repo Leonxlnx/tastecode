@@ -23,6 +23,8 @@ const SECTION_CASES = {
   pricing: new Set(numbered('pricing', 4)),
   contact: new Set(['contact-split', 'contact-centered']),
   footer: new Set(numbered('footer', 7)),
+  // Dashboard screens must use their real paired references, never legacy section recipes.
+  dashboard: new Set<string>(),
 } satisfies Record<PageLayoutFamily, Set<string>>
 
 export function assertPageLayoutSelections(page: PageBlueprint): PageBlueprint {

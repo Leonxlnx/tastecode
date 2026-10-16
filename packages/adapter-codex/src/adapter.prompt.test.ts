@@ -206,3 +206,48 @@ describe('Codex live reasoning', () => {
     }
   })
 })
+
+describe('Codex token usage', () => {
+  it('reports accounting first and then the context reading', async () => {
+    const { adapter, rpc } = promptAdapter()
+    const usage: unknown[] = []
+    adapter.on('event', (event) => {
+      if (event.type === 'usage.updated') usage.push(event.usage)
+    })
+    const breakdown = (totalTokens: number) => ({
+      inputTokens: totalTokens - 1_000,
+      cachedInputTokens: 0,
+      outputTokens: 1_000,
+      reasoningOutputTokens: 0,
+      totalTokens,
+    })
+    try {
+      await adapter.start()
+      const thread = await adapter.startThread('C:\\repo')
+      rpc.emitNotification('thread/tokenUsage/updated', {
+        threadId: thread.id,
+        turnId: 'turn-1',
+        tokenUsage: {
+          total: breakdown(90_000),
+          last: breakdown(30_000),
+          modelContextWindow: 258_400,
+        },
+      })
+
+      expect(usage).toEqual([
+        expect.objectContaining({ totalTokens: 90_000, cumulative: true }),
+        {
+          model: 'gpt-5.6',
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          totalTokens: 30_000,
+          contextWindow: 258_400,
+        },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+})

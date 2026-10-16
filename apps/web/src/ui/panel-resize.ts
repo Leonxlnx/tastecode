@@ -73,3 +73,39 @@ export function beginPanelResize(
   window.addEventListener('blur', finish, { once: true })
   return () => cleanup(false)
 }
+
+/**
+ * Eases a right or bottom panel from the size it is drawn at to another one,
+ * writing the same inline property a drag writes once per frame, then calls
+ * onFinish. Reduced motion jumps straight there. Disposal stops it where it is.
+ */
+export function settlePanelSize(options: {
+  from: number
+  to: number
+  style: CSSStyleDeclaration | undefined
+  property: string
+  onFinish: () => void
+}): () => void {
+  const duration = 200
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (reduced || !options.style || Math.abs(options.to - options.from) < 1) {
+    options.style?.setProperty(options.property, `${options.to}px`)
+    options.onFinish()
+    return () => {}
+  }
+  const style = options.style
+  let start: number | undefined
+  let frame = requestAnimationFrame(function step(now) {
+    start ??= now
+    const progress = Math.min(1, (now - start) / duration)
+    // Ease out: most of the travel early, settling gently at the end.
+    const eased = 1 - (1 - progress) ** 3
+    style.setProperty(
+      options.property,
+      `${Math.round(options.from + (options.to - options.from) * eased)}px`,
+    )
+    if (progress < 1) frame = requestAnimationFrame(step)
+    else options.onFinish()
+  })
+  return () => cancelAnimationFrame(frame)
+}

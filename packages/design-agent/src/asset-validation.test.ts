@@ -3,7 +3,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  isAssetAcquisitionProgress,
   parseAssetManifest,
+  unresolvedDesignAssetIds,
   validateAssetManifestForPage,
   validateResolvedDesignAssets,
   type DesignAsset,
@@ -131,6 +133,38 @@ describe('local asset content validation', () => {
         }),
       ),
     ).toThrow('remain unresolved')
+  })
+
+  it('recognises acquisition passes that shrink the unresolved photo set', () => {
+    const photo = (id: string): DesignAsset => ({
+      id,
+      kind: 'image',
+      role: 'photography',
+      status: 'needed',
+      purpose: 'Show the roastery',
+      requirements: ['Licensed photograph'],
+      sectionIds: ['hero'],
+      aspectRatio: '4:3',
+      composition: 'Roaster at work.',
+    })
+    const diagnostic = (...ids: string[]) => {
+      try {
+        validateResolvedDesignAssets(parseAssetManifest({ version: 1, assets: ids.map(photo) }))
+      } catch (error) {
+        return (error as Error).message
+      }
+      throw new Error('expected unresolved assets')
+    }
+    const before = diagnostic('beans', 'harbor', 'roaster')
+    expect(unresolvedDesignAssetIds(before)).toEqual(['beans', 'harbor', 'roaster'])
+    expect(unresolvedDesignAssetIds('asset manifest version must be 1')).toBeUndefined()
+
+    expect(isAssetAcquisitionProgress(before, diagnostic('beans', 'roaster'))).toBe(true)
+    expect(isAssetAcquisitionProgress(before, diagnostic('beans', 'harbor', 'roaster'))).toBe(false)
+    expect(isAssetAcquisitionProgress(before, diagnostic('beans', 'portrait'))).toBe(false)
+    expect(isAssetAcquisitionProgress(undefined, diagnostic('beans'))).toBe(false)
+    expect(isAssetAcquisitionProgress('a font failed to download', diagnostic('beans'))).toBe(false)
+    expect(isAssetAcquisitionProgress(before, 'a font failed to download')).toBe(false)
   })
 })
 

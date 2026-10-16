@@ -1,4 +1,5 @@
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
@@ -22,6 +23,53 @@ export interface DesignBrief {
   explicitAnswers: ExplicitBriefAnswer[]
   assumptions: string[]
   unresolved: string[]
+}
+
+/** Words that name a marketing surface: a site or page about a product rather than the product. */
+const MARKETING_SURFACE =
+  /\b(?:landing ?(?:pages?)?|launch ?pages?|marketing|portfolio|(?:web|micro)? ?sites?|(?:web|start|internet)? ?seiten?|webauftritt|home ?pages?|web ?pages?|one ?pagers?)\b/u
+/** Pages of a product's website rather than views of the product ("pricing page"). */
+const MARKETING_PAGE_NAMES =
+  'pricing|about(?: us)?|wait ?list|careers?|blog|contact(?: us)?|features?|changelog'
+/** A page type naming one of those pages; page types are labels, not prose. */
+const MARKETING_PAGE_TYPE = new RegExp(`\\b(?:${MARKETING_PAGE_NAMES}) ?pages?\\b`, 'u')
+/**
+ * A standalone page that presents a product ("a page for our analytics app", "a pricing page
+ * for our app") rather than operating it. "Settings page for the admin app" names an app view
+ * and stays a dashboard.
+ */
+const PAGE_ABOUT_PRODUCT = new RegExp(
+  `\\b(?:a|one|single|simple|marketing|product|promo|promotional|${MARKETING_PAGE_NAMES})\\s+page\\s+(?:about|for|showcasing|promoting|presenting|introducing)\\b`,
+  'u',
+)
+const APPLICATION_SURFACE =
+  /\b(?:dashboards?|admin|analytics|applications?|apps?|webapps?|product interface)\b/u
+
+export function isDashboardBrief(
+  brief: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
+): boolean {
+  // While dashboards are parked, every request runs as a website (see dashboard-references.ts).
+  if (!DASHBOARD_REFERENCES_ENABLED) return false
+  // The requested surface wins over the product being advertised on it: a site,
+  // one-pager or Webseite for an analytics app is still a website.
+  const pageType = surfaceText(brief.pageType)
+  if (isMarketingSurface(pageType) || MARKETING_PAGE_TYPE.test(pageType)) return false
+  if (APPLICATION_SURFACE.test(pageType)) return true
+  const request = surfaceText(brief.originalRequest)
+  return !isMarketingSurface(request) && APPLICATION_SURFACE.test(request)
+}
+
+/** A page plan in the dashboard mode; a saved one routes nothing while dashboards are parked. */
+export function isDashboardPageMode(mode: string | undefined): boolean {
+  return DASHBOARD_REFERENCES_ENABLED && mode === 'operate_monitor'
+}
+
+function isMarketingSurface(text: string): boolean {
+  return MARKETING_SURFACE.test(text) || PAGE_ABOUT_PRODUCT.test(text)
+}
+
+function surfaceText(value: string | undefined): string {
+  return (value ?? '').toLowerCase().replace(/[_-]/gu, ' ')
 }
 
 const STRING_FIELDS = [

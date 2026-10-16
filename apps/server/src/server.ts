@@ -1,3 +1,4 @@
+import path from 'node:path'
 import { timingSafeEqual } from 'node:crypto'
 import { isIPv4 } from 'node:net'
 import { WebSocketServer, type WebSocket } from 'ws'
@@ -22,6 +23,7 @@ import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
 import { createProjectListProjector, type ProjectListState } from './project-list.js'
 import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
+import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
 import {
@@ -130,6 +132,18 @@ export function startServer(
       ({ PullRequestService }) => new PullRequestService(),
     ))
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
+  let usageHistory: Promise<UsageHistoryService> | undefined
+  let usageHistoryClosing = false
+  const usageHistoryService = () =>
+    (usageHistory ??= import('./usage-history.js').then(({ UsageHistoryService }) => {
+      const service = new UsageHistoryService({
+        cacheFile: path.join(path.dirname(databasePath), 'usage-history.json'),
+        harnessUsage: () => store.usageEvents(),
+      })
+      if (usageHistoryClosing) service.dispose()
+      else void service.startBackgroundRefresh()
+      return service
+    }))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (serializedEvent === undefined) {
@@ -531,19 +545,44 @@ export function startServer(
       case 'providers.install': {
         const p = parseParams(method, params)
         const { installCommandFor } = await import('./providers.js')
-        const command = await installCommandFor(p.provider)
-        return {
-          terminalId: orchestrator.installProvider(p.provider, command, p.columns, p.rows),
-        }
+        const command = await installCommandFor(p.provider, p.agent)
+        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
+        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
       }
 
       case 'providers.launch': {
         const p = parseParams(method, params)
         const { launchCommandFor } = await import('./providers.js')
-        const command = await launchCommandFor(p.provider)
+        const command = await launchCommandFor(p.provider, p.agent)
+        const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
-          terminalId: orchestrator.launchProviderLogin(p.provider, command, p.columns, p.rows),
+          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
         }
+      }
+
+      case 'connections.list':
+        return { connections: orchestrator.listModelConnections() }
+
+      case 'connections.upsert':
+        return {
+          connection: orchestrator.upsertModelConnection(parseParams(method, params)),
+        }
+
+      case 'connections.setCredential': {
+        const p = parseParams(method, params)
+        orchestrator.setModelConnectionCredential(p.connectionId, p.apiKey)
+        return { credentialConfigured: true }
+      }
+
+      case 'connections.remove': {
+        const p = parseParams(method, params)
+        orchestrator.removeModelConnection(p.connectionId)
+        return {}
+      }
+
+      case 'connections.models': {
+        const p = parseParams(method, params)
+        return { models: await orchestrator.listConnectionModels(p.connectionId) }
       }
 
       case 'mcp.list': {
@@ -705,6 +744,21 @@ export function startServer(
         const p = parseParams(method, params)
         orchestrator.cancelVoice(p.requestId)
         return {}
+      }
+
+      case 'acp.agents': {
+        const agents = await (await import('@harness/adapter-acp/agents')).detectAgents()
+        return {
+          agents: agents.map(({ id, name, installed, verified, install, setup, problem }) => ({
+            id,
+            name,
+            installed,
+            verified,
+            setup,
+            ...(!(install === undefined) ? { install } : {}),
+            ...(!(problem === undefined) ? { problem } : {}),
+          })),
+        }
       }
 
       case 'projects.list': {
@@ -944,6 +998,15 @@ export function startServer(
         )
       }
 
+      case 'usage.history': {
+        const p = parseParams(method, params)
+        return (await usageHistoryService()).history(p.range, p.refresh ?? false)
+      }
+
+      case 'usage.resetHistory':
+        await (await usageHistoryService()).resetAndRefresh()
+        return { started: true as const }
+
       case 'usage.consumeReset': {
         const p = parseParams(method, params)
         return orchestrator.consumeRateLimitReset(p.provider, p.idempotencyKey, p.creditId)
@@ -975,6 +1038,7 @@ export function startServer(
           effort: p.effort,
           approval: p.approval,
           agent: p.agent,
+          connectionId: p.connectionId,
           isolate: p.isolate,
         })
         return { threadId: thread.id }
@@ -1143,6 +1207,8 @@ export function startServer(
       void orchestrator.closeAllTerminals().catch(() => undefined)
       await providerHistory.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
+      usageHistoryClosing = true
+      await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
       const orchestratorClosed = orchestrator.disposeAll()
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([

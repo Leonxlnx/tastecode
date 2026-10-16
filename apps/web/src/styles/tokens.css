@@ -80,7 +80,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--surface-3);
-  --composer-design-border-hover: var(--composer-control-border-hover);
   --composer-design-border-active: var(--composer-control-border-hover);
   --composer-design-beam-stroke-strength: 1;
   --composer-design-beam-inner-strength: 1;
@@ -156,7 +155,9 @@
     'JetBrainsMono Nerd Font Mono', 'JetBrains Mono Variable', 'JetBrains Mono',
     'CaskaydiaCove Nerd Font Mono', 'Cascadia Mono', 'Cascadia Code', 'Geist Mono Variable',
     'Symbols Nerd Font Mono', ui-monospace, monospace;
-  --terminal-workspace-bg: #0d0d0d;
+  /* The workspace terminal is part of the panel, so it takes the app's own
+     background and follows every backdrop preset or custom colour. */
+  --terminal-workspace-bg: var(--bg);
 
   --t-xs: 11.5px;
   --t-sm: 12.5px;
@@ -303,7 +304,9 @@
   --on-danger: #fefefe;
 
   --bg: #fdfdfd;
-  --terminal-workspace-bg: #eff1f5;
+  /* Light keeps the terminal a hair inset from the page, on the app's own
+     neutral surface rather than a separate blue-grey slab. */
+  --terminal-workspace-bg: var(--surface);
   --bg-rail: #fcfcfc;
   /* Keep the glass tint aligned with the flat rail surface. */
   --bg-rail-tint: #fcfcfc;
@@ -360,7 +363,6 @@
   --composer-action-shadow-hover: none;
   --composer-action-shadow-active: none;
   --composer-design-active-bg: var(--composer-control-bg);
-  --composer-design-border-hover: #c7c7cd;
   --composer-design-border-active: #b9bac2;
   --composer-design-prompt-border: #bfc0c8;
   --composer-design-beam-stroke-strength: 2.1;
@@ -401,16 +403,18 @@
   --error: #be123c;
   --success: #16803c;
 
-  /* Light: a white thumb with a dark dot on a grey fill. */
-  --effort-track: color-mix(in srgb, var(--text) 6%, var(--bg-prompt));
-  --effort-track-line: color-mix(in srgb, var(--text) 9%, transparent);
-  --effort-fill: color-mix(in srgb, var(--text) 27%, var(--bg-prompt));
-  --effort-dot: color-mix(in srgb, var(--text) 28%, transparent);
-  --effort-dot-lit: color-mix(in srgb, var(--bg-prompt) 92%, transparent);
-  --effort-thumb-bg: var(--bg-prompt);
-  --effort-thumb-dot: var(--text);
-  --effort-thumb-shadow: 0 1px 3px rgb(24 24 27 / 22%), 0 0 0 0.5px rgb(24 24 27 / 20%);
-  --effort-ring: color-mix(in srgb, var(--text) 40%, transparent);
+  /* Light: the same active language as a switch. The empty part is a
+     groove, the chosen range is ink, and the thumb is paper. A mid-grey
+     fill on the near-white menu read as unfinished. */
+  --effort-track: var(--surface-3);
+  --effort-track-line: color-mix(in srgb, var(--text) 16%, transparent);
+  --effort-fill: var(--light);
+  --effort-dot: color-mix(in srgb, var(--text) 42%, transparent);
+  --effort-dot-lit: color-mix(in srgb, var(--on-light) 78%, transparent);
+  --effort-thumb-bg: var(--on-light);
+  --effort-thumb-dot: var(--light);
+  --effort-thumb-shadow: 0 0 0 0.5px rgb(24 24 27 / 22%), 0 1px 1.5px rgb(24 24 27 / 12%);
+  --effort-ring: color-mix(in srgb, var(--text) 34%, transparent);
   --effort-mark-empty: color-mix(in srgb, var(--text) 20%, transparent);
 }
 
@@ -652,5 +656,4 @@ html.is-macos-font-smoothing {
 
 :root[data-theme='light'][data-backdrop='custom'] {
   --backdrop-shade: #000;
-  --terminal-workspace-bg: var(--surface);
 }

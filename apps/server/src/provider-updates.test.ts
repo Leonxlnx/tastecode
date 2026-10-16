@@ -47,10 +47,11 @@ describe('provider update service', () => {
     expect(check).not.toHaveBeenCalled()
   })
 
-  it('does not downgrade newer installations and rejects unknown or current targets', async () => {
+  it('does not downgrade newer installations and rejects unknown or unconfigured targets', async () => {
     const { service, system } = fixture()
     system.version.mockResolvedValue('0.12.0')
     await expect(service.commandFor('codex')).rejects.toThrow('no newer version')
+    await expect(service.commandFor('opencode')).rejects.toThrow('does not support')
     await expect(service.commandFor('unlisted-cli' as never)).rejects.toThrow('does not support')
   })
 

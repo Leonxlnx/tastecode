@@ -1,6 +1,45 @@
 import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
-import { REFERENCE_REVEAL_SOURCE } from './motion-guidance.js'
+import {
+  DESIGN_MOTION_GUIDANCE,
+  designMotionGuidance,
+  REFERENCE_REVEAL_SOURCE,
+} from './motion-guidance.js'
+import type { PageBlueprint } from './page.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
+
+it('selects operational motion from the brief or saved page architecture', () => {
+  const dashboard = designMotionGuidance({
+    pageType: 'dashboard',
+    originalRequest: 'Build a finance workspace.',
+  })
+  expect(dashboard).toContain('filters, sorting, tabs, navigation, drawers and chart controls')
+  expect(dashboard).toContain('keyboard operation')
+  expect(dashboard).toContain('prefers-reduced-motion')
+  expect(dashboard).not.toContain('Plan and implement a visible hero entrance')
+  expect(dashboard).toContain('Use one shared duration and easing pair for these transitions')
+  // SAFETY: Only architecture.mode is read from this saved-page fixture.
+  expect(
+    designMotionGuidance(undefined, { architecture: { mode: 'operate_monitor' } } as PageBlueprint),
+  ).toBe(dashboard)
+  expect(
+    designMotionGuidance({
+      pageType: 'landing_page',
+      originalRequest: 'A landing page for our analytics dashboard.',
+    }),
+  ).toBe(DESIGN_MOTION_GUIDANCE)
+  expect(designMotionGuidance()).toBe(DESIGN_MOTION_GUIDANCE)
+})
+
+it('gives a website one reused motion vocabulary instead of an effect per section', () => {
+  expect(DESIGN_MOTION_GUIDANCE).toContain(
+    'Give the page one motion vocabulary: two or three named reveal types (for example rise, slide and media) with shared durations, easing and stagger, reused across sections',
+  )
+  expect(DESIGN_MOTION_GUIDANCE).toContain('instead of inventing its own effect')
+  expect(DESIGN_MOTION_GUIDANCE).toContain('Do not apply the same fade-up to every section')
+})
 
 describe('reference reveal lifecycle', () => {
   it('never hides painted content, replays, or leaves hidden content after cleanup/reduced motion', () => {

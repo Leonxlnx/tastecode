@@ -19,6 +19,7 @@ The table below is generated from `licenses/direct-runtime-dependencies.json` an
 | `@fontsource-variable/inter` | Inter variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@fontsource-variable/jetbrains-mono` | JetBrains Mono variable font | OFL-1.1 | [source](https://github.com/fontsource/font-files) |
 | `@napi-rs/keyring` | OS credential-store integration | MIT | [source](https://github.com/Brooooooklyn/keyring-node) |
+| `@opencode-ai/sdk` | OpenCode adapter client | MIT | [source](https://github.com/anomalyco/opencode) |
 | `@pierre/diffs` | Pull-request diff rendering | Apache-2.0 | [source](https://github.com/pierrecomputer/pierre) |
 | `@shikijs/langs` | Syntax highlighting grammars | MIT | [source](https://github.com/shikijs/shiki) |
 | `@shikijs/themes` | Syntax highlighting themes | MIT | [source](https://github.com/shikijs/shiki) |

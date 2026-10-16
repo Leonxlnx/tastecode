@@ -62,10 +62,13 @@ describe('project MCP config', () => {
     const { project, location, store } = setup()
     mkdirSync(path.dirname(location))
     const projectKey = fs.realpathSync.native(project)
-    const nightly = { docs: { id: 'docs', enabled: true, futureField: ['kept'] } }
+    const unsupported = { docs: { id: 'docs', enabled: true, futureField: ['kept'] } }
     writeFileSync(
       location,
-      JSON.stringify({ version: 1, projects: { [projectKey]: { pi: nightly } } }),
+      JSON.stringify({
+        version: 1,
+        projects: { [projectKey]: { 'future-provider': unsupported } },
+      }),
     )
 
     store.add('codex', project, { id: 'fresh', enabled: false })
@@ -74,7 +77,7 @@ describe('project MCP config', () => {
     const saved = JSON.parse(readFileSync(location, 'utf8')) as {
       projects: Record<string, Record<string, unknown>>
     }
-    expect(saved.projects[projectKey]).toEqual({ pi: nightly })
+    expect(saved.projects[projectKey]).toEqual({ 'future-provider': unsupported })
     expect(
       readdirSync(path.dirname(location)).filter((name) => name.includes('.invalid-')),
     ).toEqual([])

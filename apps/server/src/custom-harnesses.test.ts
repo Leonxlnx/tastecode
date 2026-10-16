@@ -40,25 +40,43 @@ describe('custom harnesses', () => {
     const root = mkdtempSync(path.join(os.tmpdir(), 'harness-custom-cli-'))
     roots.push(root)
     const location = path.join(root, 'custom-harnesses.json')
-    const nightlyOnly = {
+    const unsupported = {
+      id: 'future-cli',
+      displayName: 'Future CLI',
+      provider: 'future-provider',
+      command: 'future-cli',
+      args: [],
+    }
+    writeFileSync(location, JSON.stringify({ version: 1, harnesses: [unsupported] }))
+    const store = new CustomHarnessStore(location)
+
+    expect(store.list()).toEqual([])
+    expect(store.find('future-cli')).toBeUndefined()
+    store.upsert({ id: 'first', displayName: 'First', provider: 'codex', command: 'c', args: [] })
+
+    expect(store.list().map((harness) => harness.id)).toEqual(['first'])
+    expect(JSON.parse(readFileSync(location, 'utf8')).harnesses).toEqual([
+      expect.objectContaining({ id: 'first' }),
+      unsupported,
+    ])
+  })
+
+  it('exposes configured Pi harnesses on nightly', () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-custom-cli-'))
+    roots.push(root)
+    const location = path.join(root, 'custom-harnesses.json')
+    const harness = {
       id: 'deepseek-pi',
       displayName: 'DeepSeek Pi',
       provider: 'pi',
       command: 'deepseek-pi',
       args: [],
     }
-    writeFileSync(location, JSON.stringify({ version: 1, harnesses: [nightlyOnly] }))
+    writeFileSync(location, JSON.stringify({ version: 1, harnesses: [harness] }))
     const store = new CustomHarnessStore(location)
 
-    expect(store.list()).toEqual([])
-    expect(store.find('deepseek-pi')).toBeUndefined()
-    store.upsert({ id: 'first', displayName: 'First', provider: 'codex', command: 'c', args: [] })
-
-    expect(store.list().map((harness) => harness.id)).toEqual(['first'])
-    expect(JSON.parse(readFileSync(location, 'utf8')).harnesses).toEqual([
-      expect.objectContaining({ id: 'first' }),
-      nightlyOnly,
-    ])
+    expect(store.list()).toEqual([harness])
+    expect(store.find(harness.id)).toEqual(harness)
   })
 
   it('updates and removes one entry without touching its neighbours', () => {
