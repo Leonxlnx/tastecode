@@ -135,30 +135,40 @@ describe('CLI probe', () => {
     expect(system.version).toHaveBeenCalledTimes(2)
   })
 
-  it('holds a version read until the server says it may start the CLI', async () => {
+  it('holds the background re-read of a known version until the server allows it', async () => {
     vi.useFakeTimers()
     const { system, answer, probe } = machine()
     let release!: () => void
     probe.waitBeforeReads(() => new Promise<void>((resolve) => (release = resolve)))
-    const scan = probe.version('codex', { waitMs: 250 })
-    await vi.advanceTimersByTimeAsync(250)
-    await expect(scan).resolves.toBeUndefined()
-    expect(system.version).not.toHaveBeenCalled()
+    const first = probe.version('codex')
+    await vi.advanceTimersByTimeAsync(0)
+    await answer('codex-cli 1.4.0')
+    await expect(first).resolves.toBe('codex-cli 1.4.0')
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(probe.version('codex')).resolves.toBe('codex-cli 1.4.0')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(system.version).toHaveBeenCalledTimes(1)
 
     release()
     await vi.advanceTimersByTimeAsync(0)
-    expect(system.version).toHaveBeenCalledTimes(1)
-    await answer('codex-cli 1.4.0')
-    await expect(probe.version('codex')).resolves.toBe('codex-cli 1.4.0')
+    expect(system.version).toHaveBeenCalledTimes(2)
+    await answer('codex-cli 1.5.0')
+    await expect(probe.version('codex')).resolves.toBe('codex-cli 1.5.0')
   })
 
-  it('never holds the read that checks a finished update', async () => {
+  it('never holds a first read or the read that checks a finished update', async () => {
     vi.useFakeTimers()
     const { system, answer, probe } = machine()
     probe.waitBeforeReads(() => new Promise<void>(() => undefined))
-    const verified = probe.version('codex', { fresh: true })
+    const first = probe.version('codex')
     await vi.advanceTimersByTimeAsync(0)
     expect(system.version).toHaveBeenCalledTimes(1)
+    await answer('codex-cli 0.9.0')
+    await expect(first).resolves.toBe('codex-cli 0.9.0')
+    const verified = probe.version('codex', { fresh: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(system.version).toHaveBeenCalledTimes(2)
     await answer('codex-cli 0.11.0')
     await expect(verified).resolves.toBe('codex-cli 0.11.0')
   })
