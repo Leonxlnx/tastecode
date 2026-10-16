@@ -49,6 +49,11 @@ export type OpenCodeStartOptions = {
 export type OpenCodeTurnOptions = Pick<OpenCodeStartOptions, 'model' | 'effort'>
 
 const OPENCODE_DEFAULT_VARIANT = 'default'
+/**
+ * `opencode serve` took 9-36 s to print its URL on a loaded PC. The old 7 s limit
+ * failed three of four such starts, each of which then had to be killed.
+ */
+export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -935,7 +940,10 @@ async function launchOpenCodeServer(
       }
       resolve({ url, authorization, close: () => killTree(child) })
     }
-    const timer = setTimeout(() => finish(new Error('OpenCode server did not start')), 7000)
+    const timer = setTimeout(
+      () => finish(new Error('OpenCode server did not start')),
+      OPENCODE_SERVER_START_TIMEOUT_MS,
+    )
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       output = `${output}${chunk}`.slice(-4096)

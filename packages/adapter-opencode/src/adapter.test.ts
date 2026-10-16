@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
+  OPENCODE_SERVER_START_TIMEOUT_MS,
   openCodeMcpConfig,
   openCodeReasoningEfforts,
 } from './adapter.js'
@@ -683,6 +684,43 @@ describe('OpenCode adapter', () => {
       await adapter.start()
       expect(serve.children).toHaveLength(1)
     } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('starts a serve that needs 10 s to print its URL', async () => {
+    const mock = await serveOpenCodeV2()
+    const serve = fakeOpenCodeServe()
+    const adapter = new OpenCodeAdapter({ spawn: serve.spawn })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const starting = adapter.start()
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(serve.children[0]!.kill).not.toHaveBeenCalled()
+      serve.children[0]!.stdout.write(`opencode server listening on ${mock.baseUrl}\n`)
+      vi.useRealTimers()
+      await starting
+      expect(serve.children[0]!.kill).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+      await adapter.dispose()
+    }
+  })
+
+  it('stops a serve that never prints its URL before it reports OpenCode unavailable', async () => {
+    const serve = fakeOpenCodeServe()
+    const adapter = new OpenCodeAdapter({ spawn: serve.spawn })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const failed = expect(adapter.start()).rejects.toThrow('OpenCode is unavailable')
+      await vi.advanceTimersByTimeAsync(OPENCODE_SERVER_START_TIMEOUT_MS - 1)
+      expect(serve.children[0]!.kill).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1)
+      await failed
+      expect(serve.children[0]!.kill).toHaveBeenCalled()
+      expect(serve.children).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
       await adapter.dispose()
     }
   })
