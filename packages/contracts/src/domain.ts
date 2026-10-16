@@ -136,6 +136,11 @@ export const ThreadSchema = z
     provider: ProviderIdSchema,
     /** Selects a server-owned model connection for the Harness API runtime. */
     connectionId: z.string().min(1).optional(),
+    /**
+     * The provider account this chat is pinned to; its sessions live in that
+     * account's folder. Absent means the default account.
+     */
+    accountId: AccountIdSchema.optional(),
     /** Absolute path to the workspace this thread operates on. */
     workspacePath: z.string(),
     title: z.string().optional(),

@@ -14,6 +14,7 @@ const project = {
       title: 'Task',
       provider: 'codex',
       agent: 'agent',
+      accountId: 'work',
       createdAt: 2,
       running: false,
       pinned: true,
