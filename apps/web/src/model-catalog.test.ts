@@ -267,6 +267,28 @@ describe('model catalog', () => {
       expect(unlistedHiddenModels(codex163, null)).toEqual([])
     })
 
+    it('returns Codex rows to the newest of each tier once, from version 7', () => {
+      // A profile saved at version 7 with the old Codex defaults, and an Opus
+      // 5.5 the user hid by hand.
+      const opus = claude([['opus', 'Opus 5.5']])
+      const catalog = [...codex163, ...opus]
+      const saved = new Set([
+        'codex:gpt-5.6-sol',
+        'codex:gpt-5.6-terra',
+        'codex:gpt-5.6-luna',
+        'codex:gpt-5.5',
+        'claude-code:opus',
+      ])
+      const migrated = migrateHiddenModels(saved, '7', catalog)
+
+      expect(shown(codex163, migrated)).toEqual([
+        'GPT-6-Astra',
+        'GPT-6.1-Sol',
+        'GPT-5.6-Terra',
+        'GPT-6-Luna',
+      ])
+      expect(migrated.has('claude-code:opus')).toBe(true)
+    })
     it('does not let an older row that appears late take anything over', () => {
       // `opus` moved on to Opus 6, so the 5.5 catalog row is listed on its own.
       const before = claude([

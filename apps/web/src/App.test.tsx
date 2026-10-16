@@ -1862,7 +1862,7 @@ describe('web client', () => {
       ),
     )
     expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
   })
 
   it('never starts a chat on another provider than the picker names while its source loads', async () => {
@@ -2041,7 +2041,10 @@ describe('web client', () => {
     await waitFor(() =>
       expect(screen.getByRole('switch', { name: 'Include GPT-5.5 in model picker' })).toBeTruthy(),
     )
-    expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]')
+    // The edit stays; GPT-5.5, listed only now, takes its default once.
+    expect(localStorage.getItem('harness.hiddenModels')).toBe(
+      '["codex:gpt-6.1-sol","codex:gpt-5.5"]',
+    )
   })
 
   it("keeps a new profile's first choice made while its first discovery is pending", async () => {
@@ -2075,13 +2078,15 @@ describe('web client', () => {
 
     // Every source answered: the profile is current, with the choice kept and
     // the newly listed GPT-5.5 on its default.
-    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
+    )
     expect(savedHiddenModels()).toEqual(['codex:gpt-5.5', 'codex:gpt-6.1-sol'])
   })
 
   it('never replaces a saved model-visibility choice with curated defaults', async () => {
     const saved = '["codex:gpt-6.1-sol"]'
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
     localStorage.setItem('harness.hiddenModels', saved)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
@@ -2153,7 +2158,7 @@ describe('web client', () => {
         '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
       ),
     )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7')
+    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
   })
 
   it('returns Claude Code to the current lineup for a profile an older build saved', async () => {
@@ -2178,7 +2183,9 @@ describe('web client', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('7'))
+    await waitFor(() =>
+      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
+    )
     expect(offered('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
     // Codex keeps its saved choices: GPT-5.5 stays hidden, Sol stays shown.
     expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
@@ -10953,7 +10960,7 @@ describe('reopening a session', () => {
   })
 
   it('uses a visible same-source model when the remembered one is hidden', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
