@@ -26,6 +26,8 @@ import {
   GitHubRepositoryNameSchema,
   PullRequestActionResultSchema,
   PullRequestActionSchema,
+  PullRequestCreateResultSchema,
+  PullRequestCreateSchema,
   PullRequestDetailSchema,
   PullRequestFilesResultSchema,
   PullRequestImageSchema,
@@ -1189,6 +1191,18 @@ export const methods = {
     result: CheckoutPullRequestResultSchema,
   },
   /**
+   * Open a pull request from the checkout's pushed branch. The server owns
+   * the gh command line and passes the body on stdin; it refuses the default
+   * branch and a branch without an upstream.
+   */
+  'pullRequests.create': {
+    params: PullRequestCreateSchema.extend({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: PullRequestCreateResultSchema,
+  },
+  /**
    * Load a repository file or upload embedded as an image. The
    * renderer has no GitHub session, so the server fetches the bytes through
    * the authenticated CLI and private repositories render like public ones.
@@ -1258,6 +1272,42 @@ export const methods = {
       threadId: z.string().min(1).optional(),
     }),
     result: SessionDiffSchema,
+  },
+  /**
+   * Commit every tracked change in the active checkout, plus untracked files
+   * when asked. The message travels on stdin, never as argv. Fails with a
+   * readable detail when there is nothing to commit or a hook refuses.
+   */
+  'workspace.commit': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      message: z
+        .string()
+        .min(1)
+        .max(10_000)
+        .refine((value) => value.trim().length > 0, 'expected a commit message'),
+      includeUntracked: z.boolean(),
+    }),
+    result: z.object({
+      /** Full hash of the new commit. */
+      commit: z.string().regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/, 'expected a commit hash'),
+      branch: z.string().min(1).optional(),
+    }),
+  },
+  /**
+   * Push the checkout's branch to its remote, setting the upstream on the
+   * first push. Refused on a detached HEAD. Never forces.
+   */
+  'workspace.push': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      branch: z.string().min(1),
+      remote: z.string().min(1),
+    }),
   },
   /** Lazily list one folder in a registered project or a session's isolated checkout. */
   'workspace.listDirectory': {
