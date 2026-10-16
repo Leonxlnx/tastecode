@@ -1,4 +1,5 @@
 import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import type { BrandSystem } from './brand.js'
 import path from 'node:path'
 import { assertPageCopy } from './copywriting.js'
@@ -13,9 +14,14 @@ import {
   type ReferenceDirection,
 } from './reference-directions.js'
 
-const PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Markdown fences:
+const FULL_PAGE_PROTOCOL = `Return the final page blueprint as JSON only, without Markdown fences:
 
 {"version":1,"page":{"title":"...","route":"/","description":"..."},"architecture":{"contract":"This page helps ...","mode":"scan_compare|read_understand|persuade_convert|explore_experience|operate_monitor","novelty":"low|medium|high","grid":"...","signatureRule":"...","rhythm":"..."},"navigation":[{"label":"...","target":"..."}],"navigationDesign":{"layoutCase":"navigation-1","layout":"...","behavior":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}},"sections":[{"id":"...","layoutFamily":"hero|about|feature|how_it_works|social_proof|stats|faq|cta|pricing|contact|footer|dashboard","layoutCases":["hero-text-1","hero-visual-1"],"referenceDirectionId":"direction-001","purpose":"...","userQuestion":"...","stage":"orient|qualify|evaluate|prove|explain|de_risk|act|continue","dependencies":[],"evidence":[],"copy":{"heading":"...","body":[],"callsToAction":[{"label":"...","target":"..."}]},"layout":"...","motion":{"purpose":"none|feedback|state_change|spatial_continuity|explanation|status","trigger":"none|load|scroll_enter|scroll_progress|hover|press|drag|state_change","behavior":"...","durationMs":220,"easing":"cubic-bezier(0.23, 1, 0.32, 1)","reducedMotion":"..."},"componentNeeds":[],"assetNeeds":[],"transformation":{"compact":"...","medium":"...","expanded":"..."}}],"responsive":[],"interactions":[],"acceptanceCriteria":[]}`
+
+// Parked dashboards leave the protocol, so a plan cannot choose a mode or family without references.
+const PAGE_PROTOCOL = DASHBOARD_REFERENCES_ENABLED
+  ? FULL_PAGE_PROTOCOL
+  : FULL_PAGE_PROTOCOL.replace('|operate_monitor', '').replace('|dashboard', '')
 
 export function designPagePrompt(
   brief: DesignBrief,

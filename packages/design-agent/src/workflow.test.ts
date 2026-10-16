@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   DESIGN_BRIEF_ATTACHMENT,
   designBriefingContinuation,
@@ -7,6 +7,9 @@ import {
   isDesignBriefAttachment,
   parseBriefingOutput,
 } from './workflow.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 describe('provider-neutral briefing workflow', () => {
   it('classifies dashboards separately from marketing websites without a questionnaire', () => {

@@ -4,6 +4,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { PAGE_LAYOUT_FAMILIES, WEBSITE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
 import {
@@ -94,7 +95,8 @@ function catalogText(value: unknown): string[] {
 export function loadReviewedReferences(root = referenceLibraryRoot()): LibraryReference[] {
   try {
     const catalogFiles = ['catalog.json']
-    if (existsSync(path.join(root, 'dashboard-catalog.json')))
+    // A parked dashboard catalog is ignored, also in a configured library that still has one.
+    if (DASHBOARD_REFERENCES_ENABLED && existsSync(path.join(root, 'dashboard-catalog.json')))
       catalogFiles.push('dashboard-catalog.json')
     const listed = catalogFiles.flatMap((file) => {
       const catalog = record(
@@ -115,7 +117,8 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): LibraryRe
       return (
         (entry.reviewStatus === 'reviewed' || entry.reviewStatus === 'candidate') &&
         (entry.family !== 'dashboard' ||
-          (entry.reviewStatus === 'reviewed' &&
+          (DASHBOARD_REFERENCES_ENABLED &&
+            entry.reviewStatus === 'reviewed' &&
             entry.assetType === 'generated-reference' &&
             typeof entry.mobileImagePath === 'string' &&
             entry.mobileImagePath.trim().length > 0)) &&
@@ -177,7 +180,7 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): LibraryRe
     }))
   } catch (error) {
     throw new Error(
-      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair catalog.json, dashboard-catalog.json or their files, then restart Design mode.`,
+      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair ${DASHBOARD_REFERENCES_ENABLED ? 'catalog.json, dashboard-catalog.json or their files' : 'catalog.json or its files'}, then restart Design mode.`,
     )
   }
 }

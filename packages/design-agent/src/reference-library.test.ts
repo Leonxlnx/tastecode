@@ -20,6 +20,9 @@ import {
   type ReferenceStyleProfiles,
 } from './reference-style-profiles.js'
 
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
+
 const roots: string[] = []
 afterEach(() => {
   roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true }))

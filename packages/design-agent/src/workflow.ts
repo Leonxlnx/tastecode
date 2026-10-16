@@ -1,5 +1,6 @@
 import { type BoundaryRecord, list, record, string } from './parse.js'
 import { parseDesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { DESIGN_CONTENT_GUIDANCE, LANDING_PAGE_GUIDANCE } from './content-guidance.js'
 export { DESIGN_BRIEF_ATTACHMENT, isDesignBriefAttachment } from './attachment.js'
 
@@ -22,9 +23,14 @@ const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one o
 
 {"status":"not_design","message":"This request is not a website or interface design task.","questions":[],"brief":null}`
 
-const SURFACE_GUIDANCE = `Set pageType to "dashboard" for operating product interfaces such as admin, analytics, finance, health tracking or a customer workspace. Record their actual screens, data views, navigation and user actions in requiredContent; do not impose marketing sections or an eight-section minimum. A marketing website about a dashboard product is still pageType "landing_page" and follows the landing-page guidance; so is a site, one-pager, microsite, homepage, launch page, Webseite or Seite for an app, analytics or admin product.
+const DASHBOARD_SURFACE_GUIDANCE = `Set pageType to "dashboard" for operating product interfaces such as admin, analytics, finance, health tracking or a customer workspace. Record their actual screens, data views, navigation and user actions in requiredContent; do not impose marketing sections or an eight-section minimum. A marketing website about a dashboard product is still pageType "landing_page" and follows the landing-page guidance; so is a site, one-pager, microsite, homepage, launch page, Webseite or Seite for an app, analytics or admin product.`
 
-New websites include visible entrance and scroll animations by default. Dashboards instead include useful transitions for filters, sorting, tabs, navigation, drawers and charts where present. Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.`
+/** While dashboards are parked, an app-screen request still finishes as a website run. */
+const PARKED_DASHBOARD_GUIDANCE = `Design mode currently builds websites; dashboard and app screens are not available. When the request asks for an operating product interface such as an admin, analytics, finance or health tracking dashboard, set pageType to "landing_page", design the website that presents that product with its key views as native interface sections, and record in assumptions that dashboard screens are not available in Design mode yet. Never return "not_design" for such a request.`
+
+const SURFACE_GUIDANCE = `${DASHBOARD_REFERENCES_ENABLED ? DASHBOARD_SURFACE_GUIDANCE : PARKED_DASHBOARD_GUIDANCE}
+
+New websites include visible entrance and scroll animations by default.${DASHBOARD_REFERENCES_ENABLED ? ' Dashboards instead include useful transitions for filters, sorting, tabs, navigation, drawers and charts where present.' : ''} Record an explicit request for no animation when given; do not infer motionless behavior merely from words such as calm, professional, or restrained.`
 
 export function designBriefingPrompt(request: string): string {
   return `You are running TasteCode Design Briefing mode.

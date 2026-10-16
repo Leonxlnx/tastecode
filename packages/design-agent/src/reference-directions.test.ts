@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { BrandSystem } from './brand.js'
 import type { DesignBrief } from './brief.js'
 import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
@@ -11,6 +11,9 @@ import {
   selectReferenceDirectionDeck,
   type ReferenceDirection,
 } from './reference-directions.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 const brief: DesignBrief = {
   originalRequest: 'Build a calm launch page for a material research studio.',

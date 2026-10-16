@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   designReviewPrompt,
   designRepairPrompt,
@@ -12,6 +12,9 @@ import {
   readVisualReview,
   writeVisualReview,
 } from './review-phase.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 let workspace: string | undefined
 

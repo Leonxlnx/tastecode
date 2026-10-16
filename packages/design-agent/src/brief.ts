@@ -1,4 +1,5 @@
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 import { record, string, stringsAllowEmpty } from './parse.js'
 
 export interface ExplicitBriefAnswer {
@@ -47,6 +48,8 @@ const APPLICATION_SURFACE =
 export function isDashboardBrief(
   brief: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
 ): boolean {
+  // While dashboards are parked, every request runs as a website (see dashboard-references.ts).
+  if (!DASHBOARD_REFERENCES_ENABLED) return false
   // The requested surface wins over the product being advertised on it: a site,
   // one-pager or Webseite for an analytics app is still a website.
   const pageType = surfaceText(brief.pageType)
@@ -54,6 +57,11 @@ export function isDashboardBrief(
   if (APPLICATION_SURFACE.test(pageType)) return true
   const request = surfaceText(brief.originalRequest)
   return !isMarketingSurface(request) && APPLICATION_SURFACE.test(request)
+}
+
+/** A page plan in the dashboard mode; a saved one routes nothing while dashboards are parked. */
+export function isDashboardPageMode(mode: string | undefined): boolean {
+  return DASHBOARD_REFERENCES_ENABLED && mode === 'operate_monitor'
 }
 
 function isMarketingSurface(text: string): boolean {
