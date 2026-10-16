@@ -92,6 +92,19 @@ describe('createFollowGlide', () => {
     expect(writes.at(-1)).toBe(1_100)
   })
 
+  it('lands in a bounded number of frames when they arrive back to back', () => {
+    const { glide, frames, writes, frame } = glideWith()
+    glide.setTarget(1_200, 1_000)
+    let count = 0
+    while (frames.length > 0 && count < 1_000) {
+      frame(0.01)
+      count += 1
+    }
+
+    expect(count).toBeLessThan(60)
+    expect(writes.at(-1)).toBe(1_200)
+  })
+
   it('stops on request', () => {
     const { glide, frames, writes, frame } = glideWith()
     glide.setTarget(1_100, 1_000)
