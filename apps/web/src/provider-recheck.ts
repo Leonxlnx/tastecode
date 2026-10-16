@@ -8,28 +8,26 @@ export const PROVIDER_RECHECK_INTERVAL_MS = 30_000
 
 /**
  * Whether a fresh provider scan reports something the catalog has to act on:
- * a CLI that appeared or went away, a sign-in or a problem. Versions are
- * display data and do not count, so a scan that only learned one never
- * restarts every model listing.
+ * a CLI that appeared or went away, a sign-in or sign-out, or a problem.
+ * Versions are display data, and an `unknown` sign-in only means that check
+ * did not answer this time, so neither restarts every model listing.
  */
 export function providerScanChanged(
   before: readonly ProviderStatus[],
   after: readonly ProviderStatus[],
 ): boolean {
-  const signature = (statuses: readonly ProviderStatus[]) =>
-    statuses
-      .map((status) =>
-        [
-          status.id,
-          status.installed,
-          status.auth,
-          status.problem ?? '',
-          !!status.capabilities,
-        ].join('\u0000'),
-      )
-      .sort()
-      .join('\n')
-  return signature(before) !== signature(after)
+  if (before.length !== after.length) return true
+  const previous = new Map(before.map((status) => [status.id, status]))
+  return after.some((next) => {
+    const last = previous.get(next.id)
+    return (
+      !last ||
+      last.installed !== next.installed ||
+      (last.problem ?? '') !== (next.problem ?? '') ||
+      !last.capabilities !== !next.capabilities ||
+      (last.auth !== 'unknown' && next.auth !== 'unknown' && last.auth !== next.auth)
+    )
+  })
 }
 
 /**
