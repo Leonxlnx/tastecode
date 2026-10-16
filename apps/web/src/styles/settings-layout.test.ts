@@ -136,6 +136,7 @@ describe('settings viewport CSS', () => {
     expect(systemCss).toMatch(
       /\.settings :is\(\.set-button--quiet, \.settings__action\.is-secondary\) \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
     )
+    expect(systemCss).toMatch(/\.settings \.set-button--icon \{[^}]*width: 28px;[^}]*padding: 0;/s)
     // The old per-feature button looks are gone.
     expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
