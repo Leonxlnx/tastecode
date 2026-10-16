@@ -1,3 +1,4 @@
+import { takeFeedbackConfig } from './feedback-config.js'
 import { DEFAULT_PORT, startServer } from './server.js'
 
 // The desktop's legacy launch runs this server as Electron in Node mode.
@@ -5,12 +6,16 @@ import { DEFAULT_PORT, startServer } from './server.js'
 // and provider CLI would inherit it, and an Electron app started from one of
 // them would come up as plain Node.
 delete process.env['ELECTRON_RUN_AS_NODE']
+// Same reason: the feedback inbox key must live only in this process, never in
+// the environment every agent CLI and terminal inherits.
+const feedback = takeFeedbackConfig(process.env)
 
 const port = Number(process.env['HARNESS_PORT'] ?? DEFAULT_PORT)
 const server = startServer({
   port,
   host: process.env['HARNESS_HOST'] ?? '127.0.0.1',
   accessToken: process.env['HARNESS_ACCESS_TOKEN'],
+  feedback,
 })
 
 let shuttingDown = false
