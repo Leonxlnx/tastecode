@@ -482,6 +482,14 @@ button.thread__older:hover {
   transition: color var(--dur-fast) var(--ease-out);
 }
 
+/* The -3.5px above lines a 15px icon in its 18px box up with the text edge.
+   A row with no icon starts on its label, which would then sit 1.5px left of
+   the reply text. A class, not :has(), because these rows re-render while a
+   turn streams. */
+.activity__summary--bare {
+  margin-left: -2px;
+}
+
 /* Only the summaries that actually open respond to hover. */
 .activity > button.activity__summary:hover {
   color: var(--text);
