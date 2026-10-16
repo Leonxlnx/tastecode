@@ -154,11 +154,18 @@ function decodeHref(href: string): string {
   }
 }
 
+type MarkdownStrongProps = ComponentPropsWithoutRef<'strong'> & { node?: unknown }
+
+function MarkdownStrong({ children, node: _node }: MarkdownStrongProps) {
+  return <strong>{children}</strong>
+}
+
 const STREAMDOWN_COMPONENTS = {
   a: MarkdownLink,
   code: MarkdownCode,
   inlineCode: InlineCode,
   pre: MarkdownPre,
+  strong: MarkdownStrong,
 } satisfies Components
 const IMAGE_COMPONENTS = { ...STREAMDOWN_COMPONENTS, img: MarkdownImage } satisfies Components
 
