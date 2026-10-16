@@ -562,6 +562,28 @@ export const CustomHarnessVerificationSchema = z.object({
 })
 export type CustomHarnessVerification = z.infer<typeof CustomHarnessVerificationSchema>
 
+/**
+ * What a chat source of this provider must name, so clients read it instead
+ * of comparing provider ids.
+ */
+export const ProviderSourceShapeSchema = z.object({
+  /**
+   * Whether a source names an `agent`. `none`: never. `optional`: a custom
+   * harness may be chosen. `required`: every source names one, such as an ACP
+   * agent or a Pi harness.
+   */
+  agent: z.enum(['none', 'optional', 'required']),
+  /** Every source names a server-owned model connection (`connectionId`). */
+  connection: z.boolean(),
+  /**
+   * The provider itself answers `models.list` and `auth.status` without an
+   * agent or connection. When false, the agent or connection is what the
+   * user talks to, and it names the source.
+   */
+  direct: z.boolean(),
+})
+export type ProviderSourceShape = z.infer<typeof ProviderSourceShapeSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),
@@ -577,6 +599,8 @@ export const ProviderStatusSchema = z.object({
   setup: ProviderSetupSchema.optional(),
   /** Why it is unusable, in language we can show the user directly. */
   problem: z.string().optional(),
+  /** Absent on older servers; clients fall back to their own table. */
+  source: ProviderSourceShapeSchema.optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
 
