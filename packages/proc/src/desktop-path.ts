@@ -80,6 +80,8 @@ function extraDirectories(
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin') : undefined,
       // Antigravity's installer, whose PATH change a running shell never sees.
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'agy', 'bin') : undefined,
+      // winget's links for command-line packages such as Claude Code.
+      env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links') : undefined,
       ...userBins,
       join(home, 'scoop', 'shims'),
       env.ProgramData ? join(env.ProgramData, 'chocolatey', 'bin') : undefined,

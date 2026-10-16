@@ -96,6 +96,16 @@ describe('desktopPath', () => {
     expect(result.split(';')).toContain(path.win32.join(local, 'agy', 'bin'))
   })
 
+  it('finds a winget-installed CLI before Windows refreshes the process PATH', () => {
+    const local = 'C:\\Users\\tester\\AppData\\Local'
+    const result = desktopPath('C:\\Windows\\System32', {
+      platform: 'win32',
+      home: 'C:\\Users\\tester',
+      env: { LOCALAPPDATA: local },
+    })
+    expect(result.split(';')).toContain(path.win32.join(local, 'Microsoft', 'WinGet', 'Links'))
+  })
+
   it('writes the desktop-safe PATH back onto the given environment', () => {
     const home = process.platform === 'win32' ? 'C:\\Users\\tester' : '/Users/tester'
     const env: NodeJS.ProcessEnv = {
