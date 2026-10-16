@@ -87,29 +87,44 @@ function resolveWindowsExecutable(
 ): string | undefined {
   const envValue = (name: string) =>
     Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
-  const extensions = path.win32.extname(command)
-    ? ['']
-    : (envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD').split(';')
+  const searchPath = envValue('PATH') ?? ''
+  const pathExt = envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD'
+  return searchWindowsExecutable(command, searchPath, pathExt, /[\\/]/.test(command), cwd)
+}
+
+function searchWindowsExecutable(
+  command: string,
+  searchPath: string,
+  pathExt: string,
+  relative: boolean,
+  cwd: string,
+): string | undefined {
+  const extensions = path.win32.extname(command) ? [''] : pathExt.split(';')
   // A bare command is searched on PATH only, never in cwd: cwd is usually the
   // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
   // Empty PATH entries are skipped because they would resolve to cwd as well.
-  const directories = /[\\/]/.test(command)
+  const directories = relative
     ? [cwd]
-    : (envValue('PATH') ?? '')
+    : searchPath
         .split(';')
         .map((directory) => directory.replace(/^"|"$/g, ''))
         .filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
       const candidate = path.win32.resolve(cwd, directory, command + extension)
-      try {
-        if (statSync(candidate).isFile()) return candidate
-      } catch {
-        // Match Windows PATH/PATHEXT order without launching the candidate.
-      }
+      // Match Windows PATH/PATHEXT order without launching the candidate.
+      if (isFile(candidate)) return candidate
     }
   }
   return undefined
+}
+
+function isFile(candidate: string): boolean {
+  try {
+    return statSync(candidate).isFile()
+  } catch {
+    return false
+  }
 }
 
 /**
