@@ -174,6 +174,7 @@ export function startServer(
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
@@ -1030,8 +1031,11 @@ export function startServer(
           'threadId' in p
             ? store.usageSummary(p.threadId, startOfToday.getTime())
             : { session: empty, today: empty }
-        return usageSummaryWithLimits(totals, provider, (requestedProvider) =>
-          orchestrator.usageLimitSource(requestedProvider),
+        return usageSummaryWithLimits(
+          totals,
+          provider,
+          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider),
+          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider),
         )
       }
 
