@@ -815,17 +815,33 @@ function emptyUsageCache(): UsageCache {
   }
 }
 
+/** One job for the usage worker. */
+export type UsageWorkerJob = { kind: 'scan'; request: UsageScanRequest }
+
+export type UsageWorkerMessage =
+  | { type: 'progress'; progress: UsageScanProgress }
+  | { type: 'complete'; result: UsageScanResult }
+  | { type: 'error'; message: string }
+
 function runUsageScanWorker(
   request: UsageScanRequest,
   onProgress: (progress: UsageScanProgress) => void,
   signal: AbortSignal,
 ): Promise<UsageScanResult> {
+  return runUsageWorker({ kind: 'scan', request }, signal, onProgress)
+}
+
+function runUsageWorker<Result>(
+  job: UsageWorkerJob,
+  signal: AbortSignal,
+  onProgress: (progress: UsageScanProgress) => void = () => undefined,
+): Promise<Result> {
   return new Promise((resolve, reject) => {
     const sourceExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js'
     const worker = new Worker(
       new URL(`./usage-history-worker.${sourceExtension}`, import.meta.url),
       {
-        workerData: request,
+        workerData: job,
         name: 'harness-usage-index',
         execArgv: process.execArgv.filter((argument) => !argument.startsWith('--input-type')),
       },
@@ -851,7 +867,7 @@ function runUsageScanWorker(
         return
       }
       settle()
-      if (message.type === 'complete') resolve(message.result)
+      if (message.type === 'complete') resolve(message.result as Result)
       else reject(new Error(message.message))
     })
     worker.on('error', (error) => {
@@ -867,11 +883,6 @@ function runUsageScanWorker(
     if (signal.aborted) abort()
   })
 }
-
-type UsageWorkerMessage =
-  | { type: 'progress'; progress: UsageScanProgress }
-  | { type: 'complete'; result: UsageScanResult }
-  | { type: 'error'; message: string }
 
 function emptySources(): SourceState[] {
   return REPORTED_PROVIDERS.map((provider) => {
