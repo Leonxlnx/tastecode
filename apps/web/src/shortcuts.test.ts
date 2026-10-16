@@ -12,6 +12,7 @@ import {
   matchesShortcut,
   readKeybindings,
   reservedShortcutLabel,
+  shortcutAria,
   shortcutFromKeyboardEvent,
   shortcutLabel,
   shortcutRoute,
@@ -68,8 +69,13 @@ describe('shortcuts', () => {
     const newProject = createDefaultKeybindings().newProject!
     expect(shortcutLabel(newProject, true)).toBe('⌘⇧O')
     expect(shortcutLabel(newProject, false)).toBe('Ctrl+Shift+O')
-    expect(shortcutLabel({ key: 'arrowdown', primary: true, alt: true }, false)).toBe(
-      'Ctrl+Alt+ArrowDown',
+    expect(shortcutLabel({ key: 'arrowdown', primary: true, alt: true }, false)).toBe('Ctrl+Alt+↓')
+    expect(shortcutLabel({ key: 'escape', primary: true }, false)).toBe('Ctrl+Esc')
+    expect(shortcutLabel({ key: 'delete', primary: true, shift: true }, false)).toBe(
+      'Ctrl+Shift+Del',
+    )
+    expect(shortcutAria({ key: 'arrowdown', primary: true, alt: true })).toBe(
+      'Meta+Alt+ArrowDown Control+Alt+ArrowDown',
     )
     expect(shortcutLabel({ key: 'enter', primary: true }, false)).toBe('Ctrl+Enter')
     expect(isEditableTarget(document.createElement('textarea'))).toBe(true)

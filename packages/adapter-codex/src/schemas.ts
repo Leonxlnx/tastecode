@@ -140,7 +140,11 @@ export const McpServerStatusSchema = z.object({
       mimeType: z.string().optional(),
     }),
   ),
-  authStatus: z.enum(['unsupported', 'notLoggedIn', 'bearerToken', 'oAuth']),
+  // Codex 0.154 added "unknown". One server's auth state must never discard the
+  // whole inventory, so a value this build does not know reads as unknown too.
+  authStatus: z
+    .enum(['unknown', 'unsupported', 'notLoggedIn', 'bearerToken', 'oAuth'])
+    .catch('unknown'),
 })
 
 export type ParsedMcpServerStatus = z.infer<typeof McpServerStatusSchema>

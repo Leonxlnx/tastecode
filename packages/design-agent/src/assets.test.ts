@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { deflateSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { snapshotDesignAssets } from './file-snapshot.js'
 import {
   parseAssetManifest,
@@ -10,7 +11,6 @@ import {
   validateResolvedDesignAssets,
   writeAssetManifest,
 } from './assets.js'
-import { canCreateSymlinks } from './symlink.test-support.js'
 
 const canSymlink = canCreateSymlinks()
 

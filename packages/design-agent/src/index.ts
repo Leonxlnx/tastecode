@@ -69,8 +69,10 @@ export {
   type CopyLintSeverity,
 } from './copywriting.js'
 export {
+  isAssetAcquisitionProgress,
   parseAssetManifest,
   readAssetManifest,
+  unresolvedDesignAssetIds,
   validateAssetManifestForPage,
   validateResolvedDesignAssets,
   writeAssetManifest,

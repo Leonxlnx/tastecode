@@ -1518,6 +1518,85 @@ describe('Claude Agent SDK session', () => {
     }
   })
 
+  it('reports what the main chain holds in context after each turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { model: 'haiku' })
+    await adapter.sendTurn(thread.id, 'Reply with the single word OK.')
+    const query = fake.queries[0]!
+    // Usage as Claude Code 2.1.296 reported it for that prompt on Haiku 5.5.
+    const assistant = (usage: object, parent: string | null = null) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        uuid: crypto.randomUUID(),
+        session_id: 'session-1',
+        message: {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          model: 'claude-haiku-5-5',
+          type: 'message',
+          content: [{ type: 'text', text: 'OK' }],
+          usage,
+        },
+      }) as unknown as SDKMessage
+    query.emitMessage(
+      assistant({
+        input_tokens: 2,
+        cache_creation_input_tokens: 3078,
+        cache_read_input_tokens: 535,
+        output_tokens: 4,
+      }),
+    )
+    // A subagent's context is its own, not the chat's.
+    query.emitMessage(assistant({ input_tokens: 90_000, output_tokens: 10 }, 'task-1'))
+    query.emitMessage({
+      ...(resultMessage(false) as object),
+      modelUsage: {
+        'claude-haiku-5-5': {
+          inputTokens: 2,
+          outputTokens: 4,
+          cacheReadInputTokens: 535,
+          cacheCreationInputTokens: 3078,
+          webSearchRequests: 0,
+          costUSD: 0.00062315,
+          contextWindow: 1_000_000,
+          maxOutputTokens: 128_000,
+        },
+      },
+    } as SDKMessage)
+    await tick()
+
+    const usage = events.flatMap((event) => (event.type === 'usage.updated' ? [event.usage] : []))
+    expect(usage.at(-1)).toEqual({
+      model: 'claude-haiku-5-5',
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 3619,
+      contextWindow: 1_000_000,
+    })
+    expect(usage).toHaveLength(2)
+    const store = new Store(':memory:')
+    try {
+      store.addProject('/repo')
+      store.addThread({
+        id: thread.id,
+        projectPath: '/repo',
+        provider: 'claude-code',
+        title: 'Ctx',
+      })
+      for (const event of events) store.append(thread.id, event)
+      // The reading is not tokens processed: the session total is the turn's own.
+      expect(store.usageSummary(thread.id, 0).session.totalTokens).toBe(2)
+    } finally {
+      store.close()
+      adapter.dispose()
+    }
+  })
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
@@ -1586,8 +1665,8 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
       { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
@@ -1660,8 +1739,8 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
       { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.find((model) => model.id === 'haiku')?.reasoningEfforts).toEqual([...efforts])
@@ -1691,7 +1770,7 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
-  it('places models the catalog does not list after the current lineup, newest first', async () => {
+  it('lets a release the catalog does not know lead its tier and moves the row it replaces down', async () => {
     const fake = harness([
       {
         value: 'default',
@@ -1737,23 +1816,26 @@ describe('Claude Agent SDK session', () => {
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
     expect(models.map((model) => model.displayName)).toEqual([
+      // The newest generation of each tier, in tier order.
       'Fable 5.1',
+      'Opus 6',
+      'Sonnet 5.6',
+      'Haiku 6',
+      // Older generations, newest first and in tier order within one.
       'Opus 5.5',
       'Sonnet 5.5',
       'Haiku 5.5',
-      'Opus 6',
-      'Haiku 6',
-      'Sonnet 5.6',
-      'Experimental',
       'Fable 5',
       'Opus 5',
       'Sonnet 5',
       'Opus 4.8',
       'Opus 4.7',
       'Opus 4.6',
-      'Opus 4.5',
       'Sonnet 4.6',
+      'Opus 4.5',
       'Haiku 4.5',
+      // Unversioned rows keep their order last.
+      'Experimental',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('opus')
     expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
@@ -1774,8 +1856,8 @@ describe('Claude static model catalog', () => {
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
-      'claude-opus-4-5',
       'claude-sonnet-4-6',
+      'claude-opus-4-5',
       'claude-haiku-4-5',
     ])
     expect(CLAUDE_MODELS.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
@@ -1788,6 +1870,11 @@ describe('Claude static model catalog', () => {
     for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']) {
       expect(efforts(id)).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     }
+    for (const id of ['claude-opus-4-6', 'claude-sonnet-4-6']) {
+      expect(efforts(id)).toEqual(['low', 'medium', 'high', 'max'])
+    }
+    // Opus 4.5 introduced effort with three levels; max arrived with Opus 4.6.
+    expect(efforts('claude-opus-4-5')).toEqual(['low', 'medium', 'high'])
     expect(efforts('claude-haiku-4-5')).toEqual([])
     expect(CLAUDE_MODELS.find((model) => model.id === 'claude-opus-4-7')).toMatchObject({
       defaultReasoningEffort: 'xhigh',

@@ -19,7 +19,7 @@ export type BriefingOutput =
 
 const PROTOCOL = `Return JSON only, without Markdown fences, using exactly one of these shapes:
 
-{"status":"complete","message":"Brief complete.","questions":[],"brief":{"originalRequest":"...","subject":"...","pageType":"...","scope":"...","primaryGoal":"...","audience":"...","offer":"...","primaryAction":"...","requiredContent":[],"constraints":[],"brandInputs":[],"creativeControl":"...","explicitAnswers":[],"assumptions":[],"unresolved":[]}}
+{"status":"complete","message":"Brief complete.","questions":[],"brief":{"originalRequest":"...","subject":"...","pageType":"...","scope":"...","primaryGoal":"...","audience":"...","offer":"...","primaryAction":"...","requiredContent":["Section name: its actual content"],"constraints":[],"brandInputs":[],"creativeControl":"...","assumptions":["..."],"unresolved":[]}}
 
 {"status":"not_design","message":"This request is not a website or interface design task.","questions":[],"brief":null}`
 
@@ -45,7 +45,7 @@ For a valid design request:
 1. Work autonomously. Never ask questions, request confirmation, call a user-input tool, or pause for approval of the brief. Infer missing details and record reasoned assumptions.
 2. Complete subject, page type, scope, primary goal, audience, offer or USP, primary action, required content, constraints, existing brand inputs, and desired creative control. In requiredContent, identify the sections explicitly requested or needed for that goal, using descriptive section names and their actual content. Do not impose a fixed section count or generic landing-page sequence. Record existing colors, typography, logos and visual style in brandInputs when known, with their source. Brand inputs and constraints may be empty; do not invent brand decisions before seeing the selected reference images.
 3. If requirements conflict, prefer the latest specific instruction and record the choice in assumptions. Choose sensible defaults for everything the user delegated or omitted. Do not invent business facts, customer proof, or measured results; omit unsupported claims while still producing a finished page.
-4. Return "complete" with an empty questions array and every core field specific enough for Brand and Page Blueprint. Record explicit answers, reasoned assumptions, and only non-blocking unresolved details. No closing question or confirmation is allowed.
+4. Return "complete" with an empty questions array and every core field specific enough for Brand and Page Blueprint. Record reasoned assumptions and only non-blocking unresolved details. No closing question or confirmation is allowed.
 
 ${LANDING_PAGE_GUIDANCE}
 
@@ -140,7 +140,10 @@ export function parseBriefingOutput(text: string): BriefingOutput {
       status: 'complete',
       message: string(value.message, 'message'),
       questions: [],
-      brief: { ...parseDesignBrief(brief) },
+      // TasteCode records the questions it asked and their answers itself. A
+      // model that lists request facts here is not malformed; the field is
+      // never trusted, so it must not fail an otherwise complete brief.
+      brief: { ...parseDesignBrief({ ...brief, explicitAnswers: [] }) },
     }
   }
   if (

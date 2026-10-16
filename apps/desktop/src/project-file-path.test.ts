@@ -3,7 +3,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { projectFilePath } from './project-file-path.js'
+
+const canSymlink = canCreateSymlinks()
 
 describe('projectFilePath', () => {
   it('accepts Windows and macOS files inside their selected project', async () => {
@@ -35,17 +38,20 @@ describe('projectFilePath', () => {
     ).rejects.toThrow(/outside/)
   })
 
-  it('rejects a symlink inside the project that resolves outside it', async () => {
+  it('rejects a link inside the project that resolves outside it', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'tastecode-project-'))
     const outside = await mkdtemp(path.join(tmpdir(), 'tastecode-outside-'))
     const secret = path.join(outside, 'secret.txt')
     await writeFile(secret, 'x')
-    const link = path.join(root, 'link.txt')
-    try {
+    // A directory junction stands in for the file link on hosts that deny
+    // symlinks, so the containment check stays covered on Windows without
+    // Developer Mode.
+    let link = path.join(root, 'link.txt')
+    if (canSymlink) {
       await symlink(secret, link)
-    } catch {
-      // Windows without Developer Mode cannot create symlinks — nothing to test.
-      return
+    } else {
+      await symlink(outside, path.join(root, 'linked'), 'junction')
+      link = path.join(root, 'linked', 'secret.txt')
     }
     await expect(projectFilePath(link, root)).rejects.toThrow(/outside/)
     await expect(projectFilePath(secret, root)).rejects.toThrow(/outside/)

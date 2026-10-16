@@ -18,160 +18,263 @@
   width: 10px;
   height: 10px;
   flex: none;
-  align-self: center;
-  background: var(--appearance-color);
   border-radius: var(--r-xs);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 22%, transparent);
 }
 
-/* The popup shares the menus' surface. Presets come first, as the same square
-   chips the rows show; the mixer below is for any other colour. */
+.appearance-color__swatch {
+  align-self: center;
+  background: var(--appearance-color);
+}
+
+/* The font menu's panel: same surface, shadow, padding and motion, and the
+   row's own type, so the list reads at the size of the value it opened from.
+   It is a manual popover; the component dismisses it, so the screen sampler
+   can take a click without closing it. */
 .color-picker {
   position: fixed;
+  z-index: 80;
   inset: auto;
-  width: min(220px, calc(100vw - 16px));
+  width: min(264px, calc(100vw - 16px));
   max-height: calc(100dvh - 16px);
   overflow: auto;
+  overscroll-behavior: contain;
   margin: 0;
-  padding: 10px;
+  padding: 3px;
   border: 1px solid var(--menu-line);
-  border-radius: var(--r-lg);
+  border-radius: var(--r-popup);
   background: var(--menu-bg);
   color: var(--text);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 8%),
-    0 8px 24px -14px rgb(0 0 0 / 40%);
-  font: 400 var(--t-sm) var(--font-ui);
+    0 6px 18px -14px rgb(0 0 0 / 35%);
 }
 
-.color-picker__label {
-  margin: 0 0 9px;
-  color: var(--text-3);
-  font-weight: 500;
+/* The shared popup motion, plus the discrete steps a popover needs to play
+   its exit before it leaves the top layer. */
+.color-picker.popup {
+  transition:
+    transform 120ms var(--ease-out),
+    opacity 90ms var(--ease-out),
+    display 120ms allow-discrete,
+    overlay 120ms allow-discrete;
 }
 
-.color-picker__presets {
+.color-picker[data-drop='up'] {
+  --popup-offset: 4px;
+}
+
+.color-picker__action {
   display: flex;
-  justify-content: space-between;
-  margin-bottom: 12px;
-}
-
-.color-picker__presets button {
-  width: 18px;
-  height: 18px;
-  flex: none;
-  padding: 0;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 3px 7px;
   border: 0;
-  border-radius: var(--r-sm);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent);
-  outline: 1.5px solid transparent;
-  outline-offset: 2px;
+  border-radius: var(--r-popup-item);
+  background: none;
+  color: var(--text-2);
   cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
 }
 
-.color-picker__presets button:hover {
-  outline-color: color-mix(in srgb, var(--text) 28%, transparent);
+.color-picker__action:is(:hover, :focus-visible) {
+  background: var(--control-hover);
+  color: var(--text);
 }
 
-.color-picker__presets button[aria-pressed='true'] {
-  outline-color: var(--text);
+.color-picker__action-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pulled in so the icon's ink lines up with the Hex label above. */
+.color-picker__sample-icon {
+  flex: none;
+  margin-inline: -2px;
+  color: var(--text-3);
+}
+
+.color-picker__rule {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--menu-line);
+}
+
+/* A plain saturation/brightness square with the hue bar under it, one
+   rounded block whose corners sit concentric inside the panel. The thumbs
+   carry the current colour and stay a radius inside each control. */
+.color-picker__picker {
+  --field-thumb: 18px;
+  --hue-thumb: 26px;
+
+  position: relative;
+  display: grid;
+  margin-bottom: 3px;
+}
+
+/* A hairline round the block, so the square's white corner keeps its edge
+   on the light menu. */
+.color-picker__picker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-popup-item);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent);
+  pointer-events: none;
 }
 
 .color-picker__field {
   position: relative;
-  height: 118px;
-  border-radius: var(--r-sm);
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-popup-item) var(--r-popup-item) 0 0;
   background-image:
     linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, transparent);
-  touch-action: none;
   cursor: crosshair;
-}
-
-.color-picker__handle {
-  position: absolute;
-  width: 11px;
-  height: 11px;
-  border: 2px solid #fff;
-  border-radius: var(--r-circle);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 35%);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
+  outline: none;
+  touch-action: none;
+  user-select: none;
 }
 
 .color-picker__hue {
-  display: block;
-  width: 100%;
-  height: 8px;
-  margin: 12px 0;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-pill);
-  appearance: none;
-  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  --hue-start: calc(var(--hue-thumb) / 2);
+  --hue-span: calc(100% - var(--hue-thumb));
+
+  position: relative;
+  height: 24px;
+  border-radius: 0 0 var(--r-popup-item) var(--r-popup-item);
+  background: linear-gradient(
+    to right,
+    #f00 var(--hue-start),
+    #ff0 calc(var(--hue-start) + var(--hue-span) / 6),
+    #0f0 calc(var(--hue-start) + var(--hue-span) / 3),
+    #0ff calc(var(--hue-start) + var(--hue-span) / 2),
+    #00f calc(var(--hue-start) + var(--hue-span) * 2 / 3),
+    #f0f calc(var(--hue-start) + var(--hue-span) * 5 / 6),
+    #f00 calc(100% - var(--hue-start))
+  );
   cursor: pointer;
+  outline: none;
+  touch-action: none;
+  user-select: none;
 }
 
-.color-picker__hue::-webkit-slider-thumb {
-  width: 12px;
-  height: 12px;
-  border: 2px solid #fff;
+.color-picker__field-thumb,
+.color-picker__hue-thumb {
+  position: absolute;
+  box-sizing: border-box;
+  border: 3px solid #fff;
   border-radius: var(--r-circle);
-  appearance: none;
-  background: transparent;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+  box-shadow:
+    0 0 0 1px rgb(0 0 0 / 14%),
+    0 1px 4px rgb(0 0 0 / 35%);
+  translate: -50% -50%;
+  pointer-events: none;
+  z-index: 1;
 }
 
-.color-picker__hue::-moz-range-thumb {
-  width: 10px;
-  height: 10px;
-  border: 2px solid #fff;
-  border-radius: var(--r-circle);
-  background: transparent;
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 30%);
+.color-picker__field-thumb {
+  left: calc(var(--field-thumb) / 2 + var(--s) * (100% - var(--field-thumb)));
+  top: calc(var(--field-thumb) / 2 + (1 - var(--v)) * (100% - var(--field-thumb)));
+  width: var(--field-thumb);
+  height: var(--field-thumb);
+}
+
+.color-picker__hue-thumb {
+  top: 50%;
+  left: calc(var(--hue-thumb) / 2 + var(--h) * (100% - var(--hue-thumb)));
+  width: var(--hue-thumb);
+  height: var(--hue-thumb);
+}
+
+.color-picker__field:focus-visible .color-picker__field-thumb,
+.color-picker__hue:focus-visible .color-picker__hue-thumb {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.color-picker__name {
+  color: var(--text-2);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+@property --color-picker-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
 }
 
 .color-picker__hex {
+  --color-picker-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 4px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  color: var(--text-3);
-  background: none;
+  min-height: 32px;
+  padding: 0 7px;
+  transition: --color-picker-leader var(--dur-fast) var(--ease-out);
 }
 
+.color-picker__hex:is(:hover, :focus-within) {
+  --color-picker-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.color-picker__hex:is(:hover, :focus-within) .color-picker__name {
+  color: var(--text);
+}
+
+.color-picker__leader {
+  flex: 1;
+  min-width: 16px;
+  height: 5px;
+  margin-inline: 14px 12px;
+  background: radial-gradient(circle, var(--color-picker-leader) 0.75px, transparent 1.15px) left
+    center / 5px 100% repeat-x;
+}
+
+/* Typed where the value stands: the caret is the field. */
 .color-picker__hex input {
-  width: 100%;
-  min-width: 0;
+  flex: none;
+  min-width: 3ch;
+  max-width: 10em;
   padding: 0;
   border: 0;
   outline: none;
   background: transparent;
   color: var(--text);
+  caret-color: var(--text);
   font: inherit;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: inherit;
   text-align: right;
+  field-sizing: content;
   user-select: text;
 }
 
-.color-picker__error {
-  margin: 8px 0 0;
+.color-picker__hex input[aria-invalid='true'] {
   color: var(--error);
-  font-size: var(--t-xs);
 }
 
-.appearance-color:focus-visible,
-.color-picker__field:focus-visible,
-.color-picker__hue:focus-visible,
-.color-picker__hex:focus-within {
+.color-picker__error {
+  margin: -2px 0 6px;
+  padding: 0 7px;
+  color: var(--error);
+  font-size: var(--t-sm);
+  text-align: right;
+}
+
+.appearance-color:focus-visible {
   outline: var(--focus-ring);
   outline-offset: var(--focus-ring-offset);
 }
 
-.color-picker__presets button:focus-visible {
+.color-picker__action:focus-visible {
   outline: var(--focus-ring);
-}
-
-.color-picker__hex input:focus-visible {
-  outline: none;
+  outline-offset: var(--focus-ring-inset);
 }

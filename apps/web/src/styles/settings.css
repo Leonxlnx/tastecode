@@ -120,6 +120,9 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* Reserve the scrollbar's lane on every tab, so the centred column does not
+     jump sideways between a short tab and one that scrolls. */
+  scrollbar-gutter: stable;
   -webkit-app-region: no-drag;
 }
 
@@ -1920,7 +1923,7 @@
 }
 
 .appearance-row {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 55%, transparent);
+  --appearance-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
 
   display: grid;
   grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
@@ -1933,7 +1936,7 @@
 }
 
 .appearance-row:is(:hover, :focus-within) {
-  --appearance-leader: var(--text-2);
+  --appearance-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
 @property --appearance-leader {
@@ -1964,12 +1967,13 @@
   line-height: 1.4;
 }
 
-/* The provider roster's open wire, used as a leader: dots on the baseline. */
+/* The provider defaults' leader, dot for dot: small and close-set on the
+   baseline, so it reads as a line rather than a row of beads. */
 .appearance-row__leader {
   height: 5px;
   margin-inline: 14px;
-  background: radial-gradient(circle, var(--appearance-leader) 0.9px, transparent 1.35px) left
-    center / 8px 100% repeat-x;
+  background: radial-gradient(circle, var(--appearance-leader) 0.75px, transparent 1.15px) left
+    center / 5px 100% repeat-x;
 }
 
 .appearance-row__value {
@@ -2177,7 +2181,7 @@
 
 .settings__group-note {
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px 14px;
   border-top: 1px solid var(--line);
 }
 
@@ -2186,7 +2190,7 @@
 }
 
 .settings__group-title--inside {
-  margin: 12px 12px 4px;
+  margin: 12px 14px 4px;
 }
 
 .provider-settings__status,
@@ -2689,7 +2693,7 @@
 }
 
 .background-model-settings > header {
-  padding: 10px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -2719,7 +2723,7 @@
 }
 
 .background-model-settings__error {
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-top: 1px solid var(--line);
   color: var(--error);
   font-size: var(--t-sm);
@@ -2740,7 +2744,7 @@
   align-items: center;
   gap: 10px;
   min-height: 60px;
-  padding: 12px;
+  padding: 12px 14px;
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-lg);
@@ -2761,7 +2765,7 @@
   align-items: center;
   gap: 12px;
   min-height: 40px;
-  padding: 6px 12px;
+  padding: 6px 14px;
   color: var(--text);
 }
 
@@ -3133,7 +3137,8 @@
   align-items: center;
   flex-direction: row;
   gap: 20px;
-  padding: 12px;
+  /* Same inset as every other row in a card, so titles line up down the card. */
+  padding: 12px 14px;
 }
 
 .settings .settings__row-control:has(> :is(.switch, .settings__switch-skeleton)) {
@@ -3439,6 +3444,27 @@
   color: var(--error);
 }
 
+.mcp-inherited {
+  margin-top: 28px;
+}
+
+.mcp-inherited__header {
+  margin-bottom: 12px;
+}
+
+.mcp-inherited__header h2 {
+  margin: 0 0 4px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  font-weight: 520;
+}
+
+.mcp-inherited__header p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
 .mcp-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3641,7 +3667,7 @@
 
   .model-visibility__source,
   .model-visibility__model {
-    padding-inline: 12px;
+    padding-inline: 14px;
   }
 
   .model-visibility__model {
