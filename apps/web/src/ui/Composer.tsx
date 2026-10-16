@@ -1081,11 +1081,13 @@ function ComposerComponent(props: {
 
   const addFiles = (files: Array<PickedAttachment | string>) => {
     if (files.length === 0) return
+    const pickedFiles = files.map((file) =>
+      typeof file === 'string' ? { path: file, name: basename(file) } : file,
+    )
     setAttachments((current) => {
       const attached = new Set(current.flatMap((attachment) => attachment.path ?? []))
       const additions: ComposerAttachment[] = []
-      for (const file of files) {
-        const picked = typeof file === 'string' ? { path: file, name: basename(file) } : file
+      for (const picked of pickedFiles) {
         if (attached.has(picked.path)) continue
         attached.add(picked.path)
         const inferredMediaType = previewMediaType('', picked.name)
@@ -1105,8 +1107,12 @@ function ComposerComponent(props: {
       }
       return [...current, ...additions]
     })
-    for (const file of files) {
-      if (typeof file === 'string' && previewMediaType('', file)) hydrateAttachmentPreview(file)
+    const attached = new Set(attachments.flatMap((attachment) => attachment.path ?? []))
+    for (const picked of pickedFiles) {
+      if (attached.has(picked.path)) continue
+      attached.add(picked.path)
+      if (!picked.previewUrl && (picked.mediaType ?? previewMediaType('', picked.name)))
+        hydrateAttachmentPreview(picked.path)
     }
   }
 
