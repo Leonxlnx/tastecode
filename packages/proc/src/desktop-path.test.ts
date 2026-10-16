@@ -134,6 +134,25 @@ describe('isInstalled', () => {
       expect(output.trim()).toBe('WINDOWS_PATH_OK')
     },
   )
+  it.skipIf(process.platform !== 'win32')(
+    'does not count a same-named shim in the working directory',
+    async () => {
+      // where.exe searched the working directory first, so detection could
+      // report a CLI that spawnCli would never launch from there.
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-cwd-shim-'))
+      roots.push(workspace)
+      const command = `harness-cwd-only-${process.pid}`
+      writeFileSync(path.join(workspace, `${command}.cmd`), '@echo off\r\nexit /b 0\r\n')
+      const previous = process.cwd()
+      process.chdir(workspace)
+      try {
+        await expect(isInstalled(command)).resolves.toBe(false)
+      } finally {
+        process.chdir(previous)
+      }
+    },
+  )
+
   it('finds a user-local shim that a GUI PATH would miss', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-desktop-path-'))
     roots.push(home)

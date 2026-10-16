@@ -1,5 +1,6 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
@@ -92,6 +93,7 @@ const commandCache = new Map<string, { path: string | undefined; expiresAt: numb
 /** Forget every command lookup, for example after an install or update finished. */
 export function invalidateCommandCache(): void {
   commandCache.clear()
+  folderListings.clear()
 }
 
 type WindowsLookup = { key: string; candidates: () => Generator<string> }
@@ -147,6 +149,34 @@ function resolveWindowsExecutable(
   return rememberLookup(lookup.key, undefined)
 }
 
+/**
+ * The same lookup without blocking the event loop. One directory listing per
+ * PATH entry replaces hundreds of stats, and a burst of lookups shares them.
+ */
+async function resolveWindowsExecutableAsync(
+  command: string,
+  environment: NodeJS.ProcessEnv,
+  cwd = process.cwd(),
+): Promise<string | undefined> {
+  const lookup = windowsLookup(command, environment, cwd)
+  const cached = cachedLookup(lookup.key)
+  if (cached && (cached.path === undefined || (await isFileAsync(cached.path)))) {
+    return cached.path
+  }
+  const candidates = [...lookup.candidates()]
+  const folder = (candidate: string) => path.win32.dirname(candidate).toLowerCase()
+  const folders = [...new Set(candidates.map(folder))]
+  const listings = new Map(
+    await Promise.all(folders.map(async (name) => [name, await folderNames(name)] as const)),
+  )
+  for (const candidate of candidates) {
+    const names = listings.get(folder(candidate))
+    if (!names?.has(path.win32.basename(candidate).toLowerCase())) continue
+    if (await isFileAsync(candidate)) return rememberLookup(lookup.key, candidate)
+  }
+  return rememberLookup(lookup.key, undefined)
+}
+
 /** Every path Windows would try for `command`, in PATH, then PATHEXT, order. */
 function* windowsCandidates(
   command: string,
@@ -172,6 +202,22 @@ function* windowsCandidates(
   }
 }
 
+// Detection asks for a dozen commands at once; they share one listing per folder.
+const FOLDER_LISTING_TTL_MS = 2_000
+const folderListings = new Map<string, { names: Promise<Set<string> | undefined>; at: number }>()
+
+function folderNames(folder: string): Promise<Set<string> | undefined> {
+  const cached = folderListings.get(folder)
+  if (cached && Date.now() - cached.at < FOLDER_LISTING_TTL_MS) return cached.names
+  if (folderListings.size > COMMAND_CACHE_LIMIT) folderListings.clear()
+  const names = readdir(folder).then(
+    (entries) => new Set(entries.map((entry) => entry.toLowerCase())),
+    () => undefined,
+  )
+  folderListings.set(folder, { names, at: Date.now() })
+  return names
+}
+
 function isFile(candidate: string): boolean {
   try {
     return statSync(candidate).isFile()
@@ -180,32 +226,42 @@ function isFile(candidate: string): boolean {
   }
 }
 
+function isFileAsync(candidate: string): Promise<boolean> {
+  return stat(candidate).then(
+    (entry) => entry.isFile(),
+    () => false,
+  )
+}
+
+/**
+ * Where a command would be found on the desktop-safe PATH, without running it.
+ *
+ * On Windows this is the same PATH × PATHEXT lookup spawnCli launches from, and
+ * it fills the same cache, so detection and launching agree, the working
+ * directory is never searched, and the first launch after detection is cheap.
+ */
+export function locateCommand(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (process.platform !== 'win32') return Promise.resolve(resolveExecutable(command, environment))
+  const env = { ...environment }
+  applyDesktopPath(env)
+  return resolveWindowsExecutableAsync(command, env)
+}
+
 /**
  * Whether a command exists on PATH.
  *
- * Asked with the platform's own lookup rather than by running the thing: agent
- * CLIs open browsers, start sessions, and print banners on first launch, none
- * of which is an acceptable side effect of drawing a list.
+ * Asked with a PATH lookup rather than by running the thing: agent CLIs open
+ * browsers, start sessions, and print banners on first launch, none of which
+ * is an acceptable side effect of drawing a list.
  */
-export function isInstalled(
+export async function isInstalled(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<boolean> {
-  if (process.platform !== 'win32') {
-    return Promise.resolve(resolveExecutable(command, environment) !== undefined)
-  }
-
-  return new Promise((resolve) => {
-    const env = { ...environment }
-    applyDesktopPath(env)
-    const child = spawn('where.exe', [command], {
-      stdio: 'ignore',
-      windowsHide: true,
-      env,
-    })
-    child.on('error', () => resolve(false))
-    child.on('exit', (code) => resolve(code === 0))
-  })
+  return (await locateCommand(command, environment)) !== undefined
 }
 
 function childEnvironment(options: {

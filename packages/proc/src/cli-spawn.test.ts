@@ -1,11 +1,25 @@
 import { statSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
+import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { invalidateCommandCache, quoteCmdArgument, spawnCli } from './cli.js'
+import {
+  invalidateCommandCache,
+  isInstalled,
+  locateCommand,
+  quoteCmdArgument,
+  spawnCli,
+} from './cli.js'
+import { applyDesktopPath } from './desktop-path.js'
 import { spawnOwned } from './kill.js'
 
 vi.mock('node:fs', async (original) => ({
   ...(await original<typeof import('node:fs')>()),
   statSync: vi.fn(),
+}))
+vi.mock('node:fs/promises', async (original) => ({
+  ...(await original<typeof import('node:fs/promises')>()),
+  readdir: vi.fn(),
+  stat: vi.fn(),
 }))
 vi.mock('./kill.js', () => ({ spawnOwned: vi.fn(), killTree: vi.fn() }))
 
@@ -18,9 +32,7 @@ const options = {
 
 beforeEach(() => {
   Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
-  vi.mocked(statSync).mockImplementation(() => {
-    throw new Error('not found')
-  })
+  files()
 })
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform)
@@ -29,12 +41,22 @@ afterEach(() => {
   vi.resetAllMocks()
 })
 
-/** Make exactly these files exist for the mocked statSync. */
+/** Make exactly these files exist, for the synchronous and the asynchronous lookup. */
 function files(...existing: string[]) {
   vi.mocked(statSync).mockImplementation((filename) => {
     if (!existing.includes(String(filename))) throw new Error('not found')
     return { isFile: () => true } as ReturnType<typeof statSync>
   })
+  vi.mocked(stat).mockImplementation(async (filename) => {
+    if (!existing.includes(String(filename))) throw new Error('not found')
+    return { isFile: () => true } as Awaited<ReturnType<typeof stat>>
+  })
+  const listing = vi.fn(async (folder: unknown) =>
+    existing
+      .filter((file) => path.win32.dirname(file).toLowerCase() === String(folder).toLowerCase())
+      .map((file) => path.win32.basename(file)),
+  )
+  vi.mocked(readdir).mockImplementation(listing as unknown as typeof readdir)
 }
 
 describe('Windows CLI dispatch', () => {
@@ -171,6 +193,44 @@ describe('Windows command lookup cache', () => {
     invalidateCommandCache()
     spawnCli('fresh-cli', [], search)
     expect(launched()?.[0]).toBe('C:\\tools\\fresh-cli.EXE')
+  })
+
+  it('answers isInstalled from folder listings instead of a stat per candidate', async () => {
+    files('C:\\tools\\agent.CMD', 'C:\\tools\\native.EXE')
+    await expect(isInstalled('agent', search.env)).resolves.toBe(true)
+    await expect(isInstalled('native', search.env)).resolves.toBe(true)
+    await expect(isInstalled('missing', search.env)).resolves.toBe(false)
+    expect(statSync).not.toHaveBeenCalled()
+    // One listing per folder serves every lookup in the burst.
+    const listed = vi.mocked(readdir).mock.calls.map(([folder]) => String(folder))
+    expect(new Set(listed).size).toBe(listed.length)
+    expect(stat).toHaveBeenCalledTimes(2)
+    expect(spawnOwned).not.toHaveBeenCalled()
+  })
+
+  it('locates in PATH order before PATHEXT order, like a launch', async () => {
+    files('C:\\a\\gh.CMD', 'C:\\b\\gh.EXE')
+    await expect(locateCommand('gh', search.env)).resolves.toBe('C:\\a\\gh.CMD')
+  })
+
+  it('launches what detection found without searching again', async () => {
+    files('C:\\tools\\native.EXE')
+    const env: NodeJS.ProcessEnv = { ...search.env }
+    applyDesktopPath(env)
+    await expect(isInstalled('native', env)).resolves.toBe(true)
+    spawnCli('native', [], { replaceEnv: true, env })
+    expect(statSync).toHaveBeenCalledTimes(1)
+    expect(launched()?.[0]).toBe('C:\\tools\\native.EXE')
+  })
+
+  it('stops reporting a located command once its file is gone', async () => {
+    files('C:\\tools\\agent.CMD')
+    await expect(isInstalled('agent', search.env)).resolves.toBe(true)
+    vi.mocked(readdir).mockClear()
+    await expect(isInstalled('agent', search.env)).resolves.toBe(true)
+    expect(readdir).not.toHaveBeenCalled()
+    files()
+    await expect(isInstalled('agent', search.env)).resolves.toBe(false)
   })
 
   it('keys a lookup by the PATH it searched', () => {
