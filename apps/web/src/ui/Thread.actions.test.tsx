@@ -1032,6 +1032,29 @@ describe('completed activity disclosure', () => {
     expect(screen.getByText('Command failed: pnpm test')).toBeTruthy()
   })
 
+  it('names a command after the cd into its absolute folder', () => {
+    renderCompleted([
+      turnItem('prompt-1', 1, { role: 'user', text: 'Look' }),
+      turnItem('command-1', 2, {
+        type: 'command',
+        command: 'cd "E:/work/coffee site" && cat package.json | head -50',
+      }),
+      turnItem('command-2', 3, { type: 'command', command: 'cd /d C:\\work; dir' }),
+      turnItem('command-3', 4, { type: 'command', command: 'cd /srv/app && ls' }),
+      turnItem('command-4', 5, { type: 'command', command: 'cd packages/web && pnpm test' }),
+      turnItem('command-5', 6, { type: 'command', command: 'cd src' }),
+      turnItem('answer-1', 7, { role: 'assistant', phase: 'final_answer', text: 'Done.' }),
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: /Worked for/ }))
+    expect(screen.getByText('Ran cat package.json | head -50')).toBeTruthy()
+    expect(screen.getByText('Ran dir')).toBeTruthy()
+    expect(screen.getByText('Ran ls')).toBeTruthy()
+    // A relative cd says where the command runs; a bare cd is the command.
+    expect(screen.getByText('Ran cd packages/web && pnpm test')).toBeTruthy()
+    expect(screen.getByText('Ran cd src')).toBeTruthy()
+  })
+
   it('counts generated images as generated, not viewed', () => {
     renderCompleted([
       turnItem('prompt-1', 1, { role: 'user', text: 'Make photos' }),
