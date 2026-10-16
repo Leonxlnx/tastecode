@@ -11,7 +11,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App, resolveSendAvailability } from './App.js'
+import { App, resolveSendAvailability, titleFrom } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -1095,6 +1095,14 @@ describe('web client', () => {
         accountCheck: { provider: 'codex', state: 'ready', account: { signedIn } },
       }),
     ).toBe(signedIn ? 'ready' : 'setup-required')
+  })
+
+  it('cuts a prompt title before an emoji split at 40 code units', () => {
+    expect(titleFrom('x'.repeat(39) + '🌊 reply with ok')).toBe('x'.repeat(39) + '…')
+  })
+
+  it('cuts a long ascii prompt title at 40 code units', () => {
+    expect(titleFrom('c'.repeat(50))).toBe('c'.repeat(40) + '…')
   })
 
   it.each([false, true])(

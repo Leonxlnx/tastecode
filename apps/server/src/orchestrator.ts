@@ -36,6 +36,7 @@ import {
   checkpointRepository,
   RestoreSnapshotError,
 } from './checkpoint.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import { ProviderControls } from './provider-controls.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
@@ -2813,7 +2814,7 @@ export class Orchestrator {
         threadId,
         seq: this.#store.lastSeq(threadId),
         commit: snapshot.commit,
-        label: label.trim().slice(0, 60) || 'Turn',
+        label: sliceCodeUnits(label.trim(), 60) || 'Turn',
       })
     } catch {
       // A folder that is not a repository is a normal case. Failing the turn

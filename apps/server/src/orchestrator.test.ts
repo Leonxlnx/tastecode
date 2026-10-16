@@ -8671,6 +8671,20 @@ describe('rolling a session back', () => {
     expect(checkpoints[0]?.label).toBe('change the file')
   })
 
+  it('stores a checkpoint label that stops before an emoji split at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'y'.repeat(59) + '🌊 reply with ok')
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe('y'.repeat(59))
+  })
+
+  it('stores an ascii checkpoint label cut at 60 code units', async () => {
+    const { orchestrator } = harness()
+    const thread = await orchestrator.startThread('codex', repo)
+    await orchestrator.sendTurn(thread.id, 'b'.repeat(80))
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe('b'.repeat(60))
+  })
+
   it('refuses restore through another task while the shared checkout is busy', async () => {
     const { orchestrator, sessions } = harness()
     const first = await orchestrator.startThread('codex', repo)
