@@ -436,6 +436,9 @@ export class ProviderControls {
       ? { ...heldValues(held), limits: next, checkedAt: now, origin: 'live' }
       : { provider, status: 'ready', limits: next, checkedAt: now, origin: 'live' }
     this.#publishLimits(provider, entry)
+    // Clients that re-pull after a usage change see the merge without a new
+    // read: the held value stays fresh, and the signal keeps its spacing.
+    this.#notifyUsageChanged(provider, entry, false)
   }
 
   /** Failed cleanup retains ownership, so a subsequent call can retry it. */

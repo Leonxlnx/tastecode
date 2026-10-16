@@ -1179,6 +1179,32 @@ describe('live limit windows', () => {
     })
   })
 
+  it('tells re-pulling clients about a live change at a spaced rate, without a new read', async () => {
+    const usageLimitSource = read()
+    const { registry, hooks } = setup({
+      limitChangeIntervalMs: 30_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('grok')
+    // Equal windows are no change; a burst of changes waits for one trailing signal.
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    for (const usedPercent of [12, 13, 14]) {
+      registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent }])
+    }
+    expect(hooks.onUsageChanged).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    // The re-pull is answered from the merged snapshot.
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      origin: 'live',
+      limits: [{ id: 'five_hour', usedPercent: 14 }, week, credits],
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
   it('makes last known values current again', async () => {
     const usageLimitSource = read()
     const { registry } = setup({ services: { grok: { usageLimitSource } } })
