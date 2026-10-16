@@ -590,11 +590,14 @@ export class ProviderControls {
       sequence > entry.stored
     const reading = read()
       .then(
-        (value) => {
+        (answer) => {
+          const now = Date.now()
+          // Clients label values by when they were read, not when they were asked for.
+          const value: ProviderLimitSource =
+            answer.status === 'ready' ? { ...answer, checkedAt: now, origin: 'read' } : answer
           if (!current()) return value
           const interval = this.#limitReadInterval(provider)
           const unavailable = value.status === 'unavailable'
-          const now = Date.now()
           entry.stored = sequence
           entry.value = value
           entry.readAt = startedAt

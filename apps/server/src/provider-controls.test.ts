@@ -213,6 +213,8 @@ describe('declared provider controls', () => {
       provider: 'claude-code',
       status: 'ready',
       limits: [],
+      checkedAt: 0,
+      origin: 'read',
     })
     expect(createCodex).not.toHaveBeenCalled()
   })
@@ -510,6 +512,8 @@ describe('fresh usage controls', () => {
       provider: 'codex',
       status: 'ready',
       limits: [],
+      checkedAt: 0,
+      origin: 'read',
     })
     expect(adapters).toHaveLength(2)
     expect(adapters[0]!.dispose).not.toHaveBeenCalled()
@@ -940,6 +944,22 @@ describe('limit read backoff and intervals', () => {
     await codex.consumeRateLimitReset!('fixture-idempotency-key')
     await codex.usageLimitSource()
     expect(createCodex).toHaveBeenCalledTimes(4)
+  })
+
+  it('stamps a read with the time its values arrived and marks them as read', async () => {
+    const limits = deferred<ReadyLimits>()
+    const usageLimitSource = vi.fn().mockReturnValueOnce(limits.promise)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const reading = registry.forProvider('grok').usageLimitSource()
+    await vi.advanceTimersByTimeAsync(4_000)
+    limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
+    await expect(reading).resolves.toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 10 }],
+      checkedAt: 4_000,
+      origin: 'read',
+    })
   })
 
   it('stores a read that a usage change interrupted until the interval has passed', async () => {
