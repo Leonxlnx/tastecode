@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { ClaudeEventSchema, toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
+import {
+  ClaudeEventSchema,
+  contextTokens,
+  modelContextWindow,
+  toDomainEvents,
+  toUsage,
+  type ClaudeEvent,
+} from './events.js'
 
 /**
  * Fixtures captured from claude-code 2.1.220's actual output.
@@ -318,5 +325,37 @@ describe('claude event translation', () => {
         inputIncludesCached: false,
       },
     })
+  })
+})
+
+describe('Claude context readings', () => {
+  it('counts everything one request read or wrote', () => {
+    expect(
+      contextTokens({
+        input_tokens: 2,
+        cache_creation_input_tokens: 3078,
+        cache_read_input_tokens: 535,
+        output_tokens: 4,
+      }),
+    ).toBe(3619)
+    expect(contextTokens(undefined)).toBe(0)
+  })
+
+  it("finds the message model's window in a result's per-model usage", () => {
+    const usage = {
+      'claude-haiku-5-5': { contextWindow: 200_000 },
+      'claude-opus-5-5[1m]': { contextWindow: 1_000_000 },
+    }
+    expect(modelContextWindow(usage, 'claude-opus-5-5')).toBe(1_000_000)
+    expect(modelContextWindow(usage, 'claude-haiku-5-5-20261001')).toBe(200_000)
+    // Two models and none of them named: there is no telling which one it was.
+    expect(modelContextWindow(usage, undefined)).toBeUndefined()
+    expect(
+      modelContextWindow({ 'claude-sonnet-5-5': { contextWindow: 1_000_000 } }, 'sonnet'),
+    ).toBe(1_000_000)
+    expect(modelContextWindow({ 'claude-sonnet-5-5': { contextWindow: 0 } }, undefined)).toBe(
+      undefined,
+    )
+    expect(modelContextWindow(undefined, 'claude-opus-5-5')).toBeUndefined()
   })
 })
