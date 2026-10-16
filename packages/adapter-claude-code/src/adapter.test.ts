@@ -1882,6 +1882,199 @@ describe('Claude static model catalog', () => {
   })
 })
 
+/**
+ * Scrubbed from a claude 2.1.302 stream-json capture. The task id is only on
+ * `tool_use_result`; the assistant tool_use carries the subject and, for an
+ * update, the requested status. A subject change and a deletion use that same
+ * result shape. Nothing here is an account, a path, or a live id.
+ */
+function taskToolUse(id: string, name: string, input: Record<string, unknown>): SDKMessage {
+  return {
+    type: 'assistant',
+    parent_tool_use_id: null,
+    uuid: `${id}-call`,
+    session_id: 'session-1',
+    message: {
+      id: `${id}-msg`,
+      role: 'assistant',
+      model: 'claude-haiku-5-5',
+      type: 'message',
+      content: [{ type: 'tool_use', id, name, input }],
+    },
+  } as unknown as SDKMessage
+}
+
+function taskToolResult(id: string, content: string, toolUseResult: unknown): SDKMessage {
+  return {
+    type: 'user',
+    parent_tool_use_id: null,
+    uuid: `${id}-result`,
+    session_id: 'session-1',
+    message: {
+      role: 'user',
+      content: [{ type: 'tool_result', tool_use_id: id, content }],
+    },
+    tool_use_result: toolUseResult,
+  } as unknown as SDKMessage
+}
+
+describe('Claude task plan', () => {
+  it('publishes the session task list as each create, update, and deletion lands', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const one = 'Create a.txt containing "one"'
+    const two = 'Create b.txt containing "two"'
+    const twoRenamed = 'Create b.txt containing "2"'
+    const three = 'Create c.txt containing "three"'
+    try {
+      const thread = await adapter.startThread('/repo')
+      const first = await adapter.sendTurn(thread.id, 'Create the files')
+      const query = fake.queries[0]!
+      const created = (id: string, taskId: string, subject: string) => [
+        taskToolUse(id, 'TaskCreate', {
+          subject,
+          description: 'Write the file',
+          activeForm: 'Creating the file',
+        }),
+        taskToolResult(id, `Task #${taskId} created successfully: ${subject}`, {
+          task: { id: taskId, subject },
+        }),
+      ]
+      const status = (id: string, taskId: string, from: string, to: string) => [
+        taskToolUse(id, 'TaskUpdate', { taskId, status: to }),
+        taskToolResult(id, `Updated task #${taskId} status`, {
+          success: true,
+          taskId,
+          updatedFields: ['status'],
+          statusChange: { from, to },
+        }),
+      ]
+      for (const frame of [
+        ...created('toolu_a', '1', one),
+        ...created('toolu_b', '2', two),
+        ...status('toolu_a_run', '1', 'pending', 'in_progress'),
+        taskToolUse('toolu_write_a', 'Write', { file_path: 'a.txt', content: 'one\n' }),
+        taskToolResult('toolu_write_a', 'File created successfully at: a.txt', {
+          type: 'create',
+          filePath: 'a.txt',
+          content: 'one\n',
+        }),
+        ...status('toolu_a_done', '1', 'in_progress', 'completed'),
+        taskToolUse('toolu_b_rename', 'TaskUpdate', { taskId: '2', subject: twoRenamed }),
+        taskToolResult('toolu_b_rename', 'Updated task #2 subject', {
+          success: true,
+          taskId: '2',
+          updatedFields: ['subject'],
+        }),
+        ...status('toolu_b_delete', '2', 'pending', 'deleted'),
+      ]) {
+        query.emitMessage(frame)
+      }
+      query.emitMessage(resultMessage(false))
+      await tick()
+
+      const second = await adapter.sendTurn(thread.id, 'Create the last file')
+      for (const frame of created('toolu_c', '3', three)) query.emitMessage(frame)
+      await tick()
+
+      const step = (text: string, status: 'pending' | 'running' | 'done') => ({ text, status })
+      expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+        { type: 'plan.updated', turnId: first, steps: [step(one, 'pending')] },
+        {
+          type: 'plan.updated',
+          turnId: first,
+          steps: [step(one, 'pending'), step(two, 'pending')],
+        },
+        {
+          type: 'plan.updated',
+          turnId: first,
+          steps: [step(one, 'running'), step(two, 'pending')],
+        },
+        {
+          type: 'plan.updated',
+          turnId: first,
+          steps: [step(one, 'done'), step(two, 'pending')],
+        },
+        {
+          type: 'plan.updated',
+          turnId: first,
+          steps: [step(one, 'done'), step(twoRenamed, 'pending')],
+        },
+        { type: 'plan.updated', turnId: first, steps: [step(one, 'done')] },
+        {
+          type: 'plan.updated',
+          turnId: second,
+          steps: [step(one, 'done'), step(three, 'pending')],
+        },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('maps a TodoWrite call from an older CLI onto the same plan statuses', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    try {
+      const thread = await adapter.startThread('/repo')
+      const turnId = await adapter.sendTurn(thread.id, 'Plan the work')
+      fake.queries[0]!.emitMessage(
+        taskToolUse('todo-call', 'TodoWrite', {
+          todos: [
+            { content: 'Inspect', status: 'completed' },
+            { content: 'Edit', status: 'in_progress' },
+            { content: '  ' },
+            { content: 'Check', status: 'pending' },
+          ],
+        }),
+      )
+      await tick()
+      expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+        {
+          type: 'plan.updated',
+          turnId,
+          steps: [
+            { text: 'Inspect', status: 'done' },
+            { text: 'Edit', status: 'running' },
+            { text: 'Check', status: 'pending' },
+          ],
+        },
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it.each([
+    [{ PATH: '/usr/bin' }, { PATH: '/usr/bin', CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }],
+    [
+      { PATH: '/usr/bin', CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' },
+      { PATH: '/usr/bin', CLAUDE_CODE_ENABLE_TODO_TOOLS: '0' },
+    ],
+  ] as const)(
+    'passes CLAUDE_CODE_ENABLE_TODO_TOOLS through the session environment as %j',
+    async (environment, expected) => {
+      const fake = harness()
+      const given = { ...environment }
+      const adapter = new ClaudeCodeAdapter({
+        createQuery: fake.createQuery,
+        environment: given,
+      })
+      try {
+        await adapter.startThread('/repo')
+        expect(fake.inputs[0]!.options.env).toEqual(expected)
+        expect(given).toEqual(environment)
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  )
+})
+
 describe('Claude SDK user messages', () => {
   it('keeps long unicode and multiline prompts in the SDK message body', () => {
     const text = ` Grüße 🧪\n${'x'.repeat(40_000)}`
