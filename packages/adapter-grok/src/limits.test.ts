@@ -258,6 +258,20 @@ describe('mapGrokBilling', () => {
     )
   })
 
+  it.each([
+    // Captured from Grok Build 1.0.60 on 2026-10-16 for a signed-in account.
+    [-32603, 'Internal error', 'Billing service error: Failed to serialize billing response'],
+    [-32601, 'Method not found', undefined],
+  ])('reports billing error %i with a stable message', async (code, message, data) => {
+    const { JsonRpcError } = await import('@harness/proc')
+    fake.error = new JsonRpcError(code, message, data)
+
+    const read = grokLimitSource(async () => ({ signedIn: true }))
+
+    await expect(read).rejects.toThrow(new Error('Grok Build did not report its credits.'))
+    expect(fake.disposed).toBe(1)
+  })
+
   it('reads billing through the resolved Grok binary and provider ACP', async () => {
     fake.billing = {
       config: {
