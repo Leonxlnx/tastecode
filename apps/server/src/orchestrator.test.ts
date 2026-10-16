@@ -8675,14 +8675,14 @@ describe('rolling a session back', () => {
     const { orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'y'.repeat(59) + '🌊 reply with ok')
-    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe('y'.repeat(59))
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'y'.repeat(59)}…`)
   })
 
   it('stores an ascii checkpoint label cut at 60 code units', async () => {
     const { orchestrator } = harness()
     const thread = await orchestrator.startThread('codex', repo)
     await orchestrator.sendTurn(thread.id, 'b'.repeat(80))
-    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe('b'.repeat(60))
+    expect(orchestrator.checkpoints(thread.id)[0]?.label).toBe(`${'b'.repeat(60)}…`)
   })
 
   it('stores an end-trimmed ellipsis for a long prompt and the prompt itself when it is short', async () => {
