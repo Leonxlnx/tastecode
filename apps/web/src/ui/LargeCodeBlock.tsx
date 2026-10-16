@@ -60,7 +60,7 @@ export function CodeWrapButton() {
       title="Wrap lines"
       onClick={() => writeCodeWrap(!wrap)}
     >
-      <TextWrap size={14} aria-hidden />
+      <TextWrap size={15} aria-hidden />
     </button>
   )
 }

@@ -227,31 +227,27 @@
   contain-intrinsic-size: none !important;
 }
 
+/* The block's actions are ghost icon buttons, the same as the reply's own row
+   below it: 28px, borderless, a 15px glyph at stroke 1.7, and a quiet fill on
+   hover. The button-feedback layer fades their colour and fill. */
 .md [data-streamdown='code-block'] button {
-  position: relative;
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex: none;
-  background: var(--surface-2);
-  border: 1px solid var(--line);
+  padding: 0;
+  background: transparent;
+  border: 0;
   border-radius: var(--r-md);
   color: var(--text-3);
   cursor: pointer;
-  opacity: 0;
-  transition:
-    opacity var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
 }
 
-.md [data-streamdown='code-block']:hover button,
+.md [data-streamdown='code-block'] button:hover,
 .md [data-streamdown='code-block'] button:focus-visible {
-  opacity: 1;
-}
-
-.md [data-streamdown='code-block'] button:hover {
-  color: var(--text);
+  background: var(--surface);
+  color: var(--text-2);
 }
 
 .md [data-streamdown='code-block'] button[aria-pressed='true'] {
@@ -260,31 +256,26 @@
 }
 
 .md [data-streamdown='code-block'] button svg {
-  width: 13px;
-  height: 13px;
+  width: 15px;
+  height: 15px;
+  stroke-width: 1.7;
 }
 
-/* Block controls stay 24px to sit on the label row; the hit area reaches 2px
-   further on every side so each target is 28px. */
-.md [data-streamdown='code-block'] button::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-}
-
-/* Language label and controls share one row directly above the block. The
-   label starts on the block's left edge, the prose edge above it, and the
-   controls end on its right edge. */
+/* Language label and actions share one 32px row directly above the block. The
+   label starts on the block's left edge, the prose edge above it, and a long
+   one ends in an ellipsis before it reaches the actions. Block layout rather
+   than flex, so the live header's bare text gets the ellipsis too. */
 .md [data-streamdown='code-block-header'] {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  height: 30px;
-  padding: 0;
+  display: block;
+  height: 32px;
+  padding: 0 96px 0 0;
+  overflow: hidden;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--t-xs);
+  line-height: 32px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* A fence without a language is plain text, and says so: an unlabelled row
@@ -299,20 +290,51 @@
 /* Streamdown renders the controls in their own wrapper between the header and
    the body. Left in flow, that wrapper keeps the height of the hidden buttons
    and opens a hole under the language label, so it is lifted onto the header
-   row instead. 30px row, 24px buttons: 3px from the top centres them on the
-   label and leaves the same 3px above the block, so they no longer sit on
-   its border. */
+   row instead: 2px from the top centres the 28px buttons on the 32px row.
+   It hangs 6.5px past the block, so the last glyph ends on the block's right
+   border, the mirror of the reply's action row on the left.
+
+   The wrapper, not each button, fades: the button-feedback layer owns every
+   button's transition, which left a per-button fade dead. Hover or keyboard
+   focus anywhere in the block shows all of them; a device without hover
+   always shows them. */
 .md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
   position: absolute;
-  top: 3px;
-  right: 0;
+  top: 2px;
+  right: -6.5px;
   z-index: 1;
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease-out);
+}
+
+.md
+  [data-streamdown='code-block']:is(:hover, :focus-within)
+  > div:has(> [data-streamdown='code-block-actions']) {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
+    opacity: 1;
+  }
 }
 
 .md [data-streamdown='code-block-actions'] {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
+}
+
+/* In a narrow block Wrap and Copy stay and Download goes, so the row never
+   wraps or runs into the label. */
+.md [data-streamdown='code-block'] {
+  container: code-block / inline-size;
+}
+
+@container code-block (max-width: 360px) {
+  .md [data-streamdown='code-block-download-button'] {
+    display: none;
+  }
 }
 
 /* A failed copy turns its glyph red and its title offers a retry. The row has
