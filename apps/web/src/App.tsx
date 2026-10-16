@@ -451,7 +451,9 @@ export function resolveSendAvailability(input: {
   if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
     return 'loading'
   }
-  if (input.accountCheck.state === 'failed') return 'unavailable'
+  // A check that could not answer in time confirms nothing either way. Send
+  // stays available: a CLI that really is signed out says so in the turn.
+  if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
 
@@ -2441,7 +2443,13 @@ export function App() {
         cancelled = true
       }
     }
-    setAccountCheck({ provider, state: 'loading' })
+    // Retrying a check that could not answer keeps Send available until the
+    // new answer arrives; it would otherwise lock the composer for the read.
+    setAccountCheck((current) =>
+      current.provider === provider && current.state === 'failed'
+        ? current
+        : { provider, state: 'loading' },
+    )
     void transport
       .request('auth.status', {
         provider,
@@ -4918,6 +4926,8 @@ export function App() {
     refreshCatalog()
     openSettings('providers')
   }, [refreshCatalog, openSettings])
+  // Settings would run the same read that just failed; asking again is the fix.
+  const retryAccountCheck = useCallback(() => setAuthStatusRequest((current) => current + 1), [])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
@@ -5502,7 +5512,7 @@ export function App() {
   const composerProviderError = catalogError
     ? { ...catalogError, action: { label: 'Retry', run: refreshCatalog } }
     : accountCheck.provider === provider && accountCheck.error
-      ? { ...accountCheck.error, action: { label: 'Check setup', run: openProviderSetup } }
+      ? { ...accountCheck.error, action: { label: 'Retry', run: retryAccountCheck } }
       : providerSignInState?.phase === 'failed'
         ? {
             id: `sign-in:${providerSignInState.terminalId}`,
