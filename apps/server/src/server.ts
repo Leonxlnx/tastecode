@@ -11,6 +11,7 @@ import {
   type ProviderId,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
+import { invalidateCliProbes } from './cli-probe.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
@@ -95,6 +96,12 @@ export function startServer(
     throw error
   }
   const push = new PushBus()
+  // Install, update and sign-in terminals can add, replace or update a CLI.
+  const setupTerminals = new Set<string>()
+  const setupTerminal = (terminalId: string) => {
+    setupTerminals.add(terminalId)
+    return terminalId
+  }
   const providerService = import('./providers.js')
   let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
   const providerUpdates = () =>
@@ -174,8 +181,11 @@ export function startServer(
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
     onTerminalOutput: (terminalId, data, outputOffset) =>
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
-    onTerminalExit: (terminalId, exitCode) =>
-      push.broadcast('terminal.exit', { terminalId, exitCode }),
+    onTerminalExit: (terminalId, exitCode) => {
+      // Before the exit reaches a client, which re-lists providers right away.
+      if (setupTerminals.delete(terminalId)) invalidateCliProbes()
+      push.broadcast('terminal.exit', { terminalId, exitCode })
+    },
     capturePreview: (url, viewports, signal) =>
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
@@ -451,10 +461,11 @@ export function startServer(
         const { githubSetupCommand } = await import('./pull-requests.js')
         const command = githubSetupCommand(p.action)
         return {
-          terminalId:
+          terminalId: setupTerminal(
             p.action === 'install'
               ? orchestrator.installProvider('github-cli', command, p.columns, p.rows)
               : orchestrator.launchProviderLogin('github-cli', command, p.columns, p.rows),
+          ),
         }
       }
 
@@ -512,11 +523,8 @@ export function startServer(
         const p = parseParams(method, params)
         const command = await (await providerUpdates()).commandFor(p.provider)
         return {
-          terminalId: orchestrator.installProvider(
-            `update:${p.provider}`,
-            command,
-            p.columns,
-            p.rows,
+          terminalId: setupTerminal(
+            orchestrator.installProvider(`update:${p.provider}`, command, p.columns, p.rows),
           ),
         }
       }
@@ -547,7 +555,11 @@ export function startServer(
         const { installCommandFor } = await import('./providers.js')
         const command = await installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
-        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+        return {
+          terminalId: setupTerminal(
+            orchestrator.installProvider(target, command, p.columns, p.rows),
+          ),
+        }
       }
 
       case 'providers.launch': {
@@ -556,7 +568,9 @@ export function startServer(
         const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
-          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          terminalId: setupTerminal(
+            orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          ),
         }
       }
 
