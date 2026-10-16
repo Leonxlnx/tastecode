@@ -162,6 +162,26 @@ type LimitEntry = {
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
 }
 type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
+type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
+
+const REFRESH_ERROR_LIMIT = 300
+const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
+
+/**
+ * The held values of a source whose newest refresh failed. They keep the
+ * time they were read, so clients can say how old they are.
+ */
+function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLimitSource {
+  const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = held
+  const message = failure.error instanceof Error ? failure.error.message.trim() : ''
+  return {
+    ...values,
+    stale: true,
+    refreshError: message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK,
+    // A source that ran out of timeouts waits for an account change, not a time.
+    ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
+  }
+}
 
 /** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
 const LIMIT_RETRY_MIN_MS = 5 * 60_000
@@ -538,7 +558,8 @@ export class ProviderControls {
     const entry = this.#limitEntry(provider)
     if (accountChanged) {
       entry.accountVersion += 1
-      // Another account starts without this one's failures or read times.
+      // Another account starts without this one's values, failures or read times.
+      entry.value = undefined
       entry.failure = undefined
       entry.readAt = Number.NEGATIVE_INFINITY
     }
@@ -567,7 +588,8 @@ export class ProviderControls {
 
   /**
    * One read serves concurrent callers, a fresh result serves later ones, and
-   * a failed read answers them until its retry time.
+   * a failed read answers them until its retry time: with the account's last
+   * known values when there are any, otherwise with its error.
    */
   #cachedLimits(
     provider: ProviderId,
@@ -579,7 +601,9 @@ export class ProviderControls {
     const startedAt = Date.now()
     if (entry.value && startedAt < entry.freshUntil) return Promise.resolve(entry.value)
     if (entry.failure && startedAt < entry.failure.retryAt) {
-      return Promise.reject(entry.failure.error)
+      return entry.value?.status === 'ready'
+        ? Promise.resolve(entry.value)
+        : Promise.reject(entry.failure.error)
     }
     const { version, forcedVersion, accountVersion } = entry
     const sequence = ++entry.reads
@@ -614,11 +638,14 @@ export class ProviderControls {
           return value
         },
         (error: unknown) => {
-          if (current()) {
-            const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
-            entry.failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
-          }
-          throw error
+          if (!current()) throw error
+          const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+          const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
+          entry.failure = failure
+          // One failed refresh does not make the account's known limits unknown.
+          if (entry.value?.status !== 'ready') throw error
+          entry.value = lastKnownLimits(entry.value, failure)
+          return entry.value
         },
       )
       .finally(() => {

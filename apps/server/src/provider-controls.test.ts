@@ -822,9 +822,14 @@ describe('limit read backoff and intervals', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
     registry.usageChanged('claude-code')
-    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({
+      stale: true,
+      refreshError: 'fixture-timed-out',
+    })
     await vi.advanceTimersByTimeAsync(5 * 60_000)
-    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    const recovered = await claude.usageLimitSource()
+    expect(recovered).toMatchObject({ status: 'ready' })
+    expect(recovered).not.toHaveProperty('stale')
     expect(usageLimitSource).toHaveBeenCalledTimes(5)
   })
 
@@ -879,10 +884,13 @@ describe('limit read backoff and intervals', () => {
     await vi.advanceTimersByTimeAsync(10 * 60_000)
     await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
     registry.usageChanged('grok')
-    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
     // The next wait starts at 5 minutes again, not 20.
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      stale: true,
+      retryAt: 15 * 60_000 + 5 * 60_000,
+    })
     await vi.advanceTimersByTimeAsync(5 * 60_000)
-    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    await expect(grok.usageLimitSource()).resolves.not.toHaveProperty('stale')
     expect(usageLimitSource).toHaveBeenCalledTimes(5)
   })
 
@@ -987,6 +995,121 @@ describe('limit read backoff and intervals', () => {
       limits: [{ usedPercent: 40 }],
     })
     expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('last-known limits', () => {
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ label: 'Weekly', usedPercent }],
+  })
+  const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+
+  it('answers a failed refresh with the last known values until a read succeeds', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValue(weekly(40))
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    const lastKnown = await grok.usageLimitSource()
+    expect(lastKnown).toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 10 }],
+      checkedAt: 0,
+      origin: 'read',
+      stale: true,
+      refreshError: 'fixture-limits-failed',
+      retryAt: 60_000 + 5 * 60_000,
+    })
+    // The backoff answers with the same values and starts no read.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+    await expect(grok.usageLimitSource()).resolves.toBe(lastKnown)
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(grok.usageLimitSource()).resolves.toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 40 }],
+      checkedAt: 6 * 60_000,
+      origin: 'read',
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the last known values without a retry time once timeouts run out', async () => {
+    const usageLimitSource = vi.fn().mockResolvedValueOnce(weekly(10)).mockRejectedValue(timeout())
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ retryAt: 6 * 60_000 })
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    const lastKnown = await claude.usageLimitSource()
+    expect(lastKnown).toMatchObject({
+      limits: [{ usedPercent: 10 }],
+      stale: true,
+      refreshError: 'fixture-timed-out',
+    })
+    expect(lastKnown).not.toHaveProperty('retryAt')
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    await expect(claude.usageLimitSource()).resolves.toBe(lastKnown)
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('falls back to a stable message when a failure has none', async () => {
+    const usageLimitSource = vi.fn().mockResolvedValueOnce(weekly(10)).mockRejectedValue('')
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      refreshError: 'Plan limits could not be refreshed.',
+    })
+  })
+
+  it('never answers for another account with the previous account values', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockRejectedValue(new Error('fixture-limits-failed'))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
+    const { registry } = setup({
+      services: { grok: { account, usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    usageLimitSource.mockResolvedValueOnce(weekly(20))
+    await grok.signOut()
+    await grok.usageLimitSource()
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+  })
+
+  it('keeps answering with an error when nothing was known before the failure', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'unavailable' })
+      .mockRejectedValue(new Error('fixture-limits-failed'))
+    const { registry } = setup({
+      unavailableLimitCacheMs: 1_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
   })
 })
 
