@@ -5,21 +5,14 @@ import {
   choicesFor,
   customModelChoice,
   customModelKey,
-  defaultHiddenModelKeys,
-  defaultHiddenModels,
   effectiveHiddenModels,
   filterModelChoicesByQuery,
   importLegacyVisibility,
   isCustomModelChoice,
-  migrateHiddenModels,
-  migratePendingHiddenModels,
-  MODEL_VISIBILITY_VERSION,
   modelVisibilityDefaults,
   providerDisplayName,
   readModelLineage,
   resolveReasoningEffort,
-  sourceKey,
-  unlistedHiddenModels,
   type ModelChoice,
 } from './model-catalog.js'
 
@@ -183,9 +176,6 @@ describe('model catalog', () => {
       )
     const shown = (choices: readonly ModelChoice[], hidden: ReadonlySet<string>) =>
       choices.filter((choice) => !hidden.has(choice.key)).map((choice) => choice.model.displayName)
-    const names = (choices: readonly ModelChoice[]) =>
-      choices.map((choice) => choice.model.displayName)
-
     // What codex-cli 0.154 and 0.163 list, in the adapter's order.
     const codex154 = codex([
       ['gpt-6-astra', 'GPT-6-Astra'],
@@ -206,13 +196,13 @@ describe('model catalog', () => {
     ])
 
     it('shows the newest generation of each Codex tier and hides the rest', () => {
-      expect(shown(codex163, defaultHiddenModelKeys(codex163))).toEqual([
+      expect(shown(codex163, modelVisibilityDefaults(codex163).hidden)).toEqual([
         'GPT-6-Astra',
         'GPT-6.1-Sol',
         'GPT-5.6-Terra',
         'GPT-6-Luna',
       ])
-      expect(shown(codex154, defaultHiddenModelKeys(codex154))).toEqual([
+      expect(shown(codex154, modelVisibilityDefaults(codex154).hidden)).toEqual([
         'GPT-6-Astra',
         'GPT-5.6-Sol',
         'GPT-5.6-Terra',
@@ -232,7 +222,7 @@ describe('model catalog', () => {
         ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
         ['claude-mythos-1', 'Mythos 1'],
       ])
-      expect(shown(catalog, defaultHiddenModelKeys(catalog))).toEqual([
+      expect(shown(catalog, modelVisibilityDefaults(catalog).hidden)).toEqual([
         'Fable 5.1',
         'Opus 5.5',
         'Sonnet 5.5',
@@ -259,7 +249,7 @@ describe('model catalog', () => {
         ]),
       )
       const catalog = [...claude([['opus', 'Opus 5.5']]), ...work, ...grok]
-      expect(shown(catalog, defaultHiddenModelKeys(catalog))).toEqual([
+      expect(shown(catalog, modelVisibilityDefaults(catalog).hidden)).toEqual([
         'Opus 5.5',
         'Opus 4.8',
         'Grok 4.7',
@@ -279,7 +269,7 @@ describe('model catalog', () => {
           ['g', 'Provider model'],
         ]),
       )
-      expect(defaultHiddenModels(catalog)).toEqual([])
+      expect(modelVisibilityDefaults(catalog).hidden.size).toBe(0)
     })
 
     it('never hides a custom model', () => {
@@ -288,59 +278,7 @@ describe('model catalog', () => {
         modelId: 'gpt-5.6-sol-preview',
         displayName: 'GPT-5.6-Sol',
       })
-      expect(defaultHiddenModels([...codex163, custom])).not.toContain(custom)
-    })
-
-    it('hands a new generation over from the one a saved profile shows, once', () => {
-      // The profile listed codex-cli 0.154's rows; 0.163 adds three.
-      const listed = new Set(codex154.map((choice) => choice.key))
-      const added = unlistedHiddenModels(codex163, listed)
-
-      // GPT-6-Sol starts hidden behind GPT-6.1-Sol, and the 5.6 Sol and Luna
-      // rows make way for their successors. Terra has none, so it stays.
-      expect(names(added)).toEqual(['GPT-6-Sol', 'GPT-5.6-Sol', 'GPT-5.6-Luna'])
-      // Once the new rows are listed, turning an older one back on sticks.
-      const nowListed = new Set(codex163.map((choice) => choice.key))
-      expect(unlistedHiddenModels(codex163, nowListed)).toEqual([])
-      expect(unlistedHiddenModels(codex163, null)).toEqual([])
-    })
-
-    it('returns Codex rows to the newest of each tier once, from version 7', () => {
-      // A profile saved at version 7 with the old Codex defaults, and an Opus
-      // 5.5 the user hid by hand.
-      const opus = claude([['opus', 'Opus 5.5']])
-      const catalog = [...codex163, ...opus]
-      const saved = new Set([
-        'codex:gpt-5.6-sol',
-        'codex:gpt-5.6-terra',
-        'codex:gpt-5.6-luna',
-        'codex:gpt-5.5',
-        'claude-code:opus',
-      ])
-      const migrated = migrateHiddenModels(saved, '7', catalog)
-
-      expect(shown(codex163, migrated)).toEqual([
-        'GPT-6-Astra',
-        'GPT-6.1-Sol',
-        'GPT-5.6-Terra',
-        'GPT-6-Luna',
-      ])
-      expect(migrated.has('claude-code:opus')).toBe(true)
-    })
-    it('does not let an older row that appears late take anything over', () => {
-      // `opus` moved on to Opus 6, so the 5.5 catalog row is listed on its own.
-      const before = claude([
-        ['opus', 'Opus 5.5'],
-        ['claude-opus-5', 'Opus 5'],
-      ])
-      const after = claude([
-        ['opus', 'Opus 6'],
-        ['claude-opus-5-5', 'Opus 5.5'],
-        ['claude-opus-5', 'Opus 5'],
-      ])
-      const listed = new Set(before.map((choice) => choice.key))
-
-      expect(names(unlistedHiddenModels(after, listed))).toEqual(['Opus 5.5'])
+      expect(modelVisibilityDefaults([...codex163, custom]).hidden.has(custom.key)).toBe(false)
     })
   })
 
@@ -627,236 +565,6 @@ describe('model catalog', () => {
     })
   })
 
-  describe('model visibility migration', () => {
-    const claudeChoices = choicesFor(
-      { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-      [
-        ['fable', 'Fable 5.1'],
-        ['opus', 'Opus 5.5'],
-        ['haiku', 'Haiku 5.5'],
-        ['claude-opus-4-8', 'Opus 4.8'],
-        ['claude-fable-5', 'Fable 5'],
-      ].map(([id, displayName]) => ({ ...model, id: id!, displayName: displayName! })),
-    )
-    // Haiku was hidden by the old defaults; the user also hid Opus 5.5 and
-    // re-enabled Opus 4.8 by hand. A key outside this catalog stays as saved.
-    const saved = new Set([
-      'claude-code:haiku',
-      'claude-code:opus',
-      'claude-code:claude-fable-5',
-      'codex:gpt-5.5',
-    ])
-
-    it.each([null, '3', 'unknown'])('resets every listed model for version %s', (version) => {
-      expect([...migrateHiddenModels(saved, version, claudeChoices)].sort()).toEqual([
-        'claude-code:claude-fable-5',
-        'claude-code:claude-opus-4-8',
-        'codex:gpt-5.5',
-      ])
-    })
-
-    // A real catalog, as an installed build cached it on 2026-10-13: Claude
-    // Code lists the current lineup under its aliases and every older
-    // generation under its own id, Haiku 4.5 only as a dated snapshot.
-    const named = (entries: [id: string, displayName: string][]) =>
-      entries.map(([id, displayName]) => ({ ...model, id, displayName }))
-    const catalog = [
-      ...choicesFor(
-        { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-        named([
-          ['fable', 'Fable 5.1'],
-          ['opus', 'Opus 5.5'],
-          ['sonnet', 'Sonnet 5.5'],
-          ['haiku', 'Haiku 5.5'],
-          ['claude-fable-5', 'Fable 5'],
-          ['claude-opus-5', 'Opus 5'],
-          ['claude-sonnet-5', 'Sonnet 5'],
-          ['claude-opus-4-8', 'Opus 4.8'],
-          ['claude-opus-4-7', 'Opus 4.7'],
-          ['claude-opus-4-6', 'Opus 4.6'],
-          ['claude-opus-4-5', 'Opus 4.5'],
-          ['claude-sonnet-4-6', 'Sonnet 4.6'],
-          ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
-        ]),
-      ),
-      ...choicesFor(
-        { provider: 'codex', sourceName: 'Codex', mark: 'openai' },
-        named([
-          ['gpt-6-astra', 'GPT-6-Astra'],
-          ['gpt-5.6-sol', 'GPT-5.6-Sol'],
-          ['gpt-5.5', 'GPT-5.5'],
-        ]),
-      ),
-      ...choicesFor(
-        { provider: 'grok', sourceName: 'Grok', mark: 'grok' },
-        named([
-          ['grok-4.7', 'Grok 4.7'],
-          ['grok-4.7-build-fast', 'Grok 4.7 Build Fast'],
-        ]),
-      ),
-      ...choicesFor(
-        {
-          provider: 'claude-code',
-          sourceName: 'Work Claude',
-          mark: 'anthropic',
-          agent: { id: 'work-claude', name: 'Work Claude' },
-        },
-        named([['claude-opus-4-8', 'Opus 4.8']]),
-      ),
-    ]
-    const visible = (hidden: ReadonlySet<string>, source: string) =>
-      catalog
-        .filter(
-          (choice) =>
-            sourceKey({ provider: choice.provider, agentId: choice.agent?.id }) === source &&
-            !hidden.has(choice.key),
-        )
-        .map((choice) => choice.model.displayName)
-    // Abridged from the list that build saved at version 4: the `sonnet` and
-    // `haiku` aliases hidden by an older default, Opus 5, Sonnet 5 and Haiku
-    // 4.5 never hidden, Sol turned back on by hand, keys of models no longer
-    // listed. The custom Claude harness row stands for a user-owned source.
-    const savedByOlderBuild = [
-      'codex:gpt-5.5',
-      'codex:gpt-5.4',
-      'claude-code:claude-fable-5',
-      'claude-code:sonnet',
-      'claude-code:haiku',
-      'claude-code:claude-opus-4-8',
-      'claude-code:claude-opus-4-7',
-      'claude-code:claude-opus-4-6',
-      'claude-code:claude-opus-4-5',
-      'claude-code:claude-sonnet-4-6',
-      'claude-code:opus%5B1m%5D',
-      'claude-code:work-claude:claude-opus-4-8',
-    ]
-    const savedStates: [label: string, hidden: string[]][] = [
-      ['the list an older build saved', savedByOlderBuild],
-      ['nothing hidden', []],
-      [
-        'the aliases hidden and the older rows shown',
-        ['claude-code:fable', 'claude-code:opus', 'claude-code:sonnet', 'claude-code:haiku'],
-      ],
-    ]
-    const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
-
-    it.each(
-      savedStates.flatMap(([label, hidden]) =>
-        ['4', '5', '6'].map((version) => [label, version, hidden] as const),
-      ),
-    )(
-      'returns Claude Code to the current lineup from %s at version %s',
-      (_label, version, hidden) => {
-        const migrated = migrateHiddenModels(new Set(hidden), version, catalog)
-
-        expect(visible(migrated, 'claude-code')).toEqual(currentLineup)
-      },
-    )
-
-    it.each(['4', '5', '6'])(
-      "keeps every other source's choices when migrating from version %s",
-      (version) => {
-        const saved = new Set(savedByOlderBuild)
-        const migrated = migrateHiddenModels(saved, version, catalog)
-
-        expect(visible(migrated, 'codex')).toEqual(['GPT-6-Astra', 'GPT-5.6-Sol'])
-        expect(visible(migrated, 'grok')).toEqual(['Grok 4.7', 'Grok 4.7 Build Fast'])
-        expect(migrated.has('claude-code:work-claude:claude-opus-4-8')).toBe(true)
-        // Keys of models the catalog no longer lists stay as saved.
-        expect(migrated.has('codex:gpt-5.4')).toBe(true)
-        expect(migrated.has('claude-code:opus%5B1m%5D')).toBe(true)
-      },
-    )
-
-    it('keeps an older model turned back on once the profile is current', () => {
-      const migrated = migrateHiddenModels(new Set(savedByOlderBuild), '4', catalog)
-      migrated.delete('claude-code:claude-opus-5')
-
-      expect(migrateHiddenModels(migrated, MODEL_VISIBILITY_VERSION, catalog)).toEqual(migrated)
-      expect(visible(migrated, 'claude-code')).toEqual([...currentLineup, 'Opus 5'])
-    })
-
-    it('leaves a current profile untouched', () => {
-      expect(migrateHiddenModels(saved, MODEL_VISIBILITY_VERSION, claudeChoices)).toEqual(saved)
-    })
-
-    describe('once per row', () => {
-      const direct = catalog.filter((choice) => !choice.agent)
-      const keysOf = (choices: readonly ModelChoice[]) => choices.map((choice) => choice.key)
-      const progress = (version: string | null, migratedRows: readonly string[] = []) => ({
-        version,
-        rows: new Map(migratedRows.map((key) => [key, MODEL_VISIBILITY_VERSION])),
-      })
-      const sorted = (hidden: ReadonlySet<string>) => [...hidden].sort()
-      const converged = migratePendingHiddenModels(
-        new Set(savedByOlderBuild),
-        progress('4'),
-        direct,
-      ).hidden
-
-      it.each(['4', '5', '6'])(
-        'brings a profile saved at version %s to the same list and keeps it there',
-        (version) => {
-          const migration = migratePendingHiddenModels(
-            new Set(savedByOlderBuild),
-            progress(version),
-            direct,
-          )
-
-          expect(migration.migrated).toEqual(keysOf(direct))
-          expect(sorted(migration.hidden)).toEqual(sorted(converged))
-          expect(visible(migration.hidden, 'claude-code')).toEqual(currentLineup)
-          // Saved at the current version, the list is left as it is.
-          expect(
-            migratePendingHiddenModels(
-              migration.hidden,
-              progress(MODEL_VISIBILITY_VERSION),
-              direct,
-            ),
-          ).toEqual({ hidden: migration.hidden, migrated: [] })
-        },
-      )
-
-      it('never moves a row again once it was migrated', () => {
-        // Claude Code and Codex were migrated on an earlier launch while Grok
-        // could not be listed; the user then turned Opus 5 back on.
-        const chosen = new Set(converged)
-        chosen.delete('claude-code:claude-opus-5')
-        const migration = migratePendingHiddenModels(
-          chosen,
-          progress('4', keysOf(direct.filter((choice) => choice.provider !== 'grok'))),
-          direct,
-        )
-
-        expect(migration.migrated).toEqual(['grok:grok-4.7', 'grok:grok-4.7-build-fast'])
-        expect(visible(migration.hidden, 'claude-code')).toEqual([...currentLineup, 'Opus 5'])
-        expect(sorted(migration.hidden)).toEqual(sorted(chosen))
-      })
-
-      it('migrates a row its source lists after the rest of it was migrated', () => {
-        // The cached catalog lacked the dated Haiku 4.5 row that the Claude
-        // Code CLI lists now; the user turned Opus 5 on after the first paint.
-        const haiku = 'claude-code:claude-haiku-4-5-20251001'
-        const cached = direct.filter((choice) => choice.key !== haiku)
-        const firstPaint = migratePendingHiddenModels(
-          new Set(savedByOlderBuild),
-          progress('4'),
-          cached,
-        )
-        const chosen = new Set(firstPaint.hidden)
-        chosen.delete('claude-code:claude-opus-5')
-
-        const discovery = migratePendingHiddenModels(
-          chosen,
-          progress('4', firstPaint.migrated),
-          direct,
-        )
-
-        expect(discovery.migrated).toEqual([haiku])
-        expect(visible(discovery.hidden, 'claude-code')).toEqual([...currentLineup, 'Opus 5'])
-      })
-    })
-  })
   it('keeps an effort that the next model supports', () => {
     expect(
       resolveReasoningEffort({
