@@ -414,7 +414,7 @@ function ProviderMcpSettings(props: {
       (checking && projectServers.length === 0 && inheritedServers.length === 0))
   const status = !props.projectPath
     ? 'Select a project in the sidebar first.'
-    : loadingInventory || checking
+    : loadingInventory
       ? undefined
       : !currentInventory
         ? undefined

@@ -431,12 +431,15 @@ describe('MCP settings', () => {
     expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
       'starting',
     )
-    expect(screen.queryByText('No MCP servers have been added to this project.')).toBeNull()
+    // The project's own list is final, so the page keeps its shape when the provider answers.
+    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
 
     loading = false
     act(() => changed?.({ provider: 'codex', projectPath: '/work/project' }))
     expect(await screen.findByText('Codex · MCP inventory available')).toBeTruthy()
-    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
+      'ready',
+    )
   })
 
   it('shows loading rows instead of an empty list while nothing is reported yet', async () => {
