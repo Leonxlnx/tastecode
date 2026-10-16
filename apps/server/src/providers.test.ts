@@ -54,7 +54,7 @@ describe('detectProviders', () => {
     await Promise.all([first, second])
   })
 
-  it('consumes one prewarmed scan before refreshing the machine state', async () => {
+  it('lets the first listing join the startup scan while it runs', async () => {
     let installedChecks = 0
     const sharedSystem = system({
       isInstalled: async () => {
@@ -64,31 +64,35 @@ describe('detectProviders', () => {
     })
 
     const prewarmed = prewarmProviders(sharedSystem)
-    expect(prewarmProviders(sharedSystem)).toBe(prewarmed)
+    expect(detectProviders(sharedSystem)).toBe(prewarmed)
     await prewarmed
     expect(installedChecks).toBe(7)
-
-    expect(detectProviders(sharedSystem)).toBe(prewarmed)
-    await detectProviders(sharedSystem)
-    expect(installedChecks).toBe(14)
   })
 
-  it('refreshes a prewarmed scan that waited too long for its first reader', async () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(0)
-    let installedChecks = 0
-    const sharedSystem = system({
-      isInstalled: async () => {
-        installedChecks += 1
-        return false
-      },
-    })
+  it('re-reads the PATH before looking for binaries', async () => {
+    const order: string[] = []
+    const providers = await detectProviders(
+      system({
+        refreshPath: async () => {
+          order.push('path')
+        },
+        isInstalled: async (command) => {
+          order.push(command)
+          return command === 'agy' && order[0] === 'path'
+        },
+      }),
+    )
+    expect(order[0]).toBe('path')
+    expect(find(providers, 'antigravity').installed).toBe(true)
+  })
+
+  it('scans again for a listing after the startup scan, so installs show up', async () => {
+    let installed = false
+    const sharedSystem = system({ isInstalled: async (command) => installed && command === 'grok' })
 
     await prewarmProviders(sharedSystem)
-    vi.setSystemTime(30_001)
-    await detectProviders(sharedSystem)
-
-    expect(installedChecks).toBe(14)
+    installed = true
+    expect(find(await detectProviders(sharedSystem), 'grok').installed).toBe(true)
   })
 
   it('reports an installed provider with the version it gave us', async () => {
