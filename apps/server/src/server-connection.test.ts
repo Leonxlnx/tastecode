@@ -52,6 +52,10 @@ vi.mock('./store.js', () => ({
     historyRewrittenAfter() {
       return state.historyRewritten
     }
+    feedbackLedger() {
+      return undefined
+    }
+    setFeedbackLedger() {}
     close() {}
   },
 }))
@@ -729,5 +733,65 @@ describe('checkpoint restores across clients', () => {
     } finally {
       reader.client.terminate()
     }
+  })
+})
+
+describe('feedback routes', () => {
+  async function ask(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'feedback', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+  const draft = {
+    kind: 'idea',
+    message: 'A darker sidebar would be nice.',
+    includeError: false,
+    includeDiagnostics: false,
+    context: { source: 'command_palette' },
+  }
+
+  it('reports a build without an inbox key as disabled', async () => {
+    const { port } = await listen()
+    expect(await ask(port, 'feedback.status', {})).toEqual({
+      id: 'feedback',
+      result: { enabled: false, reason: 'not_configured' },
+    })
+    expect(
+      await ask(port, 'feedback.submit', { ...draft, submissionId: crypto.randomUUID() }),
+    ).toMatchObject({ result: { ok: false, code: 'not_configured' } })
+  })
+
+  it('previews a configured draft without the key and refuses oversize text', async () => {
+    running = startServer({
+      port: 0,
+      feedback: { endpoint: { url: 'https://feedback.test/api/feedback', key: 'fb_test_000' } },
+    })
+    const listener = state.servers.at(-1)!
+    await once(listener, 'listening')
+    const address = listener.address()
+    if (!address || typeof address === 'string') throw new Error('Missing listener address')
+    const preview = await ask(address.port, 'feedback.preview', draft)
+    expect(preview).toEqual({
+      id: 'feedback',
+      result: {
+        payload: JSON.stringify(
+          { kind: 'idea', message: draft.message, metadata: { app: 'TasteCode' } },
+          null,
+          2,
+        ),
+        redactions: 0,
+      },
+    })
+    expect(JSON.stringify(preview)).not.toContain('fb_test_000')
+    expect(
+      await ask(address.port, 'feedback.preview', { ...draft, message: 'x'.repeat(4001) }),
+    ).toMatchObject({ error: { code: 'bad_request' } })
   })
 })
