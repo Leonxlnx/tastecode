@@ -21,7 +21,13 @@ describe('responsive chat pane CSS', () => {
   it('keeps the permission icon when a narrow composer drops the label', () => {
     // The icon is the IconMorph span next to the label span, so a bare
     // `.tool > span` rule leaves an empty chip.
-    const iconOnlyRules = [...css.matchAll(/([^{}]*\.composer__permission \.tool > span[^{]*)\{/g)]
+    const labelRules = [
+      ...css.matchAll(/([^{}]*\.composer__permission \.tool > span[^{]*)\{([^}]*)\}/g),
+    ]
+    for (const [, selector] of labelRules) {
+      expect(selector).toContain('.composer__permission .tool > span:not(.icon-morph)')
+    }
+    const iconOnlyRules = labelRules.filter(([, , body]) => body?.includes('display: none'))
     expect(iconOnlyRules).toHaveLength(2)
     for (const [, selector] of iconOnlyRules) {
       expect(selector).toContain('.composer__permission .tool > span:not(.icon-morph),')

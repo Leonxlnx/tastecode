@@ -2518,6 +2518,32 @@
   color: color-mix(in srgb, var(--text) 55%, var(--text-2));
 }
 
+@property --composer-permission-ink {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+/* The access label changes colour on the icon morph's clock instead of
+   snapping ahead of it. The ink moves through a registered property so the
+   hover, which sets `color` directly, stays instant. */
+.tools .composer__permission .tool {
+  --composer-permission-ink: color-mix(in srgb, var(--text) 55%, var(--text-2));
+  transition: --composer-permission-ink var(--dur-slow) var(--ease-in-out);
+}
+
+.tools .composer__permission .tool--review {
+  --composer-permission-ink: var(--composer-review);
+}
+
+.tools .composer__permission .tool--danger {
+  --composer-permission-ink: var(--composer-danger);
+}
+
+.tools .composer__permission .tool > span:not(.icon-morph) {
+  color: var(--composer-permission-ink);
+}
+
 .tools .composer__design.is-active {
   background: var(--composer-design-active-bg);
   border-color: var(--composer-design-border-active);
@@ -3139,7 +3165,8 @@
     :is(.composer__add, .composer__permission):hover:not(:disabled)
     :is(
       .tool:not(.tool--review):not(.tool--danger),
-      .tool:not(.tool--review):not(.tool--danger) svg
+      .tool:not(.tool--review):not(.tool--danger) svg,
+      .tool:not(.tool--review):not(.tool--danger) > span:not(.icon-morph)
     ) {
     color: var(--text);
   }
