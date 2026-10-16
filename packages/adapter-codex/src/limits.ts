@@ -32,48 +32,10 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
   // Ensure the main codex bucket always appears first.
   buckets.sort(([a], [b]) => (a === 'codex' ? -1 : b === 'codex' ? 1 : 0))
   const rows: ProviderLimit[] = []
-  for (const [limitId, snapshot] of buckets) {
-    // Secondary buckets (e.g. Spark) carry their own name; the main
-    // bucket falls back to the plain window label.
-    const prefix = limitId === 'codex' ? '' : `${snapshot.limitName ?? titleCaseLimitId(limitId)} `
-    rows.push(
-      ...[snapshot.primary, snapshot.secondary].flatMap((window, index) => {
-        if (!window) return []
-        const usedPercent = finitePercent(window.usedPercent)
-        if (usedPercent === undefined) return []
-        const resetsAt = resetTimestamp(window.resetsAt)
-        return [
-          {
-            label:
-              friendlyLimitLabel(limitId, snapshot.limitName, window.windowDurationMins) ??
-              prefix +
-                rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
-            usedPercent,
-            ...(!(resetsAt === undefined) ? { resetsAt } : {}),
-          },
-        ]
-      }),
-    )
-  }
-  const credits = (response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits)?.credits
-  if (credits?.hasCredits) {
-    if (credits.unlimited) {
-      rows.push({
-        label: 'Credits',
-        usedPercent: 0,
-        valueLabel: 'Unlimited',
-      })
-    } else if (credits.balance !== null) {
-      const balance = Math.max(0, Math.floor(Number(credits.balance)))
-      if (Number.isFinite(balance)) {
-        rows.push({
-          label: 'Credits',
-          usedPercent: 0,
-          valueLabel: `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
-        })
-      }
-    }
-  }
+  for (const [limitId, snapshot] of buckets) rows.push(...bucketRows(limitId, snapshot))
+  rows.push(
+    ...creditRows((response.rateLimitsByLimitId?.['codex'] ?? response.rateLimits)?.credits),
+  )
   const resets = response.rateLimitResetCredits
   const availableResets = Number(resets?.availableCount)
   if (Number.isFinite(availableResets) && availableResets > 0) {
@@ -97,6 +59,55 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
     })
   }
   return rows
+}
+
+/** The window rows of one metered bucket. */
+function bucketRows(
+  limitId: string,
+  snapshot: Pick<CodexRateLimitSnapshot, 'limitName' | 'primary' | 'secondary'>,
+): ProviderLimit[] {
+  // Secondary buckets (e.g. Spark) carry their own name; the main
+  // bucket falls back to the plain window label.
+  const prefix = limitId === 'codex' ? '' : `${snapshot.limitName ?? titleCaseLimitId(limitId)} `
+  return [snapshot.primary, snapshot.secondary].flatMap((window, index) => {
+    if (!window) return []
+    const usedPercent = finitePercent(window.usedPercent)
+    if (usedPercent === undefined) return []
+    const resetsAt = resetTimestamp(window.resetsAt)
+    return [
+      {
+        label:
+          friendlyLimitLabel(limitId, snapshot.limitName, window.windowDurationMins) ??
+          prefix + rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
+        usedPercent,
+        ...(!(resetsAt === undefined) ? { resetsAt } : {}),
+      },
+    ]
+  })
+}
+
+/** The credit balance row of the main bucket, when the account has credits. */
+function creditRows(credits: CodexRateLimitSnapshot['credits'] | undefined): ProviderLimit[] {
+  if (!credits?.hasCredits) return []
+  if (credits.unlimited) {
+    return [
+      {
+        label: 'Credits',
+        usedPercent: 0,
+        valueLabel: 'Unlimited',
+      },
+    ]
+  }
+  if (credits.balance === null) return []
+  const balance = Math.max(0, Math.floor(Number(credits.balance)))
+  if (!Number.isFinite(balance)) return []
+  return [
+    {
+      label: 'Credits',
+      usedPercent: 0,
+      valueLabel: `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,
+    },
+  ]
 }
 
 function finitePercent(value: number): number | undefined {
