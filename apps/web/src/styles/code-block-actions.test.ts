@@ -28,6 +28,12 @@ describe('code block controls layout', () => {
     )
   })
 
+  it('labels a fence without a language as text, completed or live', () => {
+    expect(markdownCss).toMatch(
+      /\.md \[data-streamdown='code-block-header'\] > span:empty::before,\s*\.md \[data-streamdown='code-block-header'\]:empty::before \{\s*content: 'text';\s*\}/,
+    )
+  })
+
   it('wraps code through white-space on the root choice', () => {
     expect(markdownCss).toMatch(
       /:root\[data-code-wrap='on'\] \.md pre code \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/s,
