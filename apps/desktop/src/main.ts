@@ -63,7 +63,7 @@ import { NativeMenuDispatch } from './native-menu-dispatch.js'
 import { isRendererFileUrl, rendererFileUrl } from './own-renderer.js'
 import { configurePreviewNavigation } from './preview-navigation.js'
 import { savePastedFile } from './pasted-file.js'
-import { ownedServerEnvironment } from './owned-server-env.js'
+import { ownedServerEnvironment, withFeedbackDetails } from './owned-server-env.js'
 import { revealablePath } from './reveal-path.js'
 import { projectFilePath } from './project-file-path.js'
 import { PreviewCaptureOwner } from './preview-capture.js'
@@ -356,9 +356,19 @@ function startOwnedServer(): boolean {
   if (devServer || serverSupervisor) return true
   let serverEnv: NodeJS.ProcessEnv
   try {
-    serverEnv = ownedServerEnvironment(
-      process.env,
-      app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+    serverEnv = withFeedbackDetails(
+      ownedServerEnvironment(
+        process.env,
+        app.isPackaged ? readFileSync(rendererIndexPath(), 'utf8') : undefined,
+      ),
+      {
+        appVersion: app.getVersion(),
+        // Written at build time by scripts/build-main.js; an unpackaged run reads
+        // the maintainer's ~/.tastecode file on the server side instead.
+        feedbackConfig: app.isPackaged
+          ? path.join(process.resourcesPath, 'feedback', 'feedback.env')
+          : undefined,
+      },
     )
   } catch (error) {
     dialog.showErrorBox(nativeAppName, error instanceof Error ? error.message : String(error))

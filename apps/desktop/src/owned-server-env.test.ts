@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ownedServerEnvironment } from './owned-server-env.js'
+import { ownedServerEnvironment, withFeedbackDetails } from './owned-server-env.js'
 
 const html = (url: string) =>
   `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' ${url}; img-src 'self'">`
@@ -44,5 +44,35 @@ describe('owned server endpoint', () => {
     expect(() =>
       ownedServerEnvironment({}, html('ws://127.0.0.1:4311 ws://127.0.0.1:5555')),
     ).toThrow('no local server endpoint')
+  })
+})
+
+describe('server feedback details', () => {
+  it('passes the app version and only the path of the packaged endpoint file', () => {
+    const inherited = { PATH: 'retained' }
+    expect(
+      withFeedbackDetails(inherited, {
+        appVersion: '0.1.2',
+        feedbackConfig: '/Applications/Taste Code.app/Contents/Resources/feedback/feedback.env',
+      }),
+    ).toEqual({
+      PATH: 'retained',
+      HARNESS_APP_VERSION: '0.1.2',
+      TASTECODE_FEEDBACK_CONFIG:
+        '/Applications/Taste Code.app/Contents/Resources/feedback/feedback.env',
+    })
+    expect(inherited).toEqual({ PATH: 'retained' })
+  })
+
+  it('lets an inherited endpoint win and adds nothing for an unpackaged run', () => {
+    expect(
+      withFeedbackDetails(
+        { TASTECODE_FEEDBACK_CONFIG: '/staging/feedback.env' },
+        { appVersion: '0.1.2', feedbackConfig: '/packaged/feedback.env' },
+      ).TASTECODE_FEEDBACK_CONFIG,
+    ).toBe('/staging/feedback.env')
+    expect(withFeedbackDetails({}, { appVersion: '0.1.2', feedbackConfig: undefined })).toEqual({
+      HARNESS_APP_VERSION: '0.1.2',
+    })
   })
 })
