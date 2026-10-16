@@ -15,7 +15,20 @@ const COPIED_MS = 1600
  * to a check on success; a failed write shows an alert glyph, a retry title and
  * an inline alert, so a rejected copy never looks like a working one.
  */
-export function CopyButton({ text, label }: { text: string; label: string }) {
+export function CopyButton({
+  text,
+  label,
+  title = 'Copy',
+  copiedLabel,
+}: {
+  text: string
+  /** Accessible name at rest. */
+  label: string
+  /** Tooltip at rest. */
+  title?: string | undefined
+  /** Name and tooltip while the check shows; without it both stay as they are. */
+  copiedLabel?: string | undefined
+}) {
   const [copied, setCopied] = useState(false)
   const [failed, setFailed] = useState(false)
   // Rows are virtualized, so this unmounts the moment it scrolls out of the
@@ -37,13 +50,14 @@ export function CopyButton({ text, label }: { text: string; label: string }) {
     }
   }
 
+  const confirmed = copied && copiedLabel !== undefined
   return (
     <span className={`copy-action${failed ? ' is-failed' : ''}`}>
       <button
         type="button"
         onClick={() => void copy()}
-        aria-label={label}
-        title={failed ? 'Copy failed — click to retry' : 'Copy'}
+        aria-label={confirmed ? copiedLabel : label}
+        title={failed ? 'Copy failed — click to retry' : confirmed ? copiedLabel : title}
       >
         <IconMorph active={failed ? 2 : copied ? 1 : 0}>
           <Copy aria-hidden />

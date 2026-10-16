@@ -69,6 +69,20 @@ describe('CopyButton', () => {
     expect(button.getAttribute('title')).toBe('Copy')
   })
 
+  it('names the copied state while the check shows when asked to', async () => {
+    render(<CopyButton text="code" label="Copy code" title="Copy code" copiedLabel="Copied" />)
+    const button = screen.getByRole('button', { name: 'Copy code' })
+    expect(button.getAttribute('title')).toBe('Copy code')
+
+    await press(button)
+
+    expect(button.getAttribute('aria-label')).toBe('Copied')
+    expect(button.getAttribute('title')).toBe('Copied')
+    act(() => vi.advanceTimersByTime(1600))
+    expect(button.getAttribute('aria-label')).toBe('Copy code')
+    expect(button.getAttribute('title')).toBe('Copy code')
+  })
+
   it('clears its reset timer when it unmounts', async () => {
     const view = render(<CopyButton text="exact text" label="Copy response" />)
     await press(screen.getByRole('button', { name: 'Copy response' }))

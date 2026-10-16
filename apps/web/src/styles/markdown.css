@@ -315,6 +315,22 @@
   gap: 3px;
 }
 
+/* A failed copy turns its glyph red and its title offers a retry. The row has
+   no room for the inline "Copy failed" text that reply copy shows, so here it
+   is announced but not drawn, and cannot widen the row. */
+.md [data-streamdown='code-block-actions'] .copy-action.is-failed button {
+  color: var(--error);
+}
+
+.md [data-streamdown='code-block-actions'] .copy-action__error {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
    app does not load. Keep controls in one row and menus out of document flow. */
 .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
