@@ -2076,6 +2076,27 @@
   color: var(--error);
 }
 
+.mcp-inherited {
+  margin-top: 28px;
+}
+
+.mcp-inherited__header {
+  margin-bottom: 12px;
+}
+
+.mcp-inherited__header h2 {
+  margin: 0 0 4px;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  font-weight: 520;
+}
+
+.mcp-inherited__header p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
 .mcp-editor {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
