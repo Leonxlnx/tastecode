@@ -531,3 +531,12 @@
   font: inherit;
   text-decoration: underline;
 }
+
+/* ---------- streaming reveal (reveal-clock.ts) ---------- */
+
+/* Streamed text is laid out as it arrives; the part not shown yet is painted
+   in transparent ink, so its line breaks are already final when it appears. */
+::highlight(md-veil) {
+  color: transparent;
+  text-decoration-color: transparent;
+}
