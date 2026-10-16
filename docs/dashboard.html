@@ -290,12 +290,33 @@
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
         </nav>
-        <span class="meta">2026-10-15 main 6361163f · Design picks, non-blocking taskkill</span>
+        <span class="meta"
+          >2026-10-16 main 0ad74ec3 · Full-width replies, context ring, model order</span
+        >
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 16 (main 0ad74ec3): Leon's overnight round landed. Assistant replies use the full
+          transcript width (PR #1616), code block controls line up with the label and the block
+          edges (PR #1617), icon-only composer chips are squares the size of Add (PR #1618), command
+          labels start after a cd into an absolute folder (PR #1619), and streamed reply text
+          reveals at a steady pace (PR #1620). Codex and Claude Code order their catalogs by tier
+          with the newest generation first, Astra, Sol, Terra, Luna and Fable, Opus, Sonnet, Haiku
+          (PR #1624), and older generations start hidden by one generation rule instead of fixed
+          lists (PR #1625). Codex and Claude Code chats show the context ring after a turn (PR
+          #1626). Settings > MCP keeps the Codex inventory when a server reports an unknown auth
+          status (PR #1628) and lists the servers a provider already loads (PR #1630); a failed
+          process stop is retried (PR #1629). Settings columns and card rows line up (PR #1612),
+          Windows shortcut labels print arrows (PR #1613), a keyboard-focused workspace tab is
+          ringed whole (PR #1614) and the workspace terminal follows the app background (PR #1615).
+          The design agent keeps acquiring photos while each pass makes progress (PR #1627), accepts
+          model-authored brief answers (PR #1621) and reported folders in the Build file list (PR
+          #1622), and no longer fails Build when a local browser cannot launch (PR #1623). The
+          design-taste plugin 0.5.0 ships without dashboard references.
+        </p>
         <p>
           October 15, evening (main 6361163f): Leon's design picks landed. The right panel's X hides
           the panel and keeps every tab, Browser page and running terminal for the next open, and
@@ -894,15 +915,17 @@
                     new sessions from their attachments; permission and Design actions compact
                     before a narrow toolbar can overlap, and the permission chip keeps its icon; one
                     smooth effort pill, with the level shown as dots on the composer model button,
-                    and a context meter with its percentage; streamed tables, links and task lists
-                    render live, a stopped reply ends with its own summary and a Stopped by you
-                    marker, Arrow Up in an empty composer recalls the last prompt, and code blocks
-                    wrap on demand; completing replies and their code blocks keep their height, Jump
-                    to latest lands at the moving end, and toasts open above the docked composer;
-                    plus an in-pane session header with shared rename in a visible field, pin,
-                    delete, checkpoint, Workspace, and Terminal actions; the idle voice control
-                    stays flat; Stop immediately restores the idle presentation while provider
-                    interruption finishes in the background</span
+                    and a context meter with its percentage for Codex and Claude Code chats too;
+                    replies use the full transcript width and streamed text reveals at a steady
+                    pace; streamed tables, links and task lists render live, a stopped reply ends
+                    with its own summary and a Stopped by you marker, Arrow Up in an empty composer
+                    recalls the last prompt, and code blocks wrap on demand; completing replies and
+                    their code blocks keep their height, Jump to latest lands at the moving end, and
+                    toasts open above the docked composer; plus an in-pane session header with
+                    shared rename in a visible field, pin, delete, checkpoint, Workspace, and
+                    Terminal actions; the idle voice control stays flat; Stop immediately restores
+                    the idle presentation while provider interruption finishes in the
+                    background</span
                   >
                 </span>
               </li>
@@ -1041,15 +1064,16 @@
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout; Claude Code,
                     Codex and Grok groups keep that order while models load, and new users start on
-                    Claude Code; current Codex and exact Claude defaults are prioritized; superseded
-                    GPT versions and every Claude generation older than the current lineup start
-                    hidden, also when a saved profile meets them for the first time; visibility
-                    updates move each row once from the first paint, so later choices stay even
-                    while a source fails discovery, and a new profile's first choice is kept; long
-                    model names no longer clip the picker; Claude account labels include the
-                    available Max multiplier, and Grok 4.5 and 4.6 remain discoverable, provider
-                    readiness stays silent during new-chat source changes, and saved custom ids
-                    remain usable while their management UI is parked</span
+                    Claude Code; both catalogs list the newest generation of each tier first (Astra,
+                    Sol, Terra, Luna; Fable, Opus, Sonnet, Haiku), and every row older than its
+                    family's newest generation starts hidden by one rule, also when a saved profile
+                    meets it for the first time; visibility updates move each row once from the
+                    first paint, so later choices stay even while a source fails discovery, and a
+                    new profile's first choice is kept; long model names no longer clip the picker;
+                    Claude account labels include the available Max multiplier, and Grok 4.5 and 4.6
+                    remain discoverable, provider readiness stays silent during new-chat source
+                    changes, and saved custom ids remain usable while their management UI is
+                    parked</span
                   >
                 </span>
               </li>
@@ -1242,10 +1266,12 @@
                   >MCP and Skills, kept simple
                   <span class="d"
                     >project views start empty until the user explicitly adds or imports a resource;
-                    add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
-                    and provider capability status instead of misleading project-name copy. The
-                    compact composer picker invokes them directly from /, $, or @. Stays this size
-                    for the beta</span
+                    the servers a provider already loads from its own settings are listed read-only
+                    below with status and tools; add, enable, per-project scope, reconnect recovery,
+                    null-safe legacy inventory, an unknown auth status that keeps the rest of the
+                    list, and provider capability status instead of misleading project-name copy.
+                    The compact composer picker invokes them directly from /, $, or @. Stays this
+                    size for the beta</span
                   >
                 </span>
               </li>
