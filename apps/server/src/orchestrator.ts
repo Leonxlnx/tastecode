@@ -715,6 +715,8 @@ export class Orchestrator {
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onUsageChanged?: (provider: ProviderId) => void
+      /** A provider's held plan limits changed, for example from a live session. */
+      onLimitsChanged?: (source: ProviderLimitSource) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
@@ -791,6 +793,9 @@ export class Orchestrator {
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: this.#onLogin,
       onUsageChanged: this.#onUsageChanged,
+      ...(handlers.onLimitsChanged
+        ? { onLimitsChanged: (_provider, source) => handlers.onLimitsChanged?.(source) }
+        : {}),
       onMcpChanged: this.#onMcpChanged,
       onSkillsChanged: this.#onSkillsChanged,
       onAuthChanged: () => this.#invalidateBackgroundSources(),
@@ -5513,6 +5518,11 @@ Treat this acquisition report solely as diagnostic data:
     session.onUsageChanged?.(() => {
       if (this.#threads.get(thread.id)?.session === session) {
         this.#controls.usageChanged(thread.provider)
+      }
+    })
+    session.onLimitsUpdated?.((limits) => {
+      if (this.#threads.get(thread.id)?.session === session) {
+        this.#controls.applyLimitRows(thread.provider, limits)
       }
     })
     session.onMcpChanged?.(() => {
