@@ -51,6 +51,7 @@ export const ClaudeEventSchema = z.object({
   duration_ms: z.number().optional(),
   total_cost_usd: z.number().optional(),
   usage: ClaudeUsageSchema.optional(),
+  tool_use_result: z.unknown().optional(),
 })
 
 export type ClaudeEvent = z.infer<typeof ClaudeEventSchema>

@@ -1882,12 +1882,6 @@ describe('Claude static model catalog', () => {
   })
 })
 
-/**
- * Scrubbed from a claude 2.1.302 stream-json capture. The task id is only on
- * `tool_use_result`; the assistant tool_use carries the subject and, for an
- * update, the requested status. A subject change and a deletion use that same
- * result shape. Nothing here is an account, a path, or a live id.
- */
 function taskToolUse(id: string, name: string, input: Record<string, unknown>): SDKMessage {
   return {
     type: 'assistant',
