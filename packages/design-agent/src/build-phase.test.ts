@@ -92,6 +92,11 @@ describe('build phase', () => {
     expect(prompt).toContain('Set summary to "Verify before publishing: ..."')
     expect(prompt).toContain('It may not replace photography, product imagery')
     expect(prompt).toContain('SVG is limited to an explicit functional icon, logo')
+    // Codex's sandbox could not launch Chromium in a real run and failed a finished Build.
+    expect(prompt).toContain('A local browser that cannot launch is not a blocker')
+    expect(designBuildCorrectionPrompt('missing files: index.html')).toContain(
+      'A local browser that cannot launch is not a blocker',
+    )
   })
 
   it('parses a completed implementation report', () => {
