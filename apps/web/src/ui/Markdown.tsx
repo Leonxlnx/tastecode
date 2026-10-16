@@ -638,16 +638,21 @@ export const Markdown = memo(function Markdown({
   projectPath,
   liveUpdate,
   updateVersion,
+  literalHtml,
 }: {
   text: string
   streaming?: boolean
   projectPath?: string | undefined
   liveUpdate?: LiveMarkdownChange | undefined
   updateVersion?: number | undefined
+  /** Shows raw HTML outside code as its source text, as the live parser does. */
+  literalHtml?: boolean | undefined
 }) {
   const rich = !streaming && needsRichMarkdown(text)
   const RichMarkdown = useCompletedMarkdown(rich)
-  if (RichMarkdown) return <RichMarkdown text={text} projectPath={projectPath} />
+  if (RichMarkdown) {
+    return <RichMarkdown text={text} projectPath={projectPath} literalHtml={literalHtml} />
+  }
   // A rich reply that completes before its renderer has loaded keeps the live
   // DOM at the same position in the tree, so it never collapses meanwhile.
   if (streaming || rich) {
