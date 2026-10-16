@@ -19,8 +19,8 @@ import { commandVersion, isInstalled } from '@harness/proc/cli'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * A probe may declare a short sign-in check that reads its CLI's public output
+ * (Codex does); every other provider is answered later by its account read.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -37,6 +37,12 @@ type Probe = {
   supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
+  /**
+   * A short sign-in check the scan runs for an installed CLI, from that CLI's
+   * public output. Without one the scan reports `unknown` and the account read
+   * decides later.
+   */
+  auth?: () => Promise<ProviderStatus['auth']>
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
 }
@@ -75,6 +81,7 @@ const PROBES: Probe[] = [
       loginOpensBrowser: true,
     },
     loginCommand: 'codex login',
+    auth: () => codexLoginStatus(),
   },
   {
     id: 'grok',
@@ -157,8 +164,12 @@ const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  auth: (provider) => installTimeAuth(provider),
+}
+
+/** The sign-in check a provider's probe declares, or `unknown` when it has none. */
+export function installTimeAuth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']> {
+  return PROBES.find((entry) => entry.id === provider)?.auth?.() ?? Promise.resolve('unknown')
 }
 
 export function providerUpdateSources() {
