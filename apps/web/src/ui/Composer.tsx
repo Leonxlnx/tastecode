@@ -253,6 +253,7 @@ type ComposerAttachment = {
   previewUrl?: string
   thumbnailUrl?: string
   mediaType?: 'image' | 'video'
+  previewSettled?: boolean
 }
 
 type RunningSubmission = 'queue' | 'steer'
@@ -1056,23 +1057,26 @@ function ComposerComponent(props: {
   }, [props.draftRequest?.request])
 
   const hydrateAttachmentPreview = (reference: string) => {
-    void previewViewedImage(reference).then((preview) => {
-      if (!mounted.current || !preview?.mediaType || !preview.previewUrl) return
-      const { mediaType, name, previewUrl, thumbnailUrl } = preview
-      setAttachments((current) =>
-        current.map((attachment) =>
-          attachment.path === reference
-            ? {
-                ...attachment,
-                name,
-                mediaType,
-                previewUrl,
-                ...(thumbnailUrl ? { thumbnailUrl } : {}),
-              }
-            : attachment,
-        ),
-      )
-    })
+    void previewViewedImage(reference)
+      .catch(() => undefined)
+      .then((preview) => {
+        if (!mounted.current) return
+        setAttachments((current) =>
+          current.map((attachment) => {
+            if (attachment.path !== reference) return attachment
+            if (!preview?.mediaType || !preview.previewUrl)
+              return { ...attachment, previewSettled: true }
+            const { mediaType, name, previewUrl, thumbnailUrl } = preview
+            return {
+              ...attachment,
+              name,
+              mediaType,
+              previewUrl,
+              ...(thumbnailUrl ? { thumbnailUrl } : {}),
+            }
+          }),
+        )
+      })
   }
 
   const addFiles = (files: Array<PickedAttachment | string>) => {
@@ -1761,7 +1765,9 @@ function ComposerComponent(props: {
                         aria-label={
                           attachment.previewUrl
                             ? `Open ${attachment.name}`
-                            : `Loading preview of ${attachment.name}`
+                            : attachment.previewSettled
+                              ? `Preview unavailable for ${attachment.name}`
+                              : `Loading preview of ${attachment.name}`
                         }
                       >
                         <span className="attachment-preview__fallback" aria-hidden>
