@@ -843,7 +843,8 @@ function codexRuntime(
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       // Codex spawns its app-server without a cwd; the wrapper resolves from the project.
-      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath) } : {}),
+      // A wrapper may run another account, whose limit windows are not the default account's.
+      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath), liveLimits: false } : {}),
     })
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {

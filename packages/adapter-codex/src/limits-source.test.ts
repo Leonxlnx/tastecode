@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs'
 import type { JsonRpcValue } from '@harness/proc'
 import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
+import { CodexLimitMemory } from './limits.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
 
@@ -22,6 +24,8 @@ type SourceState = {
   failure?: string
   rateLimitsResponse?: JsonRpcValue
   consumeResponse?: JsonRpcValue
+  /** What `initialize` reports as the app-server's home. */
+  home?: string
 }
 
 const emptyRateLimits = {
@@ -39,10 +43,14 @@ const emptyRateLimits = {
   rateLimitResetCredits: null,
 } as const
 
-function sourceAdapter(initial: Partial<SourceState> = {}) {
+function sourceAdapter(
+  initial: Partial<SourceState> = {},
+  options: ConstructorParameters<typeof CodexAdapter>[0] = {},
+) {
   const state: SourceState = { account: null, ...initial }
   const rpc = new FakeCodexRpc((method) => {
     if (method === state.failure) throw new Error(`${method} failed`)
+    if (method === 'initialize' && state.home) return { codexHome: state.home }
     if (method === 'account/read') {
       return state.accountResponse ?? { account: state.account }
     }
@@ -55,7 +63,7 @@ function sourceAdapter(initial: Partial<SourceState> = {}) {
     return {}
   })
   proc.rpc = rpc
-  return { adapter: new CodexAdapter(), rpc, state }
+  return { adapter: new CodexAdapter(options), rpc, state }
 }
 
 const capturedRateLimitUpdate = {
@@ -71,21 +79,24 @@ describe('Codex rate-limit source', () => {
     expect(rpc.disposals).toBe(1)
   })
 
-  it('maps only the exact provider update to a quiet usage-change event', async () => {
-    const { adapter, rpc } = sourceAdapter()
+  it('handles only the exact provider update, and one without values changes nothing', async () => {
+    const { adapter, rpc } = sourceAdapter({}, { limitMemory: new CodexLimitMemory() })
     const changed = vi.fn()
+    const updated = vi.fn()
     const logged = vi.fn()
     adapter.on('usageChanged', changed)
+    adapter.onLimitsUpdated(updated)
     adapter.on('log', logged)
     await adapter.start()
 
     rpc.emitNotification('account/rateLimits/updated', capturedRateLimitUpdate)
 
-    expect(changed).toHaveBeenCalledTimes(1)
+    expect(changed).not.toHaveBeenCalled()
+    expect(updated).not.toHaveBeenCalled()
     expect(logged).not.toHaveBeenCalled()
 
     rpc.emitNotification('account/rateLimits/updated-v2', capturedRateLimitUpdate)
-    expect(changed).toHaveBeenCalledTimes(1)
+    expect(changed).not.toHaveBeenCalled()
     expect(logged).toHaveBeenCalledWith('unmapped notification: account/rateLimits/updated-v2')
     adapter.dispose()
   })
@@ -100,6 +111,170 @@ describe('Codex rate-limit source', () => {
     rpc.emitNotification('account/rateLimits/updated', capturedRateLimitUpdate)
 
     expect(changed).not.toHaveBeenCalled()
+  })
+
+  describe('rolling updates', () => {
+    const chatgpt = { type: 'chatgpt', email: null, planType: 'pro' } as const
+    // Captured from codex 0.163 `account/rateLimits/read` on 2026-10-17 (ids and balance replaced).
+    const capturedRead = JSON.parse(
+      readFileSync(
+        new URL('./fixtures/rate-limits-read-codex-0.163.json', import.meta.url),
+        'utf8',
+      ),
+    ) as JsonRpcValue
+    // The 0.163 `AccountRateLimitsUpdatedNotification` shape, with the values Codex 0.163 wrote
+    // to its own session log during real turns. A live frame needs a paid turn to capture.
+    const rollingUpdate = JSON.parse(
+      readFileSync(
+        new URL('./fixtures/rate-limits-update-codex-0.163.json', import.meta.url),
+        'utf8',
+      ),
+    ) as JsonRpcValue
+    const sparkRead = {
+      ...emptyRateLimits,
+      rateLimitsByLimitId: {
+        spark: {
+          ...emptyRateLimits.rateLimits,
+          limitId: 'spark',
+          limitName: 'GPT-5.3-Codex-Spark',
+          primary: { usedPercent: 10, windowDurationMins: 300, resetsAt: null },
+        },
+      },
+    }
+    const sparkUpdate = (usedPercent: number) => ({
+      rateLimits: {
+        limitId: 'spark',
+        limitName: null,
+        primary: { usedPercent, windowDurationMins: 300, resetsAt: null },
+        secondary: null,
+        credits: null,
+      },
+    })
+
+    function liveAdapter(state: Partial<SourceState>, limitMemory: CodexLimitMemory) {
+      const source = sourceAdapter({ account: chatgpt, ...state }, { limitMemory })
+      const updated = vi.fn()
+      const changed = vi.fn()
+      source.adapter.onLimitsUpdated(updated)
+      source.adapter.onUsageChanged(changed)
+      return { ...source, updated, changed }
+    }
+
+    it('reports the windows and credits of an update as rows the read already named', async () => {
+      const { adapter, rpc, updated, changed } = liveAdapter(
+        { rateLimitsResponse: capturedRead },
+        new CodexLimitMemory(),
+      )
+      await adapter.start()
+      await expect(adapter.rateLimitSource()).resolves.toEqual({
+        status: 'ready',
+        limits: [
+          {
+            id: 'codex:primary',
+            label: 'Weekly',
+            usedPercent: 1,
+            resetsAt: 1_792_673_856_000,
+            windowMinutes: 10_080,
+          },
+          { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$50.00 · 1250 credits' },
+        ],
+      })
+
+      rpc.emitNotification('account/rateLimits/updated', rollingUpdate)
+
+      expect(updated).toHaveBeenCalledExactlyOnceWith([
+        {
+          id: 'codex:primary',
+          label: 'Weekly',
+          usedPercent: 3,
+          resetsAt: 1_792_673_856_000,
+          windowMinutes: 10_080,
+        },
+        { id: 'credits', label: 'Credits', usedPercent: 0, valueLabel: '$49.96 · 1249 credits' },
+      ])
+      // The values arrived; nothing has to be read again.
+      expect(changed).not.toHaveBeenCalled()
+      adapter.dispose()
+    })
+
+    it('keeps the read name of a bucket that a sparse update leaves out', async () => {
+      const memory = new CodexLimitMemory()
+      const { adapter, rpc, updated } = liveAdapter({ rateLimitsResponse: sparkRead }, memory)
+      await adapter.start()
+      await adapter.rateLimitSource()
+
+      rpc.emitNotification('account/rateLimits/updated', sparkUpdate(40))
+      // A null window is unknown in this update, not gone.
+      rpc.emitNotification('account/rateLimits/updated', {
+        rateLimits: { limitId: 'spark', primary: null, secondary: null },
+      })
+
+      expect(updated).toHaveBeenCalledExactlyOnceWith([
+        {
+          id: 'spark:primary',
+          label: 'GPT-5.3-Codex-Spark 5 hours',
+          usedPercent: 40,
+          windowMinutes: 300,
+        },
+      ])
+      adapter.dispose()
+    })
+
+    it('shares the newest read with a chat process in the same home, and only that home', async () => {
+      const memory = new CodexLimitMemory()
+      const control = liveAdapter(
+        { rateLimitsResponse: sparkRead, home: 'C:\\fixture\\.codex' },
+        memory,
+      )
+      await control.adapter.start()
+      await control.adapter.rateLimitSource()
+      await control.adapter.dispose()
+
+      const chat = liveAdapter({ home: 'C:\\fixture\\.codex' }, memory)
+      await chat.adapter.start()
+      chat.rpc.emitNotification('account/rateLimits/updated', sparkUpdate(20))
+      const other = liveAdapter({ home: 'D:\\other\\.codex' }, memory)
+      await other.adapter.start()
+      other.rpc.emitNotification('account/rateLimits/updated', sparkUpdate(20))
+
+      expect(chat.updated.mock.lastCall?.[0]).toMatchObject([
+        { id: 'spark:primary', label: 'GPT-5.3-Codex-Spark 5 hours' },
+      ])
+      expect(other.updated.mock.lastCall?.[0]).toMatchObject([
+        { id: 'spark:primary', label: 'Spark 5 hours' },
+      ])
+      chat.adapter.dispose()
+      other.adapter.dispose()
+    })
+
+    it('only signals a usage change where the process may run on another account', async () => {
+      const source = sourceAdapter(
+        { account: chatgpt },
+        { liveLimits: false, limitMemory: new CodexLimitMemory() },
+      )
+      const updated = vi.fn()
+      const changed = vi.fn()
+      source.adapter.onLimitsUpdated(updated)
+      source.adapter.onUsageChanged(changed)
+      await source.adapter.start()
+
+      source.rpc.emitNotification('account/rateLimits/updated', rollingUpdate)
+
+      expect(changed).toHaveBeenCalledOnce()
+      expect(updated).not.toHaveBeenCalled()
+      source.adapter.dispose()
+    })
+
+    it('signals a usage change for an update it cannot read', async () => {
+      const { adapter, rpc, updated, changed } = liveAdapter({}, new CodexLimitMemory())
+      await adapter.start()
+
+      rpc.emitNotification('account/rateLimits/updated', { rateLimits: 'changed' })
+
+      expect(changed).toHaveBeenCalledOnce()
+      expect(updated).not.toHaveBeenCalled()
+      adapter.dispose()
+    })
   })
 
   it.each([

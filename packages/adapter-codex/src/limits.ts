@@ -2,6 +2,7 @@ import {
   CodexResetCreditSchema,
   type CodexRateLimitResponse,
   type CodexRateLimitSnapshot,
+  type CodexRateLimitUpdate,
 } from './schemas.js'
 
 export type ProviderLimit = {
@@ -64,6 +65,60 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
   }
   return rows
 }
+
+type Bucket = Pick<CodexRateLimitSnapshot, 'limitName' | 'primary' | 'secondary' | 'credits'>
+
+/**
+ * The newest plan-limit values per Codex home. Codex documents its rolling
+ * updates as sparse values to merge into the newest read, so a bucket name an
+ * update leaves out keeps the read's. Reads run in a short-lived control
+ * process and updates arrive in a chat's process; both find the same values
+ * through the home they run in.
+ */
+export class CodexLimitMemory {
+  readonly #homes = new Map<string, Map<string, Bucket>>()
+
+  remember(home: string, response: CodexRateLimitResponse): void {
+    const buckets = new Map<string, Bucket>()
+    for (const [limitId, snapshot] of Object.entries(response.rateLimitsByLimitId ?? {})) {
+      if (snapshot) buckets.set(limitId, snapshot)
+    }
+    if (!buckets.has('codex')) buckets.set('codex', response.rateLimits)
+    this.#homes.set(home, buckets)
+  }
+
+  /**
+   * Merges a rolling update and returns rows for exactly the windows and
+   * credits it reported; whatever it left out stays as the server holds it.
+   */
+  apply(home: string, update: CodexRateLimitUpdate): ProviderLimit[] {
+    const limitId = update.limitId ?? 'codex'
+    let buckets = this.#homes.get(home)
+    if (!buckets) {
+      buckets = new Map()
+      this.#homes.set(home, buckets)
+    }
+    const held = buckets.get(limitId)
+    const merged: Bucket = {
+      limitName: update.limitName ?? held?.limitName ?? null,
+      primary: update.primary ?? held?.primary ?? null,
+      secondary: update.secondary ?? held?.secondary ?? null,
+      credits: update.credits ?? held?.credits ?? null,
+    }
+    buckets.set(limitId, merged)
+    return [
+      ...bucketRows(limitId, {
+        limitName: merged.limitName,
+        primary: update.primary ?? null,
+        secondary: update.secondary ?? null,
+      }),
+      ...(limitId === 'codex' ? creditRows(update.credits ?? null) : []),
+    ]
+  }
+}
+
+/** Shared by every adapter in this process, like the homes it is keyed by. */
+export const codexLimitMemory = new CodexLimitMemory()
 
 /** The window rows of one metered bucket. */
 function bucketRows(

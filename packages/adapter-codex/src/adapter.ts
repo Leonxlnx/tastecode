@@ -47,7 +47,9 @@ import {
   AccountLoginCompletedNotificationSchema,
   AccountResponseSchema,
   ApprovalParamsSchema,
+  CodexInitializeHomeSchema,
   CodexRateLimitResponseSchema,
+  CodexRateLimitUpdateSchema,
   ConsumeRateLimitResetResponseSchema,
   CommandOutputDeltaNotificationSchema,
   ErrorNotificationSchema,
@@ -90,7 +92,13 @@ import {
   type ToolRequestUserInputParams,
   type WarningNotification,
 } from './schemas.js'
-import { mapCodexRateLimits, type CodexLimitSource, type ProviderLimit } from './limits.js'
+import {
+  codexLimitMemory,
+  mapCodexRateLimits,
+  type CodexLimitMemory,
+  type CodexLimitSource,
+  type ProviderLimit,
+} from './limits.js'
 
 export { CODEX_CAPABILITIES } from './capabilities.js'
 
@@ -585,6 +593,8 @@ export type CodexAdapterEvents = {
   skillsChanged: []
   /** Provider-owned subscription usage changed; consumers should refetch. */
   usageChanged: []
+  /** Plan-limit windows a rolling update reported, by stable row id. */
+  limitsUpdated: [ProviderLimit[]]
   /** Unexpected transport loss, after pending cards and active turns are settled. */
   disconnected: []
 }
@@ -592,6 +602,10 @@ export type CodexAdapterEvents = {
 export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
+  readonly #liveLimits: boolean
+  readonly #limitMemory: CodexLimitMemory
+  /** The home `initialize` reported; it keys the newest limit read across processes. */
+  #codexHome = ''
   #rpc: CodexRpc | undefined
   /** The newest process, kept after dispose so a stop that failed can be retried. */
   #lastRpc: CodexRpc | undefined
@@ -631,10 +645,19 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       mcpServers?: McpServerConfig[]
       mcpCredentials?: Record<string, string>
       spawn?: Spawn
+      /**
+       * False when this process may run on an account other than the default
+       * one, such as a custom harness; its rolling limit updates then only
+       * signal a usage change, as before.
+       */
+      liveLimits?: boolean
+      limitMemory?: CodexLimitMemory
     } = {},
   ) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#liveLimits = options.liveLimits ?? true
+    this.#limitMemory = options.limitMemory ?? codexLimitMemory
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
@@ -702,8 +725,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       if (this.#rpc === rpc) this.#onServerRequest(method, params, respond, rpcId)
     })
 
+    let initialized: JsonRpcValue | undefined
     try {
-      await rpc.request(
+      initialized = await rpc.request(
         'initialize',
         {
           clientInfo: { name: CLIENT_NAME, title: 'TasteCode', version: '0.0.0' },
@@ -721,6 +745,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
     rpc.notify('initialized', {})
     if (this.#rpc !== rpc) throw new Error('Codex startup was cancelled')
+    this.#codexHome = CodexInitializeHomeSchema.safeParse(initialized).data?.codexHome ?? ''
     this.#started = true
     this.#restartNeeded = false
   }
@@ -813,6 +838,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       if (cause instanceof ZodError) throw new Error('Codex rate-limit response was invalid.')
       throw cause
     })
+    this.#limitMemory.remember(this.#codexHome, response)
     return { status: 'ready', limits: mapCodexRateLimits(response) }
   }
 
@@ -844,6 +870,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   onUsageChanged(listener: () => void): void {
     this.on('usageChanged', listener)
+  }
+
+  onLimitsUpdated(listener: (limits: ProviderLimit[]) => void): void {
+    this.on('limitsUpdated', listener)
   }
 
   onMcpChanged(listener: () => void): () => void {
@@ -1639,9 +1669,17 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         return
       }
 
-      case 'account/rateLimits/updated':
-        this.emit('usageChanged')
+      case 'account/rateLimits/updated': {
+        const update = this.#liveLimits ? CodexRateLimitUpdateSchema.safeParse(params) : undefined
+        // A frame this adapter cannot read still says the limits moved.
+        if (!update?.success) {
+          this.emit('usageChanged')
+          return
+        }
+        const rows = this.#limitMemory.apply(this.#codexHome, update.data.rateLimits)
+        if (rows.length) this.emit('limitsUpdated', rows)
         return
+      }
 
       case 'warning':
         this.emit('log', formatCodexWarning(WarningNotificationSchema.parse(params)))
