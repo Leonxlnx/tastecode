@@ -390,7 +390,11 @@ function applyBufferedLiveMarkdown(
     if (operation.type === 'leaf.append') {
       if (!leaf) continue
       flushText()
-      leaf.append(operation.text)
+      // One text node per leaf: a node per paced step left dozens of
+      // fragments in a paragraph for the leaf's close to merge.
+      const last = leaf.lastChild
+      if (last instanceof Text) last.appendData(operation.text)
+      else leaf.append(operation.text)
     } else if (leaf) {
       flushText()
       compactTextWrapper(leaf)
