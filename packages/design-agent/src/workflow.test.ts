@@ -48,6 +48,36 @@ describe('provider-neutral briefing workflow', () => {
     expect(designBriefingContinuation([], {})).toContain('Never ask questions')
   })
 
+  it('ignores model-authored explicit answers, which TasteCode records itself', () => {
+    const brief = {
+      originalRequest: 'Landing page for a Hamburg coffee roastery',
+      subject: 'A small Hamburg coffee roastery',
+      pageType: 'Landing page',
+      scope: 'One responsive page',
+      primaryGoal: 'Sell beans and fill workshops',
+      audience: 'Home brewers in Hamburg',
+      offer: 'Fresh beans and brewing workshops',
+      primaryAction: 'Shop beans',
+      requiredContent: ['Workshops: dates, prices and booking'],
+      constraints: [],
+      brandInputs: [],
+      creativeControl: 'Agent-led',
+      // Claude Code and Codex both returned request facts here in real runs.
+      explicitAnswers: ['The business sells beans online'],
+      assumptions: ['Prices are illustrative'],
+      unresolved: [],
+    }
+    const output = parseBriefingOutput(
+      JSON.stringify({ status: 'complete', message: 'Brief complete.', questions: [], brief }),
+    )
+    expect(output.status).toBe('complete')
+    expect(output.brief).toMatchObject({ subject: brief.subject, explicitAnswers: [] })
+
+    const prompt = designBriefingPrompt('Landing page for a Hamburg coffee roastery')
+    expect(prompt).not.toContain('explicitAnswers')
+    expect(prompt).toContain('"requiredContent":["Section name: its actual content"]')
+  })
+
   it('parses questions and continues with their answers', () => {
     const output = parseBriefingOutput(
       JSON.stringify({
