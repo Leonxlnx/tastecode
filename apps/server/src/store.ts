@@ -3684,16 +3684,18 @@ export class Store {
 
     let today = emptyUsage()
     {
-      // Seed each thread with its last usage row before the window, so a
+      // Seed each thread with its last running total before the window, so a
       // running-total provider's first in-window increment is a diff, not the
-      // whole session so far.
+      // whole session so far. A context reading can follow the total, so it
+      // must not be the seed. The LIKE prefilter matches the serialized flag;
+      // the parse below still decides.
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
           `SELECT thread_id, payload FROM (
              SELECT thread_id, payload,
                ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, event_seq DESC) AS position
-             FROM usage_events WHERE at < ?
+             FROM usage_events WHERE at < ? AND payload LIKE '%"cumulative":true%'
            ) WHERE position = 1`,
         ),
         since,
