@@ -73,13 +73,25 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('keeps provider model bulk actions compact', () => {
-    expect(settingsCss).toMatch(
-      /\.model-visibility__bulk-actions \{[^}]*display: inline-flex;[^}]*justify-self: end;/s,
+  it('keeps provider model bulk actions compact, on the segmented track', () => {
+    expect(settingsCss).toMatch(/\.model-visibility__bulk-actions \{[^}]*justify-self: end;/s)
+    expect(settingsCss).toMatch(/\.model-visibility__bulk-actions button \{[^}]*min-width: 42px;/s)
+    expect(systemCss).toMatch(
+      /:is\(\.set-segmented, \.settings \.model-visibility__bulk-actions\) \{[^}]*display: inline-flex;[^}]*height: 28px;[^}]*padding: 2px;/s,
     )
-    expect(settingsCss).toMatch(
-      /\.model-visibility__bulk-actions button \{[^}]*min-width: 42px;[^}]*min-height: 28px;/s,
+  })
+
+  it('draws one segmented control: a 28px track, the chosen option raised', () => {
+    expect(systemCss).toMatch(
+      /:is\(\.set-segmented, \.settings \.model-visibility__bulk-actions\) \{[^}]*height: 28px;[^}]*padding: 2px;[^}]*background: var\(--bg\);[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);/s,
     )
+    expect(systemCss).toMatch(
+      /:is\(\.set-segmented__option, \.settings \.model-visibility__bulk-actions button\) \{[^}]*padding: 0 10px;[^}]*border-radius: var\(--r-sm\);[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.set-segmented \.set-segmented__option\[aria-checked='true'\] \{[^}]*background: var\(--menu-hover\);[^}]*color: var\(--text\);/s,
+    )
+    expect(tuningCss).not.toMatch(/tune-segmented/)
   })
 
   it('crossfades the private email blur and morphs its reveal icon', () => {

@@ -1,4 +1,5 @@
 import { useRef, type KeyboardEvent } from 'react'
+import '../../styles/settings-system.css'
 
 export type SettingsSegmentedOption = { value: string; label: string; title?: string }
 
@@ -34,14 +35,14 @@ export function SettingsSegmented(props: {
   }
 
   return (
-    <div className="tune-segmented" role="radiogroup" aria-label={props.ariaLabel}>
+    <div className="set-segmented" role="radiogroup" aria-label={props.ariaLabel}>
       {props.options.map((option, index) => (
         <button
           key={option.value}
           ref={(element) => {
             buttons.current[index] = element
           }}
-          className="tune-segmented__option"
+          className="set-segmented__option"
           type="button"
           role="radio"
           aria-checked={index === selected}

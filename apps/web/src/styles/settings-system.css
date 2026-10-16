@@ -413,6 +413,59 @@
   padding-right: 2px;
 }
 
+/* Segmented control: a 28px track of equal choices, the chosen one raised.
+   Not scoped to .settings: the provider context panel opens outside it. The
+   model list's All/None pair sits on the same track but stays two plain
+   buttons, since a mixed list has no choice to raise; the one that would
+   change nothing is dimmed. */
+
+:is(.set-segmented, .settings .model-visibility__bulk-actions) {
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  height: 28px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+}
+
+:is(.set-segmented__option, .settings .model-visibility__bulk-actions button) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text-3);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+:is(.set-segmented__option, .settings .model-visibility__bulk-actions button):hover:not(:disabled) {
+  color: var(--text);
+}
+
+.set-segmented .set-segmented__option[aria-checked='true'] {
+  background: var(--menu-hover);
+  color: var(--text);
+}
+
+:is(.set-segmented__option, .settings .model-visibility__bulk-actions button):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.settings .model-visibility__bulk-actions button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
 /* One switch size: 30x18 with a 12px thumb, on every tab and in the provider
    context panel, which opens outside .settings. */
 

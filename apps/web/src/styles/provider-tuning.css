@@ -343,47 +343,6 @@
   outline-offset: var(--focus-ring-offset);
 }
 
-/* The same switcher as the sidebar setting. */
-.tune-segmented {
-  display: inline-flex;
-  padding: 2px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-}
-
-.tune-segmented__option {
-  min-height: 20px;
-  padding: 1px 7px;
-  background: none;
-  border: 0;
-  border-radius: var(--r-sm);
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-xs);
-  font-variant-numeric: tabular-nums;
-  line-height: 1.25;
-  white-space: nowrap;
-  transition:
-    background-color var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
-}
-
-.tune-segmented__option:hover {
-  color: var(--text);
-}
-
-.tune-segmented__option[aria-checked='true'] {
-  background: var(--menu-hover);
-  color: var(--text);
-}
-
-.tune-segmented__option:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-inset);
-}
-
 /* ---------- reasoning: a rising ladder ---------- */
 
 .effort-ladder {
