@@ -11,6 +11,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
   ProviderContextSettings,
   ProviderId,
   StoredModelConnection,
@@ -199,6 +200,10 @@ export interface AgentSession {
   onUsageChanged?(listener: () => void): void
   /** Provider MCP discovery changed; the project inventory should be refreshed. */
   onMcpChanged?(listener: () => void): (() => void) | void
+  /** Slash commands and skills the provider runs itself when a message starts with them. */
+  listCommands?(threadId?: string): Promise<ProviderCommand[]>
+  /** The provider reported a new command list for this session. */
+  onCommandsChanged?(listener: () => void): (() => void) | void
   /**
    * False when the live session negotiated no way to reload it, so releasing an
    * idle runtime would lose it. Absent means the runtime's `resume` decides.

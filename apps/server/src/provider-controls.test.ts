@@ -1,9 +1,15 @@
 import { EventEmitter } from 'node:events'
-import { ProviderIdSchema, type Model, type ProviderLimit } from '@harness/contracts'
+import {
+  ProviderIdSchema,
+  type Model,
+  type ProviderCommand,
+  type ProviderLimit,
+} from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import {
   ProviderControls,
+  type InventoryRead,
   type ProviderControlsOptions,
   type ProviderLoginResult,
   type ProviderServices,
@@ -57,6 +63,7 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     onUsageChanged: vi.fn(),
     onMcpChanged: vi.fn(),
     onSkillsChanged: vi.fn(),
+    onCommandsChanged: vi.fn(),
     onAuthChanged: vi.fn(),
   }
   const listModels = vi.fn(async (): Promise<Model[]> => [])
@@ -162,7 +169,7 @@ describe('declared provider controls', () => {
       const control = registry.forProvider(provider)
       const flags = control.capabilities
       expect(Boolean(control.listModels)).toBe(flags.nativeModels)
-      expect(Boolean(control.listMcpServers)).toBe(flags.inheritedMcp)
+      expect(Boolean(control.listMcpServers)).toBe(flags.mcpInventory)
       expect(Boolean(control.listSkills)).toBe(flags.nativeSkills)
       expect(Boolean(control.setSkillEnabled)).toBe(flags.nativeSkills)
       expect(Boolean(control.startLogin)).toBe(flags.login)
@@ -217,8 +224,8 @@ describe('declared provider controls', () => {
 
   it('reuses active MCP inventory and returns adapter capabilities without a second process', async () => {
     const { codex, createCodex } = setup()
-    const readActive = vi.fn(async () => [])
-    const inventory = await codex.listMcpServers?.(readActive)
+    const readActive = vi.fn(async () => ({ servers: [], loading: true }))
+    const inventory = await codex.listMcpServers?.('/project', readActive)
     expect(inventory).toEqual({
       capabilities: {
         inventory: true,
@@ -230,8 +237,70 @@ describe('declared provider controls', () => {
         cancelOAuth: false,
       },
       servers: [],
+      loading: true,
     })
     expect(readActive).toHaveBeenCalledOnce()
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
+  it('exposes service inventories for any provider and routes their later changes', async () => {
+    const reads: Array<InventoryRead<unknown>> = []
+    const capabilities = {
+      inventory: true,
+      add: true,
+      update: false,
+      remove: false,
+      reload: false,
+      startOAuth: false,
+      cancelOAuth: false,
+      hideInherited: false,
+    }
+    const services: ProviderServices = {
+      listMcpServers: vi.fn(async (_projectPath: string, read: InventoryRead<unknown>) => {
+        reads.push(read)
+        return { capabilities, servers: [], loading: true }
+      }),
+      listCommands: vi.fn(async (_projectPath: string, read: InventoryRead<ProviderCommand[]>) => {
+        reads.push(read)
+        return { commands: (await read.readActive?.()) ?? [], loading: false }
+      }),
+      listSkills: vi.fn(async (_projectPath: string, read: InventoryRead<never>) => {
+        reads.push(read)
+        return {
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      }),
+    }
+    const { registry, hooks, createCodex } = setup({ services: { grok: services } })
+    const grok = registry.forProvider('grok')
+    const live: ProviderCommand[] = [{ name: 'context', description: 'Show context' }]
+
+    await expect(grok.listMcpServers!('/project')).resolves.toEqual({
+      capabilities,
+      servers: [],
+      loading: true,
+    })
+    await expect(grok.listCommands!('/project', async () => live)).resolves.toEqual({
+      commands: live,
+      loading: false,
+    })
+    await expect(grok.listSkills!('/project')).resolves.toMatchObject({ skills: [] })
+    expect(services.listMcpServers).toHaveBeenCalledWith('/project', expect.anything())
+    expect(reads[0]!.readActive).toBeUndefined()
+
+    reads[0]!.changed()
+    reads[1]!.changed()
+    reads[2]!.changed()
+    expect(hooks.onMcpChanged.mock.calls).toEqual([['grok', '/project']])
+    expect(hooks.onCommandsChanged.mock.calls).toEqual([['grok', '/project']])
+    expect(hooks.onSkillsChanged.mock.calls).toEqual([['grok', '/project']])
+
+    // A probe that lands after a reset reports nothing.
+    await registry.disposeAll()
+    reads[1]!.changed()
+    expect(hooks.onCommandsChanged).toHaveBeenCalledOnce()
     expect(createCodex).not.toHaveBeenCalled()
   })
 })
@@ -271,7 +340,7 @@ describe('shared control lifetime', () => {
     expect(adapters[0]!.setSkillEnabled).toHaveBeenCalledWith('skill', false)
     await vi.advanceTimersByTimeAsync(10)
     expect(adapters[0]!.dispose).toHaveBeenCalledOnce()
-    await codex.listMcpServers!()
+    await codex.listMcpServers!('/project')
     expect(createCodex).toHaveBeenCalledTimes(2)
     await vi.advanceTimersByTimeAsync(10)
     expect(adapters[1]!.dispose).toHaveBeenCalledOnce()

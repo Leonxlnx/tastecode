@@ -6,9 +6,11 @@ import type {
   McpServerConfig,
   Model,
   ParamsOf,
+  ProviderCommand,
   ProviderId,
   ProviderLimit,
   ProviderLimitSource,
+  ResultOf,
   Skill,
   SkillCapabilities,
   SkillDiscoveryError,
@@ -33,8 +35,34 @@ export type ProviderLoginResult = {
 type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-/** Targets without a lease here yet (`commands`) are accepted and ignored. */
+/**
+ * The Codex control process serves no commands, so a `commands` watch holds no
+ * lease; services report command changes through `InventoryRead.changed`.
+ */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
+
+/** A provider's own MCP servers, before the project's TasteCode overrides. */
+export type McpInventory = {
+  capabilities: McpCapabilities
+  servers: McpServer[]
+  /** Still collecting; a change notification follows when it settles. */
+  loading?: boolean
+}
+/** A live chat's answer; the provider's capabilities do not depend on it. */
+export type ActiveMcpInventory = Omit<McpInventory, 'capabilities'>
+export type CommandInventory = ResultOf<'commands.list'>
+export type SkillInventory = {
+  capabilities: SkillCapabilities
+  skills: Skill[]
+  errors: SkillDiscoveryError[]
+}
+/** What a service gets with each inventory read of one project. */
+export type InventoryRead<Active> = {
+  /** Reads a chat already running in the project, which costs no new process. */
+  readActive?: (() => Promise<Active>) | undefined
+  /** Reports that this project's answer changed after the read returned. */
+  changed: () => void
+}
 
 /** Only this settings surface is required of an injected control process. */
 export type CodexControlAdapter = Pick<
@@ -68,6 +96,15 @@ export type ProviderServices = {
     onComplete: (result: ProviderLoginResult) => void,
   ) => LoginHandle | Promise<LoginHandle>
   signOut?: (agent?: string) => Promise<void>
+  listMcpServers?: (
+    projectPath: string,
+    read: InventoryRead<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    read: InventoryRead<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string, read: InventoryRead<never>) => Promise<SkillInventory>
 }
 
 export type ProviderControl = {
@@ -79,13 +116,14 @@ export type ProviderControl = {
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string) => Promise<Model[]>
   listMcpServers?: (
-    readActive?: () => Promise<McpServer[]>,
-  ) => Promise<{ capabilities: McpCapabilities; servers: McpServer[] }>
-  listSkills?: (projectPath: string) => Promise<{
-    capabilities: SkillCapabilities
-    skills: Skill[]
-    errors: SkillDiscoveryError[]
-  }>
+    projectPath: string,
+    readActive?: () => Promise<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    readActive?: () => Promise<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string) => Promise<SkillInventory>
   setSkillEnabled?: (projectPath: string, skillId: string, enabled: boolean) => Promise<boolean>
   startLogin?: () => Promise<LoginResponse>
   cancelLogin?: (loginId: string) => Promise<void>
@@ -104,6 +142,7 @@ export type ProviderControlsOptions = {
   onUsageChanged?: (provider: ProviderId) => void
   onMcpChanged?: (provider: ProviderId, projectPath: string) => void
   onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+  onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
   controlIdleMs?: number
   watchTtlMs?: number
@@ -379,6 +418,39 @@ export class ProviderControls {
             cancelLogin: (loginId: string) => this.#cancelLogin(provider, loginId),
           }
         : {}),
+      ...(services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() =>
+                services.listMcpServers!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'mcp', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() =>
+                services.listCommands!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'commands', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(() =>
+                services.listSkills!(
+                  projectPath,
+                  this.#inventoryRead<never>(provider, 'skills', projectPath),
+                ),
+              ),
+          }
+        : {}),
     }
     if (provider !== 'codex') return control
     return {
@@ -389,13 +461,15 @@ export class ProviderControls {
         agent
           ? this.#readModels(provider, agent)
           : this.#withShared((adapter) => adapter.listModels()),
-      listMcpServers: (readActive) =>
+      listMcpServers: (_projectPath, readActive) =>
         this.#read(async () => {
-          const [servers, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
-            readActive ? readActive() : this.#withShared((adapter) => adapter.listMcpServers()),
+          const [inventory, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
+            readActive
+              ? readActive()
+              : this.#withShared(async (adapter) => ({ servers: await adapter.listMcpServers() })),
             loadCodex(),
           ])
-          return { capabilities: CODEX_MCP_CAPABILITIES, servers }
+          return { capabilities: CODEX_MCP_CAPABILITIES, ...inventory }
         }),
       listSkills: (projectPath) =>
         this.#read(async () => {
@@ -538,6 +612,25 @@ export class ProviderControls {
     }
     entry.account = identity
     return account
+  }
+
+  #inventoryRead<Active>(
+    provider: ProviderId,
+    target: WatchTarget,
+    projectPath: string,
+    readActive?: () => Promise<Active>,
+  ): InventoryRead<Active> {
+    const generation = this.#generation
+    return {
+      readActive,
+      changed: () => {
+        // A probe that outlives a reset describes processes that are gone.
+        if (this.#closed || generation !== this.#generation) return
+        if (target === 'mcp') this.#options.onMcpChanged?.(provider, projectPath)
+        else if (target === 'skills') this.#options.onSkillsChanged?.(provider, projectPath)
+        else this.#options.onCommandsChanged?.(provider, projectPath)
+      },
+    }
   }
 
   async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {

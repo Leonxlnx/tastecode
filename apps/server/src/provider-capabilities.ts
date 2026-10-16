@@ -5,6 +5,8 @@ export type ProviderControlCapabilities = Readonly<{
   resume: boolean
   managedMcp: boolean
   inheritedMcp: boolean
+  /** The provider can list the MCP servers its own settings load (server-internal). */
+  mcpInventory: boolean
   nativeSkills: boolean
   nativeModels: boolean
   notifications: boolean
@@ -21,6 +23,7 @@ const unsupported: ProviderControlCapabilities = {
   resume: false,
   managedMcp: false,
   inheritedMcp: false,
+  mcpInventory: false,
   nativeSkills: false,
   nativeModels: false,
   notifications: false,
@@ -51,6 +54,7 @@ export const PROVIDER_CAPABILITIES = {
     resume: true,
     managedMcp: true,
     inheritedMcp: true,
+    mcpInventory: true,
     nativeSkills: true,
     nativeModels: true,
     notifications: true,
