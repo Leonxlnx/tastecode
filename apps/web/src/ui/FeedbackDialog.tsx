@@ -53,7 +53,9 @@ export function FeedbackDialog(props: {
   const [email, setEmail] = useState('')
   const [includeError, setIncludeError] = useState(error !== undefined)
   const [includeDiagnostics, setIncludeDiagnostics] = useState(true)
-  const [showPayload, setShowPayload] = useState(false)
+  // App details and the attached error are on by default, so what they add is
+  // shown from the start rather than behind a click.
+  const [showPayload, setShowPayload] = useState(true)
   const [preview, setPreview] = useState<FeedbackPreview>()
   const [sending, setSending] = useState(false)
   const [failure, setFailure] = useState<string>()

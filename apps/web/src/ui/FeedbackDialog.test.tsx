@@ -77,7 +77,12 @@ describe('FeedbackDialog', () => {
         .getAttribute('aria-checked'),
     ).toBe('true')
 
-    fireEvent.click(screen.getByRole('button', { name: 'Show exactly what will be sent' }))
+    // On by default, so the attached details are visible without a click.
+    expect(
+      screen
+        .getByRole('button', { name: 'Show exactly what will be sent' })
+        .getAttribute('aria-expanded'),
+    ).toBe('true')
     await waitFor(() =>
       expect(screen.getByLabelText('Feedback payload').textContent).toContain('"kind": "bug"'),
     )
