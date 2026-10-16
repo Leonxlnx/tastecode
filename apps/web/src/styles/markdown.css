@@ -326,13 +326,13 @@
 }
 
 /* In a narrow block Wrap and Copy stay and Download goes, so the row never
-   wraps or runs into the label. */
+   wraps or runs into the label. The selector outranks the button rule's grid. */
 .md [data-streamdown='code-block'] {
   container: code-block / inline-size;
 }
 
 @container code-block (max-width: 360px) {
-  .md [data-streamdown='code-block-download-button'] {
+  .md [data-streamdown='code-block'] button[data-streamdown='code-block-download-button'] {
     display: none;
   }
 }
