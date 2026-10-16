@@ -200,7 +200,8 @@ export function configuredMcpInventory(
         },
     ),
     ...started.filter((server) => !ids.has(server.id)),
-  ]
+    // The status list arrives sorted by name; matching it keeps rows in place when it lands.
+  ].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
 }
 
 export function mapMcpServerStatus(

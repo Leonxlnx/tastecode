@@ -75,8 +75,8 @@ describe('Codex MCP inventory while the status list loads', () => {
     expect(first).toEqual([
       configuredRow('hosted-docs'),
       configuredRow('local-tools'),
-      configuredRow('retired', 'stopped'),
       configuredRow('repl'),
+      configuredRow('retired', 'stopped'),
       configuredRow('signed-api'),
     ])
     // Commands, URLs, environments and token variables stay in Codex.
@@ -125,10 +125,10 @@ describe('Codex MCP inventory while the status list loads', () => {
     expect(servers.map(({ id, startup }) => [id, startup])).toEqual([
       ['hosted-docs', { state: 'starting' }],
       ['local-tools', { state: 'starting' }],
-      ['retired', { state: 'stopped' }],
-      ['repl', { state: 'failed', message: 'program not found' }],
-      ['signed-api', { state: 'starting' }],
       ['plugin-apps', { state: 'starting' }],
+      ['repl', { state: 'failed', message: 'program not found' }],
+      ['retired', { state: 'stopped' }],
+      ['signed-api', { state: 'starting' }],
     ])
     expect(rpc.calls.find(({ method }) => method === 'config/read')?.params).toEqual({
       includeLayers: false,
