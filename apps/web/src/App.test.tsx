@@ -12427,7 +12427,9 @@ describe('connection recovery regressions', () => {
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after reconnect' } })
-    await screen.findByText('Could not check this account. Connection lost')
+    await screen.findByText(
+      'Could not confirm this account, but you can still send. Connection lost',
+    )
     // An account that could not be confirmed does not lock the composer.
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
     online = true
@@ -12436,7 +12438,11 @@ describe('connection recovery regressions', () => {
       setConnectionState('open')
     })
     await waitFor(() =>
-      expect(screen.queryByText('Could not check this account. Connection lost')).toBeNull(),
+      expect(
+        screen.queryByText(
+          'Could not confirm this account, but you can still send. Connection lost',
+        ),
+      ).toBeNull(),
     )
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
@@ -12468,7 +12474,8 @@ describe('connection recovery regressions', () => {
     fireEvent.change(screen.getByPlaceholderText('Do anything'), {
       target: { value: 'Send while unconfirmed' },
     })
-    const notice = 'Could not check this account. CLI did not respond within the time limit'
+    const notice =
+      'Could not confirm this account, but you can still send. CLI did not respond within the time limit'
     await screen.findByText(notice)
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(reads).toBe(2))
