@@ -1968,57 +1968,6 @@
   align-self: center;
 }
 
-/* A select here is its value and a chevron: no box, no fill, open or not. */
-.settings .appearance-select {
-  max-width: 240px;
-}
-
-.settings .appearance-select .app-select__trigger {
-  --control-pressed: transparent;
-
-  gap: 6px;
-  width: auto;
-  height: auto;
-  min-height: 0;
-  padding: 0;
-  background: none;
-  border: 0;
-  border-radius: var(--r-xs);
-  box-shadow: none;
-  color: var(--text);
-  font-size: inherit;
-  letter-spacing: inherit;
-  line-height: inherit;
-}
-
-.settings .appearance-select .app-select__trigger:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.settings .appearance-select .app-select__chevron {
-  color: var(--text-3);
-  transition: rotate var(--dur-slow) var(--ease-out);
-}
-
-.settings .appearance-select.is-open .app-select__chevron {
-  rotate: 180deg;
-}
-
-/* Typing into the font picker happens on the row itself: the field sits where
-   the value stood, flush right, and the leader runs up to whatever is typed. */
-.settings .appearance-select .app-select__query {
-  width: calc(100% - 20px);
-  padding: 0;
-  caret-color: var(--text);
-  text-align: right;
-}
-
-.settings .appearance-select.is-searching .app-select__value {
-  min-width: 24px;
-  padding-right: 2px;
-}
-
 .settings__row {
   display: flex;
   align-items: center;
@@ -2511,19 +2460,6 @@
 .provider-form__select {
   justify-content: space-between;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  box-shadow: none;
-  color: var(--text);
-}
-
-.provider-form__select:hover:not(:disabled),
-.provider-form__select[aria-expanded='true'] {
-  background: var(--control-hover);
-  border-color: var(--text-3);
 }
 
 .provider-form__select-value {
@@ -2966,18 +2902,6 @@
 
 .settings__select--effort {
   min-width: 112px;
-}
-
-.settings .app-select__trigger {
-  min-height: 28px;
-  height: auto;
-  padding: 3px 7px;
-  background: var(--bg);
-  border-radius: var(--r-md);
-  box-shadow: none;
-  color: var(--text);
-  font-size: var(--t-sm);
-  line-height: 1.25;
 }
 
 .settings__select .app-select__trigger:disabled {
@@ -3547,18 +3471,6 @@
 .provider-form__select {
   justify-content: space-between;
   width: 100%;
-  height: 34px;
-  padding: 0 10px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-}
-
-.provider-form__select:hover:not(:disabled),
-.provider-form__select[aria-expanded='true'] {
-  background: var(--chrome-raised);
-  border-color: var(--text-3);
 }
 
 .provider-form__select-value {

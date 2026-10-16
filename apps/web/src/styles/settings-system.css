@@ -312,6 +312,107 @@
   cursor: default;
 }
 
+/* Selects: two looks. Boxed, for page headers and forms: every AppSelect in
+   Settings, and a menu trigger that takes .set-select. Inline, for leader
+   rows: the value and a chevron at the row's own type, with no box open or
+   not, for an AppSelect or a menu trigger that takes .set-select--inline. */
+
+.settings .app-select__trigger {
+  height: 28px;
+  padding: 0 8px;
+  box-shadow: none;
+  color: var(--text);
+  font-size: var(--t-sm);
+  line-height: 1.25;
+}
+
+.settings .menutrigger.set-select {
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font-size: var(--t-sm);
+}
+
+.settings
+  .menutrigger.set-select:is(:hover:not(:disabled), :focus-visible, [aria-expanded='true']) {
+  background: var(--bg);
+  border-color: color-mix(in srgb, var(--text-3) 55%, var(--chrome-border));
+}
+
+.settings .app-select.set-select--inline {
+  max-width: 240px;
+}
+
+.settings :is(.set-select--inline > .app-select__trigger, .menutrigger.set-select--inline) {
+  --control-pressed: transparent;
+
+  gap: 6px;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  /* A taller target than the line it sits on, without moving the line. */
+  margin-block: -4px;
+  padding: 4px 0;
+  background: none;
+  border: 0;
+  border-radius: var(--r-xs);
+  box-shadow: none;
+  color: var(--text);
+  font-size: inherit;
+  letter-spacing: inherit;
+  line-height: inherit;
+}
+
+.settings
+  :is(.set-select--inline > .app-select__trigger, .menutrigger.set-select--inline):is(
+    :hover,
+    :focus-visible
+  ) {
+  background: none;
+  color: var(--text);
+}
+
+.settings
+  :is(.set-select--inline > .app-select__trigger, .menutrigger.set-select--inline):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings .set-select--inline .app-select__chevron {
+  width: 12px;
+  height: 12px;
+  color: var(--text-3);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    rotate var(--dur-slow) var(--ease-out);
+}
+
+.settings .set-select--inline:is(:hover, .is-open) .app-select__chevron {
+  color: var(--text-2);
+}
+
+.settings .set-select--inline.is-open .app-select__chevron {
+  rotate: 180deg;
+}
+
+/* A searchable inline select is typed into on the row itself: the field sits
+   where the value stood, flush right, and the leader runs up to the text. */
+.settings .set-select--inline .app-select__query {
+  width: calc(100% - 20px);
+  padding: 0;
+  caret-color: var(--text);
+  text-align: right;
+}
+
+.settings .set-select--inline.is-searching .app-select__value {
+  min-width: 24px;
+  padding-right: 2px;
+}
+
 /* One switch size: 30x18 with a 12px thumb, on every tab and in the provider
    context panel, which opens outside .settings. */
 

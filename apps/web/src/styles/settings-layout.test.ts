@@ -145,6 +145,24 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).not.toMatch(/\.avatar-lab__field input/)
   })
 
+  it('has two select looks: boxed for headers and forms, inline for leader rows', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.app-select__trigger \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.menutrigger\.set-select \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*background: var\(--bg\);[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-select--inline > \.app-select__trigger, \.menutrigger\.set-select--inline\) \{[^}]*--control-pressed: transparent;[^}]*padding: 4px 0;[^}]*background: none;[^}]*border: 0;[^}]*font-size: inherit;/s,
+    )
+    // The appearance select and the provider defaults trigger no longer draw their own.
+    expect(settingsCss).not.toMatch(/appearance-select/)
+    expect(tuningCss).not.toMatch(/\.menutrigger\.provider-tune__trigger \{/)
+    expect(settingsCss).not.toMatch(/\.provider-form__select \{[^}]*height:/s)
+    expect(settingsSource).not.toContain('appearance-select')
+    expect(settingsSource.match(/className="set-select--inline"/g)).toHaveLength(2)
+  })
+
   it('sizes every settings switch 30x18 with a 12px thumb, in one place', () => {
     expect(systemCss).toMatch(
       /:is\(\.settings, \.tune-panel\) \.switch \{[^}]*width: 30px;[^}]*height: 18px;/s,

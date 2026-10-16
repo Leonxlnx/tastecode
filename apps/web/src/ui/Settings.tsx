@@ -1268,7 +1268,7 @@ export function ProviderSettings(props: {
               label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
               panelLabel="API provider"
               panelClassName="provider-form__menu"
-              triggerClassName="provider-form__select"
+              triggerClassName="provider-form__select set-select"
               trigger={(open) => (
                 <>
                   <span className="provider-form__select-value">
@@ -1934,7 +1934,7 @@ function AppearanceEditor(props: {
       </AppearanceRow>
       <AppearanceRow name="Interface font">
         <AppSelect
-          className="appearance-select"
+          className="set-select--inline"
           ariaLabel="Interface font"
           align="right"
           value={props.preference.font}
@@ -1947,7 +1947,7 @@ function AppearanceEditor(props: {
       </AppearanceRow>
       <AppearanceRow name="Sidebar translucency">
         <AppSelect
-          className="appearance-select"
+          className="set-select--inline"
           ariaLabel="Sidebar translucency"
           align="right"
           value={String(selectedGlass.value)}
