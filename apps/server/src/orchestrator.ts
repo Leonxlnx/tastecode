@@ -890,22 +890,37 @@ export class Orchestrator {
   async #runBackgroundTask(prompt: string): Promise<string> {
     const preference = this.#store.backgroundModelPreference()
     // Each source read can start vendor processes; read only what this choice needs.
-    const resolved = await resolveBackgroundModelFrom(preference, this.#backgroundSourceLoaders())
-    if (!resolved) {
-      throw new Error(
-        preference.mode === 'manual'
-          ? 'The selected background model is unavailable. Choose another one in Settings.'
-          : 'Connect a provider with an available model before using background writing.',
+    const failed: Array<Pick<BackgroundModelSourceLoader, 'provider' | 'agent'>> = []
+    let lastError: unknown
+    for (;;) {
+      const loaders = this.#backgroundSourceLoaders().filter(
+        (loader) =>
+          !failed.some(
+            (source) => source.provider === loader.provider && source.agent === loader.agent,
+          ),
       )
+      const resolved = await resolveBackgroundModelFrom(preference, loaders)
+      if (!resolved) break
+      try {
+        return await runBackgroundCompletion({
+          runtime: this.#runtimeFor(resolved.provider, this.#onLog),
+          selection: resolved,
+          prompt,
+          onCleanupError: (error) =>
+            this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
+        })
+      } catch (error) {
+        if (preference.mode === 'manual') throw error
+        failed.push({ provider: resolved.provider, agent: resolved.agent })
+        lastError = error
+      }
     }
-    const runtime = this.#runtimeFor(resolved.provider, this.#onLog)
-    return runBackgroundCompletion({
-      runtime,
-      selection: resolved,
-      prompt,
-      onCleanupError: (error) =>
-        this.#onLog(`[background] provider cleanup failed: ${errorMessage(error)}`),
-    })
+    if (lastError !== undefined) throw lastError
+    throw new Error(
+      preference.mode === 'manual'
+        ? 'The selected background model is unavailable. Choose another one in Settings.'
+        : 'Connect a provider with an available model before using background writing.',
+    )
   }
 
   #backgroundSourceLoaders(): BackgroundModelSourceLoader[] {
