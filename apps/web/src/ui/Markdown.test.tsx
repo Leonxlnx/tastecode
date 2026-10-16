@@ -284,6 +284,66 @@ describe('Completed Markdown', () => {
   })
 })
 
+describe('Markdown raw HTML', () => {
+  /** Renders completed text and waits for the rich renderer to replace the live parser's DOM. */
+  async function completed(text: string, literalHtml?: boolean) {
+    const view = render(<Markdown text={text} projectPath="/project" literalHtml={literalHtml} />)
+    await waitFor(() =>
+      expect(view.container.querySelector('[data-streaming-markdown]')).toBeNull(),
+    )
+    return view.container
+  }
+
+  it('shows inline HTML in a chat reply as its source text', async () => {
+    const reply = 'SEE <script>alert(1)</script> <img src=x onerror=alert(1)>'
+    const container = await completed(reply, true)
+
+    expect(container.querySelector('p')?.textContent).toBe(reply)
+    expect(container.querySelector('script, img')).toBeNull()
+    expect(container.textContent).not.toContain('Image blocked')
+  })
+
+  it('keeps tag names a chat reply mentions outside code', async () => {
+    const container = await completed('use a <div> wrapper', true)
+
+    expect(container.querySelector('p')?.textContent).toBe('use a <div> wrapper')
+  })
+
+  it('shows block HTML in a chat reply as its source text', async () => {
+    const container = await completed(
+      '<details>\n<summary>More</summary>\nBody\n</details>\n\nAfter',
+      true,
+    )
+
+    expect([...container.querySelectorAll('p')].map((paragraph) => paragraph.textContent)).toEqual([
+      '<details>\n<summary>More</summary>\nBody\n</details>',
+      'After',
+    ])
+    expect(container.querySelector('details, summary')).toBeNull()
+  })
+
+  it('keeps autolinks and code in a chat reply', async () => {
+    const container = await completed(
+      'Open <https://example.com/docs> and wrap it in `<div>`.\n\n```html\n<p>hi</p>\n```',
+      true,
+    )
+
+    const link = screen.getByRole('link', { name: 'https://example.com/docs' })
+    expect(link.getAttribute('href')).toBe('https://example.com/docs')
+    expect(container.querySelector('p code')?.textContent).toBe('<div>')
+    expect(container.querySelector('pre')?.textContent).toBe('<p>hi</p>')
+  })
+
+  it('still renders HTML in pull request text', async () => {
+    const container = await completed('<img src="https://example.com/a.png" alt="a">')
+
+    const image = screen.getByAltText('a')
+    expect(image.tagName).toBe('IMG')
+    expect(image.getAttribute('src')).toBe('https://example.com/a.png')
+    expect(container.textContent).not.toContain('<img')
+  })
+})
+
 describe('Markdown streaming motion', () => {
   // These read the DOM right after each append. Pacing has its own tests below.
   beforeEach(() => {
