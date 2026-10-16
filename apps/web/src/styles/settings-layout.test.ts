@@ -10,6 +10,10 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(/\.settings__main \{[^}]*min-height: 0;[^}]*overflow-y: auto;/s)
   })
 
+  it('keeps the content column in place whether or not the tab scrolls', () => {
+    expect(settingsCss).toMatch(/\.settings__main \{[^}]*scrollbar-gutter: stable;/s)
+  })
+
   it('keeps narrow categories on the horizontal axis', () => {
     expect(settingsCss).toMatch(
       /@media \(max-width: 700px\) \{[\s\S]*?\.settings__nav \{[^}]*overflow-x: auto;/s,
