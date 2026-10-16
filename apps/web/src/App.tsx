@@ -4154,11 +4154,10 @@ export function App() {
           )
         }
         await deleteSession(threadId)
+        forgetPendingChatDeletes([threadId])
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
         await refreshProjects().catch(() => undefined)
-      } finally {
-        forgetPendingChatDeletes([threadId])
       }
     },
     [transport, deleteSession, reportError, refreshProjects],
@@ -4193,7 +4192,7 @@ export function App() {
     void (async () => {
       for (const pending of interruptedDeletes) {
         if (findSession(projectsRef.current, pending.threadId)) await commitChatDelete(pending)
-        else forgetPendingChatDeletes([pending.threadId])
+        forgetPendingChatDeletes([pending.threadId])
         setInterruptedDeletes((current) => current.filter((entry) => entry !== pending))
       }
     })()
