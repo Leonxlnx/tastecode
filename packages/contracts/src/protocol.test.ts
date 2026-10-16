@@ -1706,4 +1706,14 @@ describe('model metadata contracts', () => {
   ])('rejects malformed metadata: %j', (metadata) => {
     expect(result.safeParse({ models: [{ ...base, ...metadata }] }).success).toBe(false)
   })
+
+  it('announces a changed model list per provider and optional agent', () => {
+    expect(channels['models.changed'].parse({ provider: 'codex' })).toEqual({ provider: 'codex' })
+    expect(channels['models.changed'].parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
+    expect(channels['models.changed'].safeParse({ provider: 'acp', agent: '' }).success).toBe(false)
+    expect(channels['models.changed'].safeParse({ provider: 'nope' }).success).toBe(false)
+  })
 })
