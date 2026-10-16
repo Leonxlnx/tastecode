@@ -21,7 +21,7 @@
 const LAG_MIN_MS = 100
 /** And by at most about this much: Leon's cap on how late text may appear. */
 const LAG_MAX_MS = 180
-/** Text that arrived LAG_MAX_MS - CATCH_UP_MS ago is reached within CATCH_UP_MS. */
+/** Text that is due is reached within this. */
 const CATCH_UP_MS = 40
 /** How quickly the arrival-rate estimate follows the provider. */
 const ARRIVAL_TAU_MS = 350
@@ -140,22 +140,19 @@ class RevealPace {
       desired = Math.max(desired, backlog / DRAIN_MS)
     }
     if (backlog > 0) desired = Math.max(desired, FLOOR_RATE)
-    // Each arrival is due LAG_MAX_MS after it landed. Aiming at the closest
-    // deadline raises the speed in time, so the cap rarely has to force it.
+    const tau = desired > this.revealRate ? REVEAL_UP_TAU_MS : REVEAL_DOWN_TAU_MS
+    this.revealRate += (desired - this.revealRate) * (1 - Math.exp(-dt / tau))
+    // Each arrival is due LAG_MAX_MS after it landed. The speed is never
+    // below what meets the closest deadline: an isolated burst then shows at
+    // an even pace that ends on time, instead of easing in and being forced
+    // through at the end. Past due, the rest comes within CATCH_UP_MS.
     const arrivals = this.arrivals
     let passed = 0
     while (passed < arrivals.length && arrivals[passed]![1] <= this.shown) passed += 1
     if (passed > 0) arrivals.splice(0, passed)
     for (const [at, total] of arrivals) {
       const left = Math.max(at + LAG_MAX_MS - now, CATCH_UP_MS)
-      desired = Math.max(desired, (total - this.shown) / left)
-    }
-    const tau = desired > this.revealRate ? REVEAL_UP_TAU_MS : REVEAL_DOWN_TAU_MS
-    this.revealRate += (desired - this.revealRate) * (1 - Math.exp(-dt / tau))
-    // Late anyway: close the gap within CATCH_UP_MS.
-    const oldest = arrivals[0]
-    if (oldest && oldest[0] <= now - LAG_MAX_MS + CATCH_UP_MS) {
-      this.revealRate = Math.max(this.revealRate, (oldest[1] - this.shown) / CATCH_UP_MS)
+      this.revealRate = Math.max(this.revealRate, (total - this.shown) / left)
     }
     if (backlog > Math.max(SNAP_MIN_CHARS, this.arrivalRate * SNAP_MS)) {
       this.shown = this.total - this.arrivalRate * LAG_MAX_MS
