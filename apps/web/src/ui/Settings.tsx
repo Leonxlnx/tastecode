@@ -66,6 +66,7 @@ import {
   IconNetwork as Network,
   IconPalette as Palette,
   IconLayoutSidebar as PanelLeft,
+  IconRefresh as Refresh,
   IconRotate as RotateCcw,
   IconUser as UserRound,
 } from '@tabler/icons-react'
@@ -2419,7 +2420,7 @@ function AboutSettings(props: { transport: Transport }) {
           disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
           onClick={() => void (nativeReady ? installAppUpdate() : check())}
         >
-          <RotateCcw size={13} aria-hidden />
+          <Refresh size={13} aria-hidden />
           {nativeReady
             ? 'Restart to update'
             : nativeDownloading

@@ -337,7 +337,10 @@ describe('about status grammar', () => {
     })
 
     expect((await screen.findByText('Browser · pre-release')).className).toBe('settings-meta')
-    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    const checkButton = screen.getByRole('button', { name: 'Check for updates' })
+    // Checking is a refresh; the rotate arrow is kept for resets.
+    expect(checkButton.querySelector('svg')?.getAttribute('class')).toContain('tabler-icon-refresh')
+    fireEvent.click(checkButton)
     expect(screen.getByRole('status', { name: 'Checking' }).className).toContain('is-checking')
 
     await act(async () => update.resolve(result))
