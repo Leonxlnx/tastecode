@@ -17,12 +17,10 @@
  * handful of characters and one StaticRange. No DOM mutation, no layout read.
  */
 
-/** The veil trails arrival by at least this much, so a burst never shows at once. */
-const LAG_MIN_MS = 70
+/** The veil aims to trail arrival by at least this much, so a burst never shows at once. */
+const LAG_MIN_MS = 100
 /** And by at most about this much: Leon's cap on how late text may appear. */
 const LAG_MAX_MS = 180
-/** The speed aims to meet that cap this much early. */
-const DEADLINE_MARGIN_MS = 30
 /** Text that arrived LAG_MAX_MS - CATCH_UP_MS ago is reached within CATCH_UP_MS. */
 const CATCH_UP_MS = 40
 /** How quickly the arrival-rate estimate follows the provider. */
@@ -34,8 +32,14 @@ const ARRIVAL_RATE_MAX = 2
 const INITIAL_ARRIVAL_RATE = 0.25
 /** How long a long gap between arrivals keeps the lag wide. */
 const GAP_DECAY_MS = 1200
-/** How hard the reveal speed leans on a backlog above or below its target. */
-const BACKLOG_GAIN = 0.35
+/**
+ * How hard the reveal speed leans on a backlog above or below its target.
+ * At 1 the speed falls in proportion as the backlog runs low, down to
+ * BACKLOG_FLOOR of the arrival rate, so the edge slows instead of running
+ * dry between bursts.
+ */
+const BACKLOG_GAIN = 1
+const BACKLOG_FLOOR = 0.1
 /**
  * How quickly the reveal speed follows its target; it never changes in a
  * step. It speeds up faster than it slows down, so a backlog building up is
@@ -113,20 +117,20 @@ class RevealPace {
     const backlog = this.total - this.shown
     const lag = clamp(1.3 * this.gapPeak, LAG_MIN_MS, LAG_MAX_MS)
     const target = Math.max(4, this.arrivalRate * lag)
-    let desired = this.arrivalRate * clamp(1 + (BACKLOG_GAIN * (backlog - target)) / target, 0.3, 4)
+    let desired =
+      this.arrivalRate * clamp(1 + (BACKLOG_GAIN * (backlog - target)) / target, BACKLOG_FLOOR, 4)
     if (finishing || now - this.lastActivity > lag + QUIET_MS) {
       desired = Math.max(desired, backlog / DRAIN_MS)
     }
     if (backlog > 0) desired = Math.max(desired, FLOOR_RATE)
-    // Each arrival is due LAG_MAX_MS after it landed. Aiming a little early
-    // at the closest deadline raises the speed in time, so the cap rarely
-    // has to force it.
+    // Each arrival is due LAG_MAX_MS after it landed. Aiming at the closest
+    // deadline raises the speed in time, so the cap rarely has to force it.
     const arrivals = this.arrivals
     let passed = 0
     while (passed < arrivals.length && arrivals[passed]![1] <= this.shown) passed += 1
     if (passed > 0) arrivals.splice(0, passed)
     for (const [at, total] of arrivals) {
-      const left = Math.max(at + LAG_MAX_MS - DEADLINE_MARGIN_MS - now, CATCH_UP_MS)
+      const left = Math.max(at + LAG_MAX_MS - now, CATCH_UP_MS)
       desired = Math.max(desired, (total - this.shown) / left)
     }
     const tau = desired > this.revealRate ? REVEAL_UP_TAU_MS : REVEAL_DOWN_TAU_MS
