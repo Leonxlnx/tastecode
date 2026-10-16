@@ -287,6 +287,15 @@
   font-size: var(--t-xs);
 }
 
+/* A fence without a language is plain text, and says so: an unlabelled row
+   read as an empty band above the block. Streamdown leaves its label span
+   empty; the live header (Markdown.tsx) is empty itself. CSS only, so neither
+   highlighting nor the download name changes. */
+.md [data-streamdown='code-block-header'] > span:empty::before,
+.md [data-streamdown='code-block-header']:empty::before {
+  content: 'text';
+}
+
 /* Streamdown renders the controls in their own wrapper between the header and
    the body. Left in flow, that wrapper keeps the height of the hidden buttons
    and opens a hole under the language label, so it is lifted onto the header
