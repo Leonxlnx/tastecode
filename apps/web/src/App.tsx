@@ -226,6 +226,7 @@ const SESSION_ORDER_KEY = 'harness.sessionOrder.dragged'
  *  which provider histories happened to arrive, so they are discarded. */
 const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
 const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
+const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
@@ -233,7 +234,6 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
-const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
