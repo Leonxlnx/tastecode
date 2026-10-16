@@ -1502,8 +1502,7 @@
 .avatar-lab {
   display: grid;
   gap: 16px;
-  padding: 4px 14px 16px;
-  border-top: 1px solid var(--line);
+  padding-top: 8px;
 }
 
 .avatar-lab__controls {
