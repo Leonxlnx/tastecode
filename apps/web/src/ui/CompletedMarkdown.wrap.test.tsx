@@ -81,8 +81,8 @@ describe('code block wrap toggle', () => {
       fireEvent.click(copy)
     })
 
-    // The block shows no trailing line break, so none is copied either.
-    expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(LONG_LINE)
+    // The raw fence text, as Streamdown's own button copied it.
+    expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(`${LONG_LINE}\n`)
     expect(browserCopy).not.toHaveBeenCalled()
     expect(copy.getAttribute('aria-label')).toBe('Copied')
     expect(copy.getAttribute('title')).toBe('Copied')
@@ -122,6 +122,6 @@ describe('code block wrap toggle', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Copy code' }))
     })
 
-    expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(code)
+    expect(writeClipboardText).toHaveBeenCalledExactlyOnceWith(`${code}\n`)
   })
 })

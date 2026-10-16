@@ -70,19 +70,11 @@ const DOWNLOAD_LABEL = 'Download file'
 /**
  * Copies a block the way reply copy does: through the app clipboard, with a
  * Copied state and a failure that says so. Streamdown's own button wrote to
- * navigator.clipboard, which fails silently. The block shows the code without
- * its trailing line breaks, and that is what is copied, so a pasted command
- * does not run on its own in a terminal.
+ * the browser clipboard API directly, which the desktop session denies, and
+ * it failed without a word. The copied text is the raw fence, as before.
  */
 function CodeCopyButton({ code }: { code: string }) {
-  return (
-    <CopyButton
-      text={code.replace(/\n+$/u, '')}
-      label="Copy code"
-      title="Copy code"
-      copiedLabel="Copied"
-    />
-  )
+  return <CopyButton text={code} label="Copy code" title="Copy code" copiedLabel="Copied" />
 }
 
 type MarkdownCodeProps = ComponentPropsWithoutRef<'code'> & {
@@ -348,7 +340,7 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
                 aria-label={DOWNLOAD_LABEL}
               />
             ) : null}
-            {showCopy ? <CodeCopyButton code={content} /> : null}
+            {showCopy ? <CodeCopyButton code={code} /> : null}
           </div>
         </div>
       ) : null}
