@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
@@ -842,35 +842,92 @@ describe('local usage history', () => {
         }),
       ),
     )
-    const request = {
-      cacheFile,
-      sources: [
-        { provider: 'claude-code' as const, root: claudeRoot },
-        { provider: 'codex' as const, root: path.join(root, 'missing-codex') },
-      ],
-      generatedAt: 1,
-    }
-    const scanned = await runUsageHistoryScan(request)
-    expect(scanned.cache.files[0]?.entries).toHaveLength(1)
+    const progress: { filesProcessed: number; filesTotal: number }[] = []
+    const service = () =>
+      new UsageHistoryService({
+        cacheFile,
+        sourceRoots: {
+          'claude-code': claudeRoot,
+          codex: path.join(root, 'missing-codex'),
+          grok: path.join(root, 'missing-grok.jsonl'),
+          opencode: path.join(root, 'missing-opencode'),
+        },
+        scanRunner: (request, onProgress) =>
+          runUsageHistoryScan(request, (update) => {
+            progress.push(update)
+            onProgress(update)
+          }),
+        now: () => new Date('2026-08-08T12:00:00.000Z'),
+      })
+    const scanned = await settledHistory(service(), 'all')
+    const compacted = (await readUsageCache(cacheFile)).files
+    expect(compacted[0]?.entries).toHaveLength(1)
 
     const perMessage = await readClaudeUsageHistory(path.join(claudeRoot, 'session.jsonl'))
     expect(perMessage).toHaveLength(3)
+    const saved = JSON.parse(readFileSync(cacheFile, 'utf8')) as { files: CachedUsageFile[] }
     writeFileSync(
       cacheFile,
       JSON.stringify({
-        ...scanned.cache,
+        ...saved,
         version: 7,
-        files: scanned.cache.files.map((file) => ({ ...file, entries: perMessage })),
+        files: saved.files.map((file) => ({ ...file, entries: perMessage })),
       }),
     )
 
-    const progress: { filesProcessed: number; filesTotal: number }[] = []
-    const rescanned = await runUsageHistoryScan({ ...request, generatedAt: 2 }, (update) =>
-      progress.push(update),
-    )
+    progress.length = 0
+    const migrated = await settledHistory(service(), 'all')
     expect(progress[0]).toEqual({ filesProcessed: 1, filesTotal: 1 })
-    expect(rescanned.cache.files).toEqual(scanned.cache.files)
-    expect((await readUsageCache(cacheFile)).files).toEqual(scanned.cache.files)
+    expect(migrated.totals).toEqual(scanned.totals)
+    expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toMatchObject({ version: 8 })
+    expect((await readUsageCache(cacheFile)).files).toEqual(compacted)
+  })
+
+  it('saves the index only when a scan changes it', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    const codexFile = path.join(codexRoot, 'session.jsonl')
+    mkdirSync(codexRoot, { recursive: true })
+    const records: unknown[] = [
+      { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+      {
+        timestamp: '2026-08-08T09:00:01.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-luna' },
+      },
+      codexTokenRecord('2026-08-08T09:01:00.000Z', { input_tokens: 1_000, output_tokens: 100 }),
+    ]
+    writeJsonLines(codexFile, records)
+    const noEvents: never[] = []
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile,
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      harnessUsage: () => noEvents,
+      now: () => new Date(now),
+    })
+
+    const first = await settledHistory(service, 'all')
+    expect(first.generatedAt).toBe(now)
+    expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toMatchObject({ version: 8 })
+
+    writeFileSync(cacheFile, 'left alone')
+    now += 60_000
+    const unchanged = await settledHistory(service, 'all')
+    expect(readFileSync(cacheFile, 'utf8')).toBe('left alone')
+    expect(unchanged.totals).toBe(first.totals)
+    expect(unchanged.generatedAt).toBe(now)
+
+    records.push(
+      codexTokenRecord('2026-08-08T09:02:00.000Z', { input_tokens: 1_250, output_tokens: 125 }),
+    )
+    writeJsonLines(codexFile, records)
+    const grown = await settledHistory(service, 'all', true)
+    expect(grown.totals.processedTokens).toBe(1_375)
+    const saved = await readUsageCache(cacheFile)
+    expect(saved.generatedAt).toBe(now)
+    expect(saved.files.map((file) => file.size)).toEqual([statSync(codexFile).size])
   })
 })
 
@@ -959,7 +1016,12 @@ async function cachedHistory(cacheFile: string, range: UsageHistoryRange) {
   const cache = await readUsageCache(cacheFile)
   const service = new UsageHistoryService({
     cacheFile,
-    scanRunner: async () => ({ cache, sources: cache.sources, warnings: [] }),
+    scanRunner: async (request) => ({
+      paths: request.indexed.map((file) => file.path),
+      files: [],
+      sources: cache.sources,
+      warnings: cache.warnings,
+    }),
     now: () => new Date('2026-08-08T12:00:00.000Z'),
   })
   await service.history(range)

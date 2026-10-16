@@ -102,14 +102,19 @@ export type UsageScanProgress = {
   filesTotal: number
 }
 
+/** Which version of a file the index holds; a file that still matches is not parsed again. */
+export type UsageFileFingerprint = Pick<CachedUsageFile, 'path' | 'provider' | 'mtimeMs' | 'size'>
+
 export type UsageScanRequest = {
-  cacheFile: string
   sources: UsageSourceRoot[]
-  generatedAt: number
+  indexed: UsageFileFingerprint[]
 }
 
 export type UsageScanResult = {
-  cache: UsageCache
+  /** Every archive file that exists now, in discovery order. */
+  paths: string[]
+  /** The files parsed in this scan. Any other path keeps the entries already indexed for it. */
+  files: CachedUsageFile[]
   sources: SourceState[]
   warnings: string[]
 }
@@ -173,6 +178,10 @@ export class UsageHistoryService {
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
   #cache: UsageCache | undefined
+  /** Whether the cache file holds `#cache`; a scan that changes nothing then skips the write. */
+  #cacheSaved = false
+  /** When the last completed scan started, or the saved index's time before the first one. */
+  #generatedAt = 0
   #cacheLoading: Promise<UsageCache> | undefined
   #refreshing: Promise<void> | undefined
   #resetting: Promise<void> | undefined
@@ -254,6 +263,8 @@ export class UsageHistoryService {
 
     const cache = emptyUsageCache()
     this.#cache = cache
+    this.#cacheSaved = false
+    this.#generatedAt = 0
     this.#cacheLoading = Promise.resolve(cache)
     this.#sources = cache.sources
     this.#scanWarnings = []
@@ -268,8 +279,10 @@ export class UsageHistoryService {
   async #loadCache(): Promise<UsageCache> {
     if (this.#cache) return this.#cache
     if (!this.#cacheLoading) {
-      this.#cacheLoading = readUsageCache(this.#cacheFile).then((cache) => {
+      this.#cacheLoading = loadUsageCache(this.#cacheFile).then(({ cache, current }) => {
         this.#cache = cache
+        this.#cacheSaved = current
+        this.#generatedAt = cache.generatedAt
         this.#sources = cache.sources
         this.#scanWarnings = cache.warnings
         return cache
@@ -280,12 +293,20 @@ export class UsageHistoryService {
 
   #startRefresh(): void {
     if (this.#refreshing || this.#disposed) return
-    this.#lastRefreshStartedAt = this.#now().getTime()
+    const generatedAt = this.#now().getTime()
+    this.#lastRefreshStartedAt = generatedAt
     this.#scan = { status: 'scanning', filesProcessed: 0, filesTotal: 0 }
+    const base = this.#cache ?? emptyUsageCache()
+    // The worker gets fingerprints only; the entries stay here instead of being
+    // re-read from disk by the worker and cloned back after every scan.
     const request: UsageScanRequest = {
-      cacheFile: this.#cacheFile,
       sources: this.#sourceRoots,
-      generatedAt: this.#lastRefreshStartedAt,
+      indexed: base.files.map((file) => ({
+        path: file.path,
+        provider: file.provider,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+      })),
     }
     const abort = new AbortController()
     this.#scanAbort = abort
@@ -300,9 +321,7 @@ export class UsageHistoryService {
         ),
       )
       .then((result) => {
-        this.#cache = result.cache
-        this.#sources = result.sources
-        this.#scanWarnings = result.warnings
+        if (!abort.signal.aborted) return this.#applyScan(base, result, generatedAt)
       })
       .catch((error: unknown) => {
         if (this.#disposed) return
@@ -316,6 +335,32 @@ export class UsageHistoryService {
         if (this.#scanAbort === abort) this.#scanAbort = undefined
         this.#refreshing = undefined
       })
+  }
+
+  /**
+   * Folds a scan into the index. A scan that finds nothing new keeps the same
+   * index object, so computed figures stay valid, and does not rewrite the file.
+   */
+  async #applyScan(base: UsageCache, result: UsageScanResult, generatedAt: number): Promise<void> {
+    if (this.#cache !== base) return
+    const cache = mergeScan(base, result, generatedAt)
+    if (cache !== base) {
+      this.#cache = cache
+      this.#sources = cache.sources
+      this.#cacheSaved = false
+    }
+    this.#generatedAt = generatedAt
+    this.#scanWarnings = cache.warnings
+    if (this.#cacheSaved) return
+    try {
+      await writeCache(this.#cacheFile, { ...cache, generatedAt })
+      this.#cacheSaved = true
+    } catch {
+      this.#scanWarnings = [
+        ...cache.warnings,
+        'Usage was loaded, but its local scan cache could not be saved.',
+      ]
+    }
   }
 
   #aggregate(range: UsageHistoryRange): UsageHistoryResult {
@@ -349,7 +394,7 @@ export class UsageHistoryService {
       range: figures.range,
       startDate: figures.startDate,
       endDate: figures.endDate,
-      generatedAt: this.#cache?.generatedAt ?? 0,
+      generatedAt: this.#generatedAt,
       sessionCount: figures.sessionCount,
       activeDays: figures.activeDays,
       totals: figures.totals,
@@ -529,31 +574,27 @@ export class UsageHistoryService {
   }
 }
 
-/** Performs the expensive archive walk. Production calls this inside a Worker. */
+/**
+ * Performs the expensive archive walk. Production calls this inside a Worker.
+ * It parses only files that differ from the indexed fingerprints and returns
+ * just those, so neither side copies the whole index.
+ */
 export async function runUsageHistoryScan(
   request: UsageScanRequest,
   onProgress: (progress: UsageScanProgress) => void = () => undefined,
 ): Promise<UsageScanResult> {
-  const previous = await readUsageCache(request.cacheFile)
   const { files, sources } = await discoverUsageSources(request.sources)
-  const warnings: string[] = []
-  const priorByPath = new Map(previous.files.map((file) => [file.path, file]))
-  const nextFiles = new Map<string, CachedUsageFile>()
-  const changed: UsageFile[] = []
-
-  for (const file of files) {
-    const prior = priorByPath.get(file.path)
-    if (
+  const indexed = new Map(request.indexed.map((file) => [file.path, file]))
+  const changed = files.filter((file) => {
+    const prior = indexed.get(file.path)
+    return !(
       prior?.provider === file.provider &&
       prior.mtimeMs === file.mtimeMs &&
       prior.size === file.size
-    ) {
-      nextFiles.set(file.path, prior)
-    } else {
-      changed.push(file)
-    }
-  }
+    )
+  })
 
+  const parsed: CachedUsageFile[] = []
   let failedFiles = 0
   let filesProcessed = files.length - changed.length
   const reportProgress = () => onProgress({ filesProcessed, filesTotal: files.length })
@@ -561,7 +602,7 @@ export async function runUsageHistoryScan(
   await mapWithConcurrency(changed, PARSE_CONCURRENCY, async (file) => {
     try {
       const entries = compactUsageRecords(await file.read(file.path))
-      nextFiles.set(file.path, {
+      parsed.push({
         path: file.path,
         provider: file.provider,
         mtimeMs: file.mtimeMs,
@@ -569,44 +610,62 @@ export async function runUsageHistoryScan(
         entries,
       })
     } catch {
+      // The indexed entries, if any, stay until the file can be read again.
       failedFiles += 1
-      const prior = priorByPath.get(file.path)
-      if (prior) nextFiles.set(file.path, prior)
     } finally {
       filesProcessed += 1
       if (filesProcessed === files.length || filesProcessed % 25 === 0) reportProgress()
     }
   })
 
-  if (failedFiles > 0) {
-    warnings.push(
-      `${failedFiles.toLocaleString()} history ${failedFiles === 1 ? 'file could' : 'files could'} not be read.`,
-    )
-  }
+  const warnings =
+    failedFiles > 0
+      ? [
+          `${failedFiles.toLocaleString()} history ${failedFiles === 1 ? 'file could' : 'files could'} not be read.`,
+        ]
+      : []
+  return { paths: files.map((file) => file.path), files: parsed, sources, warnings }
+}
 
-  const cache: UsageCache = {
+/**
+ * Builds the next index from a scan, in discovery order. Returns `base` itself
+ * when the scan changed no file, source or warning.
+ */
+function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: number): UsageCache {
+  const indexed = new Map(base.files.map((file) => [file.path, file]))
+  const parsed = new Map(result.files.map((file) => [file.path, file]))
+  const files: CachedUsageFile[] = []
+  for (const filePath of new Set(result.paths)) {
+    const file = parsed.get(filePath) ?? indexed.get(filePath)
+    if (file) files.push(file)
+  }
+  const unchanged =
+    files.length === base.files.length &&
+    files.every((file, index) => file === base.files[index]) &&
+    JSON.stringify(result.sources) === JSON.stringify(base.sources) &&
+    JSON.stringify(result.warnings) === JSON.stringify(base.warnings)
+  if (unchanged) return base
+  return {
     version: CACHE_VERSION,
-    generatedAt: request.generatedAt,
-    files: [...nextFiles.values()],
-    sources,
-    warnings,
+    generatedAt,
+    files,
+    sources: result.sources,
+    warnings: result.warnings,
   }
-  try {
-    await writeCache(request.cacheFile, cache)
-  } catch {
-    warnings.push('Usage was loaded, but its local scan cache could not be saved.')
-    cache.warnings = warnings
-  }
-  return { cache, sources, warnings }
 }
 
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
+  return (await loadUsageCache(filePath)).cache
+}
+
+/** Reads the saved index. `current` is false when the file must be saved again as is. */
+async function loadUsageCache(filePath: string): Promise<{ cache: UsageCache; current: boolean }> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
     const uncompacted = value.version === UNCOMPACTED_CACHE_VERSION
     if ((value.version === CACHE_VERSION || uncompacted) && isCachedUsageFiles(value.files)) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
-      return {
+      const cache: UsageCache = {
         version: CACHE_VERSION,
         generatedAt: typeof value.generatedAt === 'number' ? value.generatedAt : 0,
         files: uncompacted
@@ -622,11 +681,12 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
           ? value.warnings.filter((warning): warning is string => typeof warning === 'string')
           : [],
       }
+      return { cache, current: !uncompacted }
     }
   } catch {
     // A missing or interrupted cache write is equivalent to a cold start.
   }
-  return emptyUsageCache()
+  return { cache: emptyUsageCache(), current: false }
 }
 
 /**
