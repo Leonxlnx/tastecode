@@ -25,11 +25,16 @@
   scrollbar-gutter: stable both-edges;
 }
 
+/* The prompt bar's text box: the bar's width minus its text inset on both
+   sides. 100cqi is the chat pane (.stage, or the side chat), the same box the
+   bar is sized from, so the scrollbar gutter reserved on .thread cannot push
+   the column past the bar's edges. */
 .thread__col {
-  width: 100%;
-  max-width: calc(var(--chat-w) + 48px);
+  width: min(
+    calc(var(--chat-w) - 2 * var(--chat-text-inset)),
+    calc(100cqi - 2 * (var(--chat-gutter) + var(--chat-text-inset)))
+  );
   margin: 0 auto;
-  padding: 0 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -475,6 +480,14 @@ button.thread__older:hover {
   text-align: left;
   user-select: none;
   transition: color var(--dur-fast) var(--ease-out);
+}
+
+/* The -3.5px above lines a 15px icon in its 18px box up with the text edge.
+   A row with no icon starts on its label, which would then sit 1.5px left of
+   the reply text. A class, not :has(), because these rows re-render while a
+   turn streams. */
+.activity__summary--bare {
+  margin-left: -2px;
 }
 
 /* Only the summaries that actually open respond to hover. */

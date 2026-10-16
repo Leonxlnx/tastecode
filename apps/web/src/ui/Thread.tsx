@@ -2181,6 +2181,7 @@ function ActivityStack({
     : undefined
 
   if (!summaryItem) return null
+  const hasGlyph = live || Boolean(tally) || stopped
 
   return (
     <div
@@ -2189,13 +2190,13 @@ function ActivityStack({
     >
       <button
         type="button"
-        className="activity__summary"
+        className={`activity__summary${hasGlyph ? '' : ' activity__summary--bare'}`}
         ref={summaryRef}
         aria-expanded={disclosure.expanded}
         title={label}
         onClick={disclosure.toggle}
       >
-        {live || tally || stopped ? (
+        {hasGlyph ? (
           <span className="activity__glyph" aria-hidden>
             {tally ? (
               toolBatchGlyph(operationalActivity)
@@ -2858,7 +2859,7 @@ function TurnDuration(
   const stopped = !working && props.stopped === true
   return (
     <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
-      <div className="activity__summary">
+      <div className={`activity__summary${stopped ? '' : ' activity__summary--bare'}`}>
         {stopped ? (
           <span className="activity__glyph" aria-hidden>
             <Stop strokeWidth={1.8} />
