@@ -103,3 +103,93 @@ describe('pull-request contracts', () => {
     expect(PullRequestMetadataOptionsSchema.parse(options)).toEqual(options)
   })
 })
+
+describe('checkout pull-request contracts', () => {
+  const forCheckout = methods['pullRequests.forCheckout']
+  const pullRequest = {
+    repository: 'Leonxlnx/tastecode',
+    number: 1660,
+    title: 'Show the chat pull request',
+    url: 'https://github.com/Leonxlnx/tastecode/pull/1660',
+    state: 'OPEN',
+    isDraft: true,
+    reviewDecision: 'REVIEW_REQUIRED',
+    checks: 'pending',
+    headRefName: 'feature/pr-chip',
+    baseRefName: 'nightly',
+  }
+  const found = {
+    available: true,
+    branch: 'feature/pr-chip',
+    repository: 'Leonxlnx/tastecode',
+    defaultBranch: 'main',
+    upstream: 'origin/feature/pr-chip',
+    ahead: 2,
+    pullRequest,
+    fetchedAt: 1_760_000_000_000,
+  }
+
+  it('asks for a project checkout, optionally a chat and a fresh read', () => {
+    const params = { projectPath: 'D:\\project' }
+    expect(forCheckout.params.parse(params)).toEqual(params)
+    expect(forCheckout.params.parse({ ...params, threadId: 'th1', refresh: true })).toEqual({
+      ...params,
+      threadId: 'th1',
+      refresh: true,
+    })
+    expect(forCheckout.params.safeParse({ projectPath: '' }).success).toBe(false)
+    expect(forCheckout.params.safeParse({ ...params, threadId: '' }).success).toBe(false)
+  })
+
+  it('reports the branch pull request, no pull request, or why it cannot look', () => {
+    expect(forCheckout.result.parse(found)).toEqual(found)
+    const none = { available: true, branch: 'feature/new', fetchedAt: 1 }
+    expect(forCheckout.result.parse(none)).toEqual(none)
+    for (const state of ['OPEN', 'CLOSED', 'MERGED'])
+      expect(
+        forCheckout.result.parse({ ...found, pullRequest: { ...pullRequest, state } }).pullRequest
+          ?.state,
+      ).toBe(state)
+    for (const checks of ['passing', 'failing', 'pending', 'none'])
+      expect(
+        forCheckout.result.parse({ ...found, pullRequest: { ...pullRequest, checks } }).pullRequest
+          ?.checks,
+      ).toBe(checks)
+    for (const reason of [
+      'not_git',
+      'no_branch',
+      'detached',
+      'no_remote',
+      'gh_missing',
+      'signed_out',
+      'failed',
+    ])
+      expect(forCheckout.result.parse({ available: false, reason, fetchedAt: 1 }).reason).toBe(
+        reason,
+      )
+    expect(
+      forCheckout.result.parse({
+        available: false,
+        reason: 'gh_missing',
+        branch: 'b',
+        fetchedAt: 1,
+      }).branch,
+    ).toBe('b')
+  })
+
+  it.each([
+    ['unavailable without a reason', { available: false }],
+    ['a reason on a lookup that ran', { reason: 'failed' }],
+    ['a pull request on an unavailable lookup', { available: false, reason: 'failed' }],
+    ['an unknown reason', { available: false, reason: 'offline', pullRequest: undefined }],
+    ['negative ahead', { ahead: -1 }],
+    ['fractional ahead', { ahead: 0.5 }],
+    ['a bad repository', { repository: '../outside' }],
+    ['a non-GitHub url', { pullRequest: { ...pullRequest, url: 'https://example.com/pull/1' } }],
+    ['an unknown check summary', { pullRequest: { ...pullRequest, checks: 'green' } }],
+    ['an empty head', { pullRequest: { ...pullRequest, headRefName: '' } }],
+    ['a missing fetch time', { fetchedAt: undefined }],
+  ])('rejects a checkout result with %s', (_name, change) => {
+    expect(forCheckout.result.safeParse({ ...found, ...change }).success).toBe(false)
+  })
+})

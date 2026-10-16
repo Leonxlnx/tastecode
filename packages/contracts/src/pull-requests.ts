@@ -306,6 +306,78 @@ export type PullRequestAction = z.infer<typeof PullRequestActionSchema>
 export const PullRequestActionResultSchema = z.object({ message: z.string().min(1) })
 export type PullRequestActionResult = z.infer<typeof PullRequestActionResultSchema>
 
+/** All checks folded into one word. `none` means the head commit has no checks. */
+export const PullRequestChecksSummarySchema = z.enum(['passing', 'failing', 'pending', 'none'])
+export type PullRequestChecksSummary = z.infer<typeof PullRequestChecksSummarySchema>
+
+/** The pull request whose head is a checkout's branch, as much as a header chip needs. */
+export const CheckoutPullRequestSchema = PullRequestTargetSchema.extend({
+  title: z.string(),
+  url: z.string().url().startsWith('https://github.com/'),
+  state: PullRequestStateSchema,
+  isDraft: z.boolean(),
+  reviewDecision: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'REVIEW_REQUIRED']).optional(),
+  checks: PullRequestChecksSummarySchema.optional(),
+  headRefName: z.string().min(1),
+  baseRefName: z.string().min(1).optional(),
+})
+export type CheckoutPullRequest = z.infer<typeof CheckoutPullRequestSchema>
+
+/**
+ * Why a checkout's pull request could not be looked up. `not_git`: the folder
+ * is not a git checkout. `no_branch`: the repository has no commit yet.
+ * `detached`: HEAD is not on a branch. `no_remote`: no GitHub remote.
+ * `gh_missing` and `signed_out`: the GitHub CLI cannot answer. `failed`: the
+ * lookup ran and did not finish.
+ */
+export const CheckoutPullRequestUnavailableSchema = z.enum([
+  'not_git',
+  'no_branch',
+  'detached',
+  'no_remote',
+  'gh_missing',
+  'signed_out',
+  'failed',
+])
+export type CheckoutPullRequestUnavailable = z.infer<typeof CheckoutPullRequestUnavailableSchema>
+
+export const CheckoutPullRequestResultSchema = z
+  .object({
+    /** The lookup ran. False comes with a `reason`. */
+    available: z.boolean(),
+    reason: CheckoutPullRequestUnavailableSchema.optional(),
+    /** The checkout's branch, when HEAD is on one. */
+    branch: z.string().min(1).optional(),
+    /** The GitHub repository the checkout's remote points at. */
+    repository: GitHubRepositoryNameSchema.optional(),
+    /** The repository's default branch, which never gets a pull request of its own. */
+    defaultBranch: z.string().min(1).optional(),
+    /** The branch's upstream, such as "origin/feature"; absent before the first push. */
+    upstream: z.string().min(1).optional(),
+    /** Commits on the branch that its upstream does not have yet. */
+    ahead: z.number().int().nonnegative().optional(),
+    /** Absent when the branch has no pull request, open or closed. */
+    pullRequest: CheckoutPullRequestSchema.optional(),
+    fetchedAt: z.number().int().nonnegative(),
+  })
+  .superRefine((result, context) => {
+    if (result.available === (result.reason !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['reason'],
+        message: 'reason is required exactly when the lookup is unavailable',
+      })
+    }
+    if (!result.available && result.pullRequest) {
+      context.addIssue({
+        code: 'custom',
+        path: ['pullRequest'],
+        message: 'an unavailable lookup has no pull request',
+      })
+    }
+  })
+export type CheckoutPullRequestResult = z.infer<typeof CheckoutPullRequestResultSchema>
+
 /** A repository file or GitHub upload embedded in pull-request Markdown. */
 export const PullRequestImageUrlSchema = z
   .string()
