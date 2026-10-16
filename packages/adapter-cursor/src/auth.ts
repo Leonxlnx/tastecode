@@ -15,7 +15,10 @@ export async function cursorAccount(run: typeof runCli = runCursorAgent): Promis
   // before it goes online, so in that one ambiguous case it decides: an
   // expired sign-in becomes signed out and the app offers Sign in again,
   // while an offline machine with a valid sign-in stays signed in.
-  if (!/unable to fetch user details/i.test(status.stdout)) return { signedIn: true }
+  if (!/unable to fetch user details/i.test(status.stdout)) {
+    const email = cursorEmail(status.stdout)
+    return { signedIn: true, ...(email ? { email } : {}) }
+  }
   const probe = await run('cursor-agent', ['models'], CURSOR_COMMAND_TIMEOUT_MS).catch(
     () => undefined,
   )
@@ -24,6 +27,15 @@ export async function cursorAccount(run: typeof runCli = runCursorAgent): Promis
 
 export function isCursorSignedIn(output: string): boolean {
   return !/not authenticated|not logged in/i.test(output) && /authenticated|logged in/i.test(output)
+}
+
+/**
+ * The address `status` prints for a fetched account, "✓ Logged in as
+ * <email>" in 2026.07.23-e383d2b (fixtures/cursor-status-2026-10-16.json).
+ * The character class leaves out color codes a terminal build might add.
+ */
+export function cursorEmail(output: string): string | undefined {
+  return /logged in as\s+([\w.+-]+@[\w-]+(?:\.[\w-]+)+)/i.exec(output)?.[1]
 }
 
 export const CURSOR_SIGN_IN_REQUIRED =

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { cursorAccount, isCursorSignedIn } from './auth.js'
+import { cursorAccount, cursorEmail, isCursorSignedIn } from './auth.js'
 
 type CapturedRun = { code: number; stdout: string; stderr: string }
 
@@ -10,6 +10,9 @@ const capture = JSON.parse(
     'utf8',
   ),
 ) as { status: CapturedRun; models: CapturedRun }
+const signedIn = JSON.parse(
+  readFileSync(new URL('./fixtures/cursor-status-2026-10-16.json', import.meta.url), 'utf8'),
+) as { status: CapturedRun }
 
 function runs(answers: Record<string, CapturedRun | Error>) {
   const calls: string[] = []
@@ -58,13 +61,23 @@ describe('Cursor authentication', () => {
     await expect(cursorAccount(run)).resolves.toEqual({ signedIn: true })
   })
 
-  it('trusts a status that fetched the account without a second command', async () => {
-    const { run, calls } = runs({
+  it('trusts a status that fetched the account and reads its address', async () => {
+    const { run, calls } = runs({ status: signedIn.status })
+
+    await expect(cursorAccount(run)).resolves.toEqual({
+      signedIn: true,
+      email: 'developer@example.com',
+    })
+    expect(calls).toEqual(['status'])
+  })
+
+  it('claims no address the status did not print', async () => {
+    const { run } = runs({
       status: { code: 0, stdout: '✓ Logged in as developer\n', stderr: '' },
     })
 
     await expect(cursorAccount(run)).resolves.toEqual({ signedIn: true })
-    expect(calls).toEqual(['status'])
+    expect(cursorEmail('\u001b[32m✓ Logged in as a@b.co\u001b[0m\n')).toBe('a@b.co')
   })
 
   it('rejects when status does not answer in time, so the last answer stays', async () => {
