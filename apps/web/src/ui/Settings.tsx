@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -322,6 +323,13 @@ function SettingsComponent(props: {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
 
+  // Every tab shares one scroller; a tab opens at its top, not at the offset
+  // the previous tab was left at.
+  const main = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0
+  }, [section])
+
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
@@ -458,7 +466,7 @@ function SettingsComponent(props: {
         </nav>
       </aside>
 
-      <main className="settings__main">
+      <main className="settings__main" ref={main}>
         <div
           className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
         >

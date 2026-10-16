@@ -152,6 +152,18 @@ describe('settings viewport layout', () => {
     ).toBe('page')
   })
 
+  it('opens every tab at its top, not at the last tab scroll offset', () => {
+    const { container } = renderSettings({ initialSection: 'keybinds' })
+    const main = container.querySelector<HTMLElement>('.settings__main')!
+    main.scrollTop = 500
+    expect(main.scrollTop).toBe(500)
+
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    fireEvent.click(within(categories).getByRole('button', { name: 'Appearance' }))
+
+    expect(screen.getByRole('heading', { name: 'Appearance', level: 1 })).toBeTruthy()
+    expect(main.scrollTop).toBe(0)
+  })
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
