@@ -994,8 +994,11 @@ export function startServer(
           'threadId' in p
             ? store.usageSummary(p.threadId, startOfToday.getTime())
             : { session: empty, today: empty }
-        return usageSummaryWithLimits(totals, provider, (requestedProvider) =>
-          orchestrator.usageLimitSource(requestedProvider),
+        return usageSummaryWithLimits(
+          totals,
+          provider,
+          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider),
+          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider),
         )
       }
 

@@ -75,6 +75,8 @@ export type ProviderControl = {
   validateMcpServer?: (server: McpServerConfig) => void
   account(agent?: string): Promise<Account>
   usageLimitSource(): Promise<ProviderLimitSource>
+  /** The held snapshot without reading; undefined until a read or live window arrives. */
+  heldLimitSource(): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string) => Promise<Model[]>
@@ -519,6 +521,7 @@ export class ProviderControls {
               }),
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
+      heldLimitSource: () => this.#limits.get(provider)?.value,
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)

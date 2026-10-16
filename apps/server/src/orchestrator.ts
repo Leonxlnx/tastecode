@@ -1404,6 +1404,11 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).usageLimitSource()
   }
 
+  /** The provider's held limits, without starting a read. */
+  heldLimitSource(provider: ProviderId): ProviderLimitSource | undefined {
+    return this.#controls.forProvider(provider).heldLimitSource()
+  }
+
   async startLogin(provider: ProviderId): Promise<{ loginId: string; authUrl?: string }> {
     const start = this.#controls.forProvider(provider).startLogin
     if (!start) throw new Error(`provider "${provider}" cannot sign in yet`)

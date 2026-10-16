@@ -8,6 +8,7 @@ import {
   type ProviderLoginResult,
   type ProviderServices,
 } from './provider-controls.js'
+import { usageSummaryWithLimits } from './usage-summary.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -1291,6 +1292,80 @@ describe('live limit windows', () => {
     await registry.disposeAll()
     await vi.advanceTimersByTimeAsync(1_000)
     expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
+  })
+})
+
+describe('held limits first', () => {
+  const totals = {
+    session: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+    today: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+  }
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }],
+  })
+
+  it('holds nothing before the first read and nothing for a new account', async () => {
+    const { registry } = setup({
+      services: {
+        grok: { usageLimitSource: async () => weekly(10), signOut: async () => {} },
+      },
+    })
+    const grok = registry.forProvider('grok')
+    expect(grok.heldLimitSource()).toBeUndefined()
+    const read = await grok.usageLimitSource()
+    expect(grok.heldLimitSource()).toBe(read)
+    await grok.signOut()
+    expect(grok.heldLimitSource()).toBeUndefined()
+  })
+
+  it('answers an expired value at once, refreshes it once and signals only a change', async () => {
+    const second = deferred<ReturnType<typeof weekly>>()
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue(weekly(40))
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const summary = () =>
+      usageSummaryWithLimits(
+        totals,
+        'grok',
+        () => grok.usageLimitSource(),
+        () => grok.heldLimitSource(),
+      )
+    // Only the first read is awaited.
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await flush()
+    // Both callers share the one background read.
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    expect(hooks.onUsageChanged).not.toHaveBeenCalled()
+    second.resolve(weekly(10))
+    await flush()
+    // Equal numbers change nothing a client shows.
+    expect(hooks.onUsageChanged).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await flush()
+    expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('grok')
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 40 }] })
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
   })
 })
 
