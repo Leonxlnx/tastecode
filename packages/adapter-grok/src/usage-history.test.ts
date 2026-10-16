@@ -1,8 +1,29 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { readGrokUsageHistory } from './usage-history.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { GROK_USAGE_HISTORY, readGrokUsageHistory } from './usage-history.js'
+
+describe('Grok usage history source', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('reads the unified log of the given home, GROK_HOME or ~/.grok', () => {
+    const account = path.join(os.tmpdir(), 'grok-account')
+    expect(GROK_USAGE_HISTORY.root(account)).toBe(path.join(account, 'logs', 'unified.jsonl'))
+
+    vi.stubEnv('GROK_HOME', path.join(os.tmpdir(), 'grok-home'))
+    expect(GROK_USAGE_HISTORY.root()).toBe(
+      path.join(os.tmpdir(), 'grok-home', 'logs', 'unified.jsonl'),
+    )
+
+    vi.stubEnv('GROK_HOME', undefined)
+    expect(GROK_USAGE_HISTORY.root()).toBe(
+      path.join(os.homedir(), '.grok', 'logs', 'unified.jsonl'),
+    )
+  })
+})
 
 describe('Grok local usage history', () => {
   it('attributes token rows to each process model and preserves cache and reasoning', async () => {

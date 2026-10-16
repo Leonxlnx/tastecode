@@ -1,6 +1,18 @@
 import { createReadStream } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import readline from 'node:readline'
-import type { LocalUsageRecord } from '@harness/contracts'
+import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
+import { discoverFileArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+
+/** The Grok CLI appends every turn's token counts to `<GROK_HOME>/logs/unified.jsonl`. */
+export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
+  provider: 'grok',
+  label: 'Grok',
+  root: (home = process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok')) =>
+    path.join(home, 'logs', 'unified.jsonl'),
+  discover: (root) => discoverFileArchive(root, readGrokUsageHistory),
+}
 
 /** Reads the Grok CLI's append-only local token log in one streaming pass. */
 export async function readGrokUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
