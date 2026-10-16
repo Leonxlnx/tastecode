@@ -159,7 +159,7 @@ type LimitEntry = {
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
 }
-type LimitFailure = { error: unknown; count: number; retryAt: number }
+type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
 
 /** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
 const LIMIT_RETRY_MIN_MS = 5 * 60_000
@@ -169,9 +169,28 @@ function limitRetryDelay(failures: number): number {
   return Math.min(LIMIT_RETRY_MIN_MS * 2 ** (failures - 1), LIMIT_RETRY_MAX_MS)
 }
 
-function limitFailure(previous: LimitFailure | undefined, error: unknown): LimitFailure {
+/** Adapters mark a missed deadline with the platform's own error name. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError'
+}
+
+/** Each failure doubles the wait; reaching the timeout limit ends retries for this account. */
+function limitFailure(
+  previous: LimitFailure | undefined,
+  error: unknown,
+  timeoutLimit: number | undefined,
+): LimitFailure {
   const count = (previous?.count ?? 0) + 1
-  return { error, count, retryAt: Date.now() + limitRetryDelay(count) }
+  const timeouts = (previous?.timeouts ?? 0) + (isTimeout(error) ? 1 : 0)
+  return {
+    error,
+    count,
+    timeouts,
+    retryAt:
+      timeoutLimit !== undefined && timeouts >= timeoutLimit
+        ? Number.POSITIVE_INFINITY
+        : Date.now() + limitRetryDelay(count),
+  }
 }
 
 const defaultServices = {
@@ -590,7 +609,10 @@ export class ProviderControls {
           return value
         },
         (error: unknown) => {
-          if (current()) entry.failure = limitFailure(entry.failure, error)
+          if (current()) {
+            const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+            entry.failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
+          }
           throw error
         },
       )

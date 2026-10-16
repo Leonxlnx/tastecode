@@ -21,6 +21,8 @@ export type ProviderControlCapabilities = Readonly<{
    * cannot force an earlier one.
    */
   limitReadIntervalMs: number
+  /** Timed-out limit reads after which the server stops reading until the account changes. */
+  limitReadTimeoutLimit?: number
 }>
 
 const unsupported: ProviderControlCapabilities = {
@@ -58,6 +60,9 @@ export const PROVIDER_CAPABILITIES = {
     usageLimits: true,
     // Each read starts a full Claude CLI, and every turn reports a usage change.
     limitReadIntervalMs: 15 * 60_000,
+    // A CLI that still scans its transcripts misses the read deadline every
+    // time; two misses are enough to stop paying for that scan.
+    limitReadTimeoutLimit: 2,
   },
   codex: {
     resume: true,

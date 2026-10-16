@@ -776,10 +776,66 @@ describe('cached usage limits', () => {
 
 describe('limit read backoff and intervals', () => {
   type ReadyLimits = { status: 'ready'; limits: ProviderLimit[] }
+  const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
   const failing = (error: () => Error = () => new Error('fixture-limits-failed')) =>
     vi.fn(async (): Promise<ReadyLimits> => {
       throw error()
     })
+
+  it('stops reading after the declared number of timeouts until the account changes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadTimeoutLimit).toBe(2)
+    const usageLimitSource = failing(timeout)
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource, signOut } } })
+    const claude = registry.forProvider('claude-code')
+    const attempt = () => expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await attempt()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    registry.usageChanged('claude-code', true)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await claude.signOut()
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('counts only timeouts toward the limit, and a success starts the count again', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValueOnce({ status: 'ready', limits: [] })
+      .mockRejectedValueOnce(timeout())
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    registry.usageChanged('claude-code')
+    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    expect(usageLimitSource).toHaveBeenCalledTimes(5)
+  })
+
+  it('keeps retrying timeouts with backoff where no timeout limit is declared', async () => {
+    expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadTimeoutLimit')
+    const usageLimitSource = failing(timeout)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    for (const minutes of [5, 10, 20]) {
+      await vi.advanceTimersByTimeAsync(minutes * 60_000)
+      await expect(grok.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    }
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
 
   it('answers a failed read with its error until a retry time that doubles to 30 minutes', async () => {
     const usageLimitSource = failing()
