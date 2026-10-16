@@ -104,7 +104,11 @@ export function createFollowGlide(options: FollowGlideOptions): FollowGlide {
 
   const tick = (now: number) => {
     frame = undefined
-    const dt = last === undefined ? FIRST_STEP_MS : Math.min(MAX_STEP_MS, Math.max(0, now - last))
+    const elapsed = last === undefined ? FIRST_STEP_MS : now - last
+    // No display refreshes faster than once a millisecond. Frames that close
+    // together come from an environment without vsync (a test DOM runs them
+    // back to back); counting each as one frame keeps the glide finite there.
+    const dt = Math.min(MAX_STEP_MS, elapsed < 1 ? FIRST_STEP_MS : elapsed)
     last = now
     const next = smoothDamp(pos, target, vel, smoothMs, dt)
     pos = next.pos
