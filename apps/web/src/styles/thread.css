@@ -1019,8 +1019,9 @@ button.thread__older:hover {
   border-radius: var(--r-lg);
 }
 
+/* No measure of its own: like a reply, it runs to the column's right edge,
+   which already keeps lines readable. */
 .reasoning-summary {
-  max-width: 72ch;
   color: var(--text-3);
   font-family: var(--font-ui);
   font-size: var(--t-md);

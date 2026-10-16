@@ -45,4 +45,8 @@ describe('transcript row edges', () => {
     // A live output used its own 32px and jumped left when its tool finished.
     expect(css).not.toMatch(/\.aux--live \.aux__out \{/)
   })
+
+  it('runs a reasoning summary to the column edge like a reply', () => {
+    expect(rule('.reasoning-summary')).not.toContain('max-width')
+  })
 })
