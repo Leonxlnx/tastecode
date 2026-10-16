@@ -170,6 +170,30 @@ export function mapCodexUsage(
   }
 }
 
+/**
+ * How full the context window is after the last request, as a reading of its
+ * own. Codex's `last` counter is that occupancy. The reading carries no
+ * accounting counters, the shape ACP's context reports have, so session totals
+ * never count it. Nothing is reported while Codex does not know the window.
+ */
+export function mapCodexContextUsage(
+  notification: ThreadTokenUsageUpdatedNotification,
+  model?: string,
+): Usage | undefined {
+  const window = notification.tokenUsage.modelContextWindow
+  const tokens = notification.tokenUsage.last.totalTokens
+  if (!window || window <= 0 || tokens <= 0) return undefined
+  return {
+    ...(model ? { model } : {}),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: tokens,
+    contextWindow: window,
+  }
+}
+
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'])
 
 function isImage(path: string): boolean {
@@ -1614,10 +1638,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'thread/tokenUsage/updated': {
         const p = ThreadTokenUsageUpdatedNotificationSchema.parse(params)
-        emit({
-          type: 'usage.updated',
-          usage: mapCodexUsage(p, this.#threadModels.get(p.threadId)),
-        })
+        const model = this.#threadModels.get(p.threadId)
+        emit({ type: 'usage.updated', usage: mapCodexUsage(p, model) })
+        // Last, so the latest usage a client replays is the context reading.
+        const context = mapCodexContextUsage(p, model)
+        if (context) emit({ type: 'usage.updated', usage: context })
         return
       }
 
