@@ -5,6 +5,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ParamsOf,
   ProviderId,
   ProviderLimit,
   ProviderLimitSource,
@@ -20,7 +21,9 @@ import { WatchLeases } from './watch-leases.js'
 
 const loadCodex = retryableLazy(() => import('@harness/adapter-codex'))
 const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
+const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
+const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -30,7 +33,8 @@ export type ProviderLoginResult = {
 type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-type WatchTarget = 'skills' | 'mcp'
+/** Targets without a lease here yet (`commands`) are accepted and ignored. */
+type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
 
 /** Only this settings surface is required of an injected control process. */
 export type CodexControlAdapter = Pick<
@@ -108,6 +112,8 @@ export type ProviderControlsOptions = {
   loginStartTimeoutMs?: number
   /** How long a successful limit read answers later reads without a change signal. */
   limitCacheMs?: number
+  /** How long an account without plan limits keeps that answer through usage changes. */
+  unavailableLimitCacheMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
@@ -133,6 +139,12 @@ type LoginEntry = {
 type LimitEntry = {
   /** Bumped by every change so a read that started earlier cannot refresh the cache. */
   version: number
+  /** Bumped only when the account may have changed; usage changes leave it alone. */
+  accountVersion: number
+  /** Counts cached answers, so an older read never replaces a newer one. */
+  stored: number
+  /** The last account read, which shows a sign-in or switch made outside the app. */
+  account?: string | undefined
   value?: ProviderLimitSource | undefined
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
@@ -141,7 +153,11 @@ type LimitEntry = {
 }
 
 const defaultServices = {
+  antigravity: {},
+  api: {},
   codex: {},
+  opencode: {},
+  pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
     account: async () => (await loadClaude()).claudeAccount(),
@@ -149,12 +165,23 @@ const defaultServices = {
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
     signOut: async () => (await loadClaude()).signOutClaude(),
   },
+  cursor: {
+    account: async () => (await loadCursor()).cursorAccount(),
+    startLogin: async (complete) => (await loadCursor()).startCursorLogin(complete),
+    signOut: async () => (await loadCursor()).signOutCursor(),
+  },
   grok: {
     // Grok's MCP sessions run through ACP.
     validateMcpServer: validateAcpMcpServer,
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),
+  },
+  acp: {
+    account: async (agent) => (agent ? (await loadAcp()).acpAccount(agent) : { signedIn: false }),
+    signOut: async (agent) => {
+      if (agent) await (await loadAcp()).acpSignOut(agent)
+    },
   },
 } satisfies Record<ProviderId, ProviderServices>
 
@@ -173,6 +200,7 @@ export class ProviderControls {
   readonly #loginTtlMs: number
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
+  readonly #unavailableLimitCacheMs: number
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
   #shared: ProcessEntry | undefined
@@ -191,6 +219,11 @@ export class ProviderControls {
     // Codex reports a limit change after nearly every model request, and each
     // read starts a vendor process, so reads are cached and signals spaced.
     this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
+    // An account without plan limits answers the same until it changes, and
+    // Claude scans its local transcripts for up to a minute to say so. Every
+    // turn reports a usage change, so only a longer, bounded cache stops each
+    // turn from repeating that scan.
+    this.#unavailableLimitCacheMs = duration(options.unavailableLimitCacheMs, 30 * 60_000, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
@@ -219,7 +252,7 @@ export class ProviderControls {
    */
   usageChanged(provider: ProviderId, immediate = false): void {
     if (this.#closed) return
-    const entry = this.#invalidateLimits(provider)
+    const entry = this.#invalidateLimits(provider, false)
     const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
     if (wait <= 0) {
       clearTimeout(entry.notifyTimer)
@@ -306,8 +339,12 @@ export class ProviderControls {
     }
     const control: ProviderControl = {
       capabilities,
-      account: (agent) =>
-        this.#read(async () => (await services.account?.(agent)) ?? { signedIn: false }),
+      account: async (agent) => {
+        const account = await this.#read(
+          async () => (await services.account?.(agent)) ?? { signedIn: false },
+        )
+        return agent === undefined ? this.#accountRead(provider, account) : account
+      },
       usageLimitSource: () =>
         services.usageLimitSource
           ? this.#cachedLimits(provider, () =>
@@ -346,7 +383,8 @@ export class ProviderControls {
     if (provider !== 'codex') return control
     return {
       ...control,
-      account: () => this.#withShared((adapter) => adapter.account()),
+      account: async () =>
+        this.#accountRead(provider, await this.#withShared((adapter) => adapter.account())),
       listModels: (agent) =>
         agent
           ? this.#readModels(provider, agent)
@@ -427,14 +465,24 @@ export class ProviderControls {
   #limitEntry(provider: ProviderId): LimitEntry {
     let entry = this.#limits.get(provider)
     if (!entry) {
-      entry = { version: 0, freshUntil: 0, notifiedAt: Number.NEGATIVE_INFINITY }
+      entry = {
+        version: 0,
+        accountVersion: 0,
+        stored: 0,
+        freshUntil: 0,
+        notifiedAt: Number.NEGATIVE_INFINITY,
+      }
       this.#limits.set(provider, entry)
     }
     return entry
   }
 
-  #invalidateLimits(provider: ProviderId): LimitEntry {
+  #invalidateLimits(provider: ProviderId, accountChanged: boolean): LimitEntry {
     const entry = this.#limitEntry(provider)
+    if (accountChanged) entry.accountVersion += 1
+    // Spending usage cannot give an account the plan limits it lacks, so only
+    // an account change discards that answer.
+    else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
     entry.freshUntil = 0
     // A read already in flight may predate the change; the next caller starts its own.
@@ -451,12 +499,20 @@ export class ProviderControls {
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
     if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
-    const version = entry.version
+    const { version, accountVersion, stored } = entry
     const reading = read()
       .then((value) => {
-        if (entry.version === version && this.#limits.get(provider) === entry) {
+        const unavailable = value.status === 'unavailable'
+        if (
+          this.#limits.get(provider) === entry &&
+          entry.accountVersion === accountVersion &&
+          // A usage change during the read leaves an unavailable answer true.
+          (entry.version === version || (unavailable && entry.stored === stored))
+        ) {
+          entry.stored += 1
           entry.value = value
-          entry.freshUntil = Date.now() + this.#limitCacheMs
+          entry.freshUntil =
+            Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
         }
         return value
       })
@@ -468,8 +524,20 @@ export class ProviderControls {
   }
 
   #authChanged(provider: ProviderId): void {
-    this.#invalidateLimits(provider)
+    // The next account read describes the new account; it is no further change.
+    this.#invalidateLimits(provider, true).account = undefined
     this.#options.onAuthChanged?.(provider)
+  }
+
+  /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
+  #accountRead(provider: ProviderId, account: Account): Account {
+    const entry = this.#limitEntry(provider)
+    const identity = JSON.stringify([account.signedIn, account.email ?? null, account.plan ?? null])
+    if (entry.account !== undefined && entry.account !== identity) {
+      this.#invalidateLimits(provider, true)
+    }
+    entry.account = identity
+    return account
   }
 
   async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {

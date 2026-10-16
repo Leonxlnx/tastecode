@@ -77,7 +77,8 @@ export function compactHistoryReplay(entries: readonly HistoryEntry[]): HistoryE
   return compacted
 }
 
-function needsHistoryCompaction(entries: readonly HistoryEntry[]): boolean {
+/** Whether compaction would change the replay at all. */
+export function needsHistoryCompaction(entries: readonly HistoryEntry[]): boolean {
   const itemIds = new Set<string>()
   let hasUsage = false
   let hasDiff = false
@@ -106,7 +107,8 @@ function needsHistoryCompaction(entries: readonly HistoryEntry[]): boolean {
   return false
 }
 
-function historyItemId(event: DomainEvent): string | undefined {
+/** The item an event streams into or finalizes. */
+export function historyItemId(event: DomainEvent): string | undefined {
   if (event.type === 'item.started' || event.type === 'item.completed') return event.item.id
   if (event.type === 'item.delta') return event.itemId
   return undefined

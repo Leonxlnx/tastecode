@@ -22,6 +22,17 @@ const fixedWindow: ContextControl = {
 }
 
 describe('provider context controls', () => {
+  it.each(['cursor', 'opencode', 'antigravity', 'pi', 'acp', 'api'] as const)(
+    'leaves %s context decisions with the engine when it declares no controls',
+    (provider) => {
+      expect(providerContextControl(provider)).toBeUndefined()
+      expect(() =>
+        validateContextSettings(providerContextControl(provider), { compactAt: 50 }),
+      ).toThrow()
+      expect(contextForLaunch(providerContextControl(provider), { compactAt: 50 })).toBeUndefined()
+    },
+  )
+
   it('reads what each shipped adapter declared', () => {
     expect(providerContextControl('codex')).toMatchObject({ latestCompactAt: 90 })
     expect(providerContextControl('claude-code')).toMatchObject({

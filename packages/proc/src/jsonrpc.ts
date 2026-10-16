@@ -200,12 +200,21 @@ export class StdioJsonRpc {
   }
 
   dispose(): Promise<void> {
-    if (this.#disposed) return this.#termination ?? Promise.resolve()
-    this.#disposed = true
-    this.#failAll(new Error('transport disposed'))
-    this.#buffer.clear()
-    this.#termination = killTree(this.#child)
-    return this.#termination
+    if (this.#termination) return this.#termination
+    if (!this.#disposed) {
+      this.#disposed = true
+      this.#failAll(new Error('transport disposed'))
+      this.#buffer.clear()
+    }
+    // A failed stop stays retryable. Caching the rejection made one slow
+    // taskkill permanent: every later dispose, and every caller waiting for
+    // this process to go, failed until the app restarted.
+    const termination = killTree(this.#child).catch((error: unknown) => {
+      if (this.#termination === termination) this.#termination = undefined
+      throw error
+    })
+    this.#termination = termination
+    return termination
   }
 
   #write(message: unknown): void {

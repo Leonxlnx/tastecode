@@ -33,7 +33,7 @@ import {
   IconX as X,
 } from '@tabler/icons-react'
 import { writeClipboardText } from '../bridge.js'
-import { providerPresentation } from '../provider-presentation.js'
+import { sessionSourcePresentation } from '../provider-presentation.js'
 import { findSession, takeProjectSessionChanges } from '../project-store.js'
 import {
   classifyInboxEntries,
@@ -711,7 +711,7 @@ const ActiveRow = memo(function ActiveRow(
           )}
           <span aria-hidden>·</span>
           <SourceIdentity
-            presentation={providerPresentation(props.session.provider)}
+            presentation={sessionSourcePresentation(props.session.provider, props.session.agent)}
             density="compact"
           />
           {props.session.pinned ? (
@@ -1622,7 +1622,7 @@ function relativeTime(at: number, now: number): string {
 }
 
 function providerName(session: Session): string {
-  return providerPresentation(session.provider).label
+  return sessionSourcePresentation(session.provider, session.agent).label
 }
 
 function projectName(project: ProjectMetadata): string {

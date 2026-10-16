@@ -8,6 +8,12 @@ const CONTEXT_CONTROLS = {
   codex: CODEX_CAPABILITIES.context,
   'claude-code': CLAUDE_CAPABILITIES.context,
   grok: GROK_CAPABILITIES.context,
+  cursor: undefined,
+  opencode: undefined,
+  antigravity: undefined,
+  pi: undefined,
+  acp: undefined,
+  api: undefined,
 } satisfies Readonly<Record<ProviderId, ContextControl | undefined>>
 
 export function providerContextControl(provider: ProviderId): ContextControl | undefined {

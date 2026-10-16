@@ -17,7 +17,8 @@
   font-size: var(--t-md);
   font-weight: 400;
   line-height: 1.52;
-  max-width: 72ch;
+  /* Replies use the whole transcript column, out to the edge user bubbles end
+     on. A 72ch measure left a wide empty band beside every answer. */
 }
 
 .reply--notice > .md > p:first-child {
@@ -253,6 +254,11 @@
   color: var(--text);
 }
 
+.md [data-streamdown='code-block'] button[aria-pressed='true'] {
+  background: var(--control-pressed);
+  color: var(--text);
+}
+
 .md [data-streamdown='code-block'] button svg {
   width: 13px;
   height: 13px;
@@ -266,14 +272,16 @@
   inset: -2px;
 }
 
-/* Language label and controls share one row directly above the block. */
+/* Language label and controls share one row directly above the block. The
+   label starts on the block's left edge, the prose edge above it, and the
+   controls end on its right edge. */
 .md [data-streamdown='code-block-header'] {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  height: 26px;
-  padding: 0 2px;
+  height: 30px;
+  padding: 0;
   color: var(--text-3);
   font-family: var(--font-mono);
   font-size: var(--t-xs);
@@ -282,11 +290,13 @@
 /* Streamdown renders the controls in their own wrapper between the header and
    the body. Left in flow, that wrapper keeps the height of the hidden buttons
    and opens a hole under the language label, so it is lifted onto the header
-   row instead (26px row, 24px buttons: 1px from the top centres them). */
+   row instead. 30px row, 24px buttons: 3px from the top centres them on the
+   label and leaves the same 3px above the block, so they no longer sit on
+   its border. */
 .md [data-streamdown='code-block'] > div:has(> [data-streamdown='code-block-actions']) {
   position: absolute;
-  top: 1px;
-  right: 2px;
+  top: 3px;
+  right: 0;
   z-index: 1;
 }
 
@@ -304,7 +314,7 @@
   justify-content: flex-end;
   gap: 3px;
   min-height: 26px;
-  padding: 0 2px 2px;
+  padding: 0 0 2px;
 
   > div {
     position: relative;
@@ -422,6 +432,14 @@
 .md pre code > span {
   display: block;
   min-height: 1lh;
+}
+
+/* The Wrap toggle on a code block soft-wraps long lines in every block,
+   streaming ones too. Only white-space changes, so toggling never renders or
+   highlights a block again. */
+:root[data-code-wrap='on'] .md pre code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Block chunks keep late token layout local while retaining normal selection and overflow. */

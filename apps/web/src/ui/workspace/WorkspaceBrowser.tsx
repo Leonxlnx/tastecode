@@ -12,7 +12,13 @@ import {
   IconDeviceMobile as Smartphone,
   IconDeviceTablet as Tablet,
 } from '@tabler/icons-react'
-import { isDesktop, openExternalUrl } from '../../bridge.js'
+import {
+  isDesktop,
+  isMacOS,
+  onBrowserShortcut,
+  openExternalUrl,
+  type BrowserShortcutAction,
+} from '../../bridge.js'
 import { errorMessage } from '../../boundary.js'
 import { IconMorph } from '../IconMorph.js'
 import { Skeleton, SkeletonLines, SkeletonStatus } from '../Skeleton.js'
@@ -23,6 +29,7 @@ import {
   type BrowserLoadFailureView,
 } from './browser-load-error.js'
 import type { BrowserPageInfo } from './browser-page.js'
+import { browserShortcut, browserShortcutHints } from './browser-shortcuts.js'
 import { browserAddress } from './browser-url.js'
 import {
   BROWSER_VIEWPORTS,
@@ -51,6 +58,7 @@ type BrowserGuest = HTMLElement & {
   canGoForward(): boolean
   getTitle(): string
   getURL(): string
+  getWebContentsId(): number
   goBack(): void
   goForward(): void
   isLoading(): boolean
@@ -99,6 +107,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   focusAddressOnOpen,
   tabId,
   onPageInfo,
+  onClose,
 }: {
   active: boolean
   navigation?: BrowserNavigationRequest | undefined
@@ -108,6 +117,8 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   tabId?: string | undefined
   /** The page's URL and title whenever either changes, for the tab label. */
   onPageInfo?: ((tabId: string, page: BrowserPageInfo) => void) | undefined
+  /** Closes this tab, for Ctrl+W pressed in the toolbar or inside the page. */
+  onClose?: ((tabId: string) => void) | undefined
 }) {
   const canvas = useRef<HTMLDivElement>(null)
   const host = useRef<HTMLDivElement>(null)
@@ -150,6 +161,10 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
   // because the owner handed over a new function (#283).
   const pageInfoListener = useRef(onPageInfo)
   pageInfoListener.current = onPageInfo
+  const closeListener = useRef(onClose)
+  closeListener.current = onClose
+  // Escape threw an address edit away: select the restored address once it shows.
+  const selectRestoredAddress = useRef(false)
 
   useEffect(() => {
     if (tabId === undefined) return
@@ -410,16 +425,78 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
     input.select()
   }
 
+  // Escape in the address puts back the page's address, like a browser does.
+  const revertAddress = () => {
+    editingAddress.current = false
+    const restored = failedAddress.current ?? state.url
+    if (restored === address) addressInput.current?.select()
+    else {
+      selectRestoredAddress.current = true
+      setAddress(restored)
+    }
+  }
+  useLayoutEffect(() => {
+    if (!selectRestoredAddress.current) return
+    selectRestoredAddress.current = false
+    addressInput.current?.select()
+  }, [address])
+
+  const runShortcut = (shortcut: BrowserShortcutAction) => {
+    if (shortcut === 'address') editAddress()
+    else if (shortcut === 'close') {
+      if (tabId !== undefined) closeListener.current?.(tabId)
+    } else action(shortcut)
+  }
+  // Keys pressed inside the page never reach this document; the desktop shell
+  // forwards them with the guest they came from. One subscription per tab,
+  // reading the latest runner through a ref (#283).
+  const shortcutRunner = useRef(runShortcut)
+  shortcutRunner.current = runShortcut
+  useEffect(
+    () =>
+      onBrowserShortcut((guestId, shortcut) => {
+        try {
+          if (guest.current?.getWebContentsId() !== guestId) return
+        } catch {
+          // A guest that is not attached yet cannot have sent the key.
+          return
+        }
+        shortcutRunner.current(shortcut)
+      }),
+    [],
+  )
+  const macOS = isMacOS()
+  const hints = browserShortcutHints(macOS)
+
   const loadingFirstPage = Boolean(state.url) && state.loading && !hasRenderedPage && !failure
   // Later loads keep the current page visible under a thin progress line.
   const loadingLaterPage = state.loading && hasRenderedPage && !failure
 
   return (
-    <div className="workspace-browser">
+    <div
+      className="workspace-browser"
+      // Browser keys while focus is anywhere in this tab, never in the chat.
+      onKeyDown={(event) => {
+        if (event.defaultPrevented || event.nativeEvent.isComposing) return
+        if (event.key === 'Escape') {
+          if (event.target !== addressInput.current || !editingAddress.current) return
+          event.preventDefault()
+          revertAddress()
+          return
+        }
+        const shortcut = browserShortcut(event, macOS)
+        if (!shortcut) return
+        // Also keeps the key from the app's own shortcuts and the window menu.
+        event.preventDefault()
+        if (!event.repeat) runShortcut(shortcut)
+      }}
+    >
       <div className="workspace-browser__toolbar">
         <button
           type="button"
-          title="Back"
+          aria-label="Back"
+          aria-keyshortcuts={hints.back.aria}
+          title={`Back (${hints.back.label})`}
           disabled={!state.canGoBack}
           onClick={() => action('back')}
         >
@@ -427,7 +504,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         </button>
         <button
           type="button"
-          title="Forward"
+          aria-label="Forward"
+          aria-keyshortcuts={hints.forward.aria}
+          title={`Forward (${hints.forward.label})`}
           disabled={!state.canGoForward}
           onClick={() => action('forward')}
         >
@@ -435,7 +514,9 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
         </button>
         <button
           type="button"
-          title={state.loading ? 'Stop loading' : 'Reload'}
+          aria-label={state.loading ? 'Stop loading' : 'Reload'}
+          aria-keyshortcuts={state.loading ? undefined : hints.reload.aria}
+          title={state.loading ? 'Stop loading' : `Reload (${hints.reload.label})`}
           disabled={!state.url}
           onClick={() => action(state.loading ? 'stop' : 'reload')}
         >
@@ -457,6 +538,7 @@ export const WorkspaceBrowser = memo(function WorkspaceBrowser({
             value={address}
             placeholder="Enter a URL"
             aria-label="Browser address"
+            aria-keyshortcuts={hints.address.aria}
             spellCheck={false}
             onChange={(event) => {
               editingAddress.current = true

@@ -58,6 +58,24 @@
   display: none;
 }
 
+/* The edge takes focus for keyboard resizing; reached by keyboard it shows
+   as a 2px line on the panel's border instead of a box around a thin strip. */
+.workspace-panel__resize:focus-visible {
+  outline: 0;
+}
+
+.workspace-panel__resize:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0 3px;
+  border-radius: var(--r-pill);
+  background: var(--focus-ring-color);
+}
+
+.workspace-panel--bottom > .workspace-panel__resize:focus-visible::after {
+  inset: 2px 0;
+}
+
 .workspace-panel__body {
   min-width: 0;
   min-height: 0;
@@ -1538,6 +1556,62 @@
   color: var(--text);
 }
 
+/* Below 900px the open right panel covers the chat (app.css). There it leads
+   its header with a labelled way back, which hides the panel like its X. */
+.workspace-panel__back {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .workspace-panel:has(> .workspace-panel__back) {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .workspace-panel__back ~ .workspace-panel__body {
+    grid-column: 1 / -1;
+  }
+
+  .workspace-panel__back {
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    gap: 6px;
+    height: 28px;
+    margin-left: 8px;
+    padding: 0 10px 0 8px;
+    border: 1px solid var(--line);
+    border-radius: var(--r-md);
+    background: transparent;
+    color: var(--text-2);
+    cursor: pointer;
+    font: inherit;
+    font-size: var(--t-sm);
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+    -webkit-app-region: no-drag;
+  }
+
+  .workspace-panel__back:hover {
+    background: var(--control-hover);
+    color: var(--text);
+  }
+
+  .workspace-panel__back:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: var(--focus-ring-offset);
+    color: var(--text);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-panel__back {
+    transition: none;
+  }
+}
+
 .workspace-tabs {
   display: flex;
   align-items: center;
@@ -1605,6 +1679,21 @@
 .workspace-tabs__tab .workspace-tabs__close {
   flex: none;
   padding: 0 5px;
+  border-radius: var(--r-md);
+}
+/* Reached by keyboard, the whole rounded tab carries the ring. The select
+   button inside is square and stops before the close button, so its own ring
+   drew a box that cut through the pill. Inset, so the strip's clipped
+   overflow never trims it. */
+.workspace-tabs__tab > [role='tab']:focus-visible {
+  outline: none;
+}
+.workspace-tabs__tab:has(> [role='tab']:focus-visible) {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+.workspace-tabs__tab .workspace-tabs__close:focus-visible {
+  outline-offset: var(--focus-ring-inset);
 }
 .workspace-tabs__add {
   flex: none;

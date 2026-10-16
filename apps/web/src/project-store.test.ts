@@ -286,6 +286,38 @@ describe('project session updates', () => {
 })
 
 describe('server project snapshot reconciliation', () => {
+  it('retains the API connection identity and reconciles source changes', () => {
+    const snapshot = serverProjects(1, 2)
+    snapshot[0]!.sessions[0] = {
+      ...snapshot[0]!.sessions[0]!,
+      provider: 'api',
+      connectionId: 'first-api',
+    }
+    snapshot[0]!.sessions[1] = {
+      ...snapshot[0]!.sessions[1]!,
+      provider: 'api',
+      connectionId: 'second-api',
+    }
+    const current = reconcileProjectList([], snapshot, [], {}, 100)
+    expect(current[0]!.sessions.map(({ connectionId }) => connectionId)).toEqual([
+      'first-api',
+      'second-api',
+    ])
+    expect(reconcileProjectList(current, snapshot, [], {}, 200)).toBe(current)
+    const changed = [
+      {
+        ...snapshot[0]!,
+        sessions: [
+          { ...snapshot[0]!.sessions[0]!, connectionId: 'third-api' },
+          snapshot[0]!.sessions[1]!,
+        ],
+      },
+    ]
+    const next = reconcileProjectList(current, changed, [], {}, 300)
+    expect(next[0]!.sessions[0]!.connectionId).toBe('third-api')
+    expect(next[0]!.sessions[1]).toBe(current[0]!.sessions[1])
+  })
+
   it('converts once, retains an unchanged tree, and copies one changed status', () => {
     const snapshot = serverProjects(2, 2)
     const current = reconcileProjectList([], snapshot, [], {}, 100)

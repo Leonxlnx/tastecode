@@ -7,7 +7,14 @@ import type {
   UserInputRequest,
 } from '@harness/contracts'
 
-export type TurnTiming = Readonly<Record<string, { startedAt?: number; completedAt?: number }>>
+export type TurnLifecycle = {
+  startedAt?: number
+  completedAt?: number
+  /** The turn ended with an interrupted status: the user stopped it. */
+  interrupted?: true
+}
+
+export type TurnTiming = Readonly<Record<string, TurnLifecycle>>
 
 export type LiveItemUpdate = {
   item: Item

@@ -36,6 +36,12 @@ import type {
 import { z } from 'zod'
 import type { TurnOptions } from './adapters.js'
 import { canonicalDataPath } from './data-lease.js'
+import type { HistoryCarry } from './history-page.js'
+import {
+  historyIndexKeys,
+  HISTORY_STATE_EVENT_TYPES,
+  type HistoryTailRows,
+} from './history-tail.js'
 import { DatabaseSync, type SQLInputValue, type StatementSync } from './sqlite.js'
 import {
   affectsInboxProjection,
@@ -90,8 +96,10 @@ export type StoredThread = {
   id: string
   projectPath: string
   provider: ProviderId
-  /** Custom harness id, when the thread runs one instead of the provider CLI. */
+  /** ACP agent or custom harness id, when one owns the session. */
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
   /** Opaque provider-owned resume identity. Never used as the TasteCode id. */
   providerSessionId?: string | undefined
   title: string
@@ -120,6 +128,8 @@ export type StoredSidebarThread = {
   projectPath: string
   provider: ProviderId
   agent?: string | undefined
+  /** Non-secret connection identity for direct API sessions. */
+  connectionId?: string | undefined
   title: string
   pinned: boolean
   createdAt: number
@@ -140,6 +150,13 @@ export type StoredCheckpoint = {
   commit: string
   label: string
   createdAt: number
+}
+
+export type StoredUsageEvent = {
+  threadId: string
+  provider: ProviderId
+  at: number
+  usage: Usage
 }
 
 export type StoredQueuedTurn = {
@@ -221,6 +238,12 @@ const TURN_DIFF_INDEX_VERSION = 'turn_diff_events_v1'
 const RECOVERY_STATE_VERSION = 'recovery_lifecycles_v2'
 const BOUNDED_REPLAY_SNAPSHOTS_VERSION = 'bounded_replay_snapshots_v1'
 const CHRONOLOGICAL_REPLAY_SNAPSHOTS_VERSION = 'chronological_replay_snapshots_v1'
+// Every row this build writes lands in the history index in the same step. A
+// row above this sequence was written by another build, or by this one just
+// before a crash, and may be missing from the index.
+const HISTORY_INDEX_THROUGH_SETTING = 'history_index_through_v1'
+// A `history_keys` row with this key marks a thread whose index covers every row.
+const HISTORY_INDEX_COMPLETE_KEY = ''
 const SEARCH_RESULT_KEY_SETTING = 'search_result_key_v1'
 const SEARCH_SNAPSHOT_TTL_MS = 5 * 60 * 1_000
 // The renderer owns one active search. Keep a few recently used cursors for
@@ -289,6 +312,7 @@ CREATE TABLE IF NOT EXISTS threads (
   project_path TEXT NOT NULL,
   provider     TEXT NOT NULL,
   agent        TEXT,
+  connection_id TEXT,
   provider_session_id TEXT,
   title        TEXT NOT NULL,
   pinned       INTEGER NOT NULL DEFAULT 0,
@@ -447,6 +471,25 @@ CREATE TABLE IF NOT EXISTS thread_replay_snapshots (
   payload   TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS thread_runtime_state (
+  thread_id TEXT PRIMARY KEY REFERENCES threads(id) ON DELETE CASCADE,
+  payload   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS history_keys (
+  thread_id TEXT NOT NULL,
+  key       TEXT NOT NULL,
+  first_seq INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, key)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS history_state_events (
+  thread_id TEXT NOT NULL,
+  type      TEXT NOT NULL,
+  seq       INTEGER NOT NULL,
+  PRIMARY KEY (thread_id, type, seq)
+) WITHOUT ROWID;
+
 CREATE TABLE IF NOT EXISTS schema_migrations (
   name TEXT PRIMARY KEY
 );
@@ -520,6 +563,7 @@ const ADDED_COLUMNS: Array<{ table: string; column: string; definition: string }
   { table: 'threads', column: 'parent_thread_id', definition: 'TEXT' },
   { table: 'threads', column: 'restore_context_pending', definition: 'INTEGER NOT NULL DEFAULT 0' },
   { table: 'threads', column: 'provider_session_id', definition: 'TEXT' },
+  { table: 'threads', column: 'connection_id', definition: 'TEXT' },
   { table: 'threads', column: 'history_rewrite_after', definition: 'INTEGER' },
   { table: 'threads', column: 'history_rewrite_through', definition: 'INTEGER' },
 ]
@@ -540,6 +584,7 @@ type ThreadRow = {
   project_path: string
   provider: string
   agent: string | null
+  connection_id: string | null
   provider_session_id: string | null
   title: string
   pinned: SqliteInteger
@@ -564,6 +609,7 @@ type SidebarThreadRow = Pick<
   | 'project_path'
   | 'provider'
   | 'agent'
+  | 'connection_id'
   | 'title'
   | 'pinned'
   | 'created_at'
@@ -615,6 +661,7 @@ type QueuedTurnClaimRow = { thread_id: string; queue_id: string; intent: string 
 type DiffDecisionRow = { decision: string }
 type InterruptedThreadRow = { thread_id: string; payload: string; resumable: SqliteInteger }
 type HistoryRow = { seq: SqliteInteger; payload: string }
+type HistoryKeyRow = { key: string; first_seq: SqliteInteger }
 type ThreadEventRow = { thread_id: string; payload: string }
 type PayloadRow = { payload: string }
 type SearchRowIdsRow = { search_rowids: string }
@@ -777,6 +824,16 @@ export class Store {
   #pruneReplaySnapshots: StatementSync
   #deleteReplaySnapshot: StatementSync
   #lastSequence: StatementSync
+  #insertHistoryKey: StatementSync
+  #insertHistoryStateEvent: StatementSync
+  #markHistoryIndexed: StatementSync
+  #historyIndexed: StatementSync
+  #historyImportedTurn: StatementSync
+  #historyKeyFirstSeqs: StatementSync
+  #historyRowsBefore: StatementSync
+  #historyStateBefore: StatementSync
+  #historyStateBetween: StatementSync
+  #threadHasEvents: StatementSync
   #selectSearchSnapshot = new Map<number, StatementSync>()
   #readSearchResults: StatementSync
   #readSidebarSettings: StatementSync
@@ -808,6 +865,11 @@ export class Store {
   #searchRevision = 0
   /** Keeps the streamed-event path from querying SQLite just to skip search indexing. */
   #ephemeralThreads = new Set<string>()
+  /**
+   * The item and turn of each thread's last indexed delta. A run of deltas
+   * names the same keys, so the history index is written once per run.
+   */
+  #historyDeltaRuns = new Map<string, { itemId: string; turnId: string }>()
 
   /** `:memory:` in tests; a file under the user's data directory in the app. */
   constructor(location: string) {
@@ -891,6 +953,52 @@ export class Store {
        WHERE turn_diff_events.thread_id = ? AND turn_diff_events.turn_id = ?
        ORDER BY turn_diff_events.event_seq DESC LIMIT 1`,
     )
+    this.#insertHistoryKey = this.#db.prepare(
+      `INSERT INTO history_keys (thread_id, key, first_seq) VALUES (?, ?, ?)
+       ON CONFLICT (thread_id, key) DO UPDATE SET first_seq = excluded.first_seq
+       WHERE excluded.first_seq < history_keys.first_seq`,
+    )
+    this.#insertHistoryStateEvent = this.#db.prepare(
+      `INSERT OR IGNORE INTO history_state_events (thread_id, type, seq) VALUES (?, ?, ?)`,
+    )
+    this.#markHistoryIndexed = this.#db.prepare(
+      `INSERT OR IGNORE INTO history_keys (thread_id, key, first_seq) VALUES (?, ?, 0)`,
+    )
+    this.#historyIndexed = this.#db.prepare(
+      `SELECT 1 FROM history_keys WHERE thread_id = ? AND key = ?`,
+    )
+    this.#historyImportedTurn = this.#db.prepare(
+      `SELECT 1 FROM history_keys
+       WHERE thread_id = ? AND key >= 't:import:' AND key < 't:import;' LIMIT 1`,
+    )
+    this.#historyKeyFirstSeqs = this.#db.prepare(
+      `SELECT key, first_seq FROM history_keys
+       WHERE thread_id = ? AND key IN (SELECT value FROM json_each(?))`,
+    )
+    this.#historyRowsBefore = this.#db.prepare(
+      `SELECT e.seq, e.payload FROM events e
+       LEFT JOIN provider_history_events p ON p.event_seq = e.seq
+       WHERE e.thread_id = ? AND e.seq >= ? AND e.seq < ?
+         AND (p.active IS NULL OR p.active = 1)
+       ORDER BY e.seq DESC LIMIT ?`,
+    )
+    this.#historyStateBefore = this.#db.prepare(
+      `SELECT h.seq, e.payload FROM history_state_events h
+       JOIN events e ON e.seq = h.seq
+       LEFT JOIN provider_history_events p ON p.event_seq = h.seq
+       WHERE h.thread_id = ? AND h.type = ? AND h.seq < ?
+         AND (p.active IS NULL OR p.active = 1)
+       ORDER BY h.seq DESC LIMIT 1`,
+    )
+    this.#historyStateBetween = this.#db.prepare(
+      `SELECT h.seq, e.payload FROM history_state_events h
+       JOIN events e ON e.seq = h.seq
+       LEFT JOIN provider_history_events p ON p.event_seq = h.seq
+       WHERE h.thread_id = ? AND h.type IN (?, ?) AND h.seq > ? AND h.seq < ?
+         AND (p.active IS NULL OR p.active = 1)
+       ORDER BY h.seq`,
+    )
+    this.#threadHasEvents = this.#db.prepare(`SELECT 1 FROM events WHERE thread_id = ? LIMIT 1`)
     this.#upsertRecoveryStart = this.#db.prepare(
       `INSERT INTO recovery_lifecycles
          (thread_id, lifecycle_key, event_type, started_seq, terminal_seq, payload)
@@ -1024,10 +1132,10 @@ export class Store {
     this.#findProject = this.#db.prepare(`SELECT * FROM projects WHERE path = ?`)
     this.#insertThread = this.#db.prepare(
       `INSERT INTO threads
-        (id, project_path, provider, agent, provider_session_id, title, created_at,
+        (id, project_path, provider, agent, connection_id, provider_session_id, title, created_at,
           worktree_path, worktree_branch,
           lifecycle_state, keep_active, unread, last_active_at, ephemeral, parent_thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 0, 0, ?, ?, ?)`,
     )
     this.#listProjects = this.#db.prepare(`SELECT * FROM projects ORDER BY created_at`)
     this.#listProjectThreads = this.#db.prepare(
@@ -1037,7 +1145,7 @@ export class Store {
       `SELECT * FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
     )
     this.#listSidebarThreads = this.#db.prepare(
-      `SELECT id, project_path, provider, agent, title, pinned, created_at, closed_at,
+      `SELECT id, project_path, provider, agent, connection_id, title, pinned, created_at, closed_at,
               worktree_branch, lifecycle_state, lifecycle_at, lifecycle_reason, wake_at,
               keep_active, woke_at, unread
        FROM threads WHERE ephemeral = 0 ORDER BY created_at DESC`,
@@ -1213,6 +1321,40 @@ export class Store {
           .run(BOUNDED_REPLAY_SNAPSHOTS_VERSION)
       })
     }
+    this.#checkHistoryIndexWatermark()
+  }
+
+  /**
+   * A thread written by a build without the history index has rows the index
+   * never saw. Rows above the recorded watermark name those threads; they lose
+   * their complete mark and are indexed again from the log on their next open.
+   */
+  #checkHistoryIndexWatermark(): void {
+    const recorded = sqliteRow<StringValueRow>(
+      this.#readAppSetting,
+      HISTORY_INDEX_THROUGH_SETTING,
+    )?.value
+    const through = recorded === undefined ? Number.NaN : Number(recorded)
+    const last = this.#lastEventSeq()
+    if (through === last) return
+    this.#transaction(() => {
+      if (!Number.isSafeInteger(through)) {
+        this.#db.prepare(`DELETE FROM history_keys WHERE key = ?`).run(HISTORY_INDEX_COMPLETE_KEY)
+      } else if (last > through) {
+        this.#db
+          .prepare(
+            `DELETE FROM history_keys WHERE key = ? AND thread_id IN
+               (SELECT DISTINCT thread_id FROM events WHERE seq > ?)`,
+          )
+          .run(HISTORY_INDEX_COMPLETE_KEY, through)
+      }
+      this.#writeAppSetting.run(HISTORY_INDEX_THROUGH_SETTING, String(last))
+    })
+  }
+
+  #lastEventSeq(): number {
+    const row = sqliteRow<MaxSequenceRow>(this.#db.prepare(`SELECT MAX(seq) AS seq FROM events`))
+    return row?.seq == null ? 0 : Number(row.seq)
   }
 
   /** Bring a database written by an older build up to the current shape. */
@@ -1253,6 +1395,10 @@ export class Store {
         WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
         DELETE FROM design_runs
         WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM history_keys
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
+        DELETE FROM history_state_events
+        WHERE thread_id IN (SELECT id FROM threads WHERE ephemeral = 1);
         DELETE FROM threads WHERE ephemeral = 1;
       `)
     })
@@ -1260,6 +1406,11 @@ export class Store {
 
   close(): void {
     this.#searchSnapshots.clear()
+    try {
+      // Every row so far was indexed as it landed. A failed write only costs
+      // the next start a rebuild of recently written threads.
+      this.#writeAppSetting.run(HISTORY_INDEX_THROUGH_SETTING, String(this.#lastEventSeq()))
+    } catch {}
     this.#db.close()
   }
 
@@ -1354,6 +1505,7 @@ export class Store {
       stored.projectPath,
       stored.provider,
       stored.agent ?? null,
+      stored.connectionId ?? null,
       stored.providerSessionId ?? null,
       stored.title,
       stored.createdAt,
@@ -1363,6 +1515,10 @@ export class Store {
       ephemeral ? 1 : 0,
       stored.parentThreadId ?? null,
     )
+    // A new thread's index covers every row it will ever have.
+    if (!this.#threadHasEvents.get(stored.id)) {
+      this.#markHistoryIndexed.run(stored.id, HISTORY_INDEX_COMPLETE_KEY)
+    }
     if (ephemeral) this.#ephemeralThreads.add(stored.id)
     this.#invalidateSidebarThreads()
     const result = {
@@ -1918,6 +2074,20 @@ export class Store {
     return this.#sidebarSettingsCache
   }
 
+  threadRuntimeState(threadId: string): unknown {
+    const row = sqliteRow<{ payload: string }>(
+      this.#db.prepare('SELECT payload FROM thread_runtime_state WHERE thread_id = ?'),
+      threadId,
+    )
+    return row ? JSON.parse(row.payload) : undefined
+  }
+
+  saveThreadRuntimeState(threadId: string, state: unknown): void {
+    this.#db
+      .prepare('INSERT OR REPLACE INTO thread_runtime_state (thread_id, payload) VALUES (?, ?)')
+      .run(threadId, serializeJson(state))
+  }
+
   threadApproval(threadId: string): ApprovalMode | undefined {
     const row = this.#db
       .prepare('SELECT mode FROM thread_approvals WHERE thread_id = ?')
@@ -2086,8 +2256,11 @@ export class Store {
       this.#db.prepare(`DELETE FROM restore_undos WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM diff_decisions WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM design_runs WHERE thread_id = ?`).run(id)
+      this.#db.prepare(`DELETE FROM history_keys WHERE thread_id = ?`).run(id)
+      this.#db.prepare(`DELETE FROM history_state_events WHERE thread_id = ?`).run(id)
       this.#db.prepare(`DELETE FROM threads WHERE id = ?`).run(id)
       this.#db.exec('COMMIT')
+      this.#historyDeltaRuns.delete(id)
       this.#searchRevision += 1
       this.#ephemeralThreads.delete(id)
       this.#deleteCachedReplaySnapshot(id)
@@ -2145,6 +2318,8 @@ export class Store {
           'restore_undos',
           'diff_decisions',
           'design_runs',
+          'history_keys',
+          'history_state_events',
         ]) {
           this.#db.prepare(`DELETE FROM ${table} WHERE thread_id = ?`).run(id)
         }
@@ -2153,6 +2328,7 @@ export class Store {
     })
     for (const id of ids) {
       this.#ephemeralThreads.delete(id)
+      this.#historyDeltaRuns.delete(id)
       this.#deleteCachedReplaySnapshot(id)
       this.#cacheThread(id, undefined)
     }
@@ -2252,6 +2428,7 @@ export class Store {
         'events',
         'provider_history',
         'provider_history_events',
+        'thread_runtime_state',
         'checkpoints',
         'restore_undos',
         'diff_decisions',
@@ -2508,6 +2685,8 @@ export class Store {
       return result
     } catch (error) {
       this.#db.exec('ROLLBACK')
+      // A rolled-back delta took its index rows with it.
+      this.#historyDeltaRuns.clear()
       throw error
     }
   }
@@ -2612,6 +2791,7 @@ export class Store {
       this.#threadCache.clear()
       this.#invalidateSidebarThreads()
       this.#searchRevision += 1
+      this.#historyDeltaRuns.clear()
       throw error
     }
   }
@@ -2652,11 +2832,23 @@ export class Store {
     at: number,
     serializedEvent: string,
   ): number {
-    // Token deltas intentionally have no secondary index. Keep the dominant
-    // write path to one serialization and one prepared SQLite insert.
+    // Token deltas have no secondary index beyond the history keys their run
+    // names once. Keep the dominant write path to one serialization and one
+    // prepared SQLite insert.
     if (event.type === 'item.delta') {
-      return this.#insertEventRow(threadId, at, serializedEvent)
+      if (this.#continuesHistoryDeltaRun(threadId, event)) {
+        return this.#insertEventRow(threadId, at, serializedEvent)
+      }
+      const seq = this.#transaction(() => {
+        const seq = this.#insertEventRow(threadId, at, serializedEvent)
+        this.#indexHistory(seq, threadId, event)
+        return seq
+      })
+      this.#historyDeltaRuns.set(threadId, { itemId: event.itemId, turnId: event.turnId })
+      return seq
     }
+    const historyKeys = historyIndexKeys(event)
+    const historyState = HISTORY_STATE_EVENT_TYPES.has(event.type)
     const searchEntry = this.#ephemeralThreads.has(threadId) ? undefined : searchableEntry(event)
     const usageEvent = event.type === 'usage.updated'
     const inboxEvent = affectsInboxProjection(event)
@@ -2666,6 +2858,8 @@ export class Store {
     // A lone SQLite insert is already atomic. Only open an explicit
     // transaction when the event and a derived index row must commit together.
     if (
+      historyKeys.length === 0 &&
+      !historyState &&
       !searchEntry &&
       !usageEvent &&
       !inboxEvent &&
@@ -2679,6 +2873,7 @@ export class Store {
     this.#db.exec('BEGIN IMMEDIATE')
     try {
       const seq = this.#insertEventRow(threadId, at, serializedEvent)
+      this.#indexHistory(seq, threadId, event)
       if (searchEntry) this.#indexSearchEntry(seq, threadId, at, searchEntry)
       if (usageEvent) this.#indexUsageEvent(seq, threadId, at, serializedEvent)
       if (inboxEvent) this.#indexInboxEvent(seq, threadId, event, serializedEvent)
@@ -2726,7 +2921,15 @@ export class Store {
 
   #appendEventPayload(threadId: string, event: DomainEvent, at: number, payload: string): number {
     const seq = this.#insertEventRow(threadId, at, payload)
-    if (event.type === 'item.delta') return seq
+    if (event.type === 'item.delta') {
+      // Callers hold a transaction; a rollback clears the remembered runs.
+      if (!this.#continuesHistoryDeltaRun(threadId, event)) {
+        this.#indexHistory(seq, threadId, event)
+        this.#historyDeltaRuns.set(threadId, { itemId: event.itemId, turnId: event.turnId })
+      }
+      return seq
+    }
+    this.#indexHistory(seq, threadId, event)
     if (!this.#ephemeralThreads.has(threadId)) this.#indexEvent(seq, threadId, at, event)
     if (event.type === 'usage.updated') this.#indexUsageEvent(seq, threadId, at, payload)
     if (affectsInboxProjection(event)) this.#indexInboxEvent(seq, threadId, event, payload)
@@ -2752,6 +2955,153 @@ export class Store {
       entries.push({ seq: Number(row.seq), event })
     }
     return entries
+  }
+
+  // ---- history index -------------------------------------------------------
+  //
+  // `history_keys` holds, per thread, the first row that names each turn
+  // (`t:<id>`) and item (`i:<id>`); `history_state_events` lists the rows a
+  // newest page carries state from. Together they let a cold open read only
+  // the end of the log (see history-tail.ts). Rows removed or retired later
+  // leave entries behind, which only makes the reader read further back.
+
+  /** Whether the index covers every row of the thread. */
+  historyIndexed(threadId: string): boolean {
+    return this.#historyIndexed.get(threadId, HISTORY_INDEX_COMPLETE_KEY) !== undefined
+  }
+
+  historyHasImportedTurns(threadId: string): boolean {
+    return this.#historyImportedTurn.get(threadId) !== undefined
+  }
+
+  /**
+   * Active rows before `beforeSeq`, oldest first, skipping unreadable ones:
+   * the newest `limit` of them, or all from `fromSeq` on.
+   */
+  historyRowsBefore(
+    threadId: string,
+    beforeSeq: number,
+    range: { limit: number } | { fromSeq: number },
+  ): HistoryTailRows {
+    const limit = 'limit' in range ? range.limit : -1
+    const fromSeq = 'fromSeq' in range ? range.fromSeq : 0
+    const rows = sqliteRows<HistoryRow>(
+      this.#historyRowsBefore,
+      threadId,
+      fromSeq,
+      beforeSeq,
+      limit,
+    )
+    const entries: ReplayEntry[] = []
+    for (let index = rows.length - 1; index >= 0; index -= 1) {
+      const row = rows[index]!
+      const event = parseDomainEvent(row.payload, `history for thread ${threadId}`)
+      if (event !== undefined) entries.push({ seq: Number(row.seq), event })
+    }
+    const oldest = rows.at(-1)
+    return {
+      entries,
+      oldestSeq: oldest === undefined ? undefined : Number(oldest.seq),
+      complete: limit >= 0 && rows.length < limit,
+    }
+  }
+
+  /** The first row naming each key. A key the index never saw is absent. */
+  historyKeyFirstSeqs(threadId: string, keys: readonly string[]): Map<string, number> {
+    const firstSeqs = new Map<string, number>()
+    if (keys.length === 0) return firstSeqs
+    for (const row of sqliteRows<HistoryKeyRow>(
+      this.#historyKeyFirstSeqs,
+      threadId,
+      JSON.stringify(keys),
+    )) {
+      firstSeqs.set(row.key, Number(row.first_seq))
+    }
+    return firstSeqs
+  }
+
+  /**
+   * What the thread's rows before `seq` leave open, by the renderer's rules:
+   * the latest usage, approvals since the last turn end or thread error, and
+   * questions since the last thread error.
+   */
+  historyCarryBefore(threadId: string, seq: number): HistoryCarry {
+    const usage = this.#lastHistoryStateEvent(threadId, 'usage.updated', seq)
+    const error = this.#lastHistoryStateEvent(threadId, 'thread.error', seq)
+    const completed = this.#lastHistoryStateEvent(threadId, 'turn.completed', seq)
+    const approvals = this.#openHistoryRequests(
+      threadId,
+      'approval',
+      Math.max(error?.seq ?? 0, completed?.seq ?? 0),
+      seq,
+    )
+    const userInputs = this.#openHistoryRequests(threadId, 'user_input', error?.seq ?? 0, seq)
+    return { ...(usage ? { usage } : {}), approvals, userInputs }
+  }
+
+  #lastHistoryStateEvent(
+    threadId: string,
+    type: DomainEvent['type'],
+    beforeSeq: number,
+  ): ReplayEntry | undefined {
+    for (;;) {
+      const row = sqliteRow<HistoryRow>(this.#historyStateBefore, threadId, type, beforeSeq)
+      if (!row) return undefined
+      const event = parseDomainEvent(row.payload, `history for thread ${threadId}`)
+      if (event !== undefined) return { seq: Number(row.seq), event }
+      beforeSeq = Number(row.seq)
+    }
+  }
+
+  #openHistoryRequests(
+    threadId: string,
+    kind: 'approval' | 'user_input',
+    afterSeq: number,
+    beforeSeq: number,
+  ): Map<string, ReplayEntry> {
+    const open = new Map<string, ReplayEntry>()
+    for (const row of sqliteRows<HistoryRow>(
+      this.#historyStateBetween,
+      threadId,
+      `${kind}.requested`,
+      `${kind}.resolved`,
+      afterSeq,
+      beforeSeq,
+    )) {
+      const event = parseDomainEvent(row.payload, `history for thread ${threadId}`)
+      if (event?.type === 'approval.requested' || event?.type === 'user_input.requested') {
+        open.set(event.request.id, { seq: Number(row.seq), event })
+      } else if (event?.type === 'approval.resolved' || event?.type === 'user_input.resolved') {
+        open.delete(event.id)
+      }
+    }
+    return open
+  }
+
+  /**
+   * Index a thread that predates the index. `entries` must be the thread's
+   * whole history, read in the same synchronous step, so no row lands between.
+   */
+  backfillHistoryIndex(threadId: string, entries: readonly ReplayEntry[]): void {
+    if (this.historyIndexed(threadId)) return
+    const firstSeqs = new Map<string, number>()
+    this.#transaction(() => {
+      for (const { seq, event } of entries) {
+        for (const key of historyIndexKeys(event)) {
+          if (!firstSeqs.has(key)) firstSeqs.set(key, seq)
+        }
+        if (HISTORY_STATE_EVENT_TYPES.has(event.type)) {
+          this.#insertHistoryStateEvent.run(threadId, event.type, seq)
+        }
+      }
+      for (const [key, seq] of firstSeqs) this.#insertHistoryKey.run(threadId, key, seq)
+      this.#markHistoryIndexed.run(threadId, HISTORY_INDEX_COMPLETE_KEY)
+    })
+  }
+
+  /** Whether the thread's current replay is already parsed in memory. */
+  hasTailReplaySnapshotInMemory(threadId: string): boolean {
+    return this.#replaySnapshotCache.get(threadId)?.tail === true
   }
 
   /** Read the latest saved replay as an immutable base, even when a small tail is newer. */
@@ -3051,6 +3401,22 @@ export class Store {
     }
   }
 
+  /** Whether the thread's last indexed delta named the same item and turn. */
+  #continuesHistoryDeltaRun(
+    threadId: string,
+    event: Extract<DomainEvent, { type: 'item.delta' }>,
+  ): boolean {
+    const run = this.#historyDeltaRuns.get(threadId)
+    return run !== undefined && run.itemId === event.itemId && run.turnId === event.turnId
+  }
+
+  #indexHistory(seq: number, threadId: string, event: DomainEvent): void {
+    for (const key of historyIndexKeys(event)) this.#insertHistoryKey.run(threadId, key, seq)
+    if (HISTORY_STATE_EVENT_TYPES.has(event.type)) {
+      this.#insertHistoryStateEvent.run(threadId, event.type, seq)
+    }
+  }
+
   #indexEvent(seq: number, threadId: string, at: number, event: DomainEvent): void {
     const entry = searchableEntry(event)
     if (!entry) return
@@ -3313,6 +3679,31 @@ export class Store {
     }
   }
 
+  /** Read indexed usage rows rather than scanning every streamed event. */
+  usageEvents(): StoredUsageEvent[] {
+    const rows = sqliteRows<{
+      thread_id: string
+      at: SqliteInteger
+      payload: string
+      provider: string
+    }>(
+      this.#db.prepare(
+        `SELECT u.thread_id, u.at, u.payload, t.provider
+         FROM usage_events u JOIN threads t ON t.id = u.thread_id
+         ORDER BY u.thread_id, u.event_seq`,
+      ),
+    )
+    const events: StoredUsageEvent[] = []
+    for (const row of rows) {
+      const provider = toProviderId(row.provider)
+      if (!provider) continue
+      const event = parseDomainEvent(row.payload, `usage history for thread ${row.thread_id}`)
+      if (event?.type !== 'usage.updated') continue
+      events.push({ threadId: row.thread_id, provider, at: Number(row.at), usage: event.usage })
+    }
+    return events
+  }
+
   usageSummary(threadId: string, since: number): UsageSummary {
     const thread = this.thread(threadId)
     if (!thread) return { session: emptyUsage(), today: emptyUsage() }
@@ -3354,16 +3745,18 @@ export class Store {
 
     let today = emptyUsage()
     {
-      // Seed each thread with its last usage row before the window, so a
+      // Seed each thread with its last running total before the window, so a
       // running-total provider's first in-window increment is a diff, not the
-      // whole session so far.
+      // whole session so far. A context reading can follow the total, so it
+      // must not be the seed. The LIKE prefilter matches the serialized flag;
+      // the parse below still decides.
       const previous = new Map<string, UsageTotal>()
       const seeds = sqliteRows<ThreadPayloadRow>(
         this.#db.prepare(
           `SELECT thread_id, payload FROM (
              SELECT thread_id, payload,
                ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY at DESC, event_seq DESC) AS position
-             FROM usage_events WHERE at < ?
+             FROM usage_events WHERE at < ? AND payload LIKE '%"cumulative":true%'
            ) WHERE position = 1`,
         ),
         since,
@@ -3526,6 +3919,15 @@ export class Store {
     this.#searchRevision += 1
     this.#db.prepare(`DELETE FROM events WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
     this.#db.prepare(`DELETE FROM checkpoints WHERE thread_id = ? AND seq > ?`).run(threadId, seq)
+    // Keys whose first row was removed name no remaining row: the log keeps
+    // nothing after `seq`. The complete mark (first_seq 0) stays.
+    this.#db
+      .prepare(`DELETE FROM history_keys WHERE thread_id = ? AND first_seq > ?`)
+      .run(threadId, seq)
+    this.#db
+      .prepare(`DELETE FROM history_state_events WHERE thread_id = ? AND seq > ?`)
+      .run(threadId, seq)
+    this.#historyDeltaRuns.delete(threadId)
     // The inbox index keeps only current state. Rebuild this one thread so a
     // removed resolution or terminal event exposes the retained state again.
     this.#rebuildThreadInboxState(threadId)
@@ -3637,6 +4039,7 @@ export class Store {
           `restored transcript for thread ${event.thread_id}`,
         )
         if (parsed === undefined) continue
+        this.#indexHistory(event.seq, event.thread_id, parsed)
         this.#indexEvent(event.seq, event.thread_id, event.at, parsed)
         if (parsed.type === 'usage.updated') {
           this.#indexUsageEvent(event.seq, event.thread_id, event.at, event.payload)
@@ -4336,6 +4739,7 @@ function toSidebarThread(row: SidebarThreadRow): StoredSidebarThread | undefined
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
     title: row.title,
     pinned: row.pinned === 1,
     createdAt: Number(row.created_at),
@@ -4357,6 +4761,7 @@ function toThread(row: ThreadRow): StoredThread | undefined {
     projectPath: row.project_path,
     provider,
     ...(row.agent === null ? {} : { agent: row.agent }),
+    ...(row.connection_id === null ? {} : { connectionId: row.connection_id }),
     ...(row.provider_session_id === null ? {} : { providerSessionId: row.provider_session_id }),
     title: row.title,
     pinned: row.pinned === 1,

@@ -1,10 +1,12 @@
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import path from 'node:path'
 import type { AssetManifest } from './assets.js'
-import type { DesignBrief } from './brief.js'
+import { isDashboardBrief, isDashboardPageMode, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
-import { DESIGN_MOTION_GUIDANCE } from './motion-guidance.js'
+import { DESIGN_CONSISTENCY_FINDING_IDS } from './design-consistency.js'
+import { ONE_DESIGN_LANGUAGE } from './design-language.js'
+import { designMotionGuidance } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
 import { type BoundaryRecord, member, record, string, strings } from './parse.js'
 import { referenceDirectionsForPage, type ReferenceDirection } from './reference-directions.js'
@@ -70,6 +72,14 @@ export interface RepairPhaseOutput {
   checks: string[]
 }
 
+/** Replaces the website-only Hero blocker when the reviewed page is an operating dashboard. */
+const DASHBOARD_REVIEW_BLOCKERS = `- The app shell is inconsistent: a view or region invents its own navigation, header, toolbar or control style instead of the one shell and control language of the dashboard reference, or navigation changes position or style between views and viewports.
+- Data density falls below the reference: sparse marketing-style blocks, oversized hero numbers or decorative cards replace the tables, lists, charts and detail regions the task needs.
+- A table or chart is hard to read: proportional or misaligned figures in numeric columns, missing units, axes or legends, low value contrast, truncated columns or overlapping labels at any viewport.
+- A filter, tab, sort, selection, navigation item or drawer that page.json plans shows no visible selected, active, sorted or open state, or a captured state visibly contradicts the data or view it claims to control. Still screenshots cannot prove that a control changes state: when that is all that is missing, say so in summary instead of reporting a finding.
+- Keyboard focus is invisible in a captured focus state, or a surface clips or hides the focus ring.
+- A marketing hero, pricing, testimonial or footer section was added to the app screen.`
+
 export function designReviewPrompt(
   brief: DesignBrief,
   brand: BrandSystem,
@@ -80,6 +90,7 @@ export function designReviewPrompt(
   expectedViewports?: readonly { width: number; height: number }[],
 ): string {
   validateReviewScreenshots(screenshots, expectedViewports)
+  const dashboard = isDashboardBrief(brief) || isDashboardPageMode(page.architecture?.mode)
   const internalReferences = Array.isArray(page.sections)
     ? referenceDirectionsForPage(page, referenceDeck)
     : []
@@ -91,15 +102,18 @@ export function designReviewPrompt(
 
 Inspect every supplied screenshot and reference image with image-viewing tools. Screenshot paths are listed in <screenshots>; user mockups and internal direction images are listed separately below. Compare visible evidence against the primary reference for each section as well as the brief, brand system, page contract, section questions and evidence, composition rule, responsive transformations, and acceptance criteria. Review hierarchy, composition, spacing, typography, color roles, imagery, content fit, interaction affordance, responsive behavior, overflow, clipping, and visually observable accessibility failures. Flag component-demo assembly, cardification without discrete content, accidental responsive stacking, several primary focal points, or signature-device wallpaper when visible. Screenshot DOM audits are objective TasteCode evidence: include repairs for their failures and never dismiss them from visual judgment. A screenshot whose capturedHeight is smaller than its documentHeight ends before the page does; judge only what it shows and never describe the omitted part as passing.
 
-For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Only identity content, brand hues, the approved font family and image subjects should change. Compare normalized heading/media boxes, section height, line count, whitespace, radii, borders and overlaps against the reference; require repair when these drift without a concrete content, accessibility or responsive reason. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
+For every visible section, compare its screenshot geometry first against referenceDirectionId, then its declared layoutFamily, layoutCases, content-specific layout, and viewport transformation. The reference must remain recognizably present in macro geometry, hierarchy, relative proportions, alignment, overlap, density, negative-space rhythm, media count and placement, and intended movement. Identity content, image subjects and styling change: every section must render in the page's one design language from brand.json (approved font families, palette, designTokens type scale, radius family, spacing scale, button, label, card and surface treatment), even where its reference looked different. Compare normalized heading and media boxes, column structure, section height proportions, line count, media count and crop, whitespace and overlaps against the reference; require repair when these drift without a concrete content, accessibility or responsive reason. Never require a section to copy its own reference's radii, heading size, typeface, label style or surface colors when that would break the page's one design language. Report a major finding when Build substitutes an unrelated default such as a centered heading with interchangeable cards, repeats the same composition in adjacent sections, loses the reference at a breakpoint, or adds a signature motif absent from the reference.
 
-Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, avoid repeated generic reveal choreography, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
+${ONE_DESIGN_LANGUAGE}${dashboard ? '\n\nThis is an operating dashboard: judge it as one working screen rather than a marketing page. Review shell and navigation consistency, data density, table and chart readability, visible selected, sorted and open control states, and keyboard focus instead of Hero criteria.' : ''}
+
+Review each section's recorded motion decision against the rendered result when the evidence makes that possible. Motion must have one clear purpose, preserve spatial continuity, reuse the page's two or three named reveal types instead of a different effect per section or one generic fade-up everywhere, and provide a reduced-motion path. Do not claim that a still screenshot proves timing or interaction behavior; use unknown confidence when the browser evidence cannot show it.
 
 Apply the following pass blockers to every screenshot:
-- Heading size, width, line count or placement differs materially from the reference without a content or accessibility reason. Preserve intentional monumental typography and multi-line composition.
-- Invented labels, uppercase monospace micro-headings or decorative numbering absent from the reference, or a missing/failed approved font load. Do not flag reference typography merely because it is unusual.
+- The page breaks its one design language: sections use different font families, heading styles, type scales, button styles, radius families, label systems or card and surface treatments, or a section imports its own reference's styling instead of the brand's.
+- Heading width, line count, placement or relative prominence differs materially from the reference without a content or accessibility reason. Preserve intentional monumental typography and multi-line composition within the brand type scale.
+- Invented labels, uppercase monospace micro-headings or decorative numbering absent from the anchor reference's design language, or a missing/failed approved font load. Do not flag the brand's typography merely because it is unusual.
 - Any visible unfinished authoring placeholder such as lorem ipsum, TODO, or your text here. Preserve legitimate interface states and controls such as Not connected, Test data, Local preview, or Awaiting approval; they are not evidence of unfinished implementation. Preserve concise identification of concept work or an illustrative catalog; these are meaningful content, not unfinished copy.
-- A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.
+${dashboard ? DASHBOARD_REVIEW_BLOCKERS : '- A Hero stacks a headline with multiple descriptions, disclaimers, or redundant supporting messages.'}
 - Invented grids, separator rules, card-edge rails or square-panel templates replace the reference geometry. Preserve those details when they are actually visible in the selected image.
 - Grouping loses the reference composition: open editorial content becomes boxed, distinct media layouts become equal-column templates, or related controls and cards use inconsistent spacing and states.
 - An approved brand accent appears only in tiny labels, icons, or underlines instead of meaningful actions and selected states; or unrelated card colors fragment the brand system.
@@ -116,7 +130,7 @@ Do not edit files, redesign from preference, or praise the work. Report only vis
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief, page)}
 
 Return JSON only:
 {"version":1,"verdict":"pass|repair","summary":"...","findings":[{"id":"stable_snake_case","severity":"blocking|major|minor","area":"viewport or section","evidenceType":"automated|visual_inspection","confidence":"high|medium|low|unknown","evidence":"what is visibly wrong","repair":"specific bounded correction"}]}
@@ -175,10 +189,11 @@ export function parseReviewPhaseOutput(text: string): VisualReview {
   }
 }
 
-const AUDIT_FINDING_IDS = new Set([
+const AUDIT_FINDING_IDS = new Set<string>([
   'document_h1_count',
   'interactive_target_size',
   'mobile_interactive_target_size',
+  ...DESIGN_CONSISTENCY_FINDING_IDS,
 ])
 
 export function enforceDomAuditFindings(
@@ -305,11 +320,11 @@ export function designRepairPrompt(
   }))
   return `You are running repair attempt ${attempt} of ${limit} in TasteCode Design Mode.
 
-Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. Remove invented SVG filler and off-reference card-edge rails; preserve borders and rules visible in the reference. Run relevant local checks. Do not start a preview server or expand the design direction.
+Fix only the validated visual findings below. Inspect the existing implementation and every attached reference image. The approved referenceDirectionId and artifacts remain immutable during repair: restore their composition instead of inventing a replacement motif. Restore each section's reference geometry, but fix design-language findings through the shared tokens block: move the section onto the brand's font families, type scale, radius family, spacing scale, buttons, labels and surfaces, and never re-diverge a section toward its own reference's styling. Preserve unrelated user work and prefer the smallest shared correction that resolves each root cause across viewports. Remove invented SVG filler and off-reference card-edge rails; preserve borders and rules visible in the reference. Run relevant local checks. Do not start a preview server or expand the design direction.
 
 ${DESIGN_CONTENT_GUIDANCE}
 
-${DESIGN_MOTION_GUIDANCE}
+${designMotionGuidance(brief, page)}
 
 Return JSON only as the final response:
 {"status":"complete|failed","summary":"...","files":["relative/path"],"checks":["command — result"]}

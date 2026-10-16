@@ -30,6 +30,9 @@ import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import {
   ClaudeEventSchema,
+  contextTokens,
+  contextUsage,
+  modelContextWindow,
   toDomainEvents,
   toolUseItemFields,
   toUsage,
@@ -134,18 +137,13 @@ const OLDER_CLAUDE_MODELS: Model[] = [
     'high',
     'max',
   ]),
-  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', [
-    'low',
-    'medium',
-    'high',
-    'max',
-  ]),
   claudeModel('claude-sonnet-4-6', 'Sonnet 4.6', 'Older Sonnet generation', [
     'low',
     'medium',
     'high',
     'max',
   ]),
+  claudeModel('claude-opus-4-5', 'Opus 4.5', 'Older Opus generation', ['low', 'medium', 'high']),
   claudeModel('claude-haiku-4-5', 'Haiku 4.5', 'Previous Haiku generation', []),
 ]
 export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
@@ -420,6 +418,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #stopReceipt: Promise<void> | undefined
   /** The SDK's `total_cost_usd` is a running total for the current query. */
   #queryCostUsd = 0
+  /** What the main chain's latest request held in context, or 0 before the first one. */
+  #contextTokens = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
@@ -995,6 +995,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
       this.#reportedModel = event.message?.model
+      const used = contextTokens(event.message?.usage)
+      if (used > 0) this.#contextTokens = used
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
       const filtered: ClaudeEvent =
         streamed && event.message?.content
@@ -1041,6 +1043,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
             ...usage,
             ...(this.#reportedModel ? { model: this.#reportedModel } : {}),
           },
+        })
+      }
+      // Last, so the latest usage a client replays is the context reading.
+      const contextWindow = modelContextWindow(message.modelUsage, this.#reportedModel)
+      if (contextWindow && this.#contextTokens > 0) {
+        this.emit('event', {
+          type: 'usage.updated',
+          usage: contextUsage(this.#contextTokens, contextWindow, this.#reportedModel),
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {
@@ -1540,24 +1550,20 @@ function mergeClaudeModels(models: ModelInfo[]): Model[] {
   }
   // A live row keeps its catalog row's default flag, so an answer without a
   // `default` row still selects the catalog default, not whichever row is first.
-  const fromCatalog = (catalog: Model[]): Model[] =>
-    catalog.map((catalogModel) => {
-      const selected = takeFamily(claudeModelFamily(catalogModel.id))
-      return selected ? { ...selected.model, isDefault: catalogModel.isDefault } : catalogModel
-    })
-
-  const current = fromCatalog(CURRENT_CLAUDE_MODELS)
-  const older = fromCatalog(OLDER_CLAUDE_MODELS)
-  const unknown: DiscoveredClaudeModel[] = []
+  const rows: DiscoveredClaudeModel[] = CLAUDE_MODELS.map((catalogModel) => {
+    const selected = takeFamily(claudeModelFamily(catalogModel.id))
+    return selected
+      ? { ...selected, model: { ...selected.model, isDefault: catalogModel.isDefault } }
+      : { model: catalogModel, resolvedId: catalogModel.id }
+  })
   for (const entry of discovered) {
     if (used.has(entry)) continue
     const selected = takeFamily(claudeModelFamily(entry.resolvedId))
-    if (selected) unknown.push(selected)
+    if (selected) rows.push(selected)
   }
-  // A model the catalog does not list yet is most likely a new release, so it
-  // follows the current lineup instead of sinking below older generations.
-  unknown.sort((left, right) => compareClaudeReleases(left.resolvedId, right.resolvedId))
-  const merged = [...current, ...unknown.map((entry) => entry.model), ...older]
+  // A release the catalog does not know yet takes its tier's lead by version
+  // alone, and the row it replaces moves down to the older generations.
+  const merged = orderClaudeModels(rows)
 
   let defaultIndex = defaultResolvedId
     ? merged.findIndex(
@@ -1606,18 +1612,46 @@ function claudeModelFamily(id: string): string {
 const CLAUDE_VERSIONED_ID = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d+))?$/
 const CLAUDE_TIERS = ['fable', 'opus', 'sonnet', 'haiku']
 
-/**
- * Newest version first, then Fable, Opus, Sonnet and Haiku within one version.
- * Ids without a recognizable version keep their order after the versioned ones.
- */
-function compareClaudeReleases(leftId: string, rightId: string): number {
-  const left = claudeRelease(leftId)
-  const right = claudeRelease(rightId)
-  if (!left || !right) return (left ? 0 : 1) - (right ? 0 : 1)
-  return right.major - left.major || right.minor - left.minor || left.tier - right.tier
+type ClaudeRelease = { tier: number; major: number; minor: number }
+
+function compareGenerations(left: ClaudeRelease, right: ClaudeRelease): number {
+  return right.major - left.major || right.minor - left.minor
 }
 
-function claudeRelease(id: string): { tier: number; major: number; minor: number } | undefined {
+/**
+ * The newest generation of each tier comes first, in tier order (Fable, Opus,
+ * Sonnet, Haiku). Older generations follow, newest first and in tier order
+ * within one generation. Ids without a recognizable version keep their order
+ * after the versioned ones.
+ */
+function orderClaudeModels(rows: readonly DiscoveredClaudeModel[]): Model[] {
+  const releases = new Map(rows.map((row) => [row, claudeRelease(row.resolvedId)]))
+  const newest = new Map<number, ClaudeRelease>()
+  for (const release of releases.values()) {
+    if (!release) continue
+    const current = newest.get(release.tier)
+    if (!current || compareGenerations(release, current) < 0) newest.set(release.tier, release)
+  }
+  const group = (release: ClaudeRelease | undefined) => {
+    if (!release) return 2
+    return compareGenerations(release, newest.get(release.tier)!) === 0 ? 0 : 1
+  }
+  // Array sort is stable, so rows that compare equal keep their order.
+  return [...rows]
+    .sort((left, right) => {
+      const leftRelease = releases.get(left)
+      const rightRelease = releases.get(right)
+      const leftGroup = group(leftRelease)
+      const rightGroup = group(rightRelease)
+      if (leftGroup !== rightGroup) return leftGroup - rightGroup
+      if (!leftRelease || !rightRelease) return 0
+      if (leftGroup === 0) return leftRelease.tier - rightRelease.tier
+      return compareGenerations(leftRelease, rightRelease) || leftRelease.tier - rightRelease.tier
+    })
+    .map((row) => row.model)
+}
+
+function claudeRelease(id: string): ClaudeRelease | undefined {
   const match = claudeModelFamily(id).match(CLAUDE_VERSIONED_ID)
   if (!match) return undefined
   return {

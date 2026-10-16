@@ -421,17 +421,24 @@
   border-color: var(--text-3);
 }
 
-/* Inline rename, sized to sit exactly where the label was. */
+/* Inline rename: a focused field over the label, never mistaken for it. */
 .rename {
   width: 100%;
-  background: var(--surface-2);
-  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  border: 1px solid var(--text-3);
   border-radius: var(--r-md);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+  caret-color: AccentColor;
   color: var(--rail-text);
   font: inherit;
   font-size: var(--t-sm);
   outline: none;
   padding: 4px 8px;
+}
+
+.rename::selection {
+  background: AccentColor;
+  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .sessrow {
@@ -1006,10 +1013,12 @@
 }
 
 .sessrow > .rename--session {
-  height: 28px;
-  /* The field's text starts where the title did: indent + mark + gap. */
-  padding: 0 12px 0 calc(var(--sess-indent) + 21px);
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  /* The text starts where the title did: indent + mark + gap. */
+  margin: 0 4px 0 calc(var(--sess-indent) + 14px);
+  padding: 0 6px;
   font-size: var(--rail-font-size);
   font-weight: var(--rail-font-weight);
   letter-spacing: var(--rail-letter-spacing);
@@ -1244,6 +1253,10 @@
   border-top-left-radius: inherit;
 }
 
+.stage__body[hidden] {
+  display: none;
+}
+
 .stage__conversation {
   position: relative;
   display: grid;
@@ -1399,37 +1412,17 @@
   white-space: nowrap;
 }
 
+/* The field's text starts where the title did: border + padding = 8px. */
 .stagehead__rename {
   width: auto;
   min-width: 6ch;
   max-width: min(320px, 45vw);
-  height: 28px;
-  padding: 0;
+  height: 26px;
+  margin-left: -8px;
+  padding: 0 7px;
   field-sizing: content;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  outline: none;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--t-sm);
+  color: var(--text);
   font-weight: 550;
-}
-
-.rename--chat,
-.stagehead__rename {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  color: color-mix(in srgb, var(--text-2) 82%, transparent);
-  caret-color: AccentColor;
-}
-
-.rename--chat::selection,
-.stagehead__rename::selection {
-  background: AccentColor;
-  color: color-mix(in srgb, AccentColorText 88%, AccentColor);
 }
 
 .stagehead__menu-trigger,
@@ -2373,80 +2366,6 @@
   flex: 1;
 }
 
-.context-usage {
-  position: relative;
-  display: grid;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  place-items: center;
-  border-radius: var(--r-circle);
-  outline: none;
-}
-
-.context-usage svg {
-  width: 24px;
-  height: 24px;
-  overflow: visible;
-  transform: rotate(-90deg);
-}
-
-.context-usage circle {
-  fill: none;
-  stroke-width: 2.25;
-}
-
-.context-usage__track {
-  stroke: var(--line-strong);
-}
-
-.context-usage__fill {
-  stroke: var(--text-2);
-  stroke-linecap: round;
-  stroke-dasharray: var(--context-used) 100;
-  /* --dur-med does not exist: the ring used to snap between percentages. */
-  transition: stroke-dasharray var(--dur-slow) var(--ease-out);
-}
-
-.context-usage__tooltip {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 4px);
-  z-index: 40;
-  display: grid;
-  width: max-content;
-  max-width: 190px;
-  gap: 1px;
-  padding: 5px 8px;
-  background: var(--surface-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-flyout);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 90ms var(--ease-out);
-}
-
-.context-usage__tooltip strong {
-  color: var(--text);
-  font-size: var(--t-sm);
-  font-weight: 550;
-}
-
-.context-usage:focus-visible .context-usage__tooltip {
-  opacity: 1;
-  transition: none;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .context-usage:hover .context-usage__tooltip {
-    opacity: 1;
-    transition-duration: 140ms;
-  }
-}
-
 .tool {
   display: inline-flex;
   align-items: center;
@@ -2615,16 +2534,6 @@
   background-size: 200% 100%;
   color: transparent;
   animation: design-label-shimmer 2.4s linear infinite;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .composer__design:hover > span {
-    background: linear-gradient(90deg, #b9a7ff, #87c7d8, #e2a6bc, #b9a7ff);
-    background-clip: text;
-    background-size: 200% 100%;
-    color: transparent;
-    animation: design-label-shimmer 2.4s linear infinite;
-  }
 }
 
 @keyframes design-label-shimmer {
@@ -3215,8 +3124,10 @@
     box-shadow: var(--composer-action-shadow-hover);
   }
 
-  .tools .composer__design:hover:not(:disabled) {
-    border-color: var(--composer-design-border-hover);
+  /* Hover inks the label like every other chip instead of fading it. */
+  .tools .composer__design:hover:not(:disabled),
+  .tools .composer__design:hover:not(:disabled) svg {
+    color: var(--text);
   }
 
   .tools .composer__design.is-active:hover:not(:disabled) {
@@ -3368,15 +3279,20 @@
 
 /* ---------- empty & notice ---------- */
 
+/* Icon-only chips: squares the size of Add, one gap between every control. */
 @container chat-stage (max-width: 620px) {
+  .tools,
+  .composer__dictation-options-content {
+    gap: 6px;
+  }
+
   .tools {
-    gap: 4px;
     padding-inline: 6px;
   }
 
   .tools .composer__permission,
   .tools .composer__design-button-beam {
-    width: 34px;
+    width: var(--composer-control, 32px);
   }
 
   .tools .composer__permission,
@@ -3646,6 +3562,7 @@
 
   /* Keep phone controls on one line: truncate the model name and pin Send right. */
   .tools {
+    --composer-control: 34px;
     flex-wrap: nowrap;
   }
 

@@ -3,6 +3,7 @@ import type {
   MethodName,
   ProviderId,
   ProviderSetup,
+  ProviderSourceShape,
   ProviderStatus,
   ResultOf,
   ThreadInboxStatus,
@@ -34,6 +35,12 @@ const isProviderId = enumValidator<ProviderId>({
   codex: true,
   'claude-code': true,
   grok: true,
+  cursor: true,
+  opencode: true,
+  antigravity: true,
+  pi: true,
+  acp: true,
+  api: true,
 })
 const isInboxStatus = enumValidator<ThreadInboxStatus>({
   starting: true,
@@ -103,12 +110,24 @@ const isCapabilities = objectValidator<Capabilities>({
   autoReview: optional(isBoolean),
   images: isBoolean,
   context: optional(isContextControl),
+  subagents: optional(
+    enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
+  ),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
   installCommand: optional(isString),
   login: enumValidator<ProviderSetup['login']>({ app: true, provider: true }),
   loginOpensBrowser: optional(isBoolean),
+})
+const isSourceShape = objectValidator<ProviderSourceShape>({
+  agent: enumValidator<ProviderSourceShape['agent']>({
+    none: true,
+    optional: true,
+    required: true,
+  }),
+  connection: isBoolean,
+  direct: isBoolean,
 })
 const isProvider = objectValidator<ProviderStatus>({
   id: isProviderId,
@@ -123,6 +142,7 @@ const isProvider = objectValidator<ProviderStatus>({
   capabilities: optional(isCapabilities),
   setup: optional(isSetup),
   problem: optional(isString),
+  source: optional(isSourceShape),
 })
 type Project = ResultOf<'projects.list'>['projects'][number]
 const isSession = objectValidator<Project['sessions'][number]>({
@@ -130,6 +150,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   title: isString,
   provider: isProviderId,
   agent: optional(isString),
+  connectionId: optional(isString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),

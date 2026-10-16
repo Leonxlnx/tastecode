@@ -445,6 +445,16 @@ size or modification time changes.
 tools users already trust, identical across every engine. Non-git directories fall back to a
 content-addressed snapshot of touched files only.
 
+A snapshot stages the working tree into a temporary index seeded from a copy of the
+checkout's own index, reset to HEAD with `read-tree --reset -i`, so `add -A` re-reads only
+files whose stat data changed. The copy keeps the source index's timestamp, so git still
+re-checks racily clean entries. An index that marks any entry assume-unchanged or
+skip-worktree falls back to a plain `read-tree`, because `add -A` would trust the mark and
+record HEAD instead of the working file. _Rejected:_ a plain `read-tree` for every snapshot
+(no stat data, so every tracked file was hashed before each turn: `add -A` took 404 ms of a
+451 ms snapshot of a 2,487-file checkout) · listing changes with `git status` against the
+real index (it hides the same marked files and may lock the index the agent is using).
+
 **Search is FTS5** over message and tool-output text. Instant search across every session
 ever, for almost no implementation cost — and "what was that command three weeks ago in the
 other project?" is a real question nobody in this category answers well. Messages are indexed in
@@ -486,11 +496,26 @@ when provider history gained events after that sequence. A truncation that keeps
 and has newer events after it does not reset: the older turns are unchanged. A provider rewrite
 that only retires events is detected only through the re-recorded thread start: the merge records
 `thread.started` again whenever it retires rows. Requests without `page` keep
-the full and `afterSeq` responses. This is the first step of paging: #1363 planned a store-level
-reader bounded before compaction, which is still to do. Until then a thread without a saved
-replay parses every event once on open, which the store benchmark puts near 60 ms for 10,000
-events; paging the event log directly also has to keep imported provider turns, which display in
-time order rather than log order, on the right page.
+the full and `afterSeq` responses.
+
+**A cold open reads only the end of the event log.** When no current replay is parsed in memory,
+the newest page is read newest first from the log itself, bounded before compaction (#1363's
+plan). The page must equal the one cut from the compacted whole log, so the reader grows its
+tail until no turn or item in it also occurs in an older row; compacting such a tail alone gives
+the same events, and its blocks after the first are the whole log's blocks. A derived index makes
+that check cheap: `history_keys` stores, per thread, the first row naming each turn and item, and
+`history_state_events` lists the usage, request, answer, turn-end and error rows that decide what
+older rows leave open. Both are written in the event's own transaction; a run of deltas writes
+its keys once, so the per-delta path stays one insert. A thread is trusted only with a complete
+mark: new threads get it at creation, older ones when a full read indexes them, and a start
+that finds rows newer than the recorded watermark (written by a build without the index, or
+just before a crash) drops the mark of those threads. Removed or retired rows leave entries that
+only make the reader read further back. A tail that compaction would leave unchanged says
+nothing about the rows before it, so the reader keeps reading. It falls back to the full read for
+imported provider turns, which display in time order rather than log order, and when it would
+read the whole log anyway; that read also saves the replay older pages are cut from. The
+reader saves no replay itself: the first older page compacts the whole log once.
+On the 10,375-event benchmark a cold newest page takes about 9 ms instead of about 40 ms.
 
 **Streamed turn diffs are stored only when they change.** Providers can resend the same
 working-tree diff many times during one turn. The orchestrator skips an identical repeat for the
@@ -527,10 +552,20 @@ while its process is still stopping. An isolated start receives its base ref dir
 Shared orchestration reads declared capabilities and merges shared local configuration.
 Settings views renew 60-second notification leases; one read cannot hold a control process
 for the whole app lifetime. Usage-limit reads are cached per provider for 60 seconds and shared
-by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale.
+by concurrent callers. A turn's usage update, a sign-in change or a reset marks them stale; so
+does an account read that reports a different account, which is how a sign-in or switch made in
+the provider's own CLI reaches the app. An account without plan limits keeps its "unavailable"
+answer for 30 minutes instead, through usage updates: spending usage cannot give it limits, and
+Claude scans its local transcripts for up to a minute to say so. Only an account change or a
+reset discards that answer early. Failed reads are never cached.
 Change notifications to clients are coalesced to one leading and one trailing notice per
 provider every 30 seconds. Repeated reads, such as switching threads, reuse the cached result
 until something changes instead of starting a limit-reading process each time.
+Background writing (chat titles, commit messages) reads only the sources its model choice
+needs: a manual target alone, otherwise Codex, then Grok, and every source only for the
+cheapest-model fallback. Each source's account and model read is cached for 60 seconds and
+shared with the Settings listing; a sign-in change or harness edit drops them. Reading every
+source per task was rejected: it started six vendor processes per new chat.
 `ThreadController` owns web transcript, replay, queue, submission
 and draft state, while the frame store still batches streamed deltas for React.
 
@@ -632,6 +667,125 @@ manual.
 
 ---
 
+## Dashboard design references (nightly)
+
+**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
+so Design mode builds websites only until better assets arrive. One switch,
+`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
+whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
+`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
+the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
+normal website run built from website references, with the limitation recorded in the brief's
+assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
+catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked path.
+
+Nightly dashboard support is integrated through
+[PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
+[PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
+The integrated source includes main through `3e67df35`, retaining the complete nightly provider
+roster and usage history. Windows cleanup
+[PR #1394](https://github.com/Leonxlnx/tastecode/pull/1394), task authorization
+[PR #1403](https://github.com/Leonxlnx/tastecode/pull/1403), and checkpoint identity
+[PR #1404](https://github.com/Leonxlnx/tastecode/pull/1404) are merged on main; the API connection
+contract in [PR #1395](https://github.com/Leonxlnx/tastecode/pull/1395) is merged on nightly.
+This feature is not a public-beta release.
+The asset import is complete: a separate dashboard catalog and provenance record contain
+200 reviewed generated desktop/mobile pairs, stored as 400 WebPs. The existing 172 website
+references and 316 WebPs are unchanged. The combined bundle has 372 references and 716 WebPs:
+344 paired references and 28 desktop-only references.
+Sampling chooses a layout group uniformly, then one variant within that group, so retries do
+not give a composition extra votes. Since 2026-10-12 the dashboard draw is uniform only among the
+screens whose domain, tags, product name, cue or motifs best match the request's domain words,
+and over all screens when nothing matches. One complete app-shell reference preserves navigation,
+content density and responsive hierarchy. The compiled default-bundle checks passed for all
+200 selectable dashboard groups, saved-deck roundtrips and both image attachments. All 400
+dashboard WebPs have unique matching hashes and valid viewport metadata. The catalog differs
+from the private import only in formatting and is deeply JSON-equal; the other 401 imported
+files are byte-identical. Website selection still yields 14 website-only references, and
+marketing-page classification checks pass.
+
+Briefing distinguishes an operating interface from a marketing page about a dashboard product.
+The former plans `operate_monitor` views with functional filters, sorting, tabs, navigation,
+drawers and charts. Motion follows those state changes, with keyboard access, focus restoration
+and reduced-motion equivalents. Native inline chart SVG in reference-bound dashboard views and
+visibly identified demo values avoid website-only validation blockers; asserted product claims
+still require evidence. Website hero entrances and scroll reveals keep their existing behavior.
+
+Since 2026-10-12, every phase keeps one design language per page: references set each
+section's composition, and one anchor reference sets the type, palette, radius, spacing and
+component language. See [One design language per page](./DESIGN-REFERENCES.md#one-design-language-per-page).
+Dashboards use one family plus optional monospace data, taken from the anchor screen's own
+type, and never add a display face. They are reviewed for shell
+consistency, data density, table and chart readability, visible control states and focus.
+A site, one-pager or Webseite about an app classifies as a website.
+
+Reference-driven Design requires the session's declared image input capability. Unsupported
+sessions reject before inference or persisted Design state; ordinary coding remains available.
+Direct API sessions currently declare `images: false`, so visual Design is unsupported there.
+The workflow never substitutes an unannounced text-only build for the requested image copying.
+
+Fresh [Windows verification](https://github.com/Leonxlnx/tastecode/actions/runs/37228489532)
+passed lint, typecheck, the full test command and build at exact feature source
+`edc92ea9c82c40b1c7e0b6f12aa329b2fa05f79e`: 4,445 passed, 18 existing skips, zero failures.
+Desktop tests ran: 368 passed and 10 existing skips, included in that total. No deadlines were
+overridden. Follow-up integration changes only documentation and recorded screenshots.
+Historical local verification at `0ccdb67d` passed all four gates with 4,432 passed and 18 skips.
+Thirty-six focused cases cover nine provider IDs: 18 synthetic-vision website/dashboard flows
+and 18 capability-rejection/ordinary-follow-up cases.
+
+The isolated browser smoke passed at `a02c6ab3490e55003aa2a95f977b8ccca690bea9`, exercising the
+direct-API runtime against a synthetic endpoint. Two unsupported Design attempts made no
+additional inference requests and persisted no Design runs. Ordinary follow-ups retained both
+API identities, models, messages and tool context across an owned server restart. Four completed
+synthetic turns used six fake API requests and 72 synthetic tokens. All 14 source/build
+fingerprints stayed stable during the run; the queue was empty, no browser exceptions occurred,
+and owned processes were stopped. This proves capability rejection and ordinary API recovery.
+Live image-capable dashboard generation, packaged Electron, macOS and real-keyring acceptance
+remain unverified. Synthetic flows and a separate external demo do not replace these checks.
+
+_Rejected:_ composing dashboards from marketing sections, treating generation retries as new
+layout votes, or requiring static screenshots in place of working native charts and controls.
+
+---
+
+## One design language per generated page (nightly)
+
+Owner decision, 2026-10-12: a generated website must not switch design language between sections.
+Randomness stays, but one page keeps one type system (at most two families), one palette, one
+radius and spacing scale, and one button, card and label language. This supersedes the uniform,
+site-agnostic website sampling from
+[PR #1176](https://github.com/Leonxlnx/tastecode/pull/1176), which drew every layout family
+independently and put about eleven source sites into one 14-reference deck.
+
+The first drawn section, normally the hero, is still chosen uniformly by group and becomes the
+anchor; its source host defines the page's language. Each later section takes the requested
+family from the anchor site, then from the three most similar close sites in the optional per-site
+`style-profiles.json` (style score at least 10 of 14). Only a sparse family, one with fewer than
+ten composition groups, may then borrow a compatible family from those sites; otherwise the
+section comes from the uniform pool the family always used. The requested family always beats
+borrowed geometry, and the minimum score stops a few broadly similar sites from supplying a rare
+section to most pages. Profile outliers never anchor a page or count as their site's language. A
+missing or malformed profile file degrades to same-site and uniform sampling rather than failing a
+run. Saved deck entries record `site` and `role`; the anchor also carries a one-line `style`
+summary. Older decks parse unchanged. Details are in [DESIGN-REFERENCES.md](./DESIGN-REFERENCES.md).
+
+Brand derives the language from the anchor and at most two same-site references instead of the
+whole deck, and every phase is told that the anchor sets type, palette, radii, spacing, controls
+and surfaces while other references give composition only. Review then audits the generated source
+and adds bounded, non-fatal findings for fonts outside the brand and radius drift
+([DESIGN-AGENT.md](./DESIGN-AGENT.md)). The audit is a Review finding rather than a hard source
+gate because Build and Repair get one correction each, so a false positive must never fail a run.
+
+_Rejected:_ narrowing by style tags (the catalogs carry almost none), drawing every section from
+the anchor site only (most sites lack some families, which would shrink the deck), a uniform
+draw per family (the source of the mixed-language pages), the anchor site's compatible family
+before a close site's own family (it put other section types into a third of FAQ slots), and
+similar sites with no minimum score or only half the maximum (a few broadly similar sites then
+supplied a rare section, such as the library's only stats section, to a third or more of pages).
+
+---
+
 ## Layout
 
 ```
@@ -650,7 +804,13 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
+| 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
+| 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
+| 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |
+| 2026-10-12 | Sample website references from one anchor site, then similar profiled sites, to keep one design language per page; prefer dashboards matching the requested domain.            |
 | 2026-10-11 | Paged thread history by whole turns over the cached compact replay instead of sending the full replay on every open; a store-level reader for cold opens remains (#957).       |
+| 2026-10-04 | Added nightly dashboard references and image-capability preflight; Windows gates passed. Live-vision and packaged acceptance remain separate.                                  |
 | 2026-10-04 | Canonicalized checkpoint Git storage with native filesystem paths so Windows long/8.3 aliases retain the combined refs of linked worktrees (#1404).                            |
 | 2026-10-03 | Trust exact WebSocket origins only; keep isolated checkouts and pasted files out of the OS temp folder; bind pull-request reviews and merges to the inspected head commit.     |
 | 2026-10-03 | Removed every provider except Codex, Claude Code and Grok from `main`; the rest, including the direct API runtime, live only on `nightly`.                                     |
@@ -694,3 +854,4 @@ registry entry, which is deliberately a good first outside contribution.
 | 2026-09-26 | Loaded the desktop release updater as a lazy chunk and kept background throttling for browser guests.                                                                          |
 | 2026-10-11 | Kept closed activity rows from building their detail and gated a collapsed 300-call activity's heap locally.                                                                   |
 | 2026-10-11 | Ended a closed terminal's foreground job after a grace period, and a shell ignoring SIGHUP; background jobs stay.                                                              |
+| 2026-10-14 | Background writing reads only the model sources its choice needs, caches each source separately, and reuses Grok's sign-in `grok models` output for its model list.            |

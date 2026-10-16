@@ -280,6 +280,56 @@ function flattenContent(content: unknown): string {
     .trim()
 }
 
+/**
+ * What one request held in context: everything it read, cached or not, plus
+ * what it wrote. Claude Code's own context meter counts the same.
+ */
+export function contextTokens(usage: ClaudeUsage | undefined): number {
+  if (!usage) return 0
+  return (
+    (usage.input_tokens ?? 0) +
+    (usage.cache_read_input_tokens ?? 0) +
+    (usage.cache_creation_input_tokens ?? 0) +
+    (usage.output_tokens ?? 0)
+  )
+}
+
+const MODEL_ID_SUFFIXES = /(?:\[1m\]|-\d{8})+$/
+
+/**
+ * The context window of `model`, from a result's per-model usage. Keys can
+ * carry a `[1m]` or snapshot-date suffix the message's model id lacks, so
+ * they are compared without one. A result with a single model needs no match.
+ */
+export function modelContextWindow(
+  modelUsage: Readonly<Record<string, { contextWindow?: number }>> | undefined,
+  model: string | undefined,
+): number | undefined {
+  const entries = Object.entries(modelUsage ?? {})
+  const base = model?.replace(MODEL_ID_SUFFIXES, '')
+  const matches = base ? entries.filter(([key]) => key.replace(MODEL_ID_SUFFIXES, '') === base) : []
+  const candidates = matches.length > 0 ? matches : entries.length === 1 ? entries : []
+  const windows = candidates
+    .map(([, usage]) => usage.contextWindow)
+    .filter((window): window is number => typeof window === 'number' && window > 0)
+  return windows.length > 0 ? Math.max(...windows) : undefined
+}
+
+/**
+ * A context reading of its own: no accounting counters, the shape ACP's
+ * context reports have, so session totals never count it.
+ */
+export function contextUsage(tokens: number, contextWindow: number, model?: string): Usage {
+  return {
+    ...(model ? { model } : {}),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: tokens,
+    contextWindow,
+  }
+}
 export function toUsage(usage: ClaudeUsage | undefined, costUsd?: number): Usage | undefined {
   if (!usage) return undefined
   const input = usage.input_tokens ?? 0

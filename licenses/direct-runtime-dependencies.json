@@ -47,6 +47,15 @@
       "source": "https://github.com/Brooooooklyn/keyring-node"
     },
     {
+      "name": "@opencode-ai/sdk",
+      "use": "OpenCode adapter client",
+      "license": "MIT",
+      "metadataLicenses": ["MIT"],
+      "source": "https://github.com/anomalyco/opencode",
+      "bundledLicense": "licenses/npm/opencode-sdk-1.18.11-MIT.txt",
+      "licenseSource": "https://github.com/anomalyco/opencode/blob/012c2f57f976489d88bd4598a056b4bdcdd428ee/LICENSE"
+    },
+    {
       "name": "@pierre/diffs",
       "use": "Pull-request diff rendering",
       "license": "Apache-2.0",

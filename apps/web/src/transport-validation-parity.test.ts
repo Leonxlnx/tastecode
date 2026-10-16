@@ -47,6 +47,7 @@ const provider = {
       compactionOff: true,
       defaultCompactAt: 90,
     },
+    subagents: 'progress',
   },
   setup: {
     installUrl: 'https://example.com',
@@ -54,6 +55,7 @@ const provider = {
     login: 'app',
     loginOpensBrowser: true,
   },
+  source: { agent: 'optional', connection: false, direct: true },
 }
 
 /** Change each supplied field independently, including every nested schema field. */

@@ -60,6 +60,9 @@ type Bridge = {
   ) => () => void
   suspendMenuShortcuts?: (suspended: boolean) => void
   onUpdateState?: (listener: (state: AppUpdateState) => void) => () => void
+  onBrowserShortcut?: (
+    listener: (guestId: number, action: BrowserShortcutAction) => void,
+  ) => () => void
   onZoomChange: (listener: (factor: number) => void) => () => void
   reportStartupMilestone?: (name: RendererStartupMilestone) => void
   isDesktop: true
@@ -88,6 +91,8 @@ declare global {
 }
 
 export type ZoomAction = 'in' | 'out' | 'reset'
+/** A Browser key pressed inside a Browser tab's page. Mirrors apps/desktop/src/browser-shortcuts.ts. */
+export type BrowserShortcutAction = 'back' | 'forward' | 'reload' | 'address' | 'close'
 type AppTheme = 'light' | 'dark' | 'codex'
 export type AppThemePreference = AppTheme | 'system'
 export type NativeHapticPattern = 'alignment' | 'generic'
@@ -324,6 +329,30 @@ export function performNativeHaptic(pattern: NativeHapticPattern): void {
 
 export function onAppZoomChange(listener: (factor: number) => void): () => void {
   return bridge?.onZoomChange(listener) ?? (() => undefined)
+}
+
+type BrowserShortcutListener = (guestId: number, action: BrowserShortcutAction) => void
+const browserShortcutListeners = new Set<BrowserShortcutListener>()
+let stopBrowserShortcuts: (() => void) | undefined
+
+/**
+ * Browser keys the desktop shell took from a focused Browser page. Every
+ * Browser tab listens, so one native subscription fans out to all of them
+ * instead of one IPC listener per tab.
+ */
+export function onBrowserShortcut(listener: BrowserShortcutListener): () => void {
+  const subscribe = bridge?.onBrowserShortcut
+  if (!subscribe) return () => undefined
+  browserShortcutListeners.add(listener)
+  stopBrowserShortcuts ??= subscribe((guestId, action) => {
+    for (const current of browserShortcutListeners) current(guestId, action)
+  })
+  return () => {
+    browserShortcutListeners.delete(listener)
+    if (browserShortcutListeners.size) return
+    stopBrowserShortcuts?.()
+    stopBrowserShortcuts = undefined
+  }
 }
 
 export function syncNativeMenuShortcuts(keybindings: Keybindings): void {

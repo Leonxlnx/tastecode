@@ -6,6 +6,7 @@ import {
   appendUserMessage,
   beginOptimisticTurn,
   emptyThread,
+  lastSentPrompt,
   prependOlderHistory,
   reduce,
   reduceDeltas,
@@ -407,6 +408,40 @@ describe('thread reducer', () => {
     expect(started.turnTiming.current).toEqual({ startedAt: 10 })
   })
 
+  it('records a stopped turn on its lifecycle, live and after replay', () => {
+    const events: DomainEvent[] = [
+      {
+        type: 'turn.started',
+        turn: { id: 't1', threadId: 'th1', status: 'running', createdAt: 1_000 },
+      },
+      { type: 'item.started', item: item({ id: 'a1', text: '' }) },
+      { type: 'item.delta', turnId: 't1', itemId: 'a1', textDelta: 'Half an ans' },
+      { type: 'turn.completed', turnId: 't1', status: 'interrupted', completedAt: 5_000 },
+      {
+        type: 'turn.started',
+        turn: { id: 't2', threadId: 'th1', status: 'running', createdAt: 6_000 },
+      },
+      { type: 'turn.completed', turnId: 't2', status: 'interrupted' },
+    ]
+
+    const live = apply(events)
+    const replayed = reduceEventLog(
+      emptyThread,
+      events.map((event, index) => ({ seq: index + 1, event })),
+    )
+
+    expect(live.turnTiming).toEqual({
+      t1: { startedAt: 1_000, completedAt: 5_000, interrupted: true },
+      t2: { startedAt: 6_000, interrupted: true },
+    })
+    expect(replayed.turnTiming).toEqual(live.turnTiming)
+    const completed = apply([
+      events[0]!,
+      { type: 'turn.completed', turnId: 't1', status: 'completed', completedAt: 5_000 },
+    ])
+    expect(completed.turnTiming.t1).toEqual({ startedAt: 1_000, completedAt: 5_000 })
+  })
+
   it('projects the same elapsed time live and after replay', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_000)
     const submissionId = 'local:submission-1'
@@ -513,6 +548,34 @@ describe('thread reducer', () => {
     ])
 
     expect(replayed.usage).toEqual(usage)
+  })
+
+  it('keeps the last context reading through accounting reports without a window', () => {
+    const accounting = (totalTokens: number) => ({
+      inputTokens: totalTokens,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens,
+      cumulative: true,
+    })
+    const reading = (totalTokens: number) => ({
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens,
+      contextWindow: 258_400,
+    })
+    const replayed = reduceEventLog(emptyThread, [
+      { seq: 1, event: { type: 'usage.updated', usage: accounting(90_000) } },
+      { seq: 2, event: { type: 'usage.updated', usage: reading(30_000) } },
+      { seq: 3, event: { type: 'usage.updated', usage: accounting(150_000) } },
+    ])
+    expect(replayed.usage).toEqual(reading(30_000))
+
+    const next = reduce(replayed, { type: 'usage.updated', usage: reading(42_000) })
+    expect(next.usage).toEqual(reading(42_000))
   })
 
   it('rebuilds a whole conversation from a stored event log', () => {
@@ -1172,5 +1235,23 @@ describe('composer error state', () => {
     }
     expect(reduce(live, turn).error).toBeUndefined()
     expect(reduceEventLog(replay, [{ seq: 3, event: turn }]).error).toBeUndefined()
+  })
+})
+
+describe('last sent prompt', () => {
+  it('finds the newest user prompt with text and skips replies and image-only prompts', () => {
+    const state: ThreadState = {
+      ...emptyThread,
+      items: [
+        item({ id: 'u1', role: 'user', status: 'completed', text: 'Fix the build' }),
+        item({ id: 'a1', status: 'completed', text: 'Fixed.' }),
+        item({ id: 'u2', role: 'user', status: 'completed', text: 'Now add a test' }),
+        item({ id: 'u3', role: 'user', status: 'completed', attachments: ['shot.png'] }),
+        item({ id: 'a2', status: 'started', text: 'Working' }),
+      ],
+    }
+    expect(lastSentPrompt(state)).toBe('Now add a test')
+    expect(lastSentPrompt(emptyThread)).toBeUndefined()
+    expect(lastSentPrompt(appendUserMessage(emptyThread, 'Just sent'))).toBe('Just sent')
   })
 })

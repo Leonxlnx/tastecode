@@ -15,6 +15,7 @@ import {
   CODEX_CAPABILITIES,
   CodexAdapter,
   formatCodexWarning,
+  mapCodexContextUsage,
   mapCodexError,
   mapCodexUsage,
   isIgnorableCodexNotification,
@@ -136,6 +137,23 @@ describe('Codex notifications', () => {
       cumulative: true,
       inputIncludesCached: true,
     })
+  })
+
+  it('reports the last request as context occupancy beside the accounting', () => {
+    expect(mapCodexContextUsage(capturedTokenUsage, 'gpt-5.6')).toEqual({
+      model: 'gpt-5.6',
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 102_000,
+      contextWindow: 258_400,
+    })
+    const unknownWindow = {
+      ...capturedTokenUsage,
+      tokenUsage: { ...capturedTokenUsage.tokenUsage, modelContextWindow: null },
+    }
+    expect(mapCodexContextUsage(unknownWindow)).toBeUndefined()
   })
 
   it('does not collapse a failed account read into signed out', async () => {

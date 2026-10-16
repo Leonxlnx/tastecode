@@ -16,8 +16,31 @@ export type ProviderHistorySession = {
   locator?: string
 }
 
+/**
+ * Metadata the server keeps between refreshes and restarts, so a source can
+ * skip re-reading transcripts that did not change. `locator` is a source-owned
+ * key for one saved transcript, such as its file path; `revision` is the
+ * source's own cheap fingerprint of it, such as size and modification time.
+ * Both are opaque to the server.
+ */
+export type ProviderHistoryListOptions = {
+  /**
+   * The session the source reported for this locator at exactly this
+   * revision, `null` when the source reported that it lists no session, or
+   * `undefined` when nothing is known and the source must read it.
+   */
+  cached?(locator: string, revision: string): ProviderHistorySession | null | undefined
+  /**
+   * Record what the source computed for this locator and revision; `null`
+   * means the transcript lists no session. After a list() call the server may
+   * forget locators that neither callback named during it.
+   */
+  remember?(locator: string, revision: string, session: ProviderHistorySession | null): void
+}
+
 export type ProviderHistorySource = {
-  list(): Promise<ProviderHistorySession[]>
+  /** Sources that ignore `options` keep working; they only re-read more. */
+  list(options?: ProviderHistoryListOptions): Promise<ProviderHistorySession[]>
   /** Resolve older adapter thread IDs to the native saved-session identity. */
   resolveSessionId?(threadId: string): string
   /**

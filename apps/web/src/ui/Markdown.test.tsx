@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks } from '../project-file-link.js'
 import { CompletedMarkdown } from './CompletedMarkdown.js'
@@ -17,6 +17,11 @@ vi.mock('../project-file-link.js', async (importOriginal) => {
 })
 
 afterEach(cleanup)
+
+/** happy-dom's emulated device: a live reply paces its text only when motion is allowed. */
+const device = (
+  window as unknown as { happyDOM: { settings: { device: { prefersReducedMotion: string } } } }
+).happyDOM.settings.device
 
 describe('Markdown plain fast path', () => {
   it.each([
@@ -280,6 +285,14 @@ describe('Completed Markdown', () => {
 })
 
 describe('Markdown streaming motion', () => {
+  // These read the DOM right after each append. Pacing has its own tests below.
+  beforeEach(() => {
+    device.prefersReducedMotion = 'reduce'
+  })
+  afterEach(() => {
+    device.prefersReducedMotion = 'no-preference'
+  })
+
   it('defers full project-file parsing until the streamed message completes', async () => {
     const preserve = vi.mocked(preserveProjectFileLinks)
     preserve.mockClear()
@@ -399,5 +412,98 @@ describe('Markdown streaming motion', () => {
     expect(leaves.every((leaf) => (leaf as HTMLElement).style.display === 'inline')).toBe(true)
     expect(leaves.every((leaf) => (leaf as HTMLElement).style.minHeight === '0')).toBe(true)
     expect(container.querySelector('pre')?.textContent).toBe('x'.repeat(300))
+  })
+})
+
+describe('Markdown streaming pace', () => {
+  let frames: FrameRequestCallback[] = []
+  beforeEach(() => {
+    frames = []
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      frames.push(callback)
+      return frames.length
+    })
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+    device.prefersReducedMotion = 'no-preference'
+  })
+
+  const runFrame = (at: number) => {
+    const pending = frames
+    frames = []
+    for (const callback of pending) callback(at)
+  }
+  const burst = ' and then a whole burst of words lands at once from the provider.'
+
+  function streamBurst() {
+    const rendered = render(<Markdown text="It starts" streaming />)
+    rendered.rerender(
+      <Markdown
+        text={`It starts${burst}`}
+        streaming
+        liveUpdate={{ kind: 'append', text: burst }}
+        updateVersion={1}
+      />,
+    )
+    return rendered
+  }
+
+  it('reveals a burst over the following frames instead of all at once', () => {
+    const { container } = streamBurst()
+    expect(container.textContent).toBe('It starts')
+
+    const start = performance.now()
+    runFrame(start + 16)
+    const afterOne = container.textContent ?? ''
+    expect(afterOne.length).toBeGreaterThan('It starts'.length)
+    expect(afterOne.length).toBeLessThan(`It starts${burst}`.length)
+
+    for (let frame = 2; frames.length > 0 && frame < 60; frame += 1) runFrame(start + frame * 16)
+    expect(container.textContent).toBe(`It starts${burst}`)
+    // The burst drains within about LIVE_TEXT_LAG_MS, not a word per frame.
+    expect(frames).toHaveLength(0)
+  })
+
+  it('holds a word the provider cut off until the rest of it arrives', () => {
+    const rendered = render(<Markdown text="Hello" streaming />)
+    rendered.rerender(
+      <Markdown
+        text="Hello there, partial wor"
+        streaming
+        liveUpdate={{ kind: 'append', text: ' there, partial wor' }}
+        updateVersion={1}
+      />,
+    )
+    const start = performance.now()
+    for (let frame = 1; frame <= 4; frame += 1) runFrame(start + frame * 16)
+    // Half a word at a line end would jump to the next line when the rest lands.
+    expect(rendered.container.textContent).toBe('Hello there, partial ')
+
+    rendered.rerender(
+      <Markdown
+        text="Hello there, partial words."
+        streaming
+        liveUpdate={{ kind: 'append', text: 'ds.' }}
+        updateVersion={2}
+      />,
+    )
+    // Once the provider is quiet for a moment, the tail shows as it is.
+    for (let frame = 5; frames.length > 0 && frame < 40; frame += 1) runFrame(start + frame * 16)
+    expect(rendered.container.textContent).toBe('Hello there, partial words.')
+  })
+
+  it('shows what is still waiting once the reply finishes', () => {
+    const { container, rerender } = streamBurst()
+    rerender(<Markdown text={`It starts${burst} **Done.**`} />)
+    expect(container.textContent).toBe(`It starts${burst} Done.`)
+  })
+
+  it('shows text as it lands when the reader asks for reduced motion', () => {
+    device.prefersReducedMotion = 'reduce'
+    const { container } = streamBurst()
+    expect(container.textContent).toBe(`It starts${burst}`)
+    expect(frames).toHaveLength(0)
   })
 })

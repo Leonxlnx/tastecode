@@ -1,4 +1,10 @@
+export * from './connections.js'
 export * from './domain.js'
 export * from './protocol.js'
 export * from './pull-requests.js'
-export type { ProviderHistorySession, ProviderHistorySource } from './provider-history.js'
+export * from './usage-history.js'
+export type {
+  ProviderHistoryListOptions,
+  ProviderHistorySession,
+  ProviderHistorySource,
+} from './provider-history.js'

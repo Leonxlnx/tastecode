@@ -10,6 +10,7 @@ import {
   mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
+import { ListMcpServerStatusResponseSchema } from './schemas.js'
 
 /** Sanitized frames captured from Codex 0.146.0 against two process-local test servers. */
 const response: ListMcpServerStatusResponse = {
@@ -185,6 +186,37 @@ describe('Codex MCP inventory', () => {
     ['oAuth', { status: 'authenticated', method: 'oauth' }],
   ] as const)('maps Codex auth status %s', (authStatus, expected) => {
     expect(mapMcpServerStatus({ ...response.data[0]!, authStatus }).auth).toEqual(expected)
+  })
+
+  it('keeps the inventory when Codex reports an unknown or unfamiliar auth status', () => {
+    // Shape of Codex 0.154 mcpServerStatus/list rows (sanitized); it added "unknown".
+    const row = (name: string, authStatus: string) => ({
+      name,
+      runtimeStatus: null,
+      pluginId: null,
+      serverInfo: null,
+      tools: {},
+      toolsError: null,
+      resources: [],
+      resourceTemplates: [],
+      authStatus,
+    })
+    const parsed = ListMcpServerStatusResponseSchema.parse({
+      data: [
+        row('docs', 'unsupported'),
+        row('typeui', 'unknown'),
+        row('future', 'someNewState'),
+        row('mobbin', 'oAuth'),
+      ],
+      nextCursor: null,
+    })
+
+    expect(parsed.data.map((status) => [status.name, mapMcpServerStatus(status).auth])).toEqual([
+      ['docs', { status: 'not_required' }],
+      ['typeui', { status: 'unsupported' }],
+      ['future', { status: 'unsupported' }],
+      ['mobbin', { status: 'authenticated', method: 'oauth' }],
+    ])
   })
 
   it('exposes startup inventory before full details arrive', () => {

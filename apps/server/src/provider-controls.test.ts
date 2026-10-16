@@ -111,6 +111,23 @@ afterEach(async () => {
 })
 
 describe('declared provider controls', () => {
+  it('validates Grok MCP changes against its ACP launch', () => {
+    const { registry, createCodex } = setup()
+    const control = registry.forProvider('grok')
+    expect(control.capabilities.managedMcp).toBe(true)
+    expect(() => control.validateMcpServer!({ id: 'inherited', enabled: false })).toThrow(
+      'cannot be hidden through ACP',
+    )
+    expect(() =>
+      control.validateMcpServer!({
+        id: 'local',
+        enabled: true,
+        transport: { type: 'stdio', command: 'node', cwd: '/work/tools' },
+      }),
+    ).toThrow('custom working directory')
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
   it('validates Claude MCP changes without starting a control process', () => {
     const { registry, createCodex } = setup()
     const control = registry.forProvider('claude-code')
@@ -135,28 +152,12 @@ describe('declared provider controls', () => {
     ).not.toThrow()
     expect(createCodex).not.toHaveBeenCalled()
   })
-  it('validates Grok MCP changes against its ACP launch', () => {
-    const { registry, createCodex } = setup()
-    const control = registry.forProvider('grok')
-    expect(control.capabilities.managedMcp).toBe(true)
-    expect(() => control.validateMcpServer!({ id: 'inherited', enabled: false })).toThrow(
-      'cannot be hidden through ACP',
-    )
-    expect(() =>
-      control.validateMcpServer!({
-        id: 'local',
-        enabled: true,
-        transport: { type: 'stdio', command: 'node', cwd: '/work/tools' },
-      }),
-    ).toThrow('custom working directory')
-    expect(createCodex).not.toHaveBeenCalled()
-  })
   it('keeps the full roster and creates no processes until a read needs one', async () => {
     const { registry, createCodex } = setup()
     expect(Object.keys(PROVIDER_CAPABILITIES).sort()).toEqual([...ProviderIdSchema.options].sort())
     expect(
       ProviderIdSchema.options.filter((provider) => PROVIDER_CAPABILITIES[provider].resume),
-    ).toEqual(['codex', 'claude-code', 'grok'])
+    ).toEqual(['codex', 'claude-code', 'grok', 'cursor', 'opencode', 'acp', 'api'])
     for (const provider of ProviderIdSchema.options) {
       const control = registry.forProvider(provider)
       const flags = control.capabilities
@@ -169,13 +170,20 @@ describe('declared provider controls', () => {
       expect(Boolean(control.useApiKey)).toBe(flags.apiKey)
       expect(Boolean(control.consumeRateLimitReset)).toBe(flags.rateLimitReset)
     }
-    registry.forProvider('grok').watch('/project', ['mcp', 'skills'])
+    registry.forProvider('api').watch('/project', ['mcp', 'skills'])
+    await expect(registry.forProvider('api').account()).resolves.toEqual({ signedIn: false })
+    await expect(registry.forProvider('pi').usageLimitSource()).resolves.toEqual({
+      provider: 'pi',
+      status: 'unavailable',
+    })
     expect(createCodex).not.toHaveBeenCalled()
   })
 
   it('uses runtime model discovery for every non-Codex provider and custom harness', async () => {
     const { registry, codex, createCodex, listModels } = setup()
-    for (const provider of ProviderIdSchema.options.filter((id) => id !== 'codex')) {
+    for (const provider of ProviderIdSchema.options.filter(
+      (id) => id !== 'api' && id !== 'codex',
+    )) {
       await registry.forProvider(provider).listModels?.('custom-agent')
       expect(listModels).toHaveBeenCalledWith(provider, 'custom-agent')
     }
@@ -189,16 +197,16 @@ describe('declared provider controls', () => {
     const signOut = vi.fn(async () => {})
     const usageLimitSource = vi.fn(async () => ({ status: 'ready' as const, limits: [] }))
     const { registry, hooks, createCodex } = setup({
-      services: { grok: { account, signOut }, 'claude-code': { usageLimitSource } },
+      services: { acp: { account, signOut }, 'claude-code': { usageLimitSource } },
     })
     expect(account).not.toHaveBeenCalled()
-    await expect(registry.forProvider('grok').account('custom-grok')).resolves.toMatchObject({
+    await expect(registry.forProvider('acp').account('agent')).resolves.toMatchObject({
       signedIn: true,
     })
-    expect(account).toHaveBeenCalledWith('custom-grok')
-    await registry.forProvider('grok').signOut('custom-grok')
-    expect(signOut).toHaveBeenCalledWith('custom-grok')
-    expect(hooks.onAuthChanged).toHaveBeenCalledWith('grok')
+    expect(account).toHaveBeenCalledWith('agent')
+    await registry.forProvider('acp').signOut('agent')
+    expect(signOut).toHaveBeenCalledWith('agent')
+    expect(hooks.onAuthChanged).toHaveBeenCalledWith('acp')
     await expect(registry.forProvider('claude-code').usageLimitSource()).resolves.toEqual({
       provider: 'claude-code',
       status: 'ready',
@@ -292,7 +300,7 @@ describe('shared control lifetime', () => {
 
   it('releases removed projects and ignores watches from providers without notifications', async () => {
     const { registry, codex, adapters } = setup()
-    registry.forProvider('grok').watch('/other', ['mcp'])
+    registry.forProvider('api').watch('/other', ['mcp'])
     codex.watch('/project', ['skills', 'mcp'])
     await codex.listModels!()
     registry.forgetProject('/project')
@@ -623,6 +631,130 @@ describe('cached usage limits', () => {
     expect(hooks.onAuthChanged).toHaveBeenCalledWith('grok')
   })
 
+  it('rereads when an account read reports another account', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'ready' as const, limits: [] }))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test', plan: 'pro' })
+    const { registry } = setup({ services: { grok: { account, usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    // The same account again changes nothing.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an unavailable answer through usage changes until its longer cache expires', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const { registry, hooks } = setup({
+      limitCacheMs: 1_000,
+      unavailableLimitCacheMs: 10_000,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource()).resolves.toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+    })
+    registry.usageChanged('claude-code')
+    registry.usageChanged('claude-code', true)
+    await vi.advanceTimersByTimeAsync(9_999)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'unavailable' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // The signal still reaches clients: their session totals changed.
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('caches an unavailable answer that a usage change interrupted', async () => {
+    const answer = deferred<{ status: 'unavailable' }>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(answer.promise)
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    const reading = claude.usageLimitSource()
+    await flush()
+    registry.usageChanged('claude-code')
+    answer.resolve({ status: 'unavailable' })
+    await expect(reading).resolves.toMatchObject({ status: 'unavailable' })
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'unavailable' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('lets an interrupted unavailable answer replace nothing newer', async () => {
+    const stale = deferred<{ status: 'unavailable' }>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 40 }] })
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const first = grok.usageLimitSource()
+    await flush()
+    registry.usageChanged('grok')
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    stale.resolve({ status: 'unavailable' })
+    await first
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards an unavailable answer on sign-in, sign-out and reset', async () => {
+    const { startLogin, callbacks } = externalLogin()
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({
+      services: { 'claude-code': { usageLimitSource, startLogin, signOut } },
+    })
+    let claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await claude.signOut()
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+
+    await claude.startLogin!()
+    callbacks[0]!({ loginId: 'external-1', success: true, error: null })
+    await flush()
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+
+    await registry.disposeAll()
+    claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('discards an unavailable answer when an account read reports a sign-in', async () => {
+    const usageLimitSource = vi.fn(async () => ({ status: 'unavailable' as const }))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: false })
+      .mockResolvedValue({ signedIn: true, email: 'person@example.test' })
+    const { registry } = setup({ services: { grok: { account, usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    registry.usageChanged('grok')
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    // Signed in through the provider's own CLI.
+    await grok.account()
+    await grok.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
   it('forwards the first change at once and collapses a burst into one trailing signal', async () => {
     const { registry, hooks } = setup({ limitChangeIntervalMs: 1_000 })
     registry.usageChanged('codex')
@@ -803,7 +935,7 @@ describe('login ownership', () => {
     expect(adapters).toHaveLength(2)
   })
 
-  it.each(['claude-code'] as const)(
+  it.each(['claude-code', 'cursor'] as const)(
     'bounds %s login and ignores old callbacks after replacement',
     async (provider) => {
       const login = externalLogin()
@@ -849,8 +981,8 @@ describe('login ownership', () => {
 
   it('awaits external login cancellation during reset and can retry a failed cancellation', async () => {
     const login = externalLogin()
-    const { registry } = setup({ services: { 'claude-code': { startLogin: login.startLogin } } })
-    await registry.forProvider('claude-code').startLogin!()
+    const { registry } = setup({ services: { cursor: { startLogin: login.startLogin } } })
+    await registry.forProvider('cursor').startLogin!()
     login.cancels[0]!.mockRejectedValue(new Error('fixture-cancel-failed'))
     await expect(registry.disposeAll()).rejects.toThrow('could not stop')
     login.cancels[0]!.mockResolvedValue()
@@ -864,7 +996,7 @@ describe('login ownership', () => {
     expect(settled).toBe(false)
     canceled.resolve()
     await reset
-    await registry.forProvider('claude-code').startLogin!()
+    await registry.forProvider('cursor').startLogin!()
     expect(login.startLogin).toHaveBeenCalledTimes(2)
   })
 
@@ -893,21 +1025,19 @@ describe('login ownership', () => {
 
   it('reports failed completion cleanup and retains the login for a later retry', async () => {
     const login = externalLogin()
-    const { registry, hooks } = setup({
-      services: { 'claude-code': { startLogin: login.startLogin } },
-    })
-    const claude = registry.forProvider('claude-code')
-    await claude.startLogin!()
+    const { registry, hooks } = setup({ services: { cursor: { startLogin: login.startLogin } } })
+    const cursor = registry.forProvider('cursor')
+    await cursor.startLogin!()
     login.cancels[0]!.mockRejectedValueOnce(new Error('fixture-stop-failed'))
     login.callbacks[0]!({ loginId: 'external-1', success: true, error: null })
     await flush()
     expect(hooks.onAuthChanged).not.toHaveBeenCalled()
-    expect(hooks.onLogin).toHaveBeenCalledExactlyOnceWith('claude-code', {
+    expect(hooks.onLogin).toHaveBeenCalledExactlyOnceWith('cursor', {
       loginId: 'external-1',
       success: false,
       error: 'Provider sign-in process could not stop.',
     })
-    await claude.cancelLogin!('external-1')
+    await cursor.cancelLogin!('external-1')
     expect(login.cancels[0]).toHaveBeenCalledTimes(2)
   })
 
@@ -917,7 +1047,7 @@ describe('login ownership', () => {
     const cancel = vi.fn(async () => {})
     const { registry, hooks } = setup({
       services: {
-        'claude-code': {
+        cursor: {
           startLogin: (callback) => {
             complete = callback
             return loading.promise
@@ -925,7 +1055,7 @@ describe('login ownership', () => {
         },
       },
     })
-    const started = registry.forProvider('claude-code').startLogin!()
+    const started = registry.forProvider('cursor').startLogin!()
     const checked = expect(started).rejects.toThrow('canceled')
     await flush()
     const resetting = registry.disposeAll()
@@ -941,14 +1071,12 @@ describe('login ownership', () => {
   it('coalesces timeout, explicit cancellation and reset, without a late timeout event', async () => {
     const login = externalLogin()
     const stopped = deferred<void>()
-    const { registry, hooks } = setup({
-      services: { 'claude-code': { startLogin: login.startLogin } },
-    })
-    const claude = registry.forProvider('claude-code')
-    await claude.startLogin!()
+    const { registry, hooks } = setup({ services: { cursor: { startLogin: login.startLogin } } })
+    const cursor = registry.forProvider('cursor')
+    await cursor.startLogin!()
     login.cancels[0]!.mockReturnValueOnce(stopped.promise)
     await vi.advanceTimersByTimeAsync(200)
-    const canceled = claude.cancelLogin!('external-1')
+    const canceled = cursor.cancelLogin!('external-1')
     await flush()
     const resetting = registry.disposeAll()
     await flush()
@@ -962,10 +1090,8 @@ describe('login ownership', () => {
   it('cancels an expired start as soon as its late handle arrives', async () => {
     const loading = deferred<{ loginId: string; cancel: () => Promise<void> }>()
     const cancel = vi.fn(async () => {})
-    const { registry } = setup({
-      services: { 'claude-code': { startLogin: () => loading.promise } },
-    })
-    const started = registry.forProvider('claude-code').startLogin!()
+    const { registry } = setup({ services: { cursor: { startLogin: () => loading.promise } } })
+    const started = registry.forProvider('cursor').startLogin!()
     const checked = expect(started).rejects.toThrow('canceled')
     await vi.advanceTimersByTimeAsync(200)
     loading.resolve({ loginId: 'expired-login', cancel })
@@ -980,10 +1106,10 @@ describe('login ownership', () => {
     const login = externalLogin()
     const { registry, codex } = setup({
       createCodex: () => adapter,
-      services: { 'claude-code': { startLogin: login.startLogin } },
+      services: { cursor: { startLogin: login.startLogin } },
     })
     const started = codex.startLogin!()
-    await expect(registry.forProvider('claude-code').startLogin!()).resolves.toEqual({
+    await expect(registry.forProvider('cursor').startLogin!()).resolves.toEqual({
       loginId: 'external-1',
     })
     expect(adapter.startLogin).not.toHaveBeenCalled()
