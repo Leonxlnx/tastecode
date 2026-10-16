@@ -135,6 +135,34 @@ describe('CLI probe', () => {
     expect(system.version).toHaveBeenCalledTimes(2)
   })
 
+  it('holds a version read until the server says it may start the CLI', async () => {
+    vi.useFakeTimers()
+    const { system, answer, probe } = machine()
+    let release!: () => void
+    probe.waitBeforeReads(() => new Promise<void>((resolve) => (release = resolve)))
+    const scan = probe.version('codex', { waitMs: 250 })
+    await vi.advanceTimersByTimeAsync(250)
+    await expect(scan).resolves.toBeUndefined()
+    expect(system.version).not.toHaveBeenCalled()
+
+    release()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(system.version).toHaveBeenCalledTimes(1)
+    await answer('codex-cli 1.4.0')
+    await expect(probe.version('codex')).resolves.toBe('codex-cli 1.4.0')
+  })
+
+  it('never holds the read that checks a finished update', async () => {
+    vi.useFakeTimers()
+    const { system, answer, probe } = machine()
+    probe.waitBeforeReads(() => new Promise<void>(() => undefined))
+    const verified = probe.version('codex', { fresh: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(system.version).toHaveBeenCalledTimes(1)
+    await answer('codex-cli 0.11.0')
+    await expect(verified).resolves.toBe('codex-cli 0.11.0')
+  })
+
   it('reports a missing CLI without starting anything', async () => {
     const { state, system, probe } = machine()
     state.installed = false

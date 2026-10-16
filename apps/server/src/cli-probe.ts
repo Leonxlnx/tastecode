@@ -41,8 +41,18 @@ export class CliProbe {
   #entries = new Map<string, Entry>()
   #reads = new Map<string, Read>()
   #generations = new Map<string, number>()
+  #beforeRead: (() => Promise<void>) | undefined
 
   constructor(private readonly system: CliProbeSystem = REAL_SYSTEM) {}
+
+  /**
+   * Starting a CLI for its version blocks the event loop for a moment. The
+   * server passes a wait that holds those reads while a turn streams; a read
+   * that checks a finished update (`fresh`) never waits.
+   */
+  waitBeforeReads(wait: (() => Promise<void>) | undefined): void {
+    this.#beforeRead = wait
+  }
 
   async installed(command: string): Promise<boolean> {
     return (await this.system.locate(command)) !== undefined
@@ -66,7 +76,7 @@ export class CliProbe {
     const known = entry?.stamp === stamp ? entry : undefined
     const ttl = known?.version === undefined ? MISSING_VERSION_TTL_MS : VERSION_TTL_MS
     if (known && Date.now() - known.readAt < ttl) return known.version
-    const read = this.#read(command, stamp)
+    const read = this.#read(command, stamp, options.fresh ? undefined : this.#beforeRead)
     // The same binary answered before: serve that while it is asked again.
     if (known) return known.version
     return options.waitMs === undefined ? read : within(read, options.waitMs)
@@ -86,12 +96,19 @@ export class CliProbe {
     return this.#generations.get(command) ?? 0
   }
 
-  #read(command: string, stamp: string): Promise<string | undefined> {
+  #read(
+    command: string,
+    stamp: string,
+    beforeRead: (() => Promise<void>) | undefined,
+  ): Promise<string | undefined> {
     const generation = this.#generation(command)
     this.#generations.set(command, generation)
     const current = this.#reads.get(command)
     if (current?.stamp === stamp && current.generation === generation) return current.version
-    const version = this.system.version(command).then(
+    const started = beforeRead
+      ? beforeRead().then(() => this.system.version(command))
+      : this.system.version(command)
+    const version = started.then(
       (value) => value,
       () => undefined,
     )

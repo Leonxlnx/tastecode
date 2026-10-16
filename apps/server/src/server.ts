@@ -12,7 +12,7 @@ import {
   type ProviderStatus,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
-import { invalidateCliProbes } from './cli-probe.js'
+import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
@@ -42,6 +42,7 @@ import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
+import { StreamQuiet } from './stream-quiet.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
@@ -158,8 +159,11 @@ export function startServer(
       else void service.startBackgroundRefresh()
       return service
     }))
+  const streamQuiet = new StreamQuiet()
+  cliProbe.waitBeforeReads(() => streamQuiet.whenQuiet())
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -167,6 +171,7 @@ export function startServer(
       }
     },
     onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
       if (serializedEvent === undefined) {
         push.broadcast('sideChat.event', { threadId, event, seq })
       } else {
@@ -200,6 +205,7 @@ export function startServer(
     // A preview on the control port or the trusted renderer's port would pass
     // the Origin check whenever nothing else holds that port.
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
+    beforeLimitRead: () => streamQuiet.whenQuiet(),
   })
   reportStartupMilestone('server-orchestrator-ready')
   let providerStatuses: readonly ProviderStatus[] = []
@@ -293,9 +299,12 @@ export function startServer(
   /** Set once background work starts; see startBackgroundWork. */
   let providerHistory: Promise<ProviderHistory> | undefined
   let initialProviderHistory: Promise<ProviderHistory> | undefined
-  const historySchedule = new HistoryRefreshSchedule(async () =>
-    historyClosing || !providerHistory ? false : (await providerHistory).refresh(),
-  )
+  const historySchedule = new HistoryRefreshSchedule(async () => {
+    if (historyClosing || !providerHistory) return false
+    // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
+    await streamQuiet.whenQuiet()
+    return historyClosing ? false : (await providerHistory).refresh()
+  })
   const refreshProviderHistory = () => {
     // Before background work starts, its first scan will pick the change up.
     if (historyClosing) return
@@ -1299,6 +1308,7 @@ export function startServer(
       historyClosing = true
       clearTimeout(backgroundTimer)
       historySchedule.stop()
+      cliProbe.waitBeforeReads(undefined)
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
