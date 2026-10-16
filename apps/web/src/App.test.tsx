@@ -1202,6 +1202,117 @@ describe('web client', () => {
     ])
   })
 
+  it('brings back every unsent draft after a restart', async () => {
+    const docs = {
+      key: 'skill:docs',
+      kind: 'skill' as const,
+      id: '/skills/docs/SKILL.md',
+      name: 'Docs',
+      description: 'Project docs',
+      scope: 'Project',
+      token: '$docs',
+      available: true,
+    }
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const first = render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    fireEvent.change(composer(), { target: { value: 'New chat idea' } })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(composer(), { target: { value: 'Half-typed reply' } })
+    act(() => composerProps().onAttachmentsChange?.(['/work/later.png']))
+    act(() => composerProps().onResourcesChange?.([docs]))
+    window.dispatchEvent(new Event('pagehide'))
+    first.unmount()
+
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    expect(composer().value).toBe('New chat idea')
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    expect(composer().value).toBe('Half-typed reply')
+    expect(screen.getByRole('button', { name: 'Remove later.png' })).toBeTruthy()
+    expect(composerProps().draftRequest?.resources).toEqual([docs])
+  })
+
+  it('saves drafts when the page is hidden instead of on every keystroke', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: 'H' } })
+    fireEvent.change(composer, { target: { value: 'Half' } })
+    expect(localStorage.getItem('harness.composerDrafts.v1')).toBeNull()
+    window.dispatchEvent(new Event('pagehide'))
+    expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+      'new-chat': { text: 'Half', attachments: [], resources: [] },
+    })
+  })
+
+  it('saves a draft typed while the chat starts under the real chat only', async () => {
+    const request = transport.request.getMockImplementation()!
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    transport.request.mockImplementation(async (method, params) => {
+      if (method === 'thread.start') await gate
+      return request(method, params)
+    })
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    submitTurn('First prompt')
+    await waitFor(() => expect(rpcCount('thread.start')).toBe(1))
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Next unsent prompt' },
+    })
+    window.dispatchEvent(new Event('pagehide'))
+    expect(localStorage.getItem('harness.composerDrafts.v1')).toBeNull()
+    await act(async () => release())
+    await waitFor(() => expect(rpcCount('thread.sendTurn')).toBe(1))
+    window.dispatchEvent(new Event('pagehide'))
+    expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+      'thread-1': { text: 'Next unsent prompt', attachments: [], resources: [] },
+    })
+  })
+
+  it("drops a deleted chat's draft from the saved drafts", async () => {
+    serverProjects[0]!.sessions.push({ id: 'doomed-thread', title: 'Doomed chat', createdAt: 5 })
+    const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+    const first = render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^Doomed chat,/ }))
+    fireEvent.change(composer(), { target: { value: 'Doomed draft' } })
+    fireEvent.click(screen.getByRole('button', { name: /^New session,/ }))
+    fireEvent.change(composer(), { target: { value: 'Kept draft' } })
+    act(() => sidebarProps().onDeleteSession('doomed-thread'))
+    await screen.findByText('Chat deleted')
+    await act(async () => window.dispatchEvent(new Event('pagehide')))
+    await waitFor(() =>
+      expect(JSON.parse(localStorage.getItem('harness.composerDrafts.v1')!)).toEqual({
+        'untouched-thread': { text: 'Kept draft', attachments: [], resources: [] },
+      }),
+    )
+    first.unmount()
+
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: /^New session,/ }))
+    expect(composer().value).toBe('Kept draft')
+  })
+
+  it.each(['{not json', '[1,2]', '{"new-chat":{"text":5}}'])(
+    'starts with empty drafts when the saved drafts are corrupt (%s)',
+    async (saved) => {
+      localStorage.setItem('harness.composerDrafts.v1', saved)
+      const composer = () => screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+      const first = render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      expect(composer().value).toBe('')
+      fireEvent.change(composer(), { target: { value: 'Fresh start' } })
+      first.unmount()
+
+      render(<App />)
+      await screen.findByRole('button', { name: /^New session,/ })
+      expect(composer().value).toBe('Fresh start')
+    },
+  )
+
   it('offers an unsent draft back after Edit as new prompt replaces it', async () => {
     await openNewSession()
     const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
