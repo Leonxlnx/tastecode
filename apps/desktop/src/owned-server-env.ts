@@ -30,3 +30,21 @@ export function ownedServerEnvironment(
     HARNESS_RENDERER_ORIGIN: 'file://',
   }
 }
+
+/**
+ * What the server needs to describe and reach the feedback inbox. Only the
+ * path of the packaged endpoint file is passed, never the key itself, and an
+ * inherited value wins so a maintainer can point a build at another inbox.
+ */
+export function withFeedbackDetails(
+  env: NodeJS.ProcessEnv,
+  details: { appVersion: string; feedbackConfig?: string | undefined },
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    HARNESS_APP_VERSION: details.appVersion,
+    ...(details.feedbackConfig && !env['TASTECODE_FEEDBACK_CONFIG']
+      ? { TASTECODE_FEEDBACK_CONFIG: details.feedbackConfig }
+      : {}),
+  }
+}
