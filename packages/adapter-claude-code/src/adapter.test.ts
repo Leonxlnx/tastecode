@@ -1882,8 +1882,12 @@ describe('Claude static model catalog', () => {
   })
 })
 
-/** A TaskCreate pair as claude 2.1.302 writes it in the session jsonl. */
-function savedTask(toolId: string, taskId: string, subject: string, sidechain = false): string[] {
+function sessionFileTaskCreate(
+  toolId: string,
+  taskId: string,
+  subject: string,
+  sidechain = false,
+): string[] {
   return [
     JSON.stringify({
       type: 'assistant',
@@ -2095,9 +2099,9 @@ describe('Claude task plan', () => {
       writeFileSync(
         path.join(project, `${sessionId}.jsonl`),
         [
-          ...savedTask('toolu_a', '1', one),
-          ...savedTask('toolu_b', '2', two),
-          ...savedTask('toolu_side', '9', 'Side work', true),
+          ...sessionFileTaskCreate('toolu_a', '1', one),
+          ...sessionFileTaskCreate('toolu_b', '2', two),
+          ...sessionFileTaskCreate('toolu_side', '9', 'Side work', true),
           '{bad',
         ].join('\n') + '\n',
       )
@@ -2159,9 +2163,7 @@ describe('Claude task plan', () => {
             statusChange: { from: 'pending', to: 'completed' },
           }),
         )
-        query.emitMessage(
-          taskToolUse('toolu_new', 'TaskCreate', { subject: 'Check the note' }),
-        )
+        query.emitMessage(taskToolUse('toolu_new', 'TaskCreate', { subject: 'Check the note' }))
         query.emitMessage(
           taskToolResult('toolu_new', 'Task #3 created successfully: Check the note', {
             task: { id: '3', subject: 'Check the note' },
