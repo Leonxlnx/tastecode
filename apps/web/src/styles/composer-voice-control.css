@@ -86,7 +86,7 @@
 .composer__voice-error {
   max-width: var(--chat-w);
   margin: 5px auto 0;
-  padding: 0 12px;
+  padding: 0 var(--chat-text-inset);
   color: var(--error);
   font-size: var(--t-xs);
   line-height: 1.4;
