@@ -169,6 +169,36 @@ export function mcpStartupInventory(
   )
 }
 
+/**
+ * Codex answers its status list only after every server has started, which
+ * took 50-85 s in a captured 0.163 setup. Until then the configured servers
+ * show as starting, with any startup state Codex already reported. Servers
+ * the config turns off are left for the status list to report.
+ */
+export function configuredMcpInventory(
+  configured: readonly string[],
+  startupByKey: ReadonlyMap<string, McpStartupStatus>,
+  threadId?: string,
+): McpServer[] {
+  const started = mcpStartupInventory(startupByKey, threadId)
+  const reported = new Map(started.map((server) => [server.id, server]))
+  return [
+    ...configured.map(
+      (id): McpServer =>
+        reported.get(id) ?? {
+          id,
+          scope: 'global',
+          enabled: true,
+          startup: { state: 'starting' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+    ),
+    ...started.filter((server) => !configured.includes(server.id)),
+  ]
+}
+
 export function mapMcpServerStatus(
   status: ParsedMcpServerStatus,
   startup?: McpStartupStatus,
