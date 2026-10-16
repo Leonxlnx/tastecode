@@ -20,8 +20,9 @@ import { choicesFor, type ModelChoice } from './model-catalog.js'
 import { parseModelVisibility, type ModelVisibilityRecord } from './model-catalog-visibility.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
-import { IndeterminateRequestError, type ConnectionState } from './transport.js'
+import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
 
@@ -61,6 +62,8 @@ const transport = vi.hoisted(() => ({
   stateListeners: new Set<(state: ConnectionState) => void>(),
   sequenceGapListeners: new Set<(expected: number, received: number) => void>(),
   urls: new Array<string>(),
+  /** The app's own connection, for stores keyed by it. */
+  instance: undefined as object | undefined,
   state: 'open' as ConnectionState,
   connect: vi.fn(),
   close: vi.fn(),
@@ -120,6 +123,7 @@ vi.mock('./transport.js', async (importOriginal) => {
     Transport: class {
       constructor(url: string) {
         transport.urls.push(url)
+        transport.instance = this
       }
       get state() {
         return transport.state
@@ -2546,6 +2550,67 @@ describe('web client', () => {
     } finally {
       setItem.mockRestore()
     }
+  })
+
+  it.each([
+    [7, 1],
+    [1, 0],
+  ])(
+    'lists the models again on focus %i hours after the last listing: %i more',
+    async (hours, more) => {
+      render(<App />)
+      await waitFor(() => expect(rpcCount('models.list')).toBe(1))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + hours * 60 * 60_000)
+
+      act(() => window.dispatchEvent(new Event('focus')))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('models.list')).toBe(1 + more)
+      // The window showing again right after does not list a second time.
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('models.list')).toBe(1 + more)
+    },
+  )
+
+  it('lists the models again once the app updated a provider', async () => {
+    let updated = false
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      switch (method) {
+        case 'providers.updates':
+          return Promise.resolve({
+            updates: [
+              {
+                provider: 'codex',
+                displayName: 'Codex',
+                currentVersion: updated ? '0.163.0' : '0.154.0',
+                latestVersion: '0.163.0',
+                updateAvailable: !updated,
+                canUpdate: true,
+              },
+            ],
+          })
+        case 'providers.update':
+          updated = true
+          return Promise.resolve({ terminalId: 'update-codex' })
+        case 'terminal.status':
+          return Promise.resolve({ status: 'exited', output: '', outputOffset: 0, exitCode: 0 })
+        default:
+          return request(method, params)
+      }
+    })
+
+    render(<App />)
+    await waitFor(() => expect(rpcCount('models.list')).toBe(1))
+    const store = providerUpdatesStore(transport.instance as Transport)
+    await act(() => store.start('codex'))
+
+    await waitFor(() => expect(store.snapshot().operations.codex?.phase).toBe('succeeded'))
+    await waitFor(() => expect(rpcCount('models.list')).toBe(2))
+    // Exactly once for the update.
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('models.list')).toBe(2)
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {

@@ -252,6 +252,8 @@ const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
 const MODEL_CATALOG_CACHE_WRITE_DELAY_MS = 1_000
+/** How old the last listing may get before focusing the window lists every model again. */
+const MODEL_CATALOG_REVALIDATE_MS = 6 * 60 * 60_000
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
@@ -717,6 +719,8 @@ export function App() {
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
+  /** When the catalog was last listed, however that started. */
+  const catalogRequestedAt = useRef(Date.now())
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
@@ -1850,6 +1854,7 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    catalogRequestedAt.current = Date.now()
     // Sources settle one by one, and a large catalog costs a full serialize
     // per write, so their snapshots are coalesced into one trailing write
     // that the final catalog write replaces.
@@ -2333,6 +2338,26 @@ export function App() {
       takePendingCacheWrite()?.()
     }
   }, [transport, catalogRequest])
+
+  // A window left open for hours lists its models again when it comes back,
+  // so a CLI updated outside the app brings its new releases (and retires the
+  // generations they replace) without a restart. An update the app ran
+  // refreshes through the update notice already.
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState === 'hidden' || transport.state !== 'open') return
+      const now = Date.now()
+      if (now - catalogRequestedAt.current < MODEL_CATALOG_REVALIDATE_MS) return
+      catalogRequestedAt.current = now
+      setCatalogRequest((request) => request + 1)
+    }
+    window.addEventListener('focus', revalidate)
+    document.addEventListener('visibilitychange', revalidate)
+    return () => {
+      window.removeEventListener('focus', revalidate)
+      document.removeEventListener('visibilitychange', revalidate)
+    }
+  }, [transport])
 
   useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
