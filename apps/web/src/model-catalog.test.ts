@@ -7,12 +7,16 @@ import {
   customModelKey,
   defaultHiddenModelKeys,
   defaultHiddenModels,
+  effectiveHiddenModels,
   filterModelChoicesByQuery,
+  importLegacyVisibility,
   isCustomModelChoice,
   migrateHiddenModels,
   migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
+  modelVisibilityDefaults,
   providerDisplayName,
+  readModelLineage,
   resolveReasoningEffort,
   sourceKey,
   unlistedHiddenModels,
@@ -337,6 +341,289 @@ describe('model catalog', () => {
       const listed = new Set(before.map((choice) => choice.key))
 
       expect(names(unlistedHiddenModels(after, listed))).toEqual(['Opus 5.5'])
+    })
+  })
+
+  describe('generic default visibility', () => {
+    const named = (entries: readonly (readonly [id: string, displayName: string])[]) =>
+      entries.map(([id, displayName]) => ({ ...model, id, displayName, isDefault: false }))
+    const stock = (
+      provider: ModelChoice['provider'],
+      entries: readonly (readonly [id: string, displayName: string])[],
+      defaultId?: string,
+    ) =>
+      choicesFor(
+        { provider, sourceName: provider, mark: 'custom' },
+        named(entries).map((entry) => ({ ...entry, isDefault: entry.id === defaultId })),
+      )
+    const shown = (choices: readonly ModelChoice[], hidden: ReadonlySet<string>) =>
+      choices.filter((choice) => !hidden.has(choice.key)).map((choice) => choice.model.displayName)
+    const defaultsShown = (choices: readonly ModelChoice[]) =>
+      shown(choices, modelVisibilityDefaults(choices).hidden)
+
+    // Live listings on 2026-10-16: codex-cli 0.163 in the adapter's order,
+    // Claude Code's rows under their aliases as Leon's profile cached them,
+    // and Grok's CLI list.
+    const codex = stock(
+      'codex',
+      [
+        ['gpt-6-astra', 'GPT-6-Astra'],
+        ['gpt-6.1-sol', 'GPT-6.1-Sol'],
+        ['gpt-5.6-terra', 'GPT-5.6-Terra'],
+        ['gpt-6-luna', 'GPT-6-Luna'],
+        ['gpt-6-sol', 'GPT-6-Sol'],
+        ['gpt-5.6-sol', 'GPT-5.6-Sol'],
+        ['gpt-5.6-luna', 'GPT-5.6-Luna'],
+        ['gpt-5.5', 'GPT-5.5'],
+      ],
+      'gpt-6.1-sol',
+    )
+    const claude = stock(
+      'claude-code',
+      [
+        ['claude-fable-5-1[1m]', 'Fable 5.1'],
+        ['opus', 'Opus 5.5'],
+        ['sonnet', 'Sonnet 5.5'],
+        ['haiku', 'Haiku 5.5'],
+        ['claude-fable-5', 'Fable 5'],
+        ['claude-opus-5', 'Opus 5'],
+        ['claude-sonnet-5', 'Sonnet 5'],
+        ['claude-opus-4-8', 'Opus 4.8'],
+        ['claude-opus-4-7', 'Opus 4.7'],
+        ['claude-opus-4-6', 'Opus 4.6'],
+        ['claude-sonnet-4-6', 'Sonnet 4.6'],
+        ['claude-opus-4-5', 'Opus 4.5'],
+        ['claude-haiku-4-5', 'Haiku 4.5'],
+      ],
+      'opus',
+    )
+    const grok = stock(
+      'grok',
+      [
+        ['grok-4.7', 'Grok 4.7'],
+        ['grok-4.7-build-fast', 'Grok 4.7 Build Fast'],
+        ['grok-4.6', 'Grok 4.6'],
+        ['grok-4.5', 'Grok 4.5'],
+      ],
+      'grok-4.7',
+    )
+    const catalog = [...codex, ...claude, ...grok]
+    // Leon's saved hidden list (format version 4), keys only.
+    const leonHidden = [
+      'codex:gpt-5.5',
+      'codex:gpt-5.4',
+      'codex:gpt-5.4-mini',
+      'codex:gpt-5.3-codex-spark',
+      'claude-code:claude-fable-5',
+      'claude-code:claude-opus-4-8',
+      'claude-code:claude-opus-4-7',
+      'claude-code:claude-opus-4-6',
+      'claude-code:claude-opus-4-5',
+      'claude-code:claude-sonnet-4-6',
+      'claude-code:opus%5B1m%5D',
+      'claude-code:claude-opus-5',
+      'claude-code:claude-sonnet-5',
+      'claude-code:claude-haiku-4-5-20251001',
+      'claude-code:claude-haiku-4-5',
+    ]
+    const leonVisible = {
+      codex: ['GPT-6-Astra', 'GPT-6.1-Sol', 'GPT-5.6-Terra', 'GPT-6-Luna'],
+      claude: ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'],
+      grok: ['Grok 4.7'],
+    }
+
+    it("shows each live source's newest generations and hides the rest", () => {
+      expect(defaultsShown(codex)).toEqual(leonVisible.codex)
+      expect(defaultsShown(claude)).toEqual(leonVisible.claude)
+      expect(defaultsShown(grok)).toEqual(leonVisible.grok)
+      const { supersededBy } = modelVisibilityDefaults(catalog)
+      expect(supersededBy.get('codex:gpt-5.6-sol')).toBe('codex:gpt-6.1-sol')
+      expect(supersededBy.get('codex:gpt-6-sol')).toBe('codex:gpt-6.1-sol')
+      expect(supersededBy.get('grok:grok-4.5')).toBe('grok:grok-4.7')
+      // A legacy model with no newer generation is hidden but not superseded.
+      expect(supersededBy.has('grok:grok-4.7-build-fast')).toBe(false)
+    })
+
+    it("resets Leon's saved profile to the current lineup once and keeps what he hid", () => {
+      const defaults = modelVisibilityDefaults(catalog)
+      // He also hid Sonnet 5.5 himself, which no default hides.
+      const overrides = importLegacyVisibility(
+        [...leonHidden, 'claude-code:sonnet'],
+        catalog,
+        defaults,
+        1_000,
+      )
+      const hidden = effectiveHiddenModels(catalog, defaults, overrides, {})
+
+      expect(shown(codex, hidden)).toEqual(leonVisible.codex)
+      expect(shown(claude, hidden)).toEqual(leonVisible.claude.filter((n) => n !== 'Sonnet 5.5'))
+      expect(shown(grok, hidden)).toEqual(leonVisible.grok)
+      // Keys this catalog does not list keep their saved state; default-hidden
+      // keys need no override.
+      expect(Object.keys(overrides).sort()).toEqual([
+        'claude-code:claude-haiku-4-5-20251001',
+        'claude-code:opus%5B1m%5D',
+        'claude-code:sonnet',
+        'codex:gpt-5.3-codex-spark',
+        'codex:gpt-5.4',
+        'codex:gpt-5.4-mini',
+      ])
+      expect(overrides['claude-code:sonnet']).toEqual({ visible: false, at: 1_000 })
+    })
+
+    it('hands an older generation over once a newer one is listed', () => {
+      const withTerra6 = [...codex, ...stock('codex', [['gpt-6-terra', 'GPT-6-Terra']])]
+      const defaults = modelVisibilityDefaults(withTerra6)
+
+      expect(defaults.hidden.has('codex:gpt-5.6-terra')).toBe(true)
+      expect(defaults.supersededBy.get('codex:gpt-5.6-terra')).toBe('codex:gpt-6-terra')
+      expect(shown(withTerra6, defaults.hidden)).toEqual([
+        'GPT-6-Astra',
+        'GPT-6.1-Sol',
+        'GPT-6-Luna',
+        'GPT-6-Terra',
+      ])
+    })
+
+    it('keeps an older generation shown after its successor appeared, not before', () => {
+      const withTerra6 = [...codex, ...stock('codex', [['gpt-6-terra', 'GPT-6-Terra']])]
+      const defaults = modelVisibilityDefaults(withTerra6)
+      const firstSeen = { 'codex:gpt-6-terra': 5_000 }
+      const hiddenWith = (at: number) =>
+        effectiveHiddenModels(
+          withTerra6,
+          defaults,
+          { 'codex:gpt-5.6-terra': { visible: true, at } },
+          firstSeen,
+        ).has('codex:gpt-5.6-terra')
+
+      expect(hiddenWith(4_999)).toBe(true)
+      expect(hiddenWith(5_000)).toBe(false)
+      expect(hiddenWith(6_000)).toBe(false)
+      // A successor without a recorded sighting was only just listed.
+      expect(
+        effectiveHiddenModels(
+          withTerra6,
+          defaults,
+          { 'codex:gpt-5.6-terra': { visible: true, at: 6_000 } },
+          {},
+        ).has('codex:gpt-5.6-terra'),
+      ).toBe(true)
+      // A model the user hid stays hidden, a newest one shown stays shown.
+      const overridden = effectiveHiddenModels(
+        withTerra6,
+        defaults,
+        {
+          'codex:gpt-6-astra': { visible: false, at: 1 },
+          'codex:gpt-6-sol': { visible: true, at: 9_000 },
+        },
+        { 'codex:gpt-6.1-sol': 1_000 },
+      )
+      expect(overridden.has('codex:gpt-6-astra')).toBe(true)
+      expect(overridden.has('codex:gpt-6-sol')).toBe(false)
+    })
+
+    it('reads versions with letter prefixes and context sizes out of names', () => {
+      const cursor = stock('cursor', [
+        ['claude-opus-5-5-1m', 'Claude Opus 5.5 1M'],
+        ['claude-opus-4-8-1m', 'Claude Opus 4.8 1M'],
+        ['claude-fable-5-1-1m-no-zdr', 'Claude Fable 5.1 1M (NO ZDR)'],
+        ['muse-wonder-300k', 'Muse Wonder 300K'],
+      ])
+      const cursorDefaults = modelVisibilityDefaults(cursor)
+      expect(cursorDefaults.supersededBy.get('cursor:claude-opus-4-8-1m')).toBe(
+        'cursor:claude-opus-5-5-1m',
+      )
+      expect(shown(cursor, cursorDefaults.hidden)).toEqual([
+        'Claude Opus 5.5 1M',
+        'Claude Fable 5.1 1M (NO ZDR)',
+        'Muse Wonder 300K',
+      ])
+
+      const opencode = stock('opencode', [
+        ['minimax/MiniMax-M3', 'MiniMax-M3'],
+        ['minimax/MiniMax-M2.7', 'MiniMax-M2.7'],
+        ['minimax/MiniMax-M3.1-Flash-Preview', 'MiniMax-M3.1-Flash-Preview'],
+        ['deepseek/deepseek-v4.1-flash', 'DeepSeek V4.1 Flash'],
+        ['deepseek/deepseek-v4-flash', 'DeepSeek V4 Flash'],
+      ])
+      expect(defaultsShown(opencode)).toEqual([
+        'MiniMax-M3',
+        'MiniMax-M3.1-Flash-Preview',
+        'DeepSeek V4.1 Flash',
+      ])
+
+      expect(readModelLineage('MiniMax-M2.7')).toEqual({ family: 'minimax m#', generation: [2, 7] })
+      expect(readModelLineage('Qwen3.6 Coder')).toEqual({
+        family: 'qwen# coder',
+        generation: [3, 6],
+      })
+      expect(readModelLineage('GPT-5.10')?.generation).toEqual([5, 10])
+      for (const name of ['GPT-4o', 'Reka Edge 2603', 'Gemini 2.5 Pro 05-06', 'Muse 300K', '4.7']) {
+        expect(readModelLineage(name)).toBeUndefined()
+      }
+    })
+
+    it('compares generations only within one source', () => {
+      const harness = choicesFor(
+        {
+          provider: 'claude-code',
+          sourceName: 'Work Claude',
+          mark: 'anthropic',
+          agent: { id: 'work-claude', name: 'Work Claude' },
+        },
+        named([['claude-opus-4-8', 'Opus 4.8']]),
+      )
+      const connection = (connectionId: string, entries: [string, string][]) =>
+        choicesFor(
+          { provider: 'api', connectionId, sourceName: connectionId, mark: 'openrouter' },
+          named(entries),
+        )
+      const choices = [
+        ...stock('claude-code', [['opus', 'Opus 5.5']]),
+        ...harness,
+        ...connection('work', [['openai/gpt-6', 'GPT-6']]),
+        ...connection('personal', [['openai/gpt-5', 'GPT-5']]),
+      ]
+      expect(defaultsShown(choices)).toEqual(['Opus 5.5', 'Opus 4.8', 'GPT-6', 'GPT-5'])
+    })
+
+    it('shows only the first rows and the default of a source with more than 20 rows left', () => {
+      const rows = (count: number) =>
+        Array.from(
+          { length: count },
+          (_, index) => [`model-${index}`, `Model ${String.fromCharCode(97 + index)}`] as const,
+        )
+      const names = (entries: readonly (readonly [string, string])[]) =>
+        entries.map(([, displayName]) => displayName)
+      const large = stock('opencode', rows(21), 'model-10')
+      expect(defaultsShown(large)).toEqual(['Model a', 'Model b', 'Model c', 'Model d', 'Model k'])
+      expect(defaultsShown(stock('opencode', rows(20)))).toHaveLength(20)
+      // Superseded rows do not count toward the 20: 24 rows, 4 of them older.
+      const withOlder = stock('opencode', [
+        ...rows(19),
+        ...[1, 2, 3, 4, 5].map((version) => [`older-${version}`, `Older ${version}`] as const),
+      ])
+      expect(defaultsShown(withOlder)).toEqual([...names(rows(19)), 'Older 5'])
+    })
+
+    it('never hides a custom model by default, but honours hiding it', () => {
+      const custom = customModelChoice({
+        provider: 'codex',
+        modelId: 'gpt-5.6-sol-preview',
+        displayName: 'GPT-5.6-Sol',
+      })
+      const choices = [...codex, custom]
+      const defaults = modelVisibilityDefaults(choices)
+      expect(defaults.hidden.has(custom.key)).toBe(false)
+      expect(
+        effectiveHiddenModels(
+          choices,
+          defaults,
+          { [custom.key]: { visible: false, at: 1 } },
+          {},
+        ).has(custom.key),
+      ).toBe(true)
     })
   })
 
