@@ -4,6 +4,7 @@ import {
   lazy,
   memo,
   Suspense,
+  type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
@@ -192,6 +193,22 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const completedRevealRequest = useRef(props.revealRequest ?? 0)
   const modeRef = useRef(mode)
   modeRef.current = mode
+  /**
+   * Jump to latest is offered only once the end is a real distance away, and
+   * withdrawn only once it is close again. Without the gap between the two a
+   * scroll that hovers around one threshold made the pill flicker, and a
+   * small move up during a stream put it over the very text being read.
+   */
+  const [jumpShown, setJumpShown] = useState(false)
+  const jumpShownRef = useRef(false)
+  const updateJump = useCallback((distance: number) => {
+    const shown = jumpShownRef.current
+    const next =
+      modeRef.current === 'free' && (shown ? distance >= JUMP_HIDE_PX : distance > JUMP_SHOW_PX)
+    if (next === shown) return
+    jumpShownRef.current = next
+    setJumpShown(next)
+  }, [])
 
   /** Index the current turn starts at, for anchor mode. */
   const anchorIndex = useRef(0)
@@ -316,6 +333,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   useLayoutEffect(() => {
     if (mode !== 'free') stopJump()
     if (mode === 'free' || mode === 'reveal-hold') glide.stop()
+    // The next time the user takes over, the pill waits for the full distance again.
+    if (mode !== 'free' && jumpShownRef.current) {
+      jumpShownRef.current = false
+      setJumpShown(false)
+    }
   }, [mode, stopJump, glide])
   useEffect(() => stopJump, [props.threadId, stopJump])
   const {
@@ -461,6 +483,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [glide, reducedMotion, writeScrollTop],
   )
   /**
+   * The user handed the scroll back short of the end (a scroll that landed
+   * near it, a released scrollbar). They moved there themselves, so the rest
+   * of the way glides even when nothing is streaming.
+   */
+  const catchUp = useCallback(
+    (el: HTMLElement) => {
+      const state = follow.current
+      if (state.holding) return
+      const end = endOf()
+      if (glide.running || reducedMotion.matches || document.visibilityState !== 'visible') {
+        followTo(el, end)
+      } else if (Math.abs(end - state.knownTop) >= 0.5) {
+        glide.setTarget(end, state.knownTop)
+      }
+    },
+    [endOf, followTo, glide, reducedMotion],
+  )
+  /**
    * A pointer or finger on the transcript means the user is selecting,
    * clicking or dragging the scrollbar; a glide would pull the content from
    * under them. Following resumes when they let go.
@@ -476,11 +516,11 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         for (const type of releaseOn) window.removeEventListener(type, release, true)
         state.holding = false
         const el = scroller.current
-        if (el && modeRef.current === 'follow-end') followTo(el, endOf())
+        if (el && modeRef.current === 'follow-end') catchUp(el)
       }
       for (const type of releaseOn) window.addEventListener(type, release, true)
     },
-    [endOf, followTo, glide, stopJump],
+    [catchUp, glide, stopJump],
   )
   const onPointerDown = useCallback(
     (event: ReactPointerEvent) => {
@@ -491,16 +531,45 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [hold],
   )
   const onTouchStart = useCallback(() => hold(TOUCH_RELEASE), [hold])
+  /**
+   * The user asked the transcript to move by `delta` px; the scroll arrives
+   * after this. Successive steps of one gesture add up, as the browser's own
+   * target does, so a flick that asked for the end is known to have done so
+   * even when a burst of text lands in the same frame as its scroll.
+   */
+  const steer = useCallback(
+    (delta: number) => {
+      const state = follow.current
+      const now = performance.now()
+      const up = delta < 0
+      const previous = state.intent
+      const continued = previous?.up === up && now - previous.at < INTENT_MS
+      const reach = (continued ? previous.reach : state.knownTop) + delta
+      state.intent = { up, at: now, reach, toEnd: !up && reach >= endOf() - END_TOLERANCE_PX }
+      if (up) glide.stop()
+    },
+    [endOf, glide],
+  )
   const onWheel = useCallback(
     (event: ReactWheelEvent) => {
       // The user steering in any way ends a running jump on the spot.
       stopJump()
       if (event.deltaY === 0) return
-      const up = event.deltaY < 0
-      follow.current.intent = { up, at: performance.now() }
-      if (up) glide.stop()
+      const unit =
+        event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? follow.current.clientHeight : 1
+      steer(event.deltaY * unit)
     },
-    [glide, stopJump],
+    [steer, stopJump],
+  )
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      stopJump()
+      // Keys typed into a field inside the transcript move a caret, not the view.
+      if (event.defaultPrevented || isEditableTarget(event.target)) return
+      const step = scrollKeyStep(event, follow.current.clientHeight)
+      if (step !== undefined) steer(step)
+    },
+    [steer, stopJump],
   )
 
   // A turn starting is the one moment the reading position should change.
@@ -538,27 +607,45 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       return
     }
     writtenScrollTop.current = undefined
-    const following = modeRef.current === 'follow-end' || modeRef.current === 'anchor-turn'
-    // A glide trails the end by design, so not being at the end is no sign
-    // of the user while following; moving up is. Downward moves and the
-    // virtual list's own corrections leave the follow alone.
-    const movedUp = top < state.knownTop - 2
+    const mode = modeRef.current
+    const moved = top - state.knownTop
     state.knownTop = top
-    // Any manual move away from the exact end hands control back at once.
-    // isAtBottom intentionally has 80px of slack for starting a new turn,
-    // but that slack must not trap small upward gestures during streaming.
-    const atEnd = el.scrollHeight - top - el.clientHeight <= 1
-    const nextMode = atEnd ? 'follow-end' : following && !movedUp ? modeRef.current : 'free'
+    const intent =
+      state.intent && performance.now() - state.intent.at < INTENT_MS ? state.intent : undefined
+    const distance = endOf() - top
+    // At the settled end the follow aims for, or at the raw scroll limit,
+    // where the browser clamps a glide that ran ahead of a commit.
+    const atEnd = distance <= END_TOLERANCE_PX || el.scrollHeight - top - el.clientHeight <= 1
+    let nextMode: ScrollMode = mode
+    if (atEnd) nextMode = 'follow-end'
+    else if (mode === 'follow-end' || mode === 'anchor-turn') {
+      // Only a move up is the user taking over. A glide trails the end, the
+      // virtual list corrects for rows it measured, and the end moves away
+      // with every line; none of that leaves the follow. isAtBottom's 80px
+      // slack is for starting a turn and must not trap a small gesture here.
+      if (moved < -2 || (intent?.up === true && moved < 0)) nextMode = 'free'
+    } else if (
+      (moved > 0 || intent?.up === false) &&
+      (distance <= REENGAGE_PX || intent?.toEnd === true)
+    ) {
+      // Heading back down and nearly there, or sent to the end. A wheel fixes
+      // its target when it starts, so it lands short of an end that kept
+      // moving; that is still the user asking to follow, and the glide closes
+      // the rest.
+      nextMode = 'follow-end'
+    } else if (mode === 'reveal-hold') nextMode = 'free'
     if (nextMode === 'free') glide.stop()
     else if (glide.running) glide.sync(top)
-    if (modeRef.current !== nextMode) {
+    if (mode !== nextMode) {
       // Update the ref before the next streamed chunk can run the layout
       // effect and pull the viewport back to the end.
       modeRef.current = nextMode
       setMode(nextMode)
+      if (nextMode === 'follow-end') catchUp(el)
     }
+    updateJump(distance)
     if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
-  }, [canLoadOnScroll, glide, loadOlder])
+  }, [canLoadOnScroll, catchUp, endOf, glide, loadOlder, updateJump])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -838,7 +925,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           onWheel={onWheel}
           onPointerDown={onPointerDown}
           onTouchStart={onTouchStart}
-          onKeyDown={stopJump}
+          onKeyDown={onKeyDown}
         >
           <div className="thread__col">
             <div className="thread__runway" ref={runwayRef} style={{ height: runwayHeight }}>
@@ -956,6 +1043,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           followTo={followTo}
           measureFollow={measureFollow}
           endOf={endOf}
+          updateJump={updateJump}
           setMode={setMode}
         />
 
@@ -987,7 +1075,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           </button>
         ) : null}
 
-        {mode === 'free' ? (
+        {mode === 'free' && jumpShown ? (
           <button className="jump" onClick={jumpToLatest}>
             <ArrowDownToLine size={13} aria-hidden />
             Jump to latest
@@ -1022,6 +1110,7 @@ function FrameScrollFollower({
   followTo,
   measureFollow,
   endOf,
+  updateJump,
   setMode,
 }: {
   frameStore: ThreadFrameStore
@@ -1043,6 +1132,8 @@ function FrameScrollFollower({
   followTo: (element: HTMLElement, end: number) => void
   measureFollow: (element: HTMLElement, settled?: number) => void
   endOf: () => number
+  /** Offers or withdraws Jump to latest for the end's distance while free. */
+  updateJump: (distance: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
@@ -1061,6 +1152,7 @@ function FrameScrollFollower({
       // disclosure commits, while its reveal and the runway are still mid-slide.
       const viewport = follow.current.clientHeight
       measureFollow(element)
+      if (modeRef.current === 'free') updateJump(endOf() - follow.current.knownTop)
       if (modeRef.current !== 'follow-end') return
       // A viewport that changed size keeps the last line where it was at
       // once: a composer growing by a line must not cover it while a glide
@@ -1071,7 +1163,7 @@ function FrameScrollFollower({
     observer.observe(element)
     observer.observe(content)
     return () => observer.disconnect()
-  }, [scroller, modeRef, follow, writeScrollTop, followTo, measureFollow, endOf])
+  }, [scroller, modeRef, follow, writeScrollTop, followTo, measureFollow, endOf, updateJump])
 
   // Follow every render before paint: replay and virtual row measurements can
   // change the scroll height without changing the live text frame version.
@@ -1154,7 +1246,14 @@ function FrameScrollFollower({
       if (settledScrollHeight(element) > heldHeight.current + 1) {
         modeRef.current = 'free'
         setMode('free')
+        updateJump(endOf() - state.knownTop)
       }
+      return
+    }
+
+    if (modeRef.current === 'free') {
+      // The end keeps moving away while the user reads above it.
+      updateJump(endOf() - state.knownTop)
       return
     }
 
@@ -1196,8 +1295,17 @@ type FollowState = {
   instantUntil: number
   /** A pointer or finger is down on the transcript. */
   holding: boolean
-  /** Which way the user last turned the wheel, and when. */
-  intent: { up: boolean; at: number } | undefined
+  /** The user's last wheel turn or scroll key: which way, when, and how far. */
+  intent:
+    | {
+        up: boolean
+        at: number
+        /** Where the gesture asked the scroll to go. */
+        reach: number
+        /** It asked for the end, or past it. */
+        toEnd: boolean
+      }
+    | undefined
 }
 
 /** Where the viewport stood when older rows were prepended above it. */
@@ -1231,10 +1339,49 @@ const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
 const FOLLOW_SETTLE_MS = 1_200
 /** How long after a chat opens its rows are still measuring themselves in. */
 const OPEN_SETTLE_MS = 400
-/** How long an upward wheel holds the follow back until its scroll arrives. */
+/** How long a wheel turn or scroll key still explains the scroll events after it. */
 const INTENT_MS = 250
+/** Within this of the end the viewport counts as at the end. */
+const END_TOLERANCE_PX = 2
+/** A scroll heading down that lands this close to the end follows it again. */
+const REENGAGE_PX = 56
+/** Jump to latest appears past this distance from the end... */
+const JUMP_SHOW_PX = 160
+/** ...and goes once the end is closer than this again. */
+const JUMP_HIDE_PX = 96
 const POINTER_RELEASE = ['pointerup', 'pointercancel'] as const
 const TOUCH_RELEASE = ['touchend', 'touchcancel'] as const
+
+/** The browser's step for a wheel line and an arrow key. */
+const LINE_PX = 40
+
+/** How far a key scrolls the transcript, negative for up, if it scrolls at all. */
+function scrollKeyStep(
+  event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean },
+  viewport: number,
+): number | undefined {
+  // Alt+Arrow moves by turn and says so itself; the others are not scrolling.
+  if (event.altKey || event.ctrlKey || event.metaKey) return undefined
+  const page = Math.max(LINE_PX, viewport * 0.875)
+  switch (event.key) {
+    case 'ArrowUp':
+      return -LINE_PX
+    case 'ArrowDown':
+      return LINE_PX
+    case 'PageUp':
+      return -page
+    case 'PageDown':
+      return page
+    case ' ':
+      return event.shiftKey ? -page : page
+    case 'Home':
+      return Number.NEGATIVE_INFINITY
+    case 'End':
+      return Number.POSITIVE_INFINITY
+    default:
+      return undefined
+  }
+}
 
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520

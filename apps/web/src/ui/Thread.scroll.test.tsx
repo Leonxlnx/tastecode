@@ -442,4 +442,113 @@ describe('Thread scroll position', () => {
       expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
     })
   })
+
+  describe('taking over and handing back', () => {
+    const jump = () => document.querySelector('.jump')
+    /** The user turns the wheel and the transcript lands at `top`. */
+    function wheelTo(scroller: HTMLElement, top: number) {
+      fireEvent.wheel(scroller, { deltaY: top < scroller.scrollTop ? -100 : 100 })
+      scroller.scrollTop = top
+      fireEvent.scroll(scroller)
+    }
+
+    it('follows again when a scroll back down lands a line short of a growing end', () => {
+      const { scroller, grow } = streaming()
+      wheelTo(scroller, 700)
+      expect(jump()).toBeTruthy()
+
+      grow(20)
+      // A smooth wheel fixed its target before that line arrived: 40px short.
+      wheelTo(scroller, 980)
+
+      expect(jump()).toBeNull()
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_020)
+      grow(20)
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_040)
+    })
+
+    it('follows again when a flick to the end lands short of a burst that came with it', () => {
+      const { scroller, grow } = streaming()
+      wheelTo(scroller, 400)
+
+      fireEvent.wheel(scroller, { deltaY: 3_000 })
+      // A code block lands in the frame the scroll reaches the old end.
+      grow(94)
+      scroller.scrollTop = 1_000
+      fireEvent.scroll(scroller)
+
+      expect(jump()).toBeNull()
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_094)
+    })
+
+    it('offers the jump only once the end is a real distance away', () => {
+      const { scroller, grow } = streaming()
+      wheelTo(scroller, 970)
+      expect(jump()).toBeNull()
+
+      grow(100)
+      expect(jump()).toBeNull()
+      expect(scroller.scrollTop).toBe(970)
+
+      grow(40)
+      expect(jump()).toBeTruthy()
+    })
+
+    it('withdraws the jump only once the end is close again', () => {
+      const { scroller, grow } = streaming()
+      wheelTo(scroller, 800)
+      expect(jump()).toBeTruthy()
+
+      wheelTo(scroller, 880)
+      expect(jump()).toBeTruthy()
+      wheelTo(scroller, 910)
+      expect(jump()).toBeNull()
+      // Back up, but not past the distance that offers it.
+      wheelTo(scroller, 860)
+      expect(jump()).toBeNull()
+
+      // Still the user's position: a new line does not pull them down.
+      grow(20)
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(860)
+    })
+
+    it('never lets go just because the end moved away', () => {
+      const { scroller, grow } = streaming()
+
+      grow(500)
+      // The virtual list corrects the scroll for a row it measured.
+      scroller.scrollTop = 1_100
+      fireEvent.scroll(scroller)
+
+      expect(jump()).toBeNull()
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_500)
+    })
+
+    it('lets a scroll key in the transcript take over, but not one typed into a field', () => {
+      const { scroller, grow } = streaming()
+      const field = document.createElement('textarea')
+      scroller.firstElementChild!.append(field)
+
+      fireEvent.keyDown(field, { key: 'PageUp' })
+      grow(40)
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_040)
+
+      fireEvent.keyDown(scroller, { key: 'PageUp' })
+      grow(20)
+      runFrame()
+      expect(scroller.scrollTop).toBe(1_040)
+      scroller.scrollTop = 1_039
+      fireEvent.scroll(scroller)
+      grow(20)
+      settle(scroller)
+
+      expect(scroller.scrollTop).toBe(1_039)
+    })
+  })
 })
