@@ -47,6 +47,7 @@ import {
   snapshotDesignFiles,
   parseAssetManifest,
   validateResolvedDesignAssets,
+  DASHBOARD_REFERENCES_ENABLED,
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -4738,6 +4739,8 @@ describe('provider-neutral design briefing', () => {
     'builds without questions through the same workflow with synthetic image-capable $provider (dashboard: $dashboard)',
     async ({ provider, dashboard }) => {
       const model = 'future-provider/model-that-needs-no-design-code'
+      // A parked dashboard request runs the website workflow end to end (dashboard-references.ts).
+      const appScreen = dashboard && DASHBOARD_REFERENCES_ENABLED
       const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-flow-'))
       const referencePath = path.join(workspace, 'reference-home.png')
       writeFileSync(referencePath, 'reference image bytes')
@@ -4926,7 +4929,8 @@ describe('provider-neutral design briefing', () => {
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(3))
         expect(store.designRun(thread.id)).toMatchObject({ phase: 'page' })
         expect(sessions[0]?.sent[2]).toContain('Page Blueprint phase')
-        if (dashboard) {
+        if (dashboard && !appScreen) expect(sessions[0]?.sent[2]).not.toContain('operate_monitor')
+        if (appScreen) {
           expect(sessions[0]?.sent[2]).toContain(
             'Use architecture.mode operate_monitor and layoutFamily dashboard',
           )
@@ -4943,7 +4947,7 @@ describe('provider-neutral design briefing', () => {
               page: { title: 'Studio', route: '/', description: 'Studio services' },
               architecture: {
                 contract: 'Review the current workspace.',
-                mode: dashboard ? 'operate_monitor' : 'persuade_convert',
+                mode: appScreen ? 'operate_monitor' : 'persuade_convert',
                 novelty: 'low',
                 grid: 'Reference geometry.',
                 signatureRule: 'Preserve the selected reference.',
@@ -4963,13 +4967,13 @@ describe('provider-neutral design briefing', () => {
               sections: [
                 {
                   id: 'hero',
-                  layoutFamily: dashboard ? 'dashboard' : 'hero',
+                  layoutFamily: appScreen ? 'dashboard' : 'hero',
                   layoutCases: ['hero-text-5', 'hero-visual-2'],
                   referenceDirectionId: 'user-reference-1',
                   purpose: 'Introduce the offer',
                   copy: {
-                    heading: dashboard ? 'Balance $12,400' : 'Design that earns attention',
-                    body: dashboard
+                    heading: appScreen ? 'Balance $12,400' : 'Design that earns attention',
+                    body: appScreen
                       ? ['Demo data', '26 orders']
                       : ['A focused independent studio.'],
                     callsToAction: [{ label: 'Start a project', target: '#contact' }],
@@ -4995,7 +4999,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(5))
         expect(sessions[0]?.sent[4]).toContain('Build phase')
-        if (dashboard) {
+        if (appScreen) {
           expect(sessions[0]?.sent[4]).toContain('DASHBOARD INTERACTION AND MOTION')
           expect(sessions[0]?.sent[4]).not.toContain('<reference-reveal-source>')
         }
@@ -5003,7 +5007,7 @@ describe('provider-neutral design briefing', () => {
         mkdirSync(path.join(workspace, 'src'))
         writeFileSync(
           path.join(workspace, 'src', 'page.tsx'),
-          dashboard
+          appScreen
             ? 'export const Page = () => <main><h1>Balance</h1><svg role="img" aria-label="Demo revenue"><path d="M0 20L20 10L40 15" /></svg></main>'
             : 'export const Page = () => <main>Studio</main>',
         )
@@ -5040,7 +5044,7 @@ describe('provider-neutral design briefing', () => {
         )
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(7))
         expect(sessions[0]?.sent[6]).toContain('visual Review phase')
-        if (dashboard) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
+        if (appScreen) expect(sessions[0]?.sent[6]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sentAttachments[6]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[6]).toContain(referencePath)
         sessions[0]?.emit(
@@ -5065,7 +5069,7 @@ describe('provider-neutral design briefing', () => {
         sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
         await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(8))
         expect(sessions[0]?.sent[7]).toContain('repair attempt 1 of 2')
-        if (dashboard) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
+        if (appScreen) expect(sessions[0]?.sent[7]).toContain('DASHBOARD INTERACTION AND MOTION')
         expect(sessions[0]?.sent[7]).toContain('<screenshots>')
         expect(sessions[0]?.sentAttachments[7]).toHaveLength(3)
         expect(sessions[0]?.sentAttachments[7]).toContain(referencePath)
@@ -5106,7 +5110,7 @@ describe('provider-neutral design briefing', () => {
               ({ event }) =>
                 event.type === 'item.completed' &&
                 event.item.text ===
-                  `${dashboard ? 'Dashboard' : 'Website'} built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.`,
+                  `${appScreen ? 'Dashboard' : 'Website'} built. Preview ready at http://127.0.0.1:5173/. Visual review passed after 1 repair attempt. Verify before publishing: confirm the representative studio address.`,
             ),
           ).toBe(true),
         )

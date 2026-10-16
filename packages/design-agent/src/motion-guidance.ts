@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { isDashboardBrief, isDashboardPageMode, type DesignBrief } from './brief.js'
 import type { PageBlueprint } from './page.js'
 
 export const REFERENCE_REVEAL_SOURCE = readFileSync(
@@ -29,7 +29,7 @@ export function designMotionGuidance(
   brief?: Pick<DesignBrief, 'pageType' | 'originalRequest'>,
   page?: PageBlueprint,
 ): string {
-  return (brief && isDashboardBrief(brief)) || page?.architecture?.mode === 'operate_monitor'
+  return (brief && isDashboardBrief(brief)) || isDashboardPageMode(page?.architecture?.mode)
     ? DASHBOARD_MOTION_GUIDANCE
     : DESIGN_MOTION_GUIDANCE
 }

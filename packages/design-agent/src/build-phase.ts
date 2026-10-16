@@ -1,6 +1,6 @@
 import path from 'node:path'
 import type { AssetManifest } from './assets.js'
-import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { isDashboardBrief, isDashboardPageMode, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { ONE_DESIGN_LANGUAGE } from './design-language.js'
@@ -40,7 +40,7 @@ export function designBuildPrompt(
   suppliedReferences: readonly string[] = [],
 ): string {
   const exactFiles = exactBuildFiles(brief)
-  const dashboard = isDashboardBrief(brief) || page.architecture?.mode === 'operate_monitor'
+  const dashboard = isDashboardBrief(brief) || isDashboardPageMode(page.architecture?.mode)
   const gradients = gradientSetForBrand(brand)
   const tokenScales = tokenScaleGuidance(brand.designTokens)
   const suppliedReferenceCatalog = suppliedReferences.map((filePath, index) => ({

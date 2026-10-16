@@ -669,6 +669,17 @@ manual.
 
 ## Dashboard design references (nightly)
 
+**Parked since 2026-10-16 (owner decision).** The dashboard asset set is not good enough to ship,
+so Design mode builds websites only until better assets arrive. One switch,
+`DASHBOARD_REFERENCES_ENABLED` in `packages/design-agent/src/dashboard-references.ts`, turns the
+whole surface off: no dashboard catalog is loaded from any library, no dashboard deck is sampled,
+`isDashboardBrief` and a saved `operate_monitor` page route nothing into dashboard prompts, and
+the Page protocol stops offering that mode and family. A dashboard or app-screen request becomes a
+normal website run built from website references, with the limitation recorded in the brief's
+assumptions; it never fails and never claims a dashboard library. The 400 dashboard WebPs, their
+catalog and provenance left the packaged library (about 42 MB) and stay in git history. The
+history below describes the parked path.
+
 Nightly dashboard support is integrated through
 [PR #1393](https://github.com/Leonxlnx/tastecode/pull/1393), following
 [PR #1392](https://github.com/Leonxlnx/tastecode/pull/1392) merged at `17aa22a3`.
@@ -793,6 +804,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
 | 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
 | 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
 | 2026-10-14 | Kept a provider's "unavailable" limits answer for 30 minutes through usage updates, so Claude's minute-long transcript scan no longer reruns after every turn.                 |

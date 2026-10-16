@@ -1,3 +1,4 @@
+export { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
 export {
   isDashboardBrief,
   parseDesignBrief,

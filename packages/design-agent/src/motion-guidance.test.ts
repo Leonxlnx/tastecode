@@ -7,6 +7,9 @@ import {
 } from './motion-guidance.js'
 import type { PageBlueprint } from './page.js'
 
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
+
 it('selects operational motion from the brief or saved page architecture', () => {
   const dashboard = designMotionGuidance({
     pageType: 'dashboard',

@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { DesignBrief } from './brief.js'
 import { designBrandPrompt, parseBrandPhaseOutput } from './brand-phase.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 const brief: DesignBrief = {
   originalRequest: 'Build a coffee landing page.',

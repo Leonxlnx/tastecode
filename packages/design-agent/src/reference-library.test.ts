@@ -5,8 +5,6 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { isDashboardBrief, type DesignBrief } from './brief.js'
 import { WEBSITE_LAYOUT_FAMILIES } from './page.js'
-import { referenceDirectionAttachments } from './reference-directions.js'
-import { readRasterMetadata } from './raster-metadata.js'
 import {
   loadReviewedReferences,
   parseReferenceDeck,
@@ -19,6 +17,9 @@ import {
   type ReferenceStyleProfile,
   type ReferenceStyleProfiles,
 } from './reference-style-profiles.js'
+
+// Dashboards are parked behind DASHBOARD_REFERENCES_ENABLED; these tests keep that path working.
+vi.mock('./dashboard-references.js', () => ({ DASHBOARD_REFERENCES_ENABLED: true }))
 
 const roots: string[] = []
 afterEach(() => {
@@ -71,9 +72,11 @@ describe('reviewed reference library', () => {
     expect(referenceLibraryRoot()).toBe(
       fileURLToPath(new URL('../references/library/', import.meta.url)),
     )
-    expect(references).toHaveLength(372)
+    // The parked dashboard set no longer ships; the bundle holds website sections only.
+    expect(references).toHaveLength(172)
+    expect(references.some(({ family }) => family === 'dashboard')).toBe(false)
     expect(references.filter(({ family }) => family === 'hero')).toHaveLength(24)
-    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(344)
+    expect(references.filter(({ mobileImagePath }) => mobileImagePath)).toHaveLength(144)
     const websiteDeck = selectReviewedReferences(brief, references)
     expect(websiteDeck).toHaveLength(14)
     expect(websiteDeck.some(({ family }) => family === 'dashboard')).toBe(false)
@@ -108,49 +111,6 @@ describe('reviewed reference library', () => {
     )
     expect(loadReviewedReferences().map(({ id }) => id)).toEqual(['studio-hero'])
   })
-
-  it('makes every bundled dashboard pair selectable and preserves its two verified raster attachments', () => {
-    vi.stubEnv('TASTECODE_REFERENCE_LIBRARY', undefined)
-    vi.spyOn(os, 'homedir').mockReturnValue(library())
-    const references = loadReviewedReferences()
-    const dashboards = references.filter(({ family }) => family === 'dashboard')
-    expect(dashboards).toHaveLength(200)
-    expect(new Set(dashboards.map(({ group }) => group)).size).toBe(200)
-    // No domain words, so every bundled screen stays equally reachable.
-    const appBrief = {
-      ...brief,
-      subject: 'Acme',
-      pageType: 'mobile app',
-      originalRequest: 'Build a mobile app',
-    }
-    const selectedGroups = new Set<string>()
-    const images = new Set<string>()
-    for (let index = 0; index < dashboards.length; index++) {
-      const deck = selectReviewedReferences(appBrief, references, (length) =>
-        length === dashboards.length ? index : 0,
-      )
-      expect(deck).toHaveLength(1)
-      expect(deck[0]?.family).toBe('dashboard')
-      selectedGroups.add(deck[0]!.group!)
-      expect(parseReferenceDeck(deck)).toEqual(deck)
-      const attachments = referenceDirectionAttachments(deck)
-      expect(attachments).toHaveLength(2)
-      for (const attachment of attachments) {
-        images.add(attachment)
-        expect(readRasterMetadata(attachment).format).toBe('webp')
-      }
-    }
-    expect(selectedGroups.size).toBe(200)
-    expect(images.size).toBe(400)
-    // A domain request narrows the same bundle to screens named for that domain.
-    const financeDeck = selectReviewedReferences(
-      { ...appBrief, originalRequest: 'Build a finance dashboard' },
-      references,
-      () => 0,
-    )
-    expect(financeDeck[0]?.tags?.join(' ')).toContain('financ')
-    // Loading 372 references and decoding 400 rasters exceeds the default limit on a busy machine.
-  }, 60_000)
 
   it('prefers dashboards named for the requested domain and stays uniform without a match', () => {
     const root = library()

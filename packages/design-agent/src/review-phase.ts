@@ -1,7 +1,7 @@
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import path from 'node:path'
 import type { AssetManifest } from './assets.js'
-import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { isDashboardBrief, isDashboardPageMode, type DesignBrief } from './brief.js'
 import type { BrandSystem } from './brand.js'
 import { DESIGN_CONTENT_GUIDANCE } from './content-guidance.js'
 import { DESIGN_CONSISTENCY_FINDING_IDS } from './design-consistency.js'
@@ -90,7 +90,7 @@ export function designReviewPrompt(
   expectedViewports?: readonly { width: number; height: number }[],
 ): string {
   validateReviewScreenshots(screenshots, expectedViewports)
-  const dashboard = isDashboardBrief(brief) || page.architecture?.mode === 'operate_monitor'
+  const dashboard = isDashboardBrief(brief) || isDashboardPageMode(page.architecture?.mode)
   const internalReferences = Array.isArray(page.sections)
     ? referenceDirectionsForPage(page, referenceDeck)
     : []
