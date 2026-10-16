@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises'
 import { commandVersion, invalidateCommandCache, locateCommand } from '@harness/proc/cli'
+import { expireWindowsPath } from '@harness/proc/desktop-path'
 
 /**
  * One answer to "is this CLI installed, and which version is it" for every
@@ -122,9 +123,10 @@ export const cliProbe = new CliProbe()
 
 /**
  * The machine may have changed: an install, update or sign-in terminal ended.
- * Look every command up again and read every version again.
+ * Read the PATH again, look every command up again and read every version again.
  */
 export function invalidateCliProbes(): void {
+  expireWindowsPath()
   invalidateCommandCache()
   cliProbe.invalidate()
 }

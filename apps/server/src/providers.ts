@@ -11,6 +11,7 @@ import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
+import { refreshWindowsPath } from '@harness/proc/desktop-path'
 import { cliProbe } from './cli-probe.js'
 
 /**
@@ -151,6 +152,8 @@ export type SystemProbe = {
   version(command: string): Promise<string | undefined>
   auth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']>
   acpAgents(): Promise<Array<{ name: string; installed: boolean }>>
+  /** Pick up PATH changes made since launch, such as an installer's new folder. */
+  refreshPath?(): Promise<void>
 }
 
 /**
@@ -164,6 +167,7 @@ const REAL_SYSTEM: SystemProbe = {
   isInstalled: (command) => cliProbe.installed(command),
   version: (command) => cliProbe.version(command, { waitMs: LISTING_VERSION_WAIT_MS }),
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
+  refreshPath: () => refreshWindowsPath(),
   auth: (provider) =>
     provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
 }
@@ -253,10 +257,13 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
   const current = providerDetections.get(system)
   if (current) return current
 
-  const detection = Promise.all([
-    Promise.all(PROBES.map((entry) => probe(entry, system))),
-    acpStatus(system),
-  ]).then(([direct, acp]) => [...direct, acp])
+  const scan = () =>
+    Promise.all([Promise.all(PROBES.map((entry) => probe(entry, system))), acpStatus(system)])
+  const pathRefresh = system.refreshPath?.()
+  const detection = (pathRefresh ? pathRefresh.then(scan) : scan()).then(([direct, acp]) => [
+    ...direct,
+    acp,
+  ])
   providerDetections.set(system, detection)
   const clear = () => {
     if (providerDetections.get(system) === detection) providerDetections.delete(system)
