@@ -1309,6 +1309,7 @@ const ProjectRow = memo(function ProjectRow(props: {
         {renaming ? (
           <InlineRename
             value={displayName(props.project)}
+            ariaLabel={`Rename ${displayName(props.project)}`}
             onCommit={(name, fromKeyboard) => {
               props.onRenameProject(props.project.path, name)
               finishRename(fromKeyboard)
@@ -1999,7 +2000,7 @@ function useRenameFocusReturn(
 function InlineRename(props: {
   value: string
   className?: string
-  ariaLabel?: string
+  ariaLabel: string
   onCommit: (value: string, fromKeyboard: boolean) => void
   onCancel: (fromKeyboard: boolean) => void
 }) {
