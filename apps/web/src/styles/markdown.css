@@ -353,53 +353,65 @@
   white-space: nowrap;
 }
 
+/* A table reads like a code block: a 32px row with a quiet "table" label on
+   the prose edge and the actions on the right, above a rounded card. The
+   label is the wrapper's own first line, so the live table (Markdown.tsx),
+   whose controls row stays empty while it streams, shows the same row and
+   nothing moves when it completes. */
+.md [data-streamdown='table-wrapper']::before {
+  content: 'table';
+  display: block;
+  height: 32px;
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  line-height: 32px;
+}
+
 /* Streamdown's table toolbar and menus rely on Tailwind utilities, which this
-   app does not load. Keep controls in one row and menus out of document flow. */
+   app does not load. The toolbar is lifted onto the label row like a code
+   block's actions: the same ghost buttons, centred, hanging 6.5px so the last
+   glyph ends on the card border, and fading in as a whole on hover or focus.
+   Menus stay out of document flow. */
 .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
+  position: absolute;
+  top: 2px;
+  right: -6.5px;
+  z-index: 1;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 3px;
-  min-height: 26px;
-  padding: 0 0 2px;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity var(--dur-hover) var(--ease-out);
 
   > div {
     position: relative;
   }
 
-  button {
-    position: relative;
+  > button,
+  > div > button {
     display: grid;
     place-items: center;
-    width: 24px;
-    height: 24px;
+    width: 28px;
+    height: 28px;
     flex: none;
-    background: var(--surface-2);
-    border: 1px solid var(--line);
+    padding: 0;
+    background: transparent;
+    border: 0;
     border-radius: var(--r-md);
     color: var(--text-3);
     cursor: pointer;
 
     &:hover,
     &:focus-visible {
-      color: var(--text);
+      background: var(--surface);
+      color: var(--text-2);
     }
 
     svg {
-      width: 13px;
-      height: 13px;
-    }
-  }
-
-  > button,
-  > div > button {
-    opacity: 0;
-    transition: opacity var(--dur-fast) var(--ease-out);
-
-    &::before {
-      content: '';
-      position: absolute;
-      inset: -2px;
+      width: 15px;
+      height: 15px;
+      stroke-width: 1.7;
     }
   }
 
@@ -418,12 +430,15 @@
     button {
       display: block;
       width: 100%;
-      height: auto;
       padding: 5px 8px;
       border: 0;
+      border-radius: var(--r-md);
       background: transparent;
       color: var(--text-2);
+      cursor: pointer;
+      font: inherit;
       font-size: var(--t-sm);
+      line-height: 1.35;
       text-align: left;
 
       &:hover,
@@ -435,16 +450,23 @@
   }
 }
 
-.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child {
-  > button,
-  > div > button {
+.md [data-streamdown='table-wrapper']:is(:hover, :focus-within) > div:first-child:not(:last-child) {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .md [data-streamdown='table-wrapper'] > div:first-child:not(:last-child) {
     opacity: 1;
   }
 }
 
+/* The card: the code block's border and radius. Overflow stays on this
+   scroller only, so a wide table scrolls inside the rounded edge. */
 .md [data-streamdown='table-wrapper'] > div:last-child {
   overflow-x: auto;
   margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 
   > table {
     display: table;
@@ -525,6 +547,20 @@
   border: 1px solid var(--line);
   padding: 5px 9px;
   text-align: left;
+}
+
+/* Inside the card only the inner lines are drawn; the card is the outer edge. */
+.md [data-streamdown='table-wrapper'] :is(th, td) {
+  border: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.md [data-streamdown='table-wrapper'] :is(th, td):not(:first-child) {
+  border-left: 1px solid var(--line);
+}
+
+.md [data-streamdown='table-wrapper'] table > :last-child > tr:last-child > :is(th, td) {
+  border-bottom: 0;
 }
 
 .md th {

@@ -19,9 +19,7 @@ describe('hit targets', () => {
     expect(markdownCss).toMatch(
       /\.md \[data-streamdown='code-block'\] button \{[^}]*width: 28px;[^}]*height: 28px;/s,
     )
-    expect(markdownCss).toMatch(
-      /> div > button \{[^}]*&::before \{[^}]*position: absolute;[^}]*inset: -2px;/s,
-    )
+    expect(markdownCss).toMatch(/> button,\s*> div > button \{[^}]*width: 28px;[^}]*height: 28px;/s)
   })
 
   it('gives the provider update dismiss button a 28px target', () => {
