@@ -44,6 +44,37 @@ export type ItemStatus = z.infer<typeof ItemStatusSchema>
 export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
 export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
 
+export const SubagentStateSchema = z.enum(['running', 'completed', 'failed', 'interrupted'])
+export type SubagentState = z.infer<typeof SubagentStateSchema>
+
+/**
+ * A helper agent the main agent started for part of the turn. Its own steps
+ * stay out of the transcript; adapters fold them into these counters and send
+ * the whole snapshot again on the spawning `tool_call` item when it changes.
+ */
+export const SubagentSchema = z.object({
+  /** The provider's identity for this run, stable across updates. */
+  id: z.string().min(1),
+  /** The agent type or nickname the provider reports, such as "Explore". */
+  name: z.string().min(1).optional(),
+  /** What the main agent asked it to do, in the main agent's words. */
+  description: z.string().optional(),
+  /** Can still be `running` after the spawning call completed, for a background agent. */
+  state: SubagentStateSchema,
+  /** The main agent continued without waiting for the result. */
+  background: z.boolean().optional(),
+  /** Tool calls the subagent has made so far. */
+  toolUses: z.number().int().nonnegative().optional(),
+  /** Tokens the subagent has used so far, as the provider counts them. */
+  tokens: z.number().int().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  /** Name of the newest tool the subagent called. */
+  lastTool: z.string().min(1).optional(),
+  /** The provider's short account of progress or of the result. */
+  summary: z.string().optional(),
+})
+export type Subagent = z.infer<typeof SubagentSchema>
+
 export const ItemSchema = z.object({
   /**
    * Stable identity for exactly one started -> deltas -> completed lifecycle.
@@ -70,6 +101,11 @@ export const ItemSchema = z.object({
   path: z.string().optional(),
   linesAdded: z.number().optional(),
   linesRemoved: z.number().optional(),
+  /**
+   * Present on a `tool_call` that started a subagent. Absent on engines that
+   * only report subagents as plain tool calls.
+   */
+  subagent: SubagentSchema.optional(),
   createdAt: z.number(),
 })
 export type Item = z.infer<typeof ItemSchema>
@@ -279,6 +315,12 @@ export const CapabilitiesSchema = z.object({
   images: z.boolean(),
   /** Absent when the engine decides its context on its own. */
   context: ContextControlSchema.optional(),
+  /**
+   * How the engine reports subagents on their spawning tool call. `summary`:
+   * identity and the final state only. `progress`: also live counters while
+   * one runs. Absent: subagents appear only as plain tool calls.
+   */
+  subagents: z.enum(['summary', 'progress']).optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 

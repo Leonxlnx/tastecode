@@ -47,6 +47,7 @@ const provider = {
       compactionOff: true,
       defaultCompactAt: 90,
     },
+    subagents: 'progress',
   },
   setup: {
     installUrl: 'https://example.com',

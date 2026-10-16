@@ -109,6 +109,9 @@ const isCapabilities = objectValidator<Capabilities>({
   autoReview: optional(isBoolean),
   images: isBoolean,
   context: optional(isContextControl),
+  subagents: optional(
+    enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
+  ),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
