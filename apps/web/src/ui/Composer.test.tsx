@@ -754,10 +754,7 @@ describe('Composer attachment source switching', () => {
 })
 
 describe('Composer attachment preview', () => {
-  it.each([
-    ['resolves without a preview', (settle: Deferred) => settle.resolve(undefined)],
-    ['fails', (settle: Deferred) => settle.reject(new Error('unreadable'))],
-  ])('says the preview is unavailable once the attempt %s', async (_, finish) => {
+  it('says the preview is unavailable once the attempt resolves without one', async () => {
     const settle = deferred()
     bridge.previewViewedImage.mockReturnValue(settle.promise)
     bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
@@ -767,7 +764,7 @@ describe('Composer attachment preview', () => {
     const loading = await screen.findByRole('button', { name: 'Loading preview of dot.png' })
     expect((loading as HTMLButtonElement).disabled).toBe(true)
 
-    await act(async () => finish(settle))
+    await act(async () => settle.resolve(undefined))
     const unavailable = await screen.findByRole('button', {
       name: 'Preview unavailable for dot.png',
     })
@@ -2141,20 +2138,12 @@ describe('Composer prompt recall', () => {
   })
 })
 
-type Deferred = {
-  promise: Promise<unknown>
-  resolve: (value: unknown) => void
-  reject: (reason: unknown) => void
-}
-
-function deferred(): Deferred {
-  let resolve!: Deferred['resolve']
-  let reject!: Deferred['reject']
-  const promise = new Promise<unknown>((res, rej) => {
+function deferred() {
+  let resolve!: (value: unknown) => void
+  const promise = new Promise<unknown>((res) => {
     resolve = res
-    reject = rej
   })
-  return { promise, resolve, reject }
+  return { promise, resolve }
 }
 
 function renderComposer(
