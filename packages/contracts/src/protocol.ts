@@ -5,6 +5,7 @@ import {
   ModelConnectionSchema,
 } from './connections.js'
 import {
+  AccountIdSchema,
   AccountSchema,
   ApprovalDecisionSchema,
   ApprovalModeSchema,
@@ -14,6 +15,8 @@ import {
   CustomHarnessVerificationSchema,
   DomainEventSchema,
   ModelSchema,
+  ProviderAccountHomeSchema,
+  ProviderAccountSchema,
   ProviderContextSettingsSchema,
   ProviderIdSchema,
   ProviderSetupSchema,
@@ -1243,6 +1246,60 @@ export const methods = {
     params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
     result: z.object({}),
   },
+  /**
+   * The accounts of every provider that declares `multipleAccounts`, or of
+   * one provider. Each such provider lists its `default` account first.
+   * `active` is the account a new chat starts on; absent means `default`.
+   * Older servers answer `unknown method`, which clients treat as default only.
+   */
+  'accounts.list': {
+    params: z.object({ provider: ProviderIdSchema.optional() }),
+    result: z.object({
+      accounts: z.array(ProviderAccountSchema),
+      active: z.partialRecord(ProviderIdSchema, AccountIdSchema),
+    }),
+  },
+  /**
+   * Register another account. A `managed` home is a new folder under the
+   * TasteCode data folder that starts with copies of the default account's
+   * non-secret settings and never its sign-in. Sign in afterwards with
+   * `auth.startLogin` and the new `accountId`.
+   */
+  'accounts.create': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      label: z.string().trim().min(1).max(80),
+      home: ProviderAccountHomeSchema,
+    }),
+    result: z.object({ account: ProviderAccountSchema }),
+  },
+  'accounts.rename': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      accountId: AccountIdSchema,
+      label: z.string().trim().min(1).max(80),
+    }),
+    result: z.object({ account: ProviderAccountSchema }),
+  },
+  /**
+   * Unregister an account; chats pinned to it can no longer resume. Its folder
+   * stays unless `deleteHome`, the user's separate, explicit request, which
+   * only a managed folder honours: that signs the account out and erases its
+   * local sessions. The default account cannot be removed.
+   */
+  'accounts.remove': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      accountId: AccountIdSchema,
+      deleteHome: z.boolean().optional(),
+    }),
+    result: z.object({}),
+  },
+  /** Choose the account new chats with this provider start on. */
+  'accounts.setActive': {
+    params: z.object({ provider: ProviderIdSchema, accountId: AccountIdSchema }),
+    result: z.object({}),
+  },
   'workspace.info': {
     params: z.object({ path: z.string() }),
     result: z.object({
@@ -1990,6 +2047,11 @@ export const channels = {
   'usage.changed': z.object({
     provider: ProviderIdSchema,
   }),
+  /**
+   * A provider's accounts, their labels or identities, or its active account
+   * changed. Clients call `accounts.list` again; older clients ignore it.
+   */
+  'accounts.changed': z.object({ provider: ProviderIdSchema }),
   /**
    * The server's newest limits for one provider, sent when a live session or
    * a background read changed them. Clients replace that provider's source

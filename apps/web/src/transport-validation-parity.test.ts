@@ -48,6 +48,7 @@ const provider = {
       defaultCompactAt: 90,
     },
     subagents: 'progress',
+    multipleAccounts: true,
   },
   setup: {
     installUrl: 'https://example.com',

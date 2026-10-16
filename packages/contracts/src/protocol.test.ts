@@ -2038,3 +2038,114 @@ describe('provider source shape contracts', () => {
     expect(list.safeParse({ providers: [{ ...status, source }] }).success).toBe(false)
   })
 })
+
+describe('provider account contracts', () => {
+  const work = {
+    id: 'work',
+    provider: 'codex',
+    label: 'Work',
+    home: 'C:\\Users\\me\\AppData\\Roaming\\TasteCode\\accounts\\codex\\work',
+    managed: true,
+    email: 'me@example.com',
+    plan: 'pro',
+    createdAt: 1_760_000_000_000,
+  }
+  const defaultAccount = { id: 'default', provider: 'codex', label: 'Personal', managed: false }
+
+  it('lists accounts with the default first and the active one per provider', () => {
+    const list = methods['accounts.list']
+    expect(list.params.parse({})).toEqual({})
+    expect(list.params.parse({ provider: 'claude-code' })).toEqual({ provider: 'claude-code' })
+    const result = { accounts: [defaultAccount, work], active: { codex: 'work' } }
+    expect(list.result.parse(result)).toEqual(result)
+    expect(list.result.parse({ accounts: [], active: {} })).toEqual({ accounts: [], active: {} })
+    expect(list.result.safeParse({ accounts: [], active: { nope: 'work' } }).success).toBe(false)
+    expect(list.result.safeParse({ accounts: [], active: { codex: 'Work' } }).success).toBe(false)
+  })
+
+  it('keeps the default account on the CLI folder and every other one on its own', () => {
+    const list = methods['accounts.list'].result
+    const parse = (account: unknown) => list.safeParse({ accounts: [account], active: {} }).success
+    expect(parse({ ...work, home: '/Users/me/.codex-second', managed: false })).toBe(true)
+    expect(parse({ ...work, home: '\\\\server\\share\\codex' })).toBe(true)
+    for (const bad of [
+      { ...defaultAccount, home: work.home },
+      { ...defaultAccount, managed: true },
+      { ...work, home: undefined },
+      { ...work, home: 'relative\\folder' },
+      { ...work, home: '~/.codex' },
+      { ...work, home: 'C:\\bad\0path' },
+      { ...work, id: 'Work' },
+      { ...work, id: '-work' },
+      { ...work, id: 'x'.repeat(65) },
+      { ...work, label: '' },
+      { ...work, label: '   ' },
+      { ...work, label: 'x'.repeat(81) },
+      { ...work, email: '' },
+      { ...work, managed: undefined },
+    ])
+      expect(parse(bad), JSON.stringify(bad)).toBe(false)
+  })
+
+  it('creates a managed home or uses an existing folder, never a path-free one', () => {
+    const create = methods['accounts.create']
+    const managed = { provider: 'claude-code', label: 'Work', home: { kind: 'managed' } }
+    expect(create.params.parse(managed)).toEqual(managed)
+    const existing = {
+      provider: 'codex',
+      label: ' Second ',
+      home: { kind: 'existing', path: 'E:\\Codex\\.codex-second' },
+    }
+    expect(create.params.parse(existing).label).toBe('Second')
+    for (const home of [
+      undefined,
+      { kind: 'existing' },
+      { kind: 'existing', path: 'codex' },
+      { kind: 'existing', path: '' },
+      { kind: 'copy' },
+    ])
+      expect(create.params.safeParse({ ...managed, home }).success).toBe(false)
+    expect(create.result.parse({ account: work })).toEqual({ account: work })
+  })
+
+  it('renames, removes and activates by provider and account id', () => {
+    expect(
+      methods['accounts.rename'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        label: 'Client',
+      }),
+    ).toEqual({ provider: 'codex', accountId: 'work', label: 'Client' })
+    const remove = methods['accounts.remove'].params
+    expect(remove.parse({ provider: 'codex', accountId: 'work' }).deleteHome).toBeUndefined()
+    expect(
+      remove.parse({ provider: 'codex', accountId: 'work', deleteHome: true }).deleteHome,
+    ).toBe(true)
+    expect(remove.safeParse({ provider: 'codex', accountId: '' }).success).toBe(false)
+    expect(
+      methods['accounts.setActive'].params.parse({ provider: 'codex', accountId: 'default' }),
+    ).toEqual({ provider: 'codex', accountId: 'default' })
+    expect(channels['accounts.changed'].parse({ provider: 'claude-code' })).toEqual({
+      provider: 'claude-code',
+    })
+    expect(channels['accounts.changed'].safeParse({}).success).toBe(false)
+  })
+
+  it('declares which engines can run several accounts', () => {
+    const capabilities = {
+      steer: true,
+      fork: true,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: true,
+      images: true,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).multipleAccounts).toBeUndefined()
+    expect(
+      CapabilitiesSchema.parse({ ...capabilities, multipleAccounts: true }).multipleAccounts,
+    ).toBe(true)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
+      false,
+    )
+  })
+})
