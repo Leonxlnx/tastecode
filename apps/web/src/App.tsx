@@ -234,6 +234,7 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
+const COMPOSER_DRAFTS_KEY = 'harness.composerDrafts.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
@@ -588,7 +589,16 @@ export function App() {
   const [onboardingMounted, setOnboardingMounted] = useState(onboardingWanted)
   if (onboardingWanted && !onboardingMounted) setOnboardingMounted(true)
   const [offline, setOffline] = useState(false)
-  const [threadController] = useState(() => new ThreadController(transport))
+  const [threadController] = useState(
+    () =>
+      new ThreadController(transport, {
+        read: () => readSetting(COMPOSER_DRAFTS_KEY),
+        write: (drafts) =>
+          drafts === undefined
+            ? removeSetting(COMPOSER_DRAFTS_KEY)
+            : writeSetting(COMPOSER_DRAFTS_KEY, drafts),
+      }),
+  )
   const [activeId, setActiveIdState] = useState<string | undefined>()
   const setActiveId = useCallback(
     (id: string | undefined) => {
@@ -1217,6 +1227,14 @@ export function App() {
   activeIdRef.current = activeId
   const activePathRef = useRef(activePath)
   activePathRef.current = activePath
+  useEffect(() => {
+    const flushDrafts = () => threadController.flushDrafts()
+    window.addEventListener('pagehide', flushDrafts)
+    return () => {
+      window.removeEventListener('pagehide', flushDrafts)
+      flushDrafts()
+    }
+  }, [threadController])
   const publishComposerDraft = useCallback((draft: ComposerDraft) => {
     setComposerDraft((current) => ({
       text: draft.text,
