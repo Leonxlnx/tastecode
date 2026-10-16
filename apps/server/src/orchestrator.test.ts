@@ -21,6 +21,7 @@ import type {
   DomainEvent,
   McpServer,
   McpServerConfig,
+  ProviderCommand,
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
@@ -53,6 +54,7 @@ import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import type { ProviderControlsOptions } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
@@ -165,6 +167,9 @@ class FakeSession implements AgentSession {
   lateSendError: Error | undefined
   emitUsageChanged: () => void = () => {}
   emitMcpChanged: () => void = () => {}
+  commands: ProviderCommand[] = []
+  commandReads: Array<string | undefined> = []
+  emitCommandsChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -250,6 +255,15 @@ class FakeSession implements AgentSession {
     this.emitMcpChanged = listener
   }
 
+  async listCommands(threadId?: string): Promise<ProviderCommand[]> {
+    this.commandReads.push(threadId)
+    return this.commands
+  }
+
+  onCommandsChanged(listener: () => void): void {
+    this.emitCommandsChanged = listener
+  }
+
   onDisconnected(listener: () => void): () => void {
     this.emitDisconnected = listener
     return () => {
@@ -277,6 +291,7 @@ function harness(
   store = new Store(':memory:'),
   maxIdleThreadRuntimes?: number,
   idleThreadRuntimeMs?: number,
+  providerServices?: ProviderControlsOptions['services'],
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -293,6 +308,7 @@ function harness(
   const queueStates: Array<{ threadId: string; itemIds: string[]; canSteer: boolean }> = []
   const usageChanges: ProviderId[] = []
   const mcpChanges: Array<{ provider: ProviderId; projectPath: string }> = []
+  const commandChanges: Array<{ provider: ProviderId; projectPath: string }> = []
   const queueNotificationError: QueueNotificationError = {}
   const lifecycleHook: LifecycleHook = {}
 
@@ -389,6 +405,7 @@ function harness(
     onLogin: () => {},
     onUsageChanged: (provider) => usageChanges.push(provider),
     onMcpChanged: (provider, projectPath) => mcpChanges.push({ provider, projectPath }),
+    onCommandsChanged: (provider, projectPath) => commandChanges.push({ provider, projectPath }),
     mcpConfig: new McpConfigStore(
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
     ),
@@ -400,6 +417,7 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
+    ...(providerServices ? { providerServices } : {}),
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
@@ -415,6 +433,7 @@ function harness(
     queueStates,
     usageChanges,
     mcpChanges,
+    commandChanges,
     queueNotificationError,
     lifecycleHook,
     orchestrator,
@@ -7210,6 +7229,132 @@ describe('MCP inventory', () => {
     expect(startedOptions[0]).toMatchObject({
       mcpServers: [{ id: 'test-tools', enabled: true }],
     })
+  })
+
+  it('passes a service inventory and its loading state through with project overrides', async () => {
+    const listMcpServers = vi.fn(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: [],
+      loading: true,
+    }))
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listMcpServers },
+    })
+    orchestrator.addMcpServer('claude-code', '/repo', {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: true, hideInherited: false },
+      servers: [{ id: 'docs', scope: 'project' }],
+      loading: true,
+    })
+    expect(listMcpServers).toHaveBeenCalledWith('/repo', expect.anything())
+  })
+})
+
+describe('provider commands', () => {
+  const command = (name: string): ProviderCommand => ({ name, description: `${name} command` })
+
+  it('answers from the chat, then the project, then the service, then nothing', async () => {
+    const listCommands = vi.fn(
+      async (
+        _projectPath: string,
+        read: { readActive?: (() => Promise<ProviderCommand[]>) | undefined },
+      ) =>
+        read.readActive
+          ? { commands: await read.readActive(), loading: false }
+          : { commands: [command('probe')], loading: true },
+    )
+    const { orchestrator, sessions } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listCommands },
+    })
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+      const first = await orchestrator.startThread('claude-code', '/repo')
+      const second = await orchestrator.startThread('claude-code', '/repo')
+      const elsewhere = await orchestrator.startThread('claude-code', '/other')
+      sessions[0]!.commands = [command('first')]
+      sessions[1]!.commands = [command('second')]
+      sessions[2]!.commands = [command('elsewhere')]
+
+      await expect(orchestrator.listCommands('claude-code', '/repo', second.id)).resolves.toEqual({
+        commands: [command('second')],
+        loading: false,
+      })
+      expect(sessions[1]!.commandReads).toEqual([second.id])
+      // Another project's chat or an unknown chat falls back to this project's runtime.
+      for (const threadId of [elsewhere.id, 'missing-thread', undefined]) {
+        await expect(orchestrator.listCommands('claude-code', '/repo', threadId)).resolves.toEqual({
+          commands: [command('first')],
+          loading: false,
+        })
+      }
+      expect(sessions[0]!.commandReads).toEqual([first.id, first.id, first.id])
+      expect(sessions[2]!.commandReads).toEqual([])
+      await expect(orchestrator.listCommands('claude-code', '/empty')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+
+      // Without a service only a running chat can answer.
+      await expect(orchestrator.listCommands('grok', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: false,
+      })
+      await orchestrator.startThread('grok', '/repo')
+      sessions[3]!.commands = [command('grok')]
+      await expect(orchestrator.listCommands('grok', '/repo')).resolves.toEqual({
+        commands: [command('grok')],
+        loading: false,
+      })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('relays command changes from live chats and from services', async () => {
+    let changed: (() => void) | undefined
+    const { orchestrator, sessions, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        grok: {
+          listCommands: async (_projectPath, read) => {
+            changed = read.changed
+            return { commands: [], loading: true }
+          },
+        },
+      },
+    )
+    try {
+      await orchestrator.startThread('claude-code', '/repo')
+      sessions[0]!.emitCommandsChanged()
+      await orchestrator.listCommands('grok', '/other')
+      changed!()
+      expect(commandChanges).toEqual([
+        { provider: 'claude-code', projectPath: '/repo' },
+        { provider: 'grok', projectPath: '/other' },
+      ])
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 })
 

@@ -21,6 +21,7 @@ export function mapProviderSession(
     'interrupt',
     'listMcpServers',
     'reloadMcpServers',
+    'listCommands',
   ])
   const session = new Proxy(result.session, {
     get(target, key) {

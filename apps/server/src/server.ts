@@ -168,6 +168,8 @@ export function startServer(
       push.broadcast('mcp.changed', { provider, projectPath }),
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
+    onCommandsChanged: (provider, projectPath) =>
+      push.broadcast('commands.changed', { provider, projectPath }),
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
@@ -588,6 +590,11 @@ export function startServer(
       case 'mcp.list': {
         const p = parseParams(method, params)
         return orchestrator.listMcpServers(p.provider, p.projectPath)
+      }
+
+      case 'commands.list': {
+        const p = parseParams(method, params)
+        return orchestrator.listCommands(p.provider, p.projectPath, p.threadId)
       }
 
       case 'mcp.add': {
