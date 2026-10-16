@@ -113,7 +113,6 @@ export function startServer(
     (updatesService ??= import('./provider-updates.js').then(
       ({ ProviderUpdateService }) => new ProviderUpdateService(),
     ))
-  void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
   const previewCapture = new PreviewCaptureCoordinator(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
@@ -263,42 +262,40 @@ export function startServer(
   ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
   const unavailableHistory = new Map<string, unknown>()
-  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
-    (results) =>
-      new ProviderHistory(
-        store,
-        historySources.flatMap(({ provider }, index) => {
-          const result = results[index]!
-          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
-          unavailableHistory.set(`external:${provider}:`, result.reason)
-          console.log(`[history] ${provider} history could not be loaded`)
-          return []
-        }),
-        {
-          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
-          canImport: () => historySessionStarts === 0,
-          changed: (threadIds) => {
-            if (!historyClosing) {
-              lifecycleScheduler.changed()
-              push.broadcast('providerHistory.changed', { threadIds })
-            }
+  const loadHistoryService = () =>
+    Promise.allSettled(historySources.map(({ load }) => load())).then(
+      (results) =>
+        new ProviderHistory(
+          store,
+          historySources.flatMap(({ provider }, index) => {
+            const result = results[index]!
+            if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+            unavailableHistory.set(`external:${provider}:`, result.reason)
+            console.log(`[history] ${provider} history could not be loaded`)
+            return []
+          }),
+          {
+            isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+            canImport: () => historySessionStarts === 0,
+            changed: (threadIds) => {
+              if (!historyClosing) {
+                lifecycleScheduler.changed()
+                push.broadcast('providerHistory.changed', { threadIds })
+              }
+            },
+            log: (message) => console.log(`[history] ${message}`),
           },
-          log: (message) => console.log(`[history] ${message}`),
-        },
-      ),
-  )
+        ),
+    )
+  /** Set once background work starts; see startBackgroundWork. */
+  let providerHistory: Promise<ProviderHistory> | undefined
+  let initialProviderHistory: Promise<ProviderHistory> | undefined
+  let providerHistoryTimer: ReturnType<typeof setInterval> | undefined
   const refreshProviderHistory = () => {
+    // Before background work starts, its first scan will pick the change up.
     if (!historyClosing)
-      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
+      void providerHistory?.then((history) => history.refresh()).catch(() => undefined)
   }
-  const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
-  providerHistoryTimer.unref()
-  // Opening a task during startup must not replay an obsolete imported transcript
-  // before adapter revisions and ownership have been refreshed.
-  const initialProviderHistory = providerHistory.then(async (history) => {
-    await history.refresh()
-    return history
-  })
   // That first scan reads every saved provider session and can take seconds
   // (about 10 s on a large ~/.claude). A native chat's transcript is already
   // in the store, so reading it does not wait: the import a read would have
@@ -306,30 +303,60 @@ export function startServer(
   // chat so open clients reload it.
   let initialProviderHistorySettled = false
   const importsAfterInitialScan = new Set<string>()
-  void initialProviderHistory
-    .then(async (history) => {
-      initialProviderHistorySettled = true
-      const changed: string[] = []
-      for (const threadId of importsAfterInitialScan) {
-        importsAfterInitialScan.delete(threadId)
-        try {
-          if (await history.load(threadId)) {
-            orchestrator.invalidateImportedHistory(threadId)
-            changed.push(threadId)
+
+  function startProviderHistory(): void {
+    const service = loadHistoryService()
+    providerHistory = service
+    // Opening a task during startup must not replay an obsolete imported transcript
+    // before adapter revisions and ownership have been refreshed.
+    const initial = service.then(async (history) => {
+      await history.refresh()
+      return history
+    })
+    initialProviderHistory = initial
+    providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
+    providerHistoryTimer.unref()
+    void initial
+      .then(async (history) => {
+        initialProviderHistorySettled = true
+        const changed: string[] = []
+        for (const threadId of importsAfterInitialScan) {
+          importsAfterInitialScan.delete(threadId)
+          try {
+            if (await history.load(threadId)) {
+              orchestrator.invalidateImportedHistory(threadId)
+              changed.push(threadId)
+            }
+          } catch {
+            // The chat's next read or turn retries the import.
           }
-        } catch {
-          // The chat's next read or turn retries the import.
         }
-      }
-      if (changed.length && !historyClosing) {
-        lifecycleScheduler.changed()
-        push.broadcast('providerHistory.changed', { threadIds: changed })
-      }
-    })
-    .catch(() => {
-      initialProviderHistorySettled = true
-      importsAfterInitialScan.clear()
-    })
+        if (changed.length && !historyClosing) {
+          lifecycleScheduler.changed()
+          push.broadcast('providerHistory.changed', { threadIds: changed })
+        }
+      })
+      .catch(() => {
+        initialProviderHistorySettled = true
+        importsAfterInitialScan.clear()
+      })
+  }
+
+  // Background startup work starts CLIs for their versions, reads the Windows
+  // PATH from the registry, scans every saved provider session and recovers
+  // worktrees.
+  let backgroundStarted = false
+  function startBackgroundWork(): void {
+    if (backgroundStarted || historyClosing) return
+    backgroundStarted = true
+    void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
+    startProviderHistory()
+    // A previous run killed mid-session leaves git believing in checkouts that
+    // are gone. Clearing that up at startup means the next session on that path
+    // starts instead of failing with a message about our own leftovers.
+    void orchestrator.recoverWorktrees().catch(() => undefined)
+  }
+  startBackgroundWork()
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -343,6 +370,7 @@ export function startServer(
   async function loadProviderHistory(threadId: string): Promise<void> {
     let history: ProviderHistory
     try {
+      if (!initialProviderHistory) throw new Error('Provider history is closed')
       history = await initialProviderHistory
     } catch (error) {
       // Only an imported chat depends on the history service for its transcript.
@@ -354,10 +382,6 @@ export function startServer(
     }
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
-  // A previous run killed mid-session leaves git believing in checkouts that
-  // are gone. Clearing that up at startup means the next session on that path
-  // starts instead of failing with a message about our own leftovers.
-  void orchestrator.recoverWorktrees().catch(() => undefined)
 
   wss.on('connection', (socket, request) => {
     // Rejected sockets remain live until their close handshake ends. Handle
@@ -1256,7 +1280,7 @@ export function startServer(
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
-      await providerHistory.then((history) => history.close()).catch(() => undefined)
+      await providerHistory?.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true
       await usageHistory?.then((service) => service.dispose()).catch(() => undefined)
