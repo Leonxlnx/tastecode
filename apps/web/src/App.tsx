@@ -1928,16 +1928,7 @@ export function App() {
           unvalidatedModelKeys: new Set(unknownKeys),
         })
         setModelErrors({ ...discoveryErrors })
-        if (result.discovered) {
-          writeSetting(
-            MODEL_CATALOG_KEY,
-            serializeModelCatalogCache(publishedCatalog, {
-              validatedSources: validatedSources.keys(),
-              // A later completion must not refresh an earlier source's age.
-              validatedAt: Math.min(...validatedSources.values()),
-            }),
-          )
-        }
+        if (result.discovered) writeModelCatalogCache(publishedCatalog, validatedSources)
         return result
       }
       // A profile without saved visibility gets its curated defaults below,
@@ -2183,15 +2174,7 @@ export function App() {
       const discoveries = [...direct, ...acp, ...api, ...customSources]
       const catalog = discoveries.flatMap((entry) => entry.models)
       const catalogReady = discoveries.length > 0 && discoveries.every((entry) => entry.discovered)
-      if (validatedSources.size > 0) {
-        writeSetting(
-          MODEL_CATALOG_KEY,
-          serializeModelCatalogCache(catalog, {
-            validatedSources: validatedSources.keys(),
-            validatedAt: Math.min(...validatedSources.values()),
-          }),
-        )
-      }
+      if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
       // A failed connections.list is otherwise invisible: the models it paid for
@@ -6594,4 +6577,23 @@ function removeSetting(key: string): void {
   } catch {
     // Nothing to lose.
   }
+}
+
+/**
+ * Save the catalog snapshot with each validated source's age. A catalog the
+ * reader would reject drops the key instead: an outgrown snapshot is never
+ * read again, and keeping the last one that fit would paint models a source
+ * no longer lists.
+ */
+function writeModelCatalogCache(
+  models: ModelChoice[],
+  validatedSources: ReadonlyMap<string, number>,
+): void {
+  const raw = serializeModelCatalogCache(models, {
+    validatedSources: validatedSources.keys(),
+    // A later completion must not refresh an earlier source's age.
+    validatedAt: Math.min(...validatedSources.values()),
+  })
+  if (raw === undefined) removeSetting(MODEL_CATALOG_KEY)
+  else writeSetting(MODEL_CATALOG_KEY, raw)
 }

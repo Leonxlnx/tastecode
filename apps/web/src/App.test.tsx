@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
-import { serializeModelCatalogCache } from './model-catalog-cache.js'
+import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
 import { choicesFor, MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
@@ -641,6 +641,15 @@ async function openProviderSettings() {
   fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
 }
 
+/** Test snapshots are small, so they always fit the cache. */
+function serializeModelCatalogCache(
+  ...args: Parameters<typeof serializeCatalogWithinLimits>
+): string {
+  const raw = serializeCatalogWithinLimits(...args)
+  if (raw === undefined) throw new Error('test catalog exceeds the cache limits')
+  return raw
+}
+
 function cachedCodexChoice(): ModelChoice {
   return {
     key: 'codex:gpt-6.1-sol',
@@ -1044,6 +1053,26 @@ describe('web client', () => {
       'codex',
     ])
     expect(cache.models.map((choice: { key: string }) => choice.key)).toContain(stale.key)
+  })
+
+  it('drops the model catalog cache once the catalog outgrows it', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const models = Array.from({ length: 2_001 }, (_, index) => ({
+      ...cachedCodexChoice().model,
+      id: `listed-${index}`,
+      displayName: `Listed ${index}`,
+      isDefault: index === 0,
+    }))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list' ? Promise.resolve({ models }) : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull())
+    expect(composerProps().modelsLoaded).toBe(true)
   })
 
   it('retains a legacy project list through an unacknowledged outage', async () => {
