@@ -42,7 +42,7 @@ import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
 import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
-import { StreamQuiet } from './stream-quiet.js'
+import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
@@ -160,7 +160,7 @@ export function startServer(
       return service
     }))
   const streamQuiet = new StreamQuiet()
-  cliProbe.waitBeforeReads(() => streamQuiet.whenQuiet())
+  cliProbe.waitBeforeReads(() => streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
       if (event.type === 'item.delta') streamQuiet.noteDelta()
@@ -302,7 +302,7 @@ export function startServer(
   const historySchedule = new HistoryRefreshSchedule(async () => {
     if (historyClosing || !providerHistory) return false
     // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
-    await streamQuiet.whenQuiet()
+    await streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS)
     return historyClosing ? false : (await providerHistory).refresh()
   })
   const refreshProviderHistory = () => {
