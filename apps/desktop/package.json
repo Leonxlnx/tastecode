@@ -108,6 +108,13 @@
       {
         "from": "../../release/THIRD_PARTY_LICENSES.txt",
         "to": "THIRD_PARTY_LICENSES.txt"
+      },
+      {
+        "from": "dist/feedback",
+        "to": "feedback",
+        "filter": [
+          "feedback.env"
+        ]
       }
     ],
     "directories": {

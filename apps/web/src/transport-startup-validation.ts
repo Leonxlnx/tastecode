@@ -113,6 +113,7 @@ const isCapabilities = objectValidator<Capabilities>({
   subagents: optional(
     enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
   ),
+  multipleAccounts: optional(isBoolean),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
@@ -151,6 +152,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   provider: isProviderId,
   agent: optional(isString),
   connectionId: optional(isString),
+  accountId: optional(isNonEmptyString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),
@@ -178,6 +180,9 @@ export function parseProjectsListResult(value: unknown): ResultOf<'projects.list
 }
 export function parseProvidersListResult(value: unknown): ResultOf<'providers.list'> | undefined {
   return isProvidersList(value) ? value : undefined
+}
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0
 }
 function isUrl(value: unknown): boolean {
   if (typeof value !== 'string') return false
