@@ -123,6 +123,13 @@ function sourceStatus(
       : { label: 'Unavailable', detail: `Plan limits couldn’t be loaded. ${state.message}` }
   }
   if (!source) return { label: 'Checking…' }
+  // The server kept these values through a failed refresh and retries on its own.
+  if (source.status === 'ready' && source.stale && hasValues) {
+    return {
+      label: 'Last known',
+      detail: ['Couldn’t refresh plan limits.', source.refreshError].filter(Boolean).join(' '),
+    }
+  }
   if (!hasValues) return { label: 'None reported', detail: 'No plan limits reported.' }
   return undefined
 }
