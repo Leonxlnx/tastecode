@@ -160,8 +160,9 @@ export async function claudeLimitSource(
     )
   } catch (error) {
     // Only stable messages leave the adapter; the CLI's own text can carry
-    // account details.
-    throw new Error(error instanceof TimeoutError ? TIMED_OUT : 'Claude usage request failed.')
+    // account details. A missed deadline keeps the TimeoutError name, so the
+    // caller can stop repeating a read that never finishes.
+    throw error instanceof TimeoutError ? error : new Error('Claude usage request failed.')
   } finally {
     abortController.abort()
     query.close()
@@ -169,7 +170,9 @@ export async function claudeLimitSource(
   return mapClaudeUsage(usage)
 }
 
-class TimeoutError extends Error {}
+class TimeoutError extends Error {
+  override readonly name = 'TimeoutError'
+}
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined

@@ -152,7 +152,11 @@ describe('Claude Code subscription limits', () => {
         .mockRejectedValue(new Error('private detail')),
     }))
 
-    await expect(claudeLimitSource({ createQuery })).rejects.toThrow('Claude usage request failed.')
+    // A failure is not a missed deadline; only deadlines count toward giving up.
+    await expect(claudeLimitSource({ createQuery })).rejects.toMatchObject({
+      name: 'Error',
+      message: 'Claude usage request failed.',
+    })
     expect(close).toHaveBeenCalledOnce()
   })
 
@@ -200,7 +204,7 @@ describe('Claude Code subscription limits', () => {
       read.finally(() => {
         settled = true
       }),
-    ).rejects.toThrow('Claude usage request timed out.')
+    ).rejects.toMatchObject({ name: 'TimeoutError', message: 'Claude usage request timed out.' })
     await vi.advanceTimersByTimeAsync(19_999)
     expect(settled).toBe(false)
     // An older CLI ignores the skip option and scans; it must not run for minutes.
