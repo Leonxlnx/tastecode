@@ -1,3 +1,4 @@
+import { JsonRpcError } from '@harness/proc'
 import { z } from 'zod'
 import { requestGrokExtension } from './acp.js'
 import { grokSignIn, type GrokSignIn } from './adapter.js'
@@ -186,8 +187,20 @@ export function mapGrokBilling(body: unknown): ProviderLimit[] {
   ]
 }
 
+const BILLING_NOT_REPORTED = 'Grok Build did not report its credits.'
+
 async function readGrokBilling(): Promise<GrokBilling> {
-  const body = await requestGrokExtension('_x.ai/billing', 'grok billing')
+  let body: unknown
+  try {
+    body = await requestGrokExtension('_x.ai/billing', 'grok billing')
+  } catch (error) {
+    // Grok Build answers with a JSON-RPC error when its billing service fails.
+    // 1.0.60 sends -32603 "Internal error" with the data "Billing service
+    // error: Failed to serialize billing response". That text is the CLI's own
+    // and may change or carry account details, so a stable message leaves.
+    if (error instanceof JsonRpcError) throw new Error(BILLING_NOT_REPORTED)
+    throw error
+  }
   const parsed = GrokBillingSchema.safeParse(body)
   if (!parsed.success) throw new Error('Grok billing response was invalid.')
   return parsed.data

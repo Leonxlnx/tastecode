@@ -81,6 +81,8 @@ describe('provider limit sources', () => {
       provider,
       status: 'ready',
       limits: [{ label: 'Weekly', usedPercent: 25 }],
+      checkedAt: expect.any(Number),
+      origin: 'read',
     })
     if (provider === 'codex') expect(sources.disposed).toEqual([1])
     await instance.disposeAll()
