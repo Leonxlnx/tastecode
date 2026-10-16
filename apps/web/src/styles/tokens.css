@@ -155,7 +155,9 @@
     'JetBrainsMono Nerd Font Mono', 'JetBrains Mono Variable', 'JetBrains Mono',
     'CaskaydiaCove Nerd Font Mono', 'Cascadia Mono', 'Cascadia Code', 'Geist Mono Variable',
     'Symbols Nerd Font Mono', ui-monospace, monospace;
-  --terminal-workspace-bg: #0d0d0d;
+  /* The workspace terminal is part of the panel, so it takes the app's own
+     background and follows every backdrop preset or custom colour. */
+  --terminal-workspace-bg: var(--bg);
 
   --t-xs: 11.5px;
   --t-sm: 12.5px;
@@ -302,7 +304,9 @@
   --on-danger: #fefefe;
 
   --bg: #fdfdfd;
-  --terminal-workspace-bg: #eff1f5;
+  /* Light keeps the terminal a hair inset from the page, on the app's own
+     neutral surface rather than a separate blue-grey slab. */
+  --terminal-workspace-bg: var(--surface);
   --bg-rail: #fcfcfc;
   /* Keep the glass tint aligned with the flat rail surface. */
   --bg-rail-tint: #fcfcfc;
@@ -652,5 +656,4 @@ html.is-macos-font-smoothing {
 
 :root[data-theme='light'][data-backdrop='custom'] {
   --backdrop-shade: #000;
-  --terminal-workspace-bg: var(--surface);
 }
