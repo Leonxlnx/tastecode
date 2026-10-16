@@ -13,6 +13,11 @@ import {
   type RawCursorModel,
 } from './models.js'
 
+/**
+ * The cursor-agent build line this adapter's frames were captured from. It
+ * documents the wire and gates nothing: the CLI updates itself every month,
+ * and a frame that no longer matches fails its turn with ProtocolFrameError.
+ */
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
 
 export const CURSOR_CAPABILITIES: Capabilities = {

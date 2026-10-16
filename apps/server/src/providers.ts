@@ -1,5 +1,5 @@
 import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { CURSOR_CAPABILITIES } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
@@ -102,7 +102,9 @@ const PROBES: Probe[] = [
     displayName: 'Cursor',
     command: 'cursor-agent',
     capabilities: CURSOR_CAPABILITIES,
-    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    // No version gate: cursor-agent updates itself to a new date-stamped build
+    // every month, and a gate blocked each working one. A changed wire still
+    // fails the turn, through the stream's ProtocolFrameError.
     setup: {
       installUrl: 'https://docs.cursor.com/en/cli/installation',
       login: 'app',

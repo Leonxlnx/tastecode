@@ -134,14 +134,17 @@ describe('detectProviders', () => {
     expect(find(providers, 'opencode').setup?.installUrl).toBe('https://opencode.ai/en/docs')
   })
 
-  it('reports when the installed Cursor wire version is unsupported', async () => {
-    const providers = await detectProviders(
-      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
-    )
+  it('keeps Cursor usable after it updates itself to a newer build', async () => {
+    for (const version of ['2026.10.02-abc1234', '2025.12.1']) {
+      const providers = await detectProviders(
+        system({ isInstalled: async () => true, version: async () => version }),
+      )
 
-    const cursor = find(providers, 'cursor')
-    expect(cursor.installed).toBe(true)
-    expect(cursor.problem).toContain('supports 2026.07')
+      const cursor = find(providers, 'cursor')
+      expect(cursor.installed).toBe(true)
+      expect(cursor.version).toBe(version)
+      expect(cursor.problem).toBeUndefined()
+    }
   })
 
   it('omits the version when the binary would not say', async () => {
