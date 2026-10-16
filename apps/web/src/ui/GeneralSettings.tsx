@@ -71,10 +71,11 @@ export function GeneralSettings(props: {
   const mode = props.sidebarSettings.mode
   const days = draftDays === undefined ? props.sidebarSettings.autoSettleDays : draftDays
   const inbox = mode === 'inbox'
+  const titleId = useId()
 
   return (
-    <section className="settings__panel" aria-labelledby="settings-general">
-      <h1 className="settings__title" id="settings-general">
+    <section className="settings__panel" aria-labelledby={titleId}>
+      <h1 className="settings__title" id={titleId}>
         General
       </h1>
       <div className="general">
