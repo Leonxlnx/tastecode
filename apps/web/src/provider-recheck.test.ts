@@ -35,12 +35,22 @@ describe('provider scan comparison', () => {
     )
   })
 
+  it('ignores a sign-in check that did not answer this time', () => {
+    const signedIn = cursor(true, { auth: 'authenticated' })
+    expect(providerScanChanged([signedIn], [cursor(true)])).toBe(false)
+    expect(providerScanChanged([cursor(true)], [signedIn])).toBe(false)
+  })
+
   it('reports a CLI that appeared, a sign-in and a problem', () => {
     expect(providerScanChanged([cursor(false)], [cursor(true)])).toBe(true)
-    expect(providerScanChanged([cursor(true)], [cursor(true, { auth: 'authenticated' })])).toBe(
-      true,
-    )
+    expect(
+      providerScanChanged(
+        [cursor(true, { auth: 'unauthenticated' })],
+        [cursor(true, { auth: 'authenticated' })],
+      ),
+    ).toBe(true)
     expect(providerScanChanged([cursor(true)], [cursor(true, { problem: 'Broken' })])).toBe(true)
+    expect(providerScanChanged([cursor(true)], [])).toBe(true)
   })
 })
 
