@@ -233,6 +233,7 @@ const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
+const PENDING_CHAT_DELETES_KEY = 'harness.pendingChatDeletes.v1'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
 const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
 const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
@@ -816,12 +817,25 @@ export function App() {
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
   const pendingDeletionChecks = useRef(new Map<string, object>())
   const {
-    hiddenIds: archivingIds,
+    hiddenIds: queuedArchiveIds,
     pendingIds: pendingArchives,
     queue: enqueueArchive,
     undo: undoQueuedArchives,
     cancel: cancelQueuedArchive,
   } = useDeferredArchiveQueue(10_000)
+  const [startupDeletes, setStartupDeletes] = useState(readPendingChatDeletes)
+  const archivingIds = useMemo(
+    () => [...queuedArchiveIds, ...startupDeletes.map((pending) => pending.threadId)],
+    [queuedArchiveIds, startupDeletes],
+  )
+  const cancelArchive = useCallback(
+    (id: string) => {
+      if (!cancelQueuedArchive(id)) return false
+      forgetPendingChatDeletes([id])
+      return true
+    },
+    [cancelQueuedArchive],
+  )
   const archiveProjects = useMemo(() => {
     if (archivingIds.length === 0) return projects
     const hidden = new Set(archivingIds)
@@ -3224,7 +3238,7 @@ export function App() {
       const restoreDraftAfterFailedStart = () =>
         restoreRejectedDraft(NEW_CHAT_DRAFT_KEY, { text, attachments })
       if (activeId) pendingDeletionChecks.current.delete(activeId)
-      if (activeId && !cancelQueuedArchive(activeId)) {
+      if (activeId && !cancelArchive(activeId)) {
         restoreDraft()
         reportError('This chat is being deleted.')
         return
@@ -3624,7 +3638,7 @@ export function App() {
       restoreRejectedDraft,
       sendAvailability,
       publishComposerDraft,
-      cancelQueuedArchive,
+      cancelArchive,
     ],
   )
 
@@ -3795,7 +3809,7 @@ export function App() {
     async (id: string) => {
       setSurface('chat')
       pendingDeletionChecks.current.delete(id)
-      if (!cancelQueuedArchive(id)) {
+      if (!cancelArchive(id)) {
         reportError('This chat is being deleted.')
         return
       }
@@ -3880,7 +3894,7 @@ export function App() {
       commitModelChoice,
       readOpenedHistory,
       transport,
-      cancelQueuedArchive,
+      cancelArchive,
     ],
   )
 
@@ -4129,30 +4143,63 @@ export function App() {
     [transport, clearWorkspaceThread, refreshWorkspaceAfterCompletion],
   )
 
-  const queueArchive = useCallback(
-    (id: string, commit: () => Promise<void>) => {
-      setArchiveToastDismissed(false)
-      enqueueArchive(id, async () => {
-        try {
-          await commit()
-        } catch (error) {
-          reportError(error instanceof Error ? error.message : String(error))
-          await refreshProjects().catch(() => undefined)
+  const commitChatDelete = useCallback(
+    async ({ threadId, checkout }: PendingChatDelete) => {
+      try {
+        if (checkout !== 'keep') {
+          await transport.request('thread.close', { threadId })
+          await transport.request(
+            'thread.discardWorktree',
+            checkout === 'force-discard' ? { threadId, force: true } : { threadId },
+          )
         }
-      })
+        await deleteSession(threadId)
+      } catch (error) {
+        reportError(error instanceof Error ? error.message : String(error))
+        await refreshProjects().catch(() => undefined)
+      } finally {
+        forgetPendingChatDeletes([threadId])
+      }
+    },
+    [transport, deleteSession, reportError, refreshProjects],
+  )
+
+  const queueArchive = useCallback(
+    (pending: PendingChatDelete) => {
+      const id = pending.threadId
+      setArchiveToastDismissed(false)
+      savePendingChatDelete(pending)
+      enqueueArchive(id, () => commitChatDelete(pending))
       if (activeIdRef.current === id) {
         activeIdRef.current = undefined
         setActiveId(undefined)
         setThread(emptyThread)
       }
     },
-    [enqueueArchive, refreshProjects],
+    [enqueueArchive, commitChatDelete],
   )
 
   const undoArchive = useCallback(() => {
-    const id = undoQueuedArchives()
+    const ids = undoQueuedArchives()
+    forgetPendingChatDeletes(ids)
+    const id = ids.at(-1)
     if (id) void selectSession(id)
   }, [selectSession, undoQueuedArchives])
+
+  // Deletes an earlier run saved but never sent. They were confirmed then,
+  // so they run now without another undo window or checkout confirmation.
+  const startupDeletesRun = useRef(false)
+  useEffect(() => {
+    if (projectsStatus !== 'ready' || startupDeletesRun.current) return
+    startupDeletesRun.current = true
+    void (async () => {
+      for (const pending of startupDeletes) {
+        if (findSession(projectsRef.current, pending.threadId)) await commitChatDelete(pending)
+        else forgetPendingChatDeletes([pending.threadId])
+        setStartupDeletes((current) => current.filter((entry) => entry !== pending))
+      }
+    })()
+  }, [projectsStatus, startupDeletes, commitChatDelete])
 
   const archiveSession = useCallback(
     async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
@@ -4174,13 +4221,7 @@ export function App() {
           )
           return 'confirming'
         }
-        queueArchive(id, async () => {
-          if (work.isolated) {
-            await transport.request('thread.close', { threadId: id })
-            await transport.request('thread.discardWorktree', { threadId: id })
-          }
-          await deleteSession(id)
-        })
+        queueArchive({ threadId: id, checkout: work.isolated ? 'discard' : 'keep' })
         return 'queued'
       } catch (error) {
         reportError(error instanceof Error ? error.message : String(error))
@@ -4191,7 +4232,7 @@ export function App() {
           pendingDeletionChecks.current.delete(id)
       }
     },
-    [transport, deleteSession, refreshProjects, queueArchive],
+    [transport, refreshProjects, queueArchive],
   )
 
   const discardAndArchive = useCallback(async () => {
@@ -4199,11 +4240,7 @@ export function App() {
     setCheckoutDeleteBusy(true)
     try {
       const id = checkoutDelete.id
-      queueArchive(id, async () => {
-        await transport.request('thread.close', { threadId: id })
-        await transport.request('thread.discardWorktree', { threadId: id, force: true })
-        await deleteSession(id)
-      })
+      queueArchive({ threadId: id, checkout: 'force-discard' })
       dropCheckoutDelete(id)
     } catch (error) {
       reportError(error instanceof Error ? error.message : String(error))
@@ -4211,7 +4248,7 @@ export function App() {
     } finally {
       setCheckoutDeleteBusy(false)
     }
-  }, [transport, checkoutDelete, deleteSession, dropCheckoutDelete, refreshProjects, queueArchive])
+  }, [checkoutDelete, dropCheckoutDelete, refreshProjects, queueArchive])
 
   const startNewChat = useCallback(() => {
     const currentProjects = projectsRef.current
@@ -5991,6 +6028,46 @@ function saveStartupProjectName(project: Project | undefined): void {
   if ((readSetting(STARTUP_PROJECT_NAME_KEY) ?? undefined) === name) return
   if (name) writeSetting(STARTUP_PROJECT_NAME_KEY, name)
   else removeSetting(STARTUP_PROJECT_NAME_KEY)
+}
+
+/**
+ * A chat delete inside its undo window. The renderer sends it only when the
+ * window ends, so it is saved for the next start to finish after a quit or a
+ * crash. `force-discard` drops uncommitted work the user already confirmed.
+ */
+type PendingChatDelete = {
+  threadId: string
+  checkout: 'keep' | 'discard' | 'force-discard'
+}
+
+function readPendingChatDeletes(): PendingChatDelete[] {
+  try {
+    const stored: unknown = JSON.parse(readSetting(PENDING_CHAT_DELETES_KEY) ?? '[]')
+    if (!Array.isArray(stored)) return []
+    return stored.filter(
+      (entry): entry is PendingChatDelete =>
+        isRecord(entry) &&
+        typeof entry['threadId'] === 'string' &&
+        (entry['checkout'] === 'keep' ||
+          entry['checkout'] === 'discard' ||
+          entry['checkout'] === 'force-discard'),
+    )
+  } catch {
+    return []
+  }
+}
+
+function savePendingChatDelete(pending: PendingChatDelete): void {
+  const others = readPendingChatDeletes().filter((entry) => entry.threadId !== pending.threadId)
+  writeSetting(PENDING_CHAT_DELETES_KEY, JSON.stringify([...others, pending]))
+}
+
+function forgetPendingChatDeletes(threadIds: readonly string[]): void {
+  const stored = readPendingChatDeletes()
+  const remaining = stored.filter((entry) => !threadIds.includes(entry.threadId))
+  if (remaining.length === stored.length) return
+  if (remaining.length) writeSetting(PENDING_CHAT_DELETES_KEY, JSON.stringify(remaining))
+  else removeSetting(PENDING_CHAT_DELETES_KEY)
 }
 
 type SourceSelection = {
