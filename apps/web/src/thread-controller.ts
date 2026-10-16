@@ -32,6 +32,8 @@ import {
   readComposerDraft,
   upsertComposerDraft,
   moveComposerDraft,
+  parseComposerDrafts,
+  serializeComposerDrafts,
   type ComposerDraft,
 } from './composer-drafts.js'
 
@@ -48,6 +50,8 @@ export type PendingSubmission = RecoverableDraft & {
 type BufferedEvent = { seq: number | undefined; event: DomainEvent }
 type QueueState = { items: QueuedTurn[]; canSteer: boolean }
 type HistoryBase = { state: ThreadState; sequence: number | undefined }
+export type DraftStorage = { read(): string | null; write(drafts: string | undefined): void }
+const DRAFT_SAVE_DELAY_MS = 300
 const BACKGROUND_COMPACTION_CHECK_CHARACTERS = 64 * 1024
 /** Whole turns in the first page of a cold open; older turns load on demand. */
 export const NEWEST_HISTORY_TURNS = 10
@@ -61,7 +65,8 @@ export class ThreadController {
   #states = new Map<string, ThreadState>()
   #sequences = new Map<string, number>()
   #submissions = new Map<string, Map<string, PendingSubmission>>()
-  #drafts = new Map<string, ComposerDraft>()
+  #drafts: Map<string, ComposerDraft>
+  #draftSave: ReturnType<typeof setTimeout> | undefined
   #histories = new Map<string, Set<BufferedEvent[]>>()
   #historyOwners = new Map<string, BufferedEvent[]>()
   // Live cursors can cross a gap. Keep the last safe state and cursor together
@@ -81,7 +86,12 @@ export class ThreadController {
   #partialThreadIds = { has: (id: string) => !this.#sequences.has(id) }
   draftOwner = NEW_CHAT_DRAFT_KEY
 
-  constructor(private transport: Transport) {}
+  constructor(
+    private transport: Transport,
+    private draftStorage?: DraftStorage,
+  ) {
+    this.#drafts = parseComposerDrafts(draftStorage?.read() ?? null)
+  }
 
   activate(id: string | undefined): void {
     this.#activeId = id
@@ -161,13 +171,26 @@ export class ThreadController {
     return readComposerDraft(this.#drafts, key)
   }
   editDraft(key: string, patch: Partial<ComposerDraft>): ComposerDraft {
-    return upsertComposerDraft(this.#drafts, key, patch)
+    const draft = upsertComposerDraft(this.#drafts, key, patch)
+    this.#saveDraftsSoon()
+    return draft
   }
   forgetDraft(key: string): void {
-    this.#drafts.delete(key)
+    if (this.#drafts.delete(key)) this.#saveDraftsSoon()
   }
   moveDraft(from: string, to: string): void {
     moveComposerDraft(this.#drafts, from, to)
+    this.#saveDraftsSoon()
+  }
+  flushDrafts(): void {
+    if (this.#draftSave === undefined) return
+    clearTimeout(this.#draftSave)
+    this.#draftSave = undefined
+    this.draftStorage?.write(serializeComposerDrafts(this.#drafts))
+  }
+  #saveDraftsSoon(): void {
+    if (!this.draftStorage) return
+    this.#draftSave ??= setTimeout(() => this.flushDrafts(), DRAFT_SAVE_DELAY_MS)
   }
   recoverDraft(id: string, rejected: RecoverableDraft): ComposerDraft {
     const current = this.#drafts.get(id)
