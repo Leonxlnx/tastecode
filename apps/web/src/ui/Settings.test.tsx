@@ -255,10 +255,11 @@ describe('settings panel names', () => {
     ['appearance', 'Appearance'],
     ['keybinds', 'Keybinds'],
     ['models', 'Models'],
-    ['skills', 'Agent Skills'],
+    ['skills', 'Skills'],
     ['data', 'Data & privacy'],
     ['debug', 'Debug'],
     ['about', 'About'],
+    ['mcp', 'MCP servers'],
   ] as const)('labels the %s panel by its heading', (section, title) => {
     renderSettings({
       initialSection: section,
@@ -268,6 +269,10 @@ describe('settings panel names', () => {
 
     const heading = screen.getByRole('heading', { level: 1, name: title })
     expect(screen.getByRole('region', { name: title }).contains(heading)).toBe(true)
+    // The category that opened the panel carries the same name.
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    const current = within(categories).getByRole('button', { current: 'page' })
+    expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
   })
 })
 describe('about status grammar', () => {
@@ -441,7 +446,7 @@ describe('settings reset confirmation', () => {
 
     expect(
       screen.getByText(
-        'Reset only clears this renderer\u2019s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials.',
+        'Clears appearance, layout and model choices. Projects, workspaces, files, chat history and credentials stay.',
       ),
     ).toBeTruthy()
     const reset = screen.getByRole('button', { name: 'Reset app preferences' })
@@ -662,11 +667,15 @@ describe('settings loading values', () => {
     const loading = screen.getByText('Loading project count…')
     expect(loading.className).toBe('visually-hidden')
     expect(loading.closest('[aria-busy="true"]')?.querySelector('.skeleton')).toBeTruthy()
-    expect(screen.queryByText('0 projects on this machine')).toBeNull()
+    expect(screen.queryByText(/projects, workspaces/i)).toBeNull()
     expect(screen.getByRole('button', { name: 'Reset app preferences' })).toBeTruthy()
     rerenderSettings({ projectsLoading: false, projectCount: 3 })
     expect(screen.queryByText('Loading project count…')).toBeNull()
-    expect(screen.getByText('3 projects on this machine')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Clears appearance, layout and model choices. 3 projects, workspaces, files, chat history and credentials stay.',
+      ),
+    ).toBeTruthy()
     await act(async () => {})
   })
 

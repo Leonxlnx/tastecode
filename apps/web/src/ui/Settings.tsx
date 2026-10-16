@@ -428,7 +428,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'mcp'}
             icon={<Network size={15} aria-hidden />}
-            label="MCP"
+            label="MCP servers"
             onClick={() => setSection('mcp')}
           />
           <SettingsNavItem
@@ -1535,11 +1535,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
     <section className="background-model-settings" aria-label="Background work">
       <header>
         <h2>Background work</h2>
-        <p>
-          Used for session titles, commit-message drafts, and other short writing. Automatic uses
-          Luna at low on a Codex subscription, Grok 4.6 at low when Grok is connected, or the newest
-          cost-oriented model at its lowest effort elsewhere.
-        </p>
+        <p>Used for session titles, commit-message drafts, and other short writing.</p>
       </header>
       <div className="settings__group">
         <SettingsRow
@@ -2066,7 +2062,11 @@ function DataSettings(props: {
   const [confirming, setConfirming] = useState(false)
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
-  const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
+  // The row names what the reset clears; the note names what it leaves alone.
+  const kept =
+    props.projectCount === 0
+      ? 'Projects, workspaces, files, chat history and credentials stay.'
+      : `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'}, workspaces, files, chat history and credentials stay.`
 
   useEffect(() => {
     let cancelled = false
@@ -2135,23 +2135,27 @@ function DataSettings(props: {
         </SettingsRow>
       ) : null}
       <SettingsRow
-        title={
-          props.projectsLoading ? (
-            <SettingsValueSkeleton label="Loading project count…" width={176} />
-          ) : (
-            projectLabel
-          )
+        title="Reset app preferences"
+        note={
+          <>
+            Clears appearance, layout and model choices.{' '}
+            {props.projectsLoading ? (
+              <SettingsValueSkeleton label="Loading project count…" width={176} />
+            ) : (
+              kept
+            )}
+          </>
         }
-        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
         className="settings__row--roomy"
       >
         <button
           className="settings__action is-danger"
           type="button"
+          aria-label="Reset app preferences"
           onClick={() => setConfirming(true)}
         >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app preferences</span>
+          <span>Reset…</span>
         </button>
       </SettingsRow>
       {confirming ? (

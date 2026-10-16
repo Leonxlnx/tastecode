@@ -207,7 +207,7 @@ export function SkillsSettings(props: {
       <header className="skills-settings__header">
         <div>
           <h1 className="settings__title" id={titleId}>
-            Agent Skills
+            Skills
           </h1>
           <p role="status" aria-live="polite" aria-atomic="true">
             {providerStatus}
