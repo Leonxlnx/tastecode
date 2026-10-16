@@ -44,7 +44,9 @@ describe('reveal clock', () => {
     expect(steps.slice(3).every((step) => step >= 1)).toBe(true)
     // An even pace: about 6 characters a frame, never a jump.
     expect(Math.max(...steps)).toBeLessThanOrEqual(9)
-    const changes = steps.slice(1).map((step, index) => Math.abs(step - steps[index]!))
+    // The last step is whatever was left.
+    const even = steps.slice(0, -1)
+    const changes = even.slice(1).map((step, index) => Math.abs(step - even[index]!))
     expect(Math.max(...changes)).toBeLessThanOrEqual(3)
     expect(visibleText(root, fake.ranges())).toBe(source)
   })

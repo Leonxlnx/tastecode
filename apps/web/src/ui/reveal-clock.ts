@@ -21,6 +21,8 @@
 const LAG_MIN_MS = 70
 /** And by at most about this much: Leon's cap on how late text may appear. */
 const LAG_MAX_MS = 180
+/** The speed aims to meet that cap this much early. */
+const DEADLINE_MARGIN_MS = 30
 /** Text that arrived LAG_MAX_MS - CATCH_UP_MS ago is reached within CATCH_UP_MS. */
 const CATCH_UP_MS = 40
 /** How quickly the arrival-rate estimate follows the provider. */
@@ -77,7 +79,7 @@ class RevealPace {
   private gapPeak = 0
   private lastGrowth: number | undefined
   private lastActivity = -Infinity
-  /** [time, total] at each growth inside the cap window, oldest first. */
+  /** [time, total] at each growth not shown yet, oldest first. */
   private arrivals: Array<[number, number]> = []
 
   /**
@@ -116,16 +118,22 @@ class RevealPace {
       desired = Math.max(desired, backlog / DRAIN_MS)
     }
     if (backlog > 0) desired = Math.max(desired, FLOOR_RATE)
+    // Each arrival is due LAG_MAX_MS after it landed. Aiming a little early
+    // at the closest deadline raises the speed in time, so the cap rarely
+    // has to force it.
+    const arrivals = this.arrivals
+    let passed = 0
+    while (passed < arrivals.length && arrivals[passed]![1] <= this.shown) passed += 1
+    if (passed > 0) arrivals.splice(0, passed)
+    for (const [at, total] of arrivals) {
+      const left = Math.max(at + LAG_MAX_MS - DEADLINE_MARGIN_MS - now, CATCH_UP_MS)
+      desired = Math.max(desired, (total - this.shown) / left)
+    }
     const tau = desired > this.revealRate ? REVEAL_UP_TAU_MS : REVEAL_DOWN_TAU_MS
     this.revealRate += (desired - this.revealRate) * (1 - Math.exp(-dt / tau))
-
-    const due = now - LAG_MAX_MS + CATCH_UP_MS
-    const arrivals = this.arrivals
-    let stale = 0
-    while (stale + 1 < arrivals.length && arrivals[stale + 1]![0] <= due) stale += 1
-    if (stale > 0) arrivals.splice(0, stale)
+    // Late anyway: close the gap within CATCH_UP_MS.
     const oldest = arrivals[0]
-    if (oldest && oldest[0] <= due && this.shown < oldest[1]) {
+    if (oldest && oldest[0] <= now - LAG_MAX_MS + CATCH_UP_MS) {
       this.revealRate = Math.max(this.revealRate, (oldest[1] - this.shown) / CATCH_UP_MS)
     }
     if (backlog > Math.max(SNAP_MIN_CHARS, this.arrivalRate * SNAP_MS)) {
