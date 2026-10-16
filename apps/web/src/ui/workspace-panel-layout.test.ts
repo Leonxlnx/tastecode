@@ -309,4 +309,13 @@ describe('workspace panel layout', () => {
       expect(body).toContain('align-content: start')
     }
   })
+  it('rings a keyboard-focused tab around its whole rounded pill', () => {
+    expect(ruleBody(".workspace-tabs__tab > [role='tab']:focus-visible")).toContain('outline: none')
+    const ring = ruleBody(".workspace-tabs__tab:has(> [role='tab']:focus-visible)")
+    expect(ring).toContain('outline: var(--focus-ring)')
+    expect(ring).toContain('outline-offset: var(--focus-ring-inset)')
+    expect(ruleBody('.workspace-tabs__tab .workspace-tabs__close')).toContain(
+      'border-radius: var(--r-md)',
+    )
+  })
 })
