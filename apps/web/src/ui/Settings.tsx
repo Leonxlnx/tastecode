@@ -1364,8 +1364,10 @@ function ModelSettings(props: {
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
-  const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
-  const sources = groupModelsBySource(catalogModels)
+  const sources = useMemo(
+    () => groupModelsBySource(props.models.filter((choice) => !isCustomModelChoice(choice))),
+    [props.models],
+  )
 
   return (
     <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
