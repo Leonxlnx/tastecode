@@ -4,12 +4,13 @@ import {
   choicesFor,
   customModelChoice,
   customModelKey,
+  defaultHiddenModelKeys,
+  defaultHiddenModels,
   filterModelChoicesByQuery,
   isCustomModelChoice,
   migrateHiddenModels,
   migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
-  modelVisibleByDefault,
   providerDisplayName,
   resolveReasoningEffort,
   sourceKey,
@@ -132,71 +133,167 @@ describe('model catalog', () => {
     expect(filterModelChoicesByQuery(choices, '  ')).toBe(choices)
   })
 
-  it.each([
-    ['gpt-6-astra', true],
-    ['gpt-6-luna', true],
-    ['gpt-6.1-sol', true],
-    ['gpt-daybreak-blue-latest', true],
-    ['gpt-5.6-sol', false],
-    ['gpt-5.6-terra', false],
-    ['gpt-5.6-luna', false],
-    ['gpt-5.3-codex-spark', false],
-    ['gpt-5.2', false],
-    ['gpt-5.5', false],
-    ['gpt-5.4', false],
-    ['gpt-5.4-mini', false],
-    ['fable', true],
-    ['claude-fable-5', false],
-    ['claude-fable-5-1', true],
-    ['claude-fable-5-1[1m]', true],
-    ['opus', true],
-    ['claude-opus-5', false],
-    ['claude-opus-5-5', true],
-    ['sonnet', true],
-    ['claude-sonnet-5', false],
-    ['claude-sonnet-5-5', true],
-    ['claude-opus-4-8', false],
-    ['haiku', true],
-    ['claude-haiku-5-5', true],
-    ['claude-haiku-4-5', false],
-    ['claude-haiku-4-5-20251001', false],
-    ['CLAUDE-HAIKU-4-5[1m]', false],
-    ['claude-haiku-5-5-20261001', true],
-    ['claude-opus-4-5', false],
-    ['claude-opus-4-7', false],
-    ['claude-opus-4-6', false],
-    ['claude-opus-4-20250514', false],
-    ['claude-sonnet-4-6', false],
-    ['claude-sonnet-4-5-20250929', false],
-    ['claude-opus-6', true],
-    ['claude-sonnet-5-6', true],
-    ['claude-mythos-1', true],
-    ['grok-4.5', true],
-    ['grok-4.6', true],
-    ['grok-4.7', true],
-    ['grok-4.7-build-fast', false],
-    ['provider-model-added-tomorrow', true],
-  ])('defaults %s visibility to %s', (id, visible) => {
-    expect(modelVisibleByDefault({ ...model, id })).toBe(visible)
-  })
+  describe('default visibility', () => {
+    const named = (entries: [id: string, displayName: string][]) =>
+      entries.map(([id, displayName]) => ({ ...model, id, displayName }))
+    const codex = (entries: [id: string, displayName: string][]) =>
+      choicesFor({ provider: 'codex', sourceName: 'Codex', mark: 'openai' }, named(entries))
+    const claude = (entries: [id: string, displayName: string][]) =>
+      choicesFor(
+        { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+        named(entries),
+      )
+    const shown = (choices: readonly ModelChoice[], hidden: ReadonlySet<string>) =>
+      choices.filter((choice) => !hidden.has(choice.key)).map((choice) => choice.model.displayName)
+    const names = (choices: readonly ModelChoice[]) =>
+      choices.map((choice) => choice.model.displayName)
 
-  it('starts only never-listed older models hidden, and none without a record', () => {
-    const choices = choicesFor(
-      { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-      ['opus', 'claude-opus-5', 'claude-opus-4-8', 'claude-opus-6'].map((id) => ({ ...model, id })),
-    )
-    const listed = new Set(['claude-code:opus', 'claude-code:claude-opus-4-8'])
-
-    expect(unlistedHiddenModels(choices, listed).map((choice) => choice.key)).toEqual([
-      'claude-code:claude-opus-5',
+    // What codex-cli 0.154 and 0.163 list, in the adapter's order.
+    const codex154 = codex([
+      ['gpt-6-astra', 'GPT-6-Astra'],
+      ['gpt-5.6-sol', 'GPT-5.6-Sol'],
+      ['gpt-5.6-terra', 'GPT-5.6-Terra'],
+      ['gpt-5.6-luna', 'GPT-5.6-Luna'],
+      ['gpt-5.5', 'GPT-5.5'],
     ])
-    expect(unlistedHiddenModels(choices, null)).toEqual([])
+    const codex163 = codex([
+      ['gpt-6-astra', 'GPT-6-Astra'],
+      ['gpt-6.1-sol', 'GPT-6.1-Sol'],
+      ['gpt-5.6-terra', 'GPT-5.6-Terra'],
+      ['gpt-6-luna', 'GPT-6-Luna'],
+      ['gpt-6-sol', 'GPT-6-Sol'],
+      ['gpt-5.6-sol', 'GPT-5.6-Sol'],
+      ['gpt-5.6-luna', 'GPT-5.6-Luna'],
+      ['gpt-5.5', 'GPT-5.5'],
+    ])
+
+    it('shows the newest generation of each Codex tier and hides the rest', () => {
+      expect(shown(codex163, defaultHiddenModelKeys(codex163))).toEqual([
+        'GPT-6-Astra',
+        'GPT-6.1-Sol',
+        'GPT-5.6-Terra',
+        'GPT-6-Luna',
+      ])
+      expect(shown(codex154, defaultHiddenModelKeys(codex154))).toEqual([
+        'GPT-6-Astra',
+        'GPT-5.6-Sol',
+        'GPT-5.6-Terra',
+        'GPT-5.6-Luna',
+      ])
+    })
+
+    it("shows Claude Code's current lineup under its aliases and hides older generations", () => {
+      const catalog = claude([
+        ['claude-fable-5-1[1m]', 'Fable 5.1'],
+        ['opus', 'Opus 5.5'],
+        ['sonnet', 'Sonnet 5.5'],
+        ['haiku', 'Haiku 5.5'],
+        ['claude-fable-5', 'Fable 5'],
+        ['claude-opus-5', 'Opus 5'],
+        ['claude-opus-4-8', 'Opus 4.8'],
+        ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+        ['claude-mythos-1', 'Mythos 1'],
+      ])
+      expect(shown(catalog, defaultHiddenModelKeys(catalog))).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+        'Mythos 1',
+      ])
+    })
+
+    it('compares generations within one source and keeps known legacy models hidden', () => {
+      const work = choicesFor(
+        {
+          provider: 'claude-code',
+          sourceName: 'Work Claude',
+          mark: 'anthropic',
+          agent: { id: 'work-claude', name: 'Work Claude' },
+        },
+        named([['claude-opus-4-8', 'Opus 4.8']]),
+      )
+      const grok = choicesFor(
+        { provider: 'grok', sourceName: 'Grok', mark: 'grok' },
+        named([
+          ['grok-4.7', 'Grok 4.7'],
+          ['grok-4.7-build-fast', 'Grok 4.7 Build Fast'],
+        ]),
+      )
+      const catalog = [...claude([['opus', 'Opus 5.5']]), ...work, ...grok]
+      expect(shown(catalog, defaultHiddenModelKeys(catalog))).toEqual([
+        'Opus 5.5',
+        'Opus 4.8',
+        'Grok 4.7',
+      ])
+    })
+
+    it('never hides a model whose name does not read as one family and version', () => {
+      const catalog = choicesFor(
+        { provider: 'grok', sourceName: 'Grok', mark: 'grok' },
+        named([
+          ['a', 'Llama 3.3 70B'],
+          ['b', 'Llama 3.1 8B'],
+          ['c', 'GPT-4o'],
+          ['d', 'GPT-4o mini'],
+          ['e', 'claude-opus-4-1-20250805'],
+          ['f', 'claude-opus-4-20250514'],
+          ['g', 'Provider model'],
+        ]),
+      )
+      expect(defaultHiddenModels(catalog)).toEqual([])
+    })
+
+    it('never hides a custom model', () => {
+      const custom = customModelChoice({
+        provider: 'codex',
+        modelId: 'gpt-5.6-sol-preview',
+        displayName: 'GPT-5.6-Sol',
+      })
+      expect(defaultHiddenModels([...codex163, custom])).not.toContain(custom)
+    })
+
+    it('hands a new generation over from the one a saved profile shows, once', () => {
+      // The profile listed codex-cli 0.154's rows; 0.163 adds three.
+      const listed = new Set(codex154.map((choice) => choice.key))
+      const added = unlistedHiddenModels(codex163, listed)
+
+      // GPT-6-Sol starts hidden behind GPT-6.1-Sol, and the 5.6 Sol and Luna
+      // rows make way for their successors. Terra has none, so it stays.
+      expect(names(added)).toEqual(['GPT-6-Sol', 'GPT-5.6-Sol', 'GPT-5.6-Luna'])
+      // Once the new rows are listed, turning an older one back on sticks.
+      const nowListed = new Set(codex163.map((choice) => choice.key))
+      expect(unlistedHiddenModels(codex163, nowListed)).toEqual([])
+      expect(unlistedHiddenModels(codex163, null)).toEqual([])
+    })
+
+    it('does not let an older row that appears late take anything over', () => {
+      // `opus` moved on to Opus 6, so the 5.5 catalog row is listed on its own.
+      const before = claude([
+        ['opus', 'Opus 5.5'],
+        ['claude-opus-5', 'Opus 5'],
+      ])
+      const after = claude([
+        ['opus', 'Opus 6'],
+        ['claude-opus-5-5', 'Opus 5.5'],
+        ['claude-opus-5', 'Opus 5'],
+      ])
+      const listed = new Set(before.map((choice) => choice.key))
+
+      expect(names(unlistedHiddenModels(after, listed))).toEqual(['Opus 5.5'])
+    })
   })
 
   describe('model visibility migration', () => {
     const claudeChoices = choicesFor(
       { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-      ['opus', 'haiku', 'claude-opus-4-8', 'claude-fable-5'].map((id) => ({ ...model, id })),
+      [
+        ['fable', 'Fable 5.1'],
+        ['opus', 'Opus 5.5'],
+        ['haiku', 'Haiku 5.5'],
+        ['claude-opus-4-8', 'Opus 4.8'],
+        ['claude-fable-5', 'Fable 5'],
+      ].map(([id, displayName]) => ({ ...model, id: id!, displayName: displayName! })),
     )
     // Haiku was hidden by the old defaults; the user also hid Opus 5.5 and
     // re-enabled Opus 4.8 by hand. A key outside this catalog stays as saved.

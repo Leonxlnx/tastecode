@@ -125,11 +125,12 @@ import {
   choicesFor,
   customModelChoice,
   customModelKey,
+  defaultHiddenModelKeys,
+  defaultHiddenModels,
   isCustomModelChoice,
   migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
-  modelVisibleByDefault,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
@@ -1867,7 +1868,7 @@ export function App() {
         const current = hiddenModelsRef.current
         const candidates = modelVisibilityInitialized.current
           ? unlistedHiddenModels(models, listedModelsRef.current)
-          : models.filter((choice) => !modelVisibleByDefault(choice.model))
+          : defaultHiddenModels(models)
         const additions = candidates.filter((choice) => !current.has(choice.key))
         if (additions.length === 0) return
         const next = new Set(current)
@@ -1978,11 +1979,7 @@ export function App() {
       let hidden = hiddenModelsRef.current
       let hiddenChanged = false
       if (!modelVisibilityInitialized.current && directCatalogReady && directCatalog.length > 0) {
-        hidden = new Set(
-          directCatalog
-            .filter((choice) => !modelVisibleByDefault(choice.model))
-            .map((choice) => choice.key),
-        )
+        hidden = defaultHiddenModelKeys(directCatalog)
         modelVisibilityInitialized.current = true
         hiddenChanged = true
       } else if (directCatalogReady) {
@@ -4683,9 +4680,7 @@ export function App() {
     modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
-      for (const choice of created ?? []) {
-        if (!modelVisibleByDefault(choice.model)) next.add(choice.key)
-      }
+      for (const key of defaultHiddenModelKeys(created ?? [])) next.add(key)
       if (visible) next.delete(key)
       else next.add(key)
       return next
