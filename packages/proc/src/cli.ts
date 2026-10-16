@@ -309,7 +309,7 @@ async function spawnCommandVersion(
 ): Promise<string | undefined> {
   try {
     const child = spawnCli(command, ['--version'])
-    const captured = captureCli(child, timeoutMs, 64 * 1024)
+    const captured = captureCli(child, timeoutMs, 64 * 1024, commandLabel(command))
     endStdin(child)
     const { stdout } = await captured
     return (
@@ -352,7 +352,7 @@ export function runCli(
   timeoutMs = 5000,
 ): Promise<{ code: number | null; stdout: string; stderr?: string | undefined }> {
   const child = spawnCli(command, args)
-  const captured = captureCli(child, timeoutMs)
+  const captured = captureCli(child, timeoutMs, undefined, commandLabel(command))
   endStdin(child)
   return captured
 }
@@ -376,6 +376,8 @@ export function captureCli(
   child: ChildProcessWithoutNullStreams,
   timeoutMs = 5000,
   maxBytes = 1024 * 1024,
+  /** The command's name for the timeout message, such as `cursor-agent`. */
+  label?: string,
 ): Promise<CapturedCli> {
   return new Promise((resolve, reject) => {
     let stdout = ''
@@ -395,7 +397,7 @@ export function captureCli(
       }, reject)
     }
     const timer = setTimeout(() => {
-      finish(new Error('CLI did not respond within the time limit'))
+      finish(new Error(`${label ?? 'The CLI'} did not answer within ${timeLimit(timeoutMs)}.`))
     }, timeoutMs)
     const append = (chunk: string, stream: 'stdout' | 'stderr') => {
       if (settled) return
@@ -418,6 +420,17 @@ export function captureCli(
     // Exit can precede the final bytes in inherited pipes.
     child.on('close', (code, signal) => finish({ code, signal, stdout, stderr }))
   })
+}
+
+/** `cursor-agent` for `C:\...\cursor-agent.cmd`: the name a user would type. */
+function commandLabel(command: string): string {
+  return path.basename(command).replace(/\.(?:cmd|bat|exe|com)$/i, '')
+}
+
+function timeLimit(ms: number): string {
+  if (ms < 1000) return `${ms} ms`
+  const seconds = Math.round(ms / 1000)
+  return `${seconds} ${seconds === 1 ? 'second' : 'seconds'}`
 }
 
 export type CapturedCli = {
