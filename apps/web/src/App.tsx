@@ -4680,7 +4680,7 @@ export function App() {
     modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
-      for (const key of defaultHiddenModelKeys(created ?? [])) next.add(key)
+      for (const hiddenKey of defaultHiddenModelKeys(created ?? [])) next.add(hiddenKey)
       if (visible) next.delete(key)
       else next.add(key)
       return next
