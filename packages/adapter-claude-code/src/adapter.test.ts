@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -1882,6 +1882,48 @@ describe('Claude static model catalog', () => {
   })
 })
 
+/** A TaskCreate pair as claude 2.1.302 writes it in the session jsonl. */
+function savedTask(toolId: string, taskId: string, subject: string, sidechain = false): string[] {
+  return [
+    JSON.stringify({
+      type: 'assistant',
+      isSidechain: sidechain,
+      message: {
+        role: 'assistant',
+        content: [{ type: 'tool_use', id: toolId, name: 'TaskCreate', input: { subject } }],
+      },
+    }),
+    JSON.stringify({
+      type: 'user',
+      isSidechain: sidechain,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: toolId,
+            content: `Task #${taskId} created successfully: ${subject}`,
+          },
+        ],
+      },
+      toolUseResult: { task: { id: taskId, subject } },
+    }),
+  ]
+}
+
+async function withClaudeConfig(run: (configDir: string) => Promise<void>): Promise<void> {
+  const configDir = mkdtempSync(path.join(tmpdir(), 'harness-claude-tasks-'))
+  const previous = process.env['CLAUDE_CONFIG_DIR']
+  process.env['CLAUDE_CONFIG_DIR'] = configDir
+  try {
+    await run(configDir)
+  } finally {
+    if (previous === undefined) delete process.env['CLAUDE_CONFIG_DIR']
+    else process.env['CLAUDE_CONFIG_DIR'] = previous
+    rmSync(configDir, { recursive: true, force: true })
+  }
+}
+
 function taskToolUse(id: string, name: string, input: Record<string, unknown>): SDKMessage {
   return {
     type: 'assistant',
@@ -2041,6 +2083,102 @@ describe('Claude task plan', () => {
     } finally {
       await adapter.dispose()
     }
+  })
+
+  it('applies a live task update to tasks the resumed transcript already created', async () => {
+    const one = 'Write the note'
+    const two = 'Check the note'
+    const sessionId = '11111111-1111-4111-8111-111111111111'
+    await withClaudeConfig(async (configDir) => {
+      const project = path.join(configDir, 'projects', '-repo')
+      mkdirSync(project, { recursive: true })
+      writeFileSync(
+        path.join(project, `${sessionId}.jsonl`),
+        [
+          ...savedTask('toolu_a', '1', one),
+          ...savedTask('toolu_b', '2', two),
+          ...savedTask('toolu_side', '9', 'Side work', true),
+          '{bad',
+        ].join('\n') + '\n',
+      )
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+        const turnId = await adapter.sendTurn(thread.id, 'Finish the first task')
+        const query = fake.queries.at(-1)!
+        query.emitMessage(
+          taskToolUse('toolu_done', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_done', 'Updated task #1 status', {
+            success: true,
+            taskId: '1',
+            updatedFields: ['status'],
+            statusChange: { from: 'pending', to: 'completed' },
+          }),
+        )
+        await tick()
+        expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+          {
+            type: 'plan.updated',
+            turnId,
+            steps: [
+              { text: one, status: 'done' },
+              { text: two, status: 'pending' },
+            ],
+          },
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    })
+  })
+
+  it('keeps an empty plan when a resumed session has no transcript', async () => {
+    const sessionId = '22222222-2222-4222-8222-222222222222'
+    await withClaudeConfig(async () => {
+      const fake = harness()
+      const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+      const events: DomainEvent[] = []
+      adapter.on('event', (event) => events.push(event))
+      try {
+        const thread = await adapter.resumeThread(`claude-${sessionId}`, '/repo')
+        const turnId = await adapter.sendTurn(thread.id, 'Start a new task')
+        const query = fake.queries.at(-1)!
+        query.emitMessage(
+          taskToolUse('toolu_missing', 'TaskUpdate', { taskId: '1', status: 'completed' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_missing', 'Updated task #1 status', {
+            success: true,
+            taskId: '1',
+            updatedFields: ['status'],
+            statusChange: { from: 'pending', to: 'completed' },
+          }),
+        )
+        query.emitMessage(
+          taskToolUse('toolu_new', 'TaskCreate', { subject: 'Check the note' }),
+        )
+        query.emitMessage(
+          taskToolResult('toolu_new', 'Task #3 created successfully: Check the note', {
+            task: { id: '3', subject: 'Check the note' },
+          }),
+        )
+        await tick()
+        expect(events.filter((event) => event.type === 'plan.updated')).toEqual([
+          {
+            type: 'plan.updated',
+            turnId,
+            steps: [{ text: 'Check the note', status: 'pending' }],
+          },
+        ])
+      } finally {
+        await adapter.dispose()
+      }
+    })
   })
 
   it.each([
