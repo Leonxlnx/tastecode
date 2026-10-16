@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mapCodexRateLimits } from './adapter.js'
+import { mapCodexRateLimits } from './limits.js'
 import type { CodexRateLimitResponse, CodexRateLimitSnapshot } from './schemas.js'
 
 const snapshot = (overrides: Partial<CodexRateLimitSnapshot> = {}): CodexRateLimitSnapshot => ({
