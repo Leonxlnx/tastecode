@@ -120,10 +120,10 @@ export type ProviderControlsOptions = {
   unavailableLimitCacheMs?: number
   /** Replaces every provider's declared `limitReadIntervalMs`. */
   limitReadIntervalMs?: number
-  /** Minimum spacing of forwarded usage-change signals per provider. */
-  limitChangeIntervalMs?: number
   /** Minimum spacing of published limit snapshots per provider. */
   limitPublishIntervalMs?: number
+  /** Minimum spacing of forwarded usage-change signals per provider. */
+  limitChangeIntervalMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -347,9 +347,9 @@ export class ProviderControls {
       options.limitReadIntervalMs === undefined
         ? undefined
         : duration(options.limitReadIntervalMs, 0, 0)
-    this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     // Codex reports its windows beside nearly every token update.
     this.#limitPublishIntervalMs = duration(options.limitPublishIntervalMs, 1_000, 0)
+    this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
@@ -443,10 +443,8 @@ export class ProviderControls {
     clearTimeout(this.#watchTimer)
     this.#skills.clear()
     this.#mcp.clear()
-    for (const entry of this.#limits.values()) {
-      clearTimeout(entry.notifyTimer)
-      clearTimeout(entry.publishTimer)
-    }
+    for (const entry of this.#limits.values()) clearTimeout(entry.publishTimer)
+    for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
     // Stopping the control process also cancels its browser login. Sending a
