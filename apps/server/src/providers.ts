@@ -10,7 +10,7 @@ import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updat
 import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
-import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
+import type { ProviderSetup, ProviderSourceShape, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc/cli'
 
 /**
@@ -39,7 +39,14 @@ type Probe = {
   loginCommand?: string
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
+  /** What its chat sources must name. Absent means `DIRECT_SOURCE`. */
+  source?: ProviderSourceShape
 }
+
+/** A CLI that answers for itself; a custom harness may stand in for it. */
+const DIRECT_SOURCE: ProviderSourceShape = { agent: 'optional', connection: false, direct: true }
+/** One integration over many agents, so the agent is what the user talks to. */
+const ACP_SOURCE: ProviderSourceShape = { agent: 'required', connection: false, direct: false }
 
 /**
  * The order here is the order `providers.list` reports, and the renderer
@@ -136,6 +143,8 @@ const PROBES: Probe[] = [
       login: 'provider',
     },
     loginCommand: 'pi',
+    // Every Pi chat runs through a named harness.
+    source: { agent: 'required', connection: false, direct: true },
   },
 ]
 
@@ -279,6 +288,7 @@ function scanProviders(system: SystemProbe): Promise<ProviderStatus[]> {
 }
 
 async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus> {
+  const source = entry.source ?? DIRECT_SOURCE
   if (!entry.command) {
     return {
       id: entry.id,
@@ -286,6 +296,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       installed: false,
       auth: 'unknown',
       setup: entry.setup,
+      source,
       ...(entry.unbuilt ? { problem: entry.unbuilt } : {}),
     }
   }
@@ -298,6 +309,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
       installed: false,
       auth: 'unknown',
       setup: entry.setup,
+      source,
       problem: `${entry.command} is not on PATH`,
     }
   }
@@ -310,6 +322,7 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     installed: true,
     auth,
     setup: entry.setup,
+    source,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
     ...(unsupported
@@ -334,6 +347,7 @@ async function acpStatus(system: SystemProbe): Promise<ProviderStatus> {
     displayName: 'ACP agents',
     installed: present.length > 0,
     auth: 'unknown',
+    source: ACP_SOURCE,
     ...(present.length > 0 ? { version: present.map((agent) => agent.name).join(', ') } : {}),
     ...(present.length === 0 ? { problem: 'No ACP agent found on PATH' } : {}),
   }

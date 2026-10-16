@@ -800,7 +800,11 @@ export class Orchestrator {
 
   #voiceRequests = new Map<string, AbortController>()
 
-  watchProvider(provider: ProviderId, projectPath: string, targets: Array<'skills' | 'mcp'>) {
+  watchProvider(
+    provider: ProviderId,
+    projectPath: string,
+    targets: ParamsOf<'providers.watch'>['targets'],
+  ) {
     return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 

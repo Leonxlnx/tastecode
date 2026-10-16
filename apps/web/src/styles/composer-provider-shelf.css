@@ -74,6 +74,34 @@
   overflow-wrap: anywhere;
 }
 
+/* Quieter than the row's own action: reporting is optional, fixing is not. */
+.composer__error-report {
+  flex: none;
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: var(--r-md);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  line-height: 1.2;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+
+.composer__error-report:hover {
+  background: color-mix(in oklab, var(--error) 10%, transparent);
+  opacity: 1;
+}
+
+.composer__error-report:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  opacity: 1;
+}
+
 .composer__error-dismiss {
   display: grid;
   place-items: center;

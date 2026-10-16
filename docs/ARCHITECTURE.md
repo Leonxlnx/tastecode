@@ -85,6 +85,27 @@ a terminal emulator leaves running. SIGTERM straight after the hangup: it cut of
 more than a moment to shut down cleanly. Waiting for the job in the close itself: closing a chat
 took up to nine seconds and its terminal could not be reopened meanwhile.
 
+### User feedback goes through the server
+
+**Outbound feedback goes through the local server; the inbox key lives only in the server
+process.** The renderer's CSP allows only the local server, so the feedback dialog calls
+`feedback.status`, `feedback.preview` and `feedback.submit`, and the server builds, redacts and
+sends the Trecko request. Preview and submit share one builder, so the preview is exactly what
+is sent, and only `feedback.submit` (the dialog's Send) sends anything. The key is injected at
+build time: `apps/desktop/scripts/feedback-endpoint.js` writes the gitignored
+`dist/feedback/feedback.env`, which ships as an extra resource outside `app.asar`. Desktop main
+passes the server only that file's path; the server reads it once at startup and deletes every
+feedback variable from `process.env`, so agent CLIs, terminals and git never inherit the key.
+`pnpm dev` reads `~/.tastecode/trecko-feedback.env` instead. Builds without a key answer
+`not_configured`, and every entry point stays hidden. The local limits (one send at a time,
+waits after each attempt, daily caps, duplicate refusal) only stop the app itself from spamming
+the inbox. The key can be extracted from any packaged build, so real abuse protection belongs
+in Trecko.
+
+_Rejected:_ a renderer `fetch` to Trecko (widens the CSP and puts the key in the renderer).
+Leaving the key in the server's environment (every child process would inherit it). Compiling
+the key into desktop main (main never needs it).
+
 ---
 
 ## Desktop shell: Electron
@@ -804,6 +825,7 @@ registry entry, which is deliberately a good first outside contribution.
 
 | Date       | Change                                                                                                                                                                         |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 2026-10-16 | Sent user-initiated feedback to the team's Trecko inbox through the local server; the inbox key stays in the server process and out of git.                                    |
 | 2026-10-16 | Parked dashboard references behind `DASHBOARD_REFERENCES_ENABLED`; dashboard requests build as websites and the 42 MB dashboard set left the package.                          |
 | 2026-10-14 | Read cold newest history pages from the end of the event log, checked against a derived per-thread index of first turn and item rows (#957).                                   |
 | 2026-10-14 | Seeded checkpoint snapshots from the checkout's own index so a turn start re-reads only changed files instead of hashing every tracked file.                                   |
