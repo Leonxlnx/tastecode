@@ -1520,24 +1520,6 @@
   font-size: var(--t-xs);
 }
 
-.avatar-lab__field input {
-  width: 100%;
-  min-height: 28px;
-  padding: 4px 8px;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  font-size: var(--t-sm);
-  outline: none;
-}
-
-.avatar-lab__field input:focus-visible {
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
 .avatar-lab__previews {
   display: flex;
   flex-wrap: wrap;
@@ -2522,38 +2504,6 @@
   grid-column: 1 / -1;
 }
 
-.provider-form input,
-.provider-form select,
-.provider-form textarea {
-  min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.provider-form input,
-.provider-form select {
-  height: 28px;
-  padding: 0 8px;
-}
-
-.provider-form textarea {
-  min-height: 72px;
-  padding: 8px 10px;
-  line-height: 1.4;
-  resize: vertical;
-}
-
-.provider-form input:focus,
-.provider-form select:focus,
-.provider-form textarea:focus {
-  border-color: var(--text-3);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 8%, transparent);
-}
-
 .provider-form__field .menuwrap {
   min-width: 0;
 }
@@ -3397,26 +3347,9 @@
   margin: 0;
 }
 
-.mcp-editor input,
-.mcp-editor textarea {
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  outline: none;
-  background: var(--surface-2);
-  color: var(--text);
-  font: inherit;
-}
-
-.mcp-editor input:focus,
-.mcp-editor textarea:focus {
-  border-color: var(--text-3);
-}
-
-.mcp-editor textarea {
+/* Room for a transport object without scrolling. */
+.settings form.mcp-editor textarea {
   min-height: 130px;
-  resize: vertical;
 }
 
 .mcp-editor__wide,
@@ -3605,38 +3538,6 @@
 .provider-form__actions,
 .provider-form__error {
   grid-column: 1 / -1;
-}
-
-.provider-form input,
-.provider-form select,
-.provider-form textarea {
-  min-width: 0;
-  background: var(--bg);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font: inherit;
-  outline: none;
-}
-
-.provider-form input,
-.provider-form select {
-  height: 34px;
-  padding: 0 10px;
-}
-
-.provider-form textarea {
-  min-height: 72px;
-  padding: 8px 10px;
-  line-height: 1.4;
-  resize: vertical;
-}
-
-.provider-form input:focus,
-.provider-form select:focus,
-.provider-form textarea:focus {
-  border-color: var(--text-3);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--text) 8%, transparent);
 }
 
 .provider-form__field .menuwrap {

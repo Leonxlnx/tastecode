@@ -1303,6 +1303,7 @@ export function ProviderSettings(props: {
           <label>
             <span>Name</span>
             <input
+              className="set-input"
               value={connectionName}
               onChange={(event) => setConnectionName(event.target.value)}
             />
@@ -1310,6 +1311,7 @@ export function ProviderSettings(props: {
           <label className="provider-form__wide">
             <span>Base URL</span>
             <input
+              className="set-input"
               value={connectionBaseUrl}
               onChange={(event) => setConnectionBaseUrl(event.target.value)}
               spellCheck={false}
@@ -1318,6 +1320,7 @@ export function ProviderSettings(props: {
           <label>
             <span>Default model</span>
             <input
+              className="set-input"
               value={connectionDefaultModel}
               onChange={(event) => setConnectionDefaultModel(event.target.value)}
               placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
@@ -1327,6 +1330,7 @@ export function ProviderSettings(props: {
           <label className="provider-form__wide">
             <span>API key</span>
             <input
+              className="set-input"
               type="password"
               value={connectionApiKey}
               onChange={(event) => setConnectionApiKey(event.target.value)}

@@ -1454,6 +1454,10 @@ describe('provider settings', () => {
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
+    // Every field in the form is the one settings text field.
+    for (const label of ['Name', 'Base URL', 'Default model', 'API key']) {
+      expect(screen.getByLabelText(label).className).toBe('set-input')
+    }
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research API' } })
     fireEvent.change(screen.getByLabelText('Default model'), {
       target: { value: 'research-model' },

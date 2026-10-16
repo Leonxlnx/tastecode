@@ -73,6 +73,7 @@ export function GeneratedAvatarLab(props: { initialName?: string | undefined }) 
         <label className="avatar-lab__field" htmlFor={inputId}>
           <span>Name</span>
           <input
+            className="set-input"
             id={inputId}
             type="text"
             maxLength={64}

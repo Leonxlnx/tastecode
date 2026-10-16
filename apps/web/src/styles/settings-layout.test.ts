@@ -129,6 +129,22 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
   })
 
+  it('draws every form field from one 28px text field', () => {
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\) \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(textarea\.set-input, \.mcp-editor textarea\) \{[^}]*min-height: 72px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\):focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
+    )
+    // The API form's second, 34px copy of the field rules is gone with the first.
+    expect(settingsCss).not.toMatch(/\.provider-form input/)
+    expect(settingsCss).not.toMatch(/\.mcp-editor input/)
+    expect(settingsCss).not.toMatch(/\.avatar-lab__field input/)
+  })
+
   it('sizes every settings switch 30x18 with a 12px thumb, in one place', () => {
     expect(systemCss).toMatch(
       /:is\(\.settings, \.tune-panel\) \.switch \{[^}]*width: 30px;[^}]*height: 18px;/s,

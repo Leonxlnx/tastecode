@@ -269,6 +269,49 @@
   color: var(--text);
 }
 
+/* Text fields: one 28px field for every form; a textarea starts at 72px. The
+   MCP server editor's fields take the same rules until its file uses the
+   class. */
+
+.settings :is(.set-input, .mcp-editor input, .mcp-editor textarea) {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--t-sm);
+  outline: none;
+  transition:
+    border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.settings :is(textarea.set-input, .mcp-editor textarea) {
+  height: auto;
+  min-height: 72px;
+  padding: 6px 8px;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.settings :is(.set-input, .mcp-editor input, .mcp-editor textarea)::placeholder {
+  color: var(--text-3);
+}
+
+.settings :is(.set-input, .mcp-editor input, .mcp-editor textarea):focus {
+  border-color: var(--text-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.settings :is(.set-input, .mcp-editor input, .mcp-editor textarea):disabled {
+  color: var(--text-3);
+  cursor: default;
+}
+
 /* One switch size: 30x18 with a 12px thumb, on every tab and in the provider
    context panel, which opens outside .settings. */
 
