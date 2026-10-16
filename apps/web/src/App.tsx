@@ -823,10 +823,10 @@ export function App() {
     undo: undoQueuedArchives,
     cancel: cancelQueuedArchive,
   } = useDeferredArchiveQueue(10_000)
-  const [startupDeletes, setStartupDeletes] = useState(readPendingChatDeletes)
+  const [interruptedDeletes, setInterruptedDeletes] = useState(readPendingChatDeletes)
   const archivingIds = useMemo(
-    () => [...queuedArchiveIds, ...startupDeletes.map((pending) => pending.threadId)],
-    [queuedArchiveIds, startupDeletes],
+    () => [...queuedArchiveIds, ...interruptedDeletes.map((pending) => pending.threadId)],
+    [queuedArchiveIds, interruptedDeletes],
   )
   const cancelArchive = useCallback(
     (id: string) => {
@@ -4186,20 +4186,18 @@ export function App() {
     if (id) void selectSession(id)
   }, [selectSession, undoQueuedArchives])
 
-  // Deletes an earlier run saved but never sent. They were confirmed then,
-  // so they run now without another undo window or checkout confirmation.
-  const startupDeletesRun = useRef(false)
+  const interruptedDeletesRun = useRef(false)
   useEffect(() => {
-    if (projectsStatus !== 'ready' || startupDeletesRun.current) return
-    startupDeletesRun.current = true
+    if (projectsStatus !== 'ready' || interruptedDeletesRun.current) return
+    interruptedDeletesRun.current = true
     void (async () => {
-      for (const pending of startupDeletes) {
+      for (const pending of interruptedDeletes) {
         if (findSession(projectsRef.current, pending.threadId)) await commitChatDelete(pending)
         else forgetPendingChatDeletes([pending.threadId])
-        setStartupDeletes((current) => current.filter((entry) => entry !== pending))
+        setInterruptedDeletes((current) => current.filter((entry) => entry !== pending))
       }
     })()
-  }, [projectsStatus, startupDeletes, commitChatDelete])
+  }, [projectsStatus, interruptedDeletes, commitChatDelete])
 
   const archiveSession = useCallback(
     async (id: string): Promise<'queued' | 'confirming' | 'skipped' | 'failed'> => {
@@ -6030,11 +6028,6 @@ function saveStartupProjectName(project: Project | undefined): void {
   else removeSetting(STARTUP_PROJECT_NAME_KEY)
 }
 
-/**
- * A chat delete inside its undo window. The renderer sends it only when the
- * window ends, so it is saved for the next start to finish after a quit or a
- * crash. `force-discard` drops uncommitted work the user already confirmed.
- */
 type PendingChatDelete = {
   threadId: string
   checkout: 'keep' | 'discard' | 'force-discard'
