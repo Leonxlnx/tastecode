@@ -291,12 +291,24 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-15 nightly 98bb0fba · includes main f8425b39</span>
+        <span class="meta">2026-10-16 nightly 04580dfe · includes main 0ad74ec3</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 16 on nightly (04580dfe): main is synchronized through 0ad74ec3 (PR #1632) with
+          every nightly provider, API connection and the usage history kept, bringing main's October
+          16 round: full-width replies, aligned code block controls, square composer chips, steady
+          streamed text, tier-ordered Codex and Claude Code catalogs with one generation rule, the
+          context ring for Codex and Claude Code, the inherited MCP servers list, settings and
+          terminal polish and the design agent fixes. The sync hand-merged main's staged background
+          model sources with nightly's API connections, which load through the same per-source cache
+          and run on their connection runtime. Dashboard references are parked behind one switch:
+          dashboard requests build as websites and the 42 MB dashboard set left the package (PR
+          #1611); the design-taste plugin 0.5.0 ships without them.
+        </p>
         <p>
           October 15, evening on nightly (98bb0fba): main is synchronized through f8425b39 by two
           more sync PRs, with every nightly provider, API connection and the usage history kept: the
@@ -1001,15 +1013,17 @@
                     new sessions from their attachments; permission and Design actions compact
                     before a narrow toolbar can overlap, and the permission chip keeps its icon; one
                     smooth effort pill, with the level shown as dots on the composer model button,
-                    and a context meter with its percentage; streamed tables, links and task lists
-                    render live, a stopped reply ends with its own summary and a Stopped by you
-                    marker, Arrow Up in an empty composer recalls the last prompt, and code blocks
-                    wrap on demand; completing replies and their code blocks keep their height, Jump
-                    to latest lands at the moving end, and toasts open above the docked composer;
-                    plus an in-pane session header with shared rename in a visible field, pin,
-                    delete, checkpoint, Workspace, and Terminal actions; the idle voice control
-                    stays flat; Stop immediately restores the idle presentation while provider
-                    interruption finishes in the background</span
+                    and a context meter with its percentage for Codex and Claude Code chats too;
+                    replies use the full transcript width and streamed text reveals at a steady
+                    pace; streamed tables, links and task lists render live, a stopped reply ends
+                    with its own summary and a Stopped by you marker, Arrow Up in an empty composer
+                    recalls the last prompt, and code blocks wrap on demand; completing replies and
+                    their code blocks keep their height, Jump to latest lands at the moving end, and
+                    toasts open above the docked composer; plus an in-pane session header with
+                    shared rename in a visible field, pin, delete, checkpoint, Workspace, and
+                    Terminal actions; the idle voice control stays flat; Stop immediately restores
+                    the idle presentation while provider interruption finishes in the
+                    background</span
                   >
                 </span>
               </li>
@@ -1150,15 +1164,15 @@
                     remain picker inclusion; the flat list is the first-run layout; Claude Code,
                     Codex and Grok groups keep that order while models load, followed on nightly by
                     the other CLIs, ACP agents and API connections, and new users start on Claude
-                    Code; current Codex and exact Claude defaults are prioritized; superseded GPT
-                    versions and every Claude generation older than the current lineup start hidden,
-                    also when a saved profile meets them for the first time; visibility updates move
-                    each row once from the first paint, so later choices stay even while a source
-                    fails discovery, and a new profile's first choice is kept; long model names no
-                    longer clip the picker; Claude account labels include the available Max
-                    multiplier, and Grok 4.5 and 4.6 remain discoverable, provider readiness stays
-                    silent during new-chat source changes, and saved custom ids remain usable while
-                    their management UI is parked</span
+                    Code; both catalogs list the newest generation of each tier first (Astra, Sol,
+                    Terra, Luna; Fable, Opus, Sonnet, Haiku), and every row older than its family's
+                    newest generation starts hidden by one rule, also when a saved profile meets it
+                    for the first time; visibility updates move each row once from the first paint,
+                    so later choices stay even while a source fails discovery, and a new profile's
+                    first choice is kept; long model names no longer clip the picker; Claude account
+                    labels include the available Max multiplier, and Grok 4.5 and 4.6 remain
+                    discoverable, provider readiness stays silent during new-chat source changes,
+                    and saved custom ids remain usable while their management UI is parked</span
                   >
                 </span>
               </li>
@@ -1351,10 +1365,12 @@
                   >MCP and Skills, kept simple
                   <span class="d"
                     >project views start empty until the user explicitly adds or imports a resource;
-                    add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
-                    and provider capability status instead of misleading project-name copy. The
-                    compact composer picker invokes them directly from /, $, or @. Stays this size
-                    for the beta</span
+                    the servers a provider already loads from its own settings are listed read-only
+                    below with status and tools; add, enable, per-project scope, reconnect recovery,
+                    null-safe legacy inventory, an unknown auth status that keeps the rest of the
+                    list, and provider capability status instead of misleading project-name copy.
+                    The compact composer picker invokes them directly from /, $, or @. Stays this
+                    size for the beta</span
                   >
                 </span>
               </li>
