@@ -113,6 +113,7 @@ const isCapabilities = objectValidator<Capabilities>({
   subagents: optional(
     enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
   ),
+  multipleAccounts: optional(isBoolean),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
