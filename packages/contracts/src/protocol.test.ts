@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -20,6 +20,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryResultSchema,
   type ProviderLimit,
   type ProviderLimitSource,
 } from './protocol.js'
@@ -60,16 +61,16 @@ describe('audit recovery contracts', () => {
     expect(channels['preview.captureCancelled'].parse({ requestId })).toEqual({ requestId })
     expect(
       methods['providers.watch'].params.parse({
-        provider: 'grok',
+        provider: 'api',
         projectPath: '/repo',
         targets: ['mcp', 'skills'],
       }),
-    ).toMatchObject({ provider: 'grok' })
+    ).toMatchObject({ provider: 'api' })
     expect(
       methods['providers.watch'].params.safeParse({
         provider: 'codex',
         projectPath: '/repo',
-        targets: ['mcp', 'skills', 'mcp'],
+        targets: ['mcp', 'skills', 'commands', 'mcp'],
       }).success,
     ).toBe(false)
   })
@@ -237,6 +238,64 @@ describe('protocol envelopes', () => {
     expect(RequestSchema.parse({ id: '1', method: 'system.info', params: {} })).toBeTruthy()
   })
 
+  it('keeps usage estimates paired with their pricing coverage', () => {
+    const totals = {
+      uncachedInputTokens: 100,
+      cachedInputTokens: 200,
+      cacheWriteInputTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+      processedTokens: 330,
+      estimatedCostUsd: 0.01,
+      cacheSavingsUsd: 0.02,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 300,
+      unpricedTokens: 30,
+    }
+    const result = {
+      range: '30d' as const,
+      startDate: '2026-07-10',
+      endDate: '2026-08-08',
+      generatedAt: 1,
+      sessionCount: 1,
+      activeDays: 1,
+      totals,
+      providers: [{ provider: 'codex' as const, sessionCount: 1, totals }],
+      models: [
+        {
+          provider: 'codex' as const,
+          model: 'gpt-5.6-sol',
+          sessionCount: 1,
+          pricing: 'exact' as const,
+          totals,
+        },
+      ],
+      daily: [
+        {
+          date: '2026-08-08',
+          sessionCount: 1,
+          totals,
+          providers: [{ provider: 'codex' as const, tokens: 330, estimatedCostUsd: 0.01 }],
+        },
+      ],
+      sources: [{ provider: 'codex' as const, available: true, sessionCount: 1 }],
+      scan: { status: 'idle' as const, filesProcessed: 1, filesTotal: 1 },
+      warnings: [],
+    }
+
+    expect(UsageHistoryResultSchema.parse(result)).toEqual(result)
+  })
+
+  it('keeps local usage history separate from earned provider reset credits', () => {
+    const history = { range: '30d', refresh: true }
+    expect(methods['usage.history'].params.parse(history)).toEqual(history)
+    expect(methods['usage.history'].params.safeParse({ range: 'forever' }).success).toBe(false)
+    expect(methods['usage.resetHistory'].result.parse({ started: true })).toEqual({ started: true })
+    expect(methods['usage.resetHistory'].result.safeParse({ outcome: 'reset' }).success).toBe(false)
+    expect(methods['usage.consumeReset'].result.safeParse({ started: true }).success).toBe(false)
+  })
+
   it('requires a sequence on every push so clients can detect gaps', () => {
     expect(() => PushSchema.parse({ channel: 'server.welcome', data: {} })).toThrow()
   })
@@ -377,41 +436,35 @@ describe('protocol envelopes', () => {
       }),
     ).toThrow()
     expect(() => methods['thread.start'].params.parse({ provider: 'nope' })).toThrow()
-    expect(methods['models.list'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
-      {
-        provider: 'codex',
-        agent: 'codex-fork',
-      },
-    )
+    expect(methods['models.list'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
     expect(
       methods['harnesses.upsert'].params.parse({
-        id: 'codex-fork',
-        displayName: 'Codex Fork',
-        provider: 'codex',
-        command: '/Applications/Codex forks/codex-fork',
-        args: ['--profile', 'value with spaces'],
-        workingDirectory: '~/Developer/codex-fork',
-        environment: { CODEX_HOME: '/Users/me/.codex-fork' },
+        id: 'deepseek-pi',
+        displayName: 'DeepSeek Pi',
+        provider: 'pi',
+        command: '/Applications/Pi forks/deepseek-pi',
+        args: ['--openrouter', 'value with spaces'],
+        workingDirectory: '~/Developer/pi-deepseek',
+        environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
       }),
     ).toMatchObject({
-      provider: 'codex',
-      args: ['--profile', 'value with spaces'],
-      workingDirectory: '~/Developer/codex-fork',
-      environment: { CODEX_HOME: '/Users/me/.codex-fork' },
+      provider: 'pi',
+      args: ['--openrouter', 'value with spaces'],
+      workingDirectory: '~/Developer/pi-deepseek',
+      environment: { PI_CODING_AGENT_DIR: '/Users/me/.pi-deepseek' },
     })
     expect(
       methods['harnesses.verify'].result.parse({
         verification: {
           status: 'ready',
-          summary: 'Codex Fork is compatible',
+          summary: 'DeepSeek Pi is compatible',
           checkedAt: 1,
-          resolvedCommand: '/Users/me/.local/bin/codex-fork',
+          resolvedCommand: '/Users/me/.local/bin/deepseek-pi',
           checks: [
-            {
-              label: 'Codex app-server',
-              status: 'passed',
-              detail: 'Initialize handshake completed.',
-            },
+            { label: 'Pi RPC', status: 'passed', detail: 'Initialize handshake completed.' },
           ],
         },
       }),
@@ -420,22 +473,20 @@ describe('protocol envelopes', () => {
       methods['harnesses.upsert'].params.parse({
         id: 'bad',
         displayName: 'Bad',
-        provider: 'unlisted-cli',
+        provider: 'api',
         command: 'bad',
         args: [],
       }),
     ).toThrow()
-    expect(() => methods['models.list'].params.parse({ provider: 'codex', agent: '' })).toThrow()
-    expect(methods['auth.status'].params.parse({ provider: 'codex', agent: 'codex-fork' })).toEqual(
-      {
-        provider: 'codex',
-        agent: 'codex-fork',
-      },
-    )
+    expect(() => methods['models.list'].params.parse({ provider: 'acp', agent: '' })).toThrow()
+    expect(methods['auth.status'].params.parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
     expect(methods['auth.startLogin'].result.parse({ loginId: 'cli-login' })).toEqual({
       loginId: 'cli-login',
     })
-    expect(() => methods['auth.status'].params.parse({ provider: 'codex', agent: '' })).toThrow()
+    expect(() => methods['auth.status'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(() => methods['auth.startLogin'].result.parse({ loginId: '' })).toThrow()
     const { undo } = methods['thread.restore'].result.parse({ undo: 'restore-token' })
     expect(methods['thread.undoRestore'].params.parse({ threadId: 'th1', undo })).toEqual({
@@ -664,8 +715,8 @@ describe('protocol envelopes', () => {
       status: 'ready',
       limits: [],
     })
-    expect(parse([], { provider: 'codex', status: 'unavailable' }).limitSource).toEqual({
-      provider: 'codex',
+    expect(parse([], { provider: 'api', status: 'unavailable' }).limitSource).toEqual({
+      provider: 'api',
       status: 'unavailable',
     })
 
@@ -1213,8 +1264,8 @@ describe('protocol envelopes', () => {
       methods['providers.list'].result.parse({
         providers: [
           {
-            id: 'grok',
-            displayName: 'Grok',
+            id: 'opencode',
+            displayName: 'OpenCode',
             installed: false,
             auth: 'unknown',
             setup,
@@ -1222,23 +1273,48 @@ describe('protocol envelopes', () => {
         ],
       }).providers[0]?.setup,
     ).toEqual(setup)
+    expect(
+      methods['acp.agents'].result.parse({
+        agents: [
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: false,
+            verified: true,
+            setup,
+          },
+        ],
+      }).agents[0]?.setup,
+    ).toEqual(setup)
+    // A vendor breaking a login path is the agent's story to tell; the field
+    // is optional so healthy agents carry nothing.
+    expect(
+      methods['acp.agents'].result.parse({
+        agents: [
+          {
+            id: 'gemini',
+            name: 'Gemini CLI',
+            installed: true,
+            verified: true,
+            setup,
+            problem: 'Google ended individual sign-in.',
+          },
+        ],
+      }).agents[0]?.problem,
+    ).toBe('Google ended individual sign-in.')
   })
 
   it('names an install target without carrying any command text', () => {
-    const valid = { provider: 'codex', columns: 80, rows: 24 }
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.install'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.install'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
+      methods['providers.install'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
     expect(methods['providers.install'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
     expect(() =>
-      methods['providers.install'].params.parse({
-        provider: 'unlisted-cli',
-        columns: 80,
-        rows: 24,
-      }),
+      methods['providers.install'].params.parse({ provider: 'acp', agent: '' }),
     ).toThrow()
     expect(methods['providers.install'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
@@ -1261,17 +1337,15 @@ describe('protocol envelopes', () => {
   })
 
   it('names a launch target without carrying any command text', () => {
-    const valid = { provider: 'codex', columns: 80, rows: 24 }
+    const valid = { provider: 'acp', agent: 'gemini', columns: 80, rows: 24 }
     expect(methods['providers.launch'].params.parse(valid)).toEqual(valid)
     expect(
-      methods['providers.launch'].params.parse({ provider: 'grok', columns: 80, rows: 24 }),
-    ).toEqual({ provider: 'grok', columns: 80, rows: 24 })
+      methods['providers.launch'].params.parse({ provider: 'opencode', columns: 80, rows: 24 }),
+    ).toEqual({ provider: 'opencode', columns: 80, rows: 24 })
     expect(methods['providers.launch'].params.parse({ ...valid, command: 'rm -rf /' })).toEqual(
       valid,
     )
-    expect(() =>
-      methods['providers.launch'].params.parse({ provider: 'unlisted-cli', columns: 80, rows: 24 }),
-    ).toThrow()
+    expect(() => methods['providers.launch'].params.parse({ provider: 'acp', agent: '' })).toThrow()
     expect(methods['providers.launch'].result.parse({ terminalId: 'term-1' })).toEqual({
       terminalId: 'term-1',
     })
@@ -1388,9 +1462,9 @@ describe('protocol envelopes', () => {
     const target = {
       mode: 'manual' as const,
       target: {
-        provider: 'claude-code' as const,
-        agent: 'claude-fork',
-        model: 'haiku',
+        provider: 'api' as const,
+        connectionId: 'openrouter',
+        model: 'anthropic/claude-haiku-4.5',
         effort: 'low',
       },
     }
@@ -1409,7 +1483,7 @@ describe('protocol envelopes', () => {
     expect(() =>
       methods['backgroundModel.updateSettings'].params.parse({
         mode: 'manual',
-        target: { provider: 'unlisted-cli', model: 'missing-provider' },
+        target: { provider: 'api', model: 'missing-connection' },
       }),
     ).toThrow()
     expect(
@@ -1445,9 +1519,9 @@ describe('protocol envelopes', () => {
         preference: { mode: 'automatic' },
         sources: [],
         resolved: {
-          provider: 'unlisted-cli',
-          model: 'missing-provider',
-          sourceName: 'Unlisted',
+          provider: 'api',
+          model: 'missing-connection',
+          sourceName: 'API',
           automatic: true,
         },
       }),
@@ -1584,5 +1658,349 @@ describe('feedback contracts', () => {
       payload: '{}',
       redactions: 2,
     })
+  })
+})
+
+describe('model metadata contracts', () => {
+  const base = {
+    id: 'gpt-6.1-sol',
+    displayName: 'GPT-6.1-Sol',
+    isDefault: true,
+    reasoningEfforts: ['low', 'medium', 'high'],
+  }
+  const result = methods['models.list'].result
+
+  it('keeps lists without metadata valid for older adapters', () => {
+    expect(result.parse({ models: [base] })).toEqual({
+      models: [{ ...base, serviceTiers: [] }],
+    })
+  })
+
+  it('accepts lab, family, generation, release date and curation flags', () => {
+    const model = {
+      ...base,
+      lab: 'OpenAI',
+      family: 'gpt-sol',
+      generation: '6.1',
+      released: '2026-10-02',
+      recommended: true,
+      deprecated: false,
+    }
+    expect(result.parse({ models: [model] }).models[0]).toMatchObject(model)
+    expect(result.parse({ models: [{ ...base, generation: '6' }] }).models[0]?.generation).toBe('6')
+  })
+
+  it.each([
+    { generation: 6 },
+    { generation: '' },
+    { generation: '6.x' },
+    { generation: 'v6.1' },
+    { generation: '6.' },
+    { released: '2026-10' },
+    { released: '02.10.2026' },
+    { released: '2026-10-02T12:00:00Z' },
+    { lab: '' },
+    { family: '' },
+    { recommended: 'yes' },
+    { deprecated: 1 },
+  ])('rejects malformed metadata: %j', (metadata) => {
+    expect(result.safeParse({ models: [{ ...base, ...metadata }] }).success).toBe(false)
+  })
+
+  it('announces a changed model list per provider and optional agent', () => {
+    expect(channels['models.changed'].parse({ provider: 'codex' })).toEqual({ provider: 'codex' })
+    expect(channels['models.changed'].parse({ provider: 'acp', agent: 'kimi' })).toEqual({
+      provider: 'acp',
+      agent: 'kimi',
+    })
+    expect(channels['models.changed'].safeParse({ provider: 'acp', agent: '' }).success).toBe(false)
+    expect(channels['models.changed'].safeParse({ provider: 'nope' }).success).toBe(false)
+  })
+})
+
+describe('provider command contracts', () => {
+  const list = methods['commands.list']
+
+  it('lists commands for a project, optionally from one chat', () => {
+    const params = { provider: 'claude-code', projectPath: 'D:\\project' }
+    expect(list.params.parse(params)).toEqual(params)
+    expect(list.params.parse({ ...params, threadId: 'th1' })).toEqual({
+      ...params,
+      threadId: 'th1',
+    })
+    expect(list.params.safeParse({ ...params, threadId: '' }).success).toBe(false)
+    expect(list.params.safeParse({ ...params, projectPath: '' }).success).toBe(false)
+  })
+
+  it('round-trips commands and skills with hints and aliases', () => {
+    const result = {
+      commands: [
+        { name: 'context', description: 'Show context usage' },
+        {
+          name: 'design-taste:design-taste',
+          description: 'Build pages from references',
+          argumentHint: '<page>',
+          aliases: ['taste'],
+          kind: 'skill',
+        },
+        { name: 'review', description: '', kind: 'command' },
+      ],
+      loading: false,
+    }
+    expect(list.result.parse(result)).toEqual(result)
+    expect(list.result.parse({ commands: [], loading: true })).toEqual({
+      commands: [],
+      loading: true,
+    })
+    expect(list.result.safeParse({ commands: [] }).success).toBe(false)
+  })
+
+  it.each([
+    { name: '/context' },
+    { name: '' },
+    { name: 'two words' },
+    { name: 'context', aliases: ['/ctx'] },
+    { name: 'context', argumentHint: '' },
+    { name: 'context', kind: 'prompt' },
+  ])('rejects malformed commands: %j', (command) => {
+    expect(
+      list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })
+        .success,
+    ).toBe(false)
+  })
+
+  it('announces changed commands and accepts a commands watch', () => {
+    expect(
+      channels['commands.changed'].parse({ provider: 'grok', projectPath: 'D:\\project' }),
+    ).toEqual({ provider: 'grok', projectPath: 'D:\\project' })
+    expect(channels['commands.changed'].safeParse({ provider: 'grok' }).success).toBe(false)
+    expect(
+      methods['providers.watch'].params.parse({
+        provider: 'claude-code',
+        projectPath: '/repo',
+        targets: ['skills', 'mcp', 'commands'],
+      }).targets,
+    ).toEqual(['skills', 'mcp', 'commands'])
+  })
+})
+
+describe('MCP inventory state contracts', () => {
+  const capabilities = {
+    inventory: true,
+    add: true,
+    update: true,
+    remove: true,
+    reload: false,
+    startOAuth: false,
+    cancelOAuth: false,
+  }
+
+  it('keeps hiding inherited servers optional so legacy capabilities still parse', () => {
+    expect(McpCapabilitiesSchema.parse(capabilities).hideInherited).toBeUndefined()
+    expect(McpCapabilitiesSchema.parse({ ...capabilities, hideInherited: false })).toEqual({
+      ...capabilities,
+      hideInherited: false,
+    })
+    expect(McpCapabilitiesSchema.safeParse({ ...capabilities, hideInherited: 'no' }).success).toBe(
+      false,
+    )
+  })
+
+  it('marks an unsettled server list as loading', () => {
+    const result = methods['mcp.list'].result
+    expect(result.parse({ capabilities, servers: [] }).loading).toBeUndefined()
+    expect(result.parse({ capabilities, servers: [], loading: true })).toEqual({
+      capabilities,
+      servers: [],
+      loading: true,
+    })
+    expect(result.safeParse({ capabilities, servers: [], loading: 1 }).success).toBe(false)
+  })
+})
+
+describe('limit freshness contracts', () => {
+  const usage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+  }
+  const summary = (source: unknown) =>
+    methods['usage.summary'].result.safeParse({
+      session: usage,
+      today: usage,
+      limits:
+        typeof source === 'object' && source !== null && 'limits' in source
+          ? (source as { limits: unknown }).limits
+          : [],
+      limitSource: source,
+    })
+  const row = {
+    id: 'five_hour',
+    label: 'Session',
+    usedPercent: 40,
+    resetsAt: 1_800_000,
+    windowMinutes: 300,
+  }
+
+  it('keeps the old shapes valid', () => {
+    expect(summary({ provider: 'codex', status: 'ready', limits: [] }).success).toBe(true)
+    expect(summary({ provider: 'api', status: 'unavailable' }).success).toBe(true)
+    expect(
+      summary({
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5 hours', usedPercent: 25 }],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('carries ids, windows and last-known state through the mirrored limits', () => {
+    const source = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [row, { id: 'seven_day', label: 'Weekly', usedPercent: 10, windowMinutes: 10_080 }],
+      checkedAt: 1_760_000_000_000,
+      origin: 'live',
+      stale: true,
+      refreshError: 'Claude did not report its limits in time.',
+      retryAt: 1_760_000_300_000,
+    }
+    const parsed = summary(source)
+    expect(parsed.success).toBe(true)
+    expect(parsed.data?.limitSource).toEqual(source)
+    expect(parsed.data?.limits).toEqual(source.limits)
+  })
+
+  it('reports why limits are unavailable and when the server retries', () => {
+    const failed = {
+      provider: 'grok',
+      status: 'unavailable',
+      reason: 'failed',
+      error: 'Grok Build did not report its credits.',
+      retryAt: 1_760_000_120_000,
+    }
+    expect(summary(failed).data?.limitSource).toEqual(failed)
+    for (const reason of ['unsupported', 'noPlan'])
+      expect(summary({ provider: 'api', status: 'unavailable', reason }).success).toBe(true)
+  })
+
+  it.each([
+    ['empty id', { limits: [{ ...row, id: '' }] }],
+    ['long id', { limits: [{ ...row, id: 'x'.repeat(81) }] }],
+    ['zero window', { limits: [{ ...row, windowMinutes: 0 }] }],
+    ['fractional window', { limits: [{ ...row, windowMinutes: 1.5 }] }],
+    ['negative check time', { checkedAt: -1 }],
+    ['unknown origin', { origin: 'cache' }],
+    ['stale false', { stale: false }],
+    ['error without stale', { refreshError: 'Failed.' }],
+    ['retry without stale', { retryAt: 1 }],
+    ['empty error', { stale: true, refreshError: '' }],
+    ['long error', { stale: true, refreshError: 'x'.repeat(301) }],
+  ])('rejects a ready source with %s', (_name, change) => {
+    const source = { provider: 'claude-code', status: 'ready', limits: [row], ...change }
+    expect(summary(source).success).toBe(false)
+  })
+
+  it.each([
+    ['unknown reason', { reason: 'offline' }],
+    ['error without failed', { reason: 'noPlan', error: 'No plan.' }],
+    ['retry without reason', { retryAt: 1 }],
+    ['negative retry', { reason: 'failed', retryAt: -1 }],
+  ])('rejects an unavailable source with %s', (_name, change) => {
+    expect(summary({ provider: 'grok', status: 'unavailable', ...change }).success).toBe(false)
+  })
+
+  it('pushes a provider source and accepts a read intent', () => {
+    const source = { provider: 'codex', status: 'ready', limits: [row], origin: 'live' }
+    expect(channels['usage.limits'].parse({ source })).toEqual({ source })
+    expect(channels['usage.limits'].safeParse({ source: { provider: 'codex' } }).success).toBe(
+      false,
+    )
+    const params = methods['usage.summary'].params
+    for (const intent of ['background', 'visible', 'retry'])
+      expect(params.parse({ provider: 'codex', intent })).toEqual({ provider: 'codex', intent })
+    expect(params.parse({ threadId: 'th1', intent: 'visible' })).toEqual({
+      threadId: 'th1',
+      intent: 'visible',
+    })
+    expect(params.safeParse({ provider: 'codex', intent: 'always' }).success).toBe(false)
+  })
+})
+
+describe('subagent contracts', () => {
+  const call = {
+    id: 'toolu_1-call',
+    turnId: 't1',
+    type: 'tool_call',
+    status: 'started',
+    text: 'Agent',
+    createdAt: 1,
+  }
+  const subagent = {
+    id: 'toolu_1',
+    name: 'Explore',
+    description: 'Find the config loader',
+    state: 'running',
+    background: true,
+    toolUses: 4,
+    tokens: 12_345,
+    durationMs: 8_200.5,
+    lastTool: 'Grep',
+    summary: 'Reading apps/server/src/config.ts',
+  }
+  const capabilities = {
+    steer: true,
+    fork: false,
+    interrupt: true,
+    reasoningItems: true,
+    approvals: true,
+    images: true,
+  }
+
+  it('keeps tool calls without a subagent valid', () => {
+    expect(ItemSchema.parse(call)).toEqual(call)
+    expect(ItemSchema.parse(call).subagent).toBeUndefined()
+  })
+
+  it('round-trips a subagent snapshot on its spawning tool call', () => {
+    const item = { ...call, subagent }
+    expect(ItemSchema.parse(item)).toEqual(item)
+    expect(
+      DomainEventSchema.parse({
+        type: 'item.completed',
+        item: { ...item, status: 'completed', subagent: { id: 'toolu_1', state: 'completed' } },
+      }),
+    ).toMatchObject({ item: { subagent: { id: 'toolu_1', state: 'completed' } } })
+    for (const state of ['running', 'completed', 'failed', 'interrupted'])
+      expect(ItemSchema.parse({ ...call, subagent: { id: 'a', state } }).subagent?.state).toBe(
+        state,
+      )
+  })
+
+  it.each([
+    ['empty id', { id: '' }],
+    ['missing state', { state: undefined }],
+    ['unknown state', { state: 'queued' }],
+    ['negative tool uses', { toolUses: -1 }],
+    ['fractional tool uses', { toolUses: 1.5 }],
+    ['negative tokens', { tokens: -3 }],
+    ['negative duration', { durationMs: -1 }],
+    ['empty last tool', { lastTool: '' }],
+    ['empty name', { name: '' }],
+    ['string background', { background: 'yes' }],
+  ])('rejects a subagent with %s', (_name, change) => {
+    expect(ItemSchema.safeParse({ ...call, subagent: { ...subagent, ...change } }).success).toBe(
+      false,
+    )
+  })
+
+  it('declares how an engine reports subagents, absent for plain tool calls', () => {
+    expect(CapabilitiesSchema.parse(capabilities).subagents).toBeUndefined()
+    for (const subagents of ['summary', 'progress'])
+      expect(CapabilitiesSchema.parse({ ...capabilities, subagents }).subagents).toBe(subagents)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: 'live' }).success).toBe(false)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: true }).success).toBe(false)
   })
 })

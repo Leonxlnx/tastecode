@@ -20,6 +20,7 @@ import type {
 } from '@harness/contracts'
 import { UserInputRequestSchema } from '@harness/contracts'
 import { mapThreadItem } from './map-item.js'
+import { orderCodexModels } from './model-order.js'
 import {
   spawnCli,
   StdioJsonRpc,
@@ -167,6 +168,30 @@ export function mapCodexUsage(
     totalTokens: total.totalTokens,
     cumulative: true,
     inputIncludesCached: true,
+  }
+}
+
+/**
+ * How full the context window is after the last request, as a reading of its
+ * own. Codex's `last` counter is that occupancy. The reading carries no
+ * accounting counters, the shape ACP's context reports have, so session totals
+ * never count it. Nothing is reported while Codex does not know the window.
+ */
+export function mapCodexContextUsage(
+  notification: ThreadTokenUsageUpdatedNotification,
+  model?: string,
+): Usage | undefined {
+  const window = notification.tokenUsage.modelContextWindow
+  const tokens = notification.tokenUsage.last.totalTokens
+  if (!window || window <= 0 || tokens <= 0) return undefined
+  return {
+    ...(model ? { model } : {}),
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: tokens,
+    contextWindow: window,
   }
 }
 
@@ -580,6 +605,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
   #rpc: CodexRpc | undefined
+  /** The newest process, kept after dispose so a stop that failed can be retried. */
+  #lastRpc: CodexRpc | undefined
   #started = false
   #restartNeeded = false
   #starting: Promise<void> | undefined
@@ -676,6 +703,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       },
     )
     this.#rpc = rpc
+    this.#lastRpc = rpc
 
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => {
@@ -909,17 +937,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         models.push(compatibilityModel)
       }
     }
-    // Codex's own catalog priority (codex-cli 0.154). Unlisted rows keep their
-    // model/list order after these, and the legacy fallback stays last.
-    const preferred = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
-    return models.sort((left, right) => {
-      const leftRank = preferred.indexOf(left.id)
-      const rightRank = preferred.indexOf(right.id)
-      return (
-        (leftRank < 0 ? preferred.length : leftRank) -
-        (rightRank < 0 ? preferred.length : rightRank)
-      )
-    })
+    // Every listed model appears, so a release needs no change here. Untiered
+    // rows keep their model/list order, and the legacy fallback stays last.
+    return orderCodexModels(models)
   }
 
   async listMcpServers(threadId?: string): Promise<McpServer[]> {
@@ -1256,7 +1276,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   dispose(): Promise<void> {
     this.#startupGeneration += 1
-    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
+    // A second dispose after a failed stop asks the process to stop again
+    // instead of returning that failure forever.
+    const rpc = this.#rpc ?? this.#lastRpc
+    const stopped = rpc ? Promise.resolve(rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#started = false
     this.#restartNeeded = false
@@ -1614,10 +1637,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'thread/tokenUsage/updated': {
         const p = ThreadTokenUsageUpdatedNotificationSchema.parse(params)
-        emit({
-          type: 'usage.updated',
-          usage: mapCodexUsage(p, this.#threadModels.get(p.threadId)),
-        })
+        const model = this.#threadModels.get(p.threadId)
+        emit({ type: 'usage.updated', usage: mapCodexUsage(p, model) })
+        // Last, so the latest usage a client replays is the context reading.
+        const context = mapCodexContextUsage(p, model)
+        if (context) emit({ type: 'usage.updated', usage: context })
         return
       }
 

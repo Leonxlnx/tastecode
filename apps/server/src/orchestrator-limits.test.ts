@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProviderIdSchema } from '@harness/contracts'
+import { ProviderIdSchema, type ProviderId } from '@harness/contracts'
+import type { AgentSession } from './adapters.js'
 import { Store } from './store.js'
 
 const sources = vi.hoisted(() => ({
@@ -123,6 +124,57 @@ describe('provider limit sources', () => {
     expect(sources.codex).not.toHaveBeenCalled()
     expect(sources.claude).not.toHaveBeenCalled()
     expect(sources.grok).not.toHaveBeenCalled()
+    await instance.disposeAll()
+  })
+
+  it('answers the read after each Claude turn without another usage scan', async () => {
+    sources.claude.mockResolvedValue({ status: 'unavailable' })
+    let usageChanged = () => {}
+    const session: AgentSession = {
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: true,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+      },
+      sendTurn: async () => 'turn',
+      interrupt: async () => {},
+      respondToApproval: () => {},
+      dispose: () => {},
+      on: () => {},
+      onUsageChanged: (listener) => {
+        usageChanged = listener
+      },
+    }
+    const signals: ProviderId[] = []
+    const instance = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onUsageChanged: (provider) => signals.push(provider),
+      runtimeFor: (provider) => ({
+        start: async (workspacePath) => ({
+          thread: { id: 'claude-thread', provider, workspacePath, createdAt: Date.now() },
+          session,
+        }),
+        listModels: async () => [],
+      }),
+    })
+    await instance.startThread('claude-code', process.cwd())
+
+    await instance.usageLimitSource('claude-code')
+    for (let turn = 0; turn < 3; turn += 1) {
+      // Each turn's rate-limit event, then the client's refresh it triggers.
+      usageChanged()
+      await expect(instance.usageLimitSource('claude-code')).resolves.toEqual({
+        provider: 'claude-code',
+        status: 'unavailable',
+      })
+    }
+    expect(signals[0]).toBe('claude-code')
+    expect(sources.claude).toHaveBeenCalledOnce()
     await instance.disposeAll()
   })
 

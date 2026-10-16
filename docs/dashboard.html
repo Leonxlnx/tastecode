@@ -289,13 +289,113 @@
           <a href="#ready">Checklist</a>
           <a href="#parked">Nightly only</a>
           <a href="./feature-inventory.html">Inventory</a>
+          <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-15 main c1d46aae · Steady replies, calm Browser errors</span>
+        <span class="meta">2026-10-16 nightly 04580dfe · includes main 0ad74ec3</span>
       </div>
     </div>
 
     <div class="wrap">
       <section id="scope">
+        <p>
+          October 16 on nightly (04580dfe): main is synchronized through 0ad74ec3 (PR #1632) with
+          every nightly provider, API connection and the usage history kept, bringing main's October
+          16 round: full-width replies, aligned code block controls, square composer chips, steady
+          streamed text, tier-ordered Codex and Claude Code catalogs with one generation rule, the
+          context ring for Codex and Claude Code, the inherited MCP servers list, settings and
+          terminal polish and the design agent fixes. The sync hand-merged main's staged background
+          model sources with nightly's API connections, which load through the same per-source cache
+          and run on their connection runtime. Dashboard references are parked behind one switch:
+          dashboard requests build as websites and the 42 MB dashboard set left the package (PR
+          #1611); the design-taste plugin 0.5.0 ships without them.
+        </p>
+        <p>
+          October 15, evening on nightly (98bb0fba): main is synchronized through f8425b39 by two
+          more sync PRs, with every nightly provider, API connection and the usage history kept: the
+          non-blocking Windows taskkill (PR #1588, main's PR #1556) and Leon's design picks with
+          main's docs update (PR #1609). Neither sync changed nightly-only code; PR #1609 needed a
+          hand merge only in the two docs pages. The picks are shared UI, so they reach every
+          nightly provider without provider-specific code.
+        </p>
+        <p>
+          October 15 on nightly (a8b85315): main is synchronized through b003509f by two sync PRs,
+          with every nightly provider, API connection and the usage history kept, bringing main's
+          October 15 merges below: the round-5 batch through 3c7168fb (PR #1581) and the streaming,
+          GPT short name, toast and test fixes with main's docs update (PR #1586). In PR #1581 the
+          app shell kept nightly's full provider roster, its preferred-source default-model fallback
+          and its send-availability inputs while taking main's draft notice and its loading state
+          for a model choice whose source is still listing. PR #1586 changed no nightly-only code;
+          only the two docs pages needed a hand merge.
+        </p>
+        <p>
+          October 14 on nightly (2a6c7e1c): main is synchronized through 16b95be9 with every nightly
+          provider, API connection and the usage history kept, bringing main's October 12 to 14
+          merges below; on nightly a new profile's first visibility choice also covers ACP, API
+          connection and custom harness rows. An expired Cursor sign-in now reads as signed out, so
+          Settings and the composer offer Sign in, and Cursor model discovery says "Your Cursor
+          sign-in has expired or is missing. Sign in to Cursor again." instead of "Cursor model
+          discovery failed". The Cursor CLI's status counts any stored sign-in as logged in, while
+          its model list and turns refuse an expired one (PR #1547).
+        </p>
+        <p>
+          October 13 on nightly (0d93b349): main is synchronized through 4794e048 by three sync PRs,
+          with every nightly provider, API connection and the usage history kept (PRs #1533, #1541,
+          #1545). Chat rows take main's new sidebar layout and keep each ACP agent's own mark. No
+          nightly-only provider gets main's new Ultra or Ultracode efforts by hand; OpenCode, Pi and
+          ACP agents show the levels their runtimes report (PR #1541). Model visibility moves each
+          row once across nightly's whole catalog, so a source that fails discovery, such as Cursor,
+          no longer holds the other sources back. In the account popup a failed OpenCode read shows
+          Unavailable with Retry, and an API connection whose refresh failed shows Last known (PR
+          #1545).
+        </p>
+        <p>
+          Late October 12 on nightly (f1a65a4e): a search hit's jump runs once instead of again on
+          every return to the chat (PR #1498, the same fix as main's PR #1532). Cursor on Windows
+          starts its bundled node.exe instead of the cmd.exe shim, so multi-line prompts and the
+          first turn of a new chat no longer fail, and session instructions are kept until the CLI
+          starts (PR #1499). A chat that switches model runs its next turn on that model for API
+          connections and for ACP agents that choose a model through a session option, such as Kimi;
+          Gemini CLI and Qwen Code still keep their starting model (PR #1520). API connections
+          answer a tool call whose arguments fail review with a tool error instead of failing the
+          turn (PR #1504), stop the remaining tool calls of a batch on Stop (PR #1508), give
+          router-prefixed ids and current families such as claude-*, o3, Kimi K2 and GLM 4.x the 64
+          KB context budget instead of 8 KB (PR #1523), and no longer rewrite saved history for a
+          placeholder key shorter than four characters (PR #1528). OpenCode rejects a v1 model id
+          without its provider before the turn opens instead of blocking every later turn (PR
+          #1525). The Design agent reads named Tailwind radii through the workspace theme, so
+          token-correct pages no longer get false radius findings (PR #1506), and pricing, about and
+          waitlist pages for an app stay on website references (PR #1510).
+        </p>
+        <p>
+          October 12 on nightly (abb78ddf): main is synchronized through 0e792a64 with every nightly
+          provider kept (PR #1494), and Claude Code is first across nightly's longer provider lists
+          (PR #1495). Cursor, Antigravity and Pi keep reading past a frame that fails its schema or
+          a listener that throws (PR #1494). The Design agent keeps one design language per page: it
+          samples website references from one anchor site and then similar profiled sites (53 style
+          profiles), matches a dashboard screen to the request's domain (PR #1485), tells every
+          phase to follow the anchor's shared designTokens with at most two font families (PR
+          #1478), and audits generated fonts and radii as bounded Review findings while Brand sees
+          only the anchor and up to two same-site references; finished dashboards say "Dashboard
+          built." (PR #1493). A bad providers.json entry no longer breaks every API connection, and
+          Antigravity is found in %LOCALAPPDATA%\agy\bin (PR #1489).
+        </p>
+        <p>
+          October 15, evening (main 6361163f): Leon's design picks landed. The right panel's X hides
+          the panel and keeps every tab, Browser page and running terminal for the next open, and
+          below 900 px the panel header leads with Back to chat (PR #1589). Double-clicking a panel
+          edge restores its default size, and a focused edge resizes from the keyboard (PR #1593).
+          The Browser tab takes Alt+Left/Right, Ctrl/Command+R or F5, Ctrl/Command+L, Ctrl/Command+W
+          and Esc, also from inside the page (PR #1594). While a reply streams, tables, links and
+          task lists render as their lines complete (PR #1600), and a stopped reply settles with a
+          Stopped after summary and a Stopped by you marker (PR #1599). Restore points use a history
+          clock (PR #1595), Allow once is the only primary button on an approval card (PR #1596),
+          the Design chip takes the shared composer hover (PR #1597) and the context meter shows a
+          full track with its percentage (PR #1598). Arrow Up in an empty composer puts the last
+          prompt back (PR #1601), code blocks get a Wrap toggle beside Copy (PR #1602), and renaming
+          a chat shows a visible field (PR #1603). On Windows, stopping a process tree runs taskkill
+          asynchronously, so it no longer freezes every open answer for about half a second (PR
+          #1556).
+        </p>
         <p>
           October 15 (main c1d46aae): replies stay steady while they finish. A completing rich reply
           keeps its live rendering until the rich renderer is ready instead of collapsing into plain
@@ -393,13 +493,48 @@
           were closed on GitHub and moved to the team's own roadmap tool.
         </p>
         <p>
+          <a href="./CLAUDE-HANDOFF.md">October 9 Claude handoff</a> records the completed reference
+          work, exact verification, local workspace risks and every open PR/issue. Nightly includes
+          main through 16b95be9, synchronized on 2026-10-14. The latest published desktop remains
+          0.1.1. The existing 0.1.2 draft is an older packaging proof, not a release of this nightly
+          source.
+        </p>
+        <p>
+          Nightly synchronization retains the complete provider roster and usage history while
+          integrating main through 16b95be9. OpenCode shares concurrent starts, rejects interrupted
+          session opening, recovers disconnected streams, and grants automatic permissions for one
+          request only. ACP prompt rejection settles pending work and approvals. New API chats
+          preserve their model, connection, and complete tool context across restart; older API
+          chats without saved context cannot resume. Standalone Pi works without a custom harness.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1392">Synchronization PR #1392</a>
+          merged into nightly at 17aa22a3. Dashboard support is integrated on nightly through
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>; this is not a
+          public release. Windows cleanup
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1394">#1394</a>, task authorization
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1403">#1403</a> and checkpoint
+          identity <a href="https://github.com/Leonxlnx/tastecode/pull/1404">#1404</a> are merged on
+          main. The standalone API connection contract
+          <a href="https://github.com/Leonxlnx/tastecode/pull/1395">#1395</a> is merged on nightly.
+        </p>
+        <p>
+          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
+            >Windows CI run 37228489532</a
+          >
+          passed lint, typecheck, the full test command and build for feature candidate edc92ea9:
+          4,445 tests passed, 18 existing skips, zero failures. Desktop tests ran with 368 passed
+          and 10 existing skips, included in that total; the real Windows alias regression passed.
+          No deadlines were overridden. Product source, tests, configuration, dependencies and
+          bundled images match that tested candidate; follow-up changes are documentation and
+          recorded screenshots only. Parent 67c7383c separately passed 4,395 tests in the same run.
+          Packaged Windows and macOS verification remains pending.
+        </p>
+        <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1404">Checkpoint identity (#1404)</a>:
           Windows long paths and 8.3 aliases share one Git common-directory identity, preserving
-          linked worktrees' combined checkpoint refs during history cleanup. A real alias regression
-          and all 36 checkpoint/audit tests passed locally; the fix is also covered by
-          <a href="https://github.com/Leonxlnx/tastecode/actions/runs/37228489532"
-            >Windows integration verification</a
-          >.
+          linked worktrees' combined checkpoint refs during history cleanup. Resolution errors
+          propagate and separate repositories remain distinct.
         </p>
         <p>
           <a href="https://github.com/Leonxlnx/tastecode/pull/1394"
@@ -695,7 +830,8 @@
           >. <a href="./DESIGN-REFERENCES.md">Reference workflow and local library setup</a>.
         </p>
         <p class="sub">
-          New Design runs sample the full eligible library without source-site or style filtering.
+          New Design runs sampled the full eligible library without source-site or style filtering
+          until 2026-10-12, when nightly moved website decks to anchor-site sampling (PR #1485).
           Complete generated candidates expand the local pool to 172 compositions and 24 heroes;
           their visual inspection remains part of the consuming run. Hero entrances and distinct
           scroll reveals are required by default. Normal follow-ups clear completed Design JSON
@@ -876,10 +1012,15 @@
                     chips follow each source's declared capability; file-only prompts send and name
                     new sessions from their attachments; permission and Design actions compact
                     before a narrow toolbar can overlap, and the permission chip keeps its icon; one
-                    smooth effort pill, with the level shown as dots on the composer model button;
-                    completing replies and their code blocks keep their height, Jump to latest lands
-                    at the moving end, and toasts open above the docked composer; plus an in-pane
-                    session header with shared rename, pin, delete, checkpoint, Workspace, and
+                    smooth effort pill, with the level shown as dots on the composer model button,
+                    and a context meter with its percentage for Codex and Claude Code chats too;
+                    replies use the full transcript width and streamed text reveals at a steady
+                    pace; streamed tables, links and task lists render live, a stopped reply ends
+                    with its own summary and a Stopped by you marker, Arrow Up in an empty composer
+                    recalls the last prompt, and code blocks wrap on demand; completing replies and
+                    their code blocks keep their height, Jump to latest lands at the moving end, and
+                    toasts open above the docked composer; plus an in-pane session header with
+                    shared rename in a visible field, pin, delete, checkpoint, Workspace, and
                     Terminal actions; the idle voice control stays flat; Stop immediately restores
                     the idle presentation while provider interruption finishes in the
                     background</span
@@ -891,8 +1032,9 @@
                 <span
                   >Review and safety
                   <span class="d"
-                    >per-hunk diff review, exact edit-block undo, approvals, validated checkpoints,
-                    modal keyboard isolation, modes</span
+                    >per-hunk diff review, exact edit-block undo, approvals with one primary Allow
+                    once, validated checkpoints marked by a history clock, modal keyboard isolation,
+                    modes</span
                   >
                 </span>
               </li>
@@ -913,12 +1055,16 @@
                     2-by-2-plus-one icon launcher and swaps its icon in place to close; it stays
                     visible throughout the closing transition. Closing a focused tab hands focus to
                     the next tab, a reattached terminal leaves focus in the composer, and removing
-                    the active project does not reopen the bottom terminal. The right panel resizes
-                    from 300 px and there stacks its launcher and its Review and Files trees; both
-                    panels reflow their tools by the panel's own width. Aligned dividers stay
-                    square, resizing preserves a 360 px center chat with or without the left
-                    sidebar, missing workspace items fail without exposing raw paths, startup is
-                    bounded, and 390 px layouts do not overflow</span
+                    the active project does not reopen the bottom terminal. The right panel's X
+                    hides it with every tab and running terminal kept, Back to chat leads its header
+                    below 900 px, a double-click or the keyboard restores an edge's default size,
+                    and the Browser tab takes back, forward, reload, address and close shortcuts,
+                    also from inside the page. The right panel resizes from 300 px and there stacks
+                    its launcher and its Review and Files trees; both panels reflow their tools by
+                    the panel's own width. Aligned dividers stay square, resizing preserves a 360 px
+                    center chat with or without the left sidebar, missing workspace items fail
+                    without exposing raw paths, startup is bounded, and 390 px layouts do not
+                    overflow</span
                   >
                 </span>
               </li>
@@ -955,8 +1101,9 @@
                 <span
                   >Lifecycle hardening
                   <span class="d"
-                    >reply guidance survives resume, Windows PTY cleanup waits for exit, and a
-                    server run as a legacy Node child exits when the main process dies</span
+                    >reply guidance survives resume, stale usage indexes rebuild, failed scans
+                    recover without retry storms, Windows PTY cleanup waits for exit, and a server
+                    run as a legacy Node child exits when the main process dies</span
                   >
                 </span>
               </li>
@@ -1015,16 +1162,17 @@
                     names and marks stay consistent; flat and rail pickers share search; Settings
                     keeps the short catalog lists search-free while every model and its switch
                     remain picker inclusion; the flat list is the first-run layout; Claude Code,
-                    Codex and Grok groups keep that order while models load, and new users start on
-                    Claude Code; current Codex and exact Claude defaults are prioritized; superseded
-                    GPT versions and every Claude generation older than the current lineup start
-                    hidden, also when a saved profile meets them for the first time; visibility
-                    updates move each row once from the first paint, so later choices stay even
-                    while a source fails discovery, and a new profile's first choice is kept; long
-                    model names no longer clip the picker; Claude account labels include the
-                    available Max multiplier, and Grok 4.5 and 4.6 remain discoverable, provider
-                    readiness stays silent during new-chat source changes, and saved custom ids
-                    remain usable while their management UI is parked</span
+                    Codex and Grok groups keep that order while models load, followed on nightly by
+                    the other CLIs, ACP agents and API connections, and new users start on Claude
+                    Code; both catalogs list the newest generation of each tier first (Astra, Sol,
+                    Terra, Luna; Fable, Opus, Sonnet, Haiku), and every row older than its family's
+                    newest generation starts hidden by one rule, also when a saved profile meets it
+                    for the first time; visibility updates move each row once from the first paint,
+                    so later choices stay even while a source fails discovery, and a new profile's
+                    first choice is kept; long model names no longer clip the picker; Claude account
+                    labels include the available Max multiplier, and Grok 4.5 and 4.6 remain
+                    discoverable, provider readiness stays silent during new-chat source changes,
+                    and saved custom ids remain usable while their management UI is parked</span
                   >
                 </span>
               </li>
@@ -1217,10 +1365,12 @@
                   >MCP and Skills, kept simple
                   <span class="d"
                     >project views start empty until the user explicitly adds or imports a resource;
-                    add, enable, per-project scope, reconnect recovery, null-safe legacy inventory,
-                    and provider capability status instead of misleading project-name copy. The
-                    compact composer picker invokes them directly from /, $, or @. Stays this size
-                    for the beta</span
+                    the servers a provider already loads from its own settings are listed read-only
+                    below with status and tools; add, enable, per-project scope, reconnect recovery,
+                    null-safe legacy inventory, an unknown auth status that keeps the rest of the
+                    list, and provider capability status instead of misleading project-name copy.
+                    The compact composer picker invokes them directly from /, $, or @. Stays this
+                    size for the beta</span
                   >
                 </span>
               </li>
@@ -1281,8 +1431,44 @@
           </div>
 
           <div class="lane l-active">
-            <header>In progress <span class="count">1</span></header>
+            <header>In progress <span class="count">2</span></header>
             <ul>
+              <li>
+                <i class="tick">●</i>
+                <span
+                  >Dashboard design support, nightly
+                  <span class="d"
+                    >integrated on nightly in
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1393">PR #1393</a>
+                    after merged
+                    <a href="https://github.com/Leonxlnx/tastecode/pull/1392">PR #1392</a>; not
+                    released on public beta. The 200 reviewed generated desktop/mobile dashboard
+                    pairs (400 WebPs) are imported in a separate catalog with provenance. One
+                    complete app shell is chosen by matching the request's domain, uniformly among
+                    the best matches; pricing, about and waitlist pages for an app stay on website
+                    references; finished runs say "Dashboard built." Plans use operate_monitor and
+                    functional filters, sorting, tabs, navigation, drawers and charts, including
+                    keyboard access, focus restoration and reduced motion. Native charts and visibly
+                    identified demo values avoid website-only validation blockers. Image capability
+                    is checked before inference; unsupported sessions, including direct API sessions
+                    with images: false, retain ordinary coding. The 172 shipped website references
+                    and 316 WebPs are unchanged; the combined bundle has 372 references, 344 paired,
+                    and 716 WebPs. Default-bundle selection, saved-deck, attachment and hash checks
+                    passed for all 200 dashboard groups and 400 distinct WebPs. The catalog is
+                    deeply JSON-equal to the private import after formatting; the other 401 files
+                    are byte-identical. Fresh Windows CI at edc92ea9 passed all four gates with
+                    4,445 tests passed, 18 existing skips and zero failures. Historical local gates
+                    at 0ccdb67d passed with 4,432 tests and 18 skips. Thirty-six focused cases
+                    across nine provider IDs cover 18 synthetic-vision flows and 18 capability
+                    rejections/ordinary follow-ups. The isolated browser/API smoke at a02c6ab3 used
+                    a synthetic endpoint: two unsupported Design attempts added no inference
+                    requests or persisted Design runs; ordinary follow-ups retained both API
+                    identities, models and tool context across an owned restart, with no browser
+                    exceptions or queued work left. Live image-capable dashboard generation,
+                    packaged Electron, macOS and real-keyring acceptance remain unverified</span
+                  >
+                </span>
+              </li>
               <li>
                 <i class="tick">●</i>
                 <span
@@ -1305,8 +1491,12 @@
                     review can pass; every new page section records one of the human-authored beta
                     layout families and exact case IDs, invalid or adjacent duplicate compositions
                     fail before Build, and Build plus Review must preserve the selected geometry;
-                    new runs sample catalog and complete generated candidates uniformly, with
-                    distinct feature/about compositions before reuse; the legacy 132-direction deck
+                    new website runs sample one anchor site first, then the closest profiled sites,
+                    then the uniform pool, with distinct feature/about compositions before reuse;
+                    every phase keeps the anchor's one design language through shared designTokens
+                    and at most two font families, Brand sees only the anchor and same-site
+                    references, and a font and radius audit that reads named Tailwind radii through
+                    the workspace theme adds bounded Review findings; the legacy 132-direction deck
                     remains for older saved runs; supplied reference pixels and selected direction
                     IDs persist across phases; approved artifacts and assets are checked before
                     reuse, duplicate briefing IDs are rejected, and exact output rules inspect

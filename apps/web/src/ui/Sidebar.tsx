@@ -58,7 +58,7 @@ import {
 import {
   providerDisplayName,
   providerMark,
-  providerPresentation,
+  sessionSourcePresentation,
 } from '../provider-presentation.js'
 import { avatarSeedName, type ProfileIdentityPreferences } from '../profile-preferences.js'
 import { sidebarRail } from '../sidebar-order.js'
@@ -136,6 +136,7 @@ export type Session = {
   title: string
   provider: ProviderId
   agent?: string | undefined
+  connectionId?: string | undefined
   createdAt: number
   /** Client-observed start of the current status, used for elapsed/relative labels. */
   statusSince?: number | undefined
@@ -1768,7 +1769,10 @@ function SessionRow(props: {
         title={sessionLabel(props.session)}
       >
         <span className="sess__provider" aria-hidden>
-          <ProviderIcon mark={providerPresentation(props.session.provider).mark} size={12} />
+          <ProviderIcon
+            mark={sessionSourcePresentation(props.session.provider, props.session.agent).mark}
+            size={12}
+          />
         </span>
         <span className="sess__title">{props.session.title}</span>
         <span className="sess__meta">
@@ -1934,7 +1938,7 @@ function SessionTime(props: { at: number }) {
 }
 
 function sessionLabel(session: Session): string {
-  const source = providerPresentation(session.provider).label
+  const source = sessionSourcePresentation(session.provider, session.agent).label
   const unread = session.unread ? ', unread' : ''
   const branch = session.worktreeBranch ? `, isolated on ${session.worktreeBranch}` : ''
   switch (session.status) {

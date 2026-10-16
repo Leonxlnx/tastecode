@@ -2578,6 +2578,39 @@ describe('usage totals', () => {
     }
   })
 
+  it('counts no context reading and seeds the day from the last cumulative update', () => {
+    vi.useFakeTimers()
+    try {
+      store.addProject('/repo')
+      store.addThread({ id: 'one', projectPath: '/repo', provider: 'codex', title: 'One' })
+      const reading = (tokens: number): DomainEvent => ({
+        type: 'usage.updated',
+        usage: {
+          inputTokens: 0,
+          cachedInputTokens: 0,
+          outputTokens: 0,
+          reasoningTokens: 0,
+          totalTokens: tokens,
+          contextWindow: 258_400,
+        },
+      })
+      // Codex reports its running total, then what the context holds.
+      vi.setSystemTime(new Date('2026-07-30T23:50:00'))
+      store.append('one', usage(100, undefined, true))
+      store.append('one', reading(60))
+      vi.setSystemTime(new Date('2026-07-31T00:10:00'))
+      store.append('one', usage(140, undefined, true))
+      store.append('one', reading(80))
+
+      expect(store.usageSummary('one', new Date('2026-07-31T00:00:00').getTime())).toEqual({
+        session: expect.objectContaining({ totalTokens: 140 }),
+        today: expect.objectContaining({ totalTokens: 40 }),
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('adds per-turn Claude usage and provider-reported cost', () => {
     store.addProject('/repo')
     store.addThread({ id: 'one', projectPath: '/repo', provider: 'claude-code', title: 'One' })

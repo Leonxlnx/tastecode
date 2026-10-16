@@ -48,6 +48,12 @@ export type TurnPresentation = {
   complete: boolean
   /** Turns carrying a design:* marker retain their phase labels alongside provider work. */
   design: boolean
+  /** The user stopped the turn: it is settled like a finished one, with what it reached. */
+  stopped: boolean
+  /** The row a stopped turn's end marker follows: its answer, its work, or its prompt. */
+  endIndex: number
+  /** The last flat-list index that belongs to this turn. */
+  lastIndex: number
 }
 
 export type ThreadProjection = {
@@ -253,6 +259,7 @@ function presentTurnsRange(
       workEntries: Array<{ item: Item; index: number }>
       answers: Array<{ item: Item; index: number }>
       prompt?: Item
+      promptIndex?: number
       firstResponseIndex?: number
       earliest: number
       latest: number
@@ -262,6 +269,10 @@ function presentTurnsRange(
       activityCount: number
       onlyReasoning: boolean
       design: boolean
+      /** Its output ended where the user stopped it, so unfinished text is what it said. */
+      stopped: boolean
+      lastIndex: number
+      lastStackedIndex: number
     }
   >()
 
@@ -287,12 +298,16 @@ function presentTurnsRange(
         activityCount: 0,
         onlyReasoning: true,
         design: false,
+        stopped: item.turnId !== activeTurnId && turnTiming[item.turnId]?.interrupted === true,
+        lastIndex: index,
+        lastStackedIndex: -1,
       }
       drafts.set(item.turnId, draft)
     }
 
     draft.earliest = Math.min(draft.earliest, item.createdAt)
     draft.latest = Math.max(draft.latest, item.createdAt)
+    draft.lastIndex = index
     const designMarker = item.type === 'tool_call' && item.text?.startsWith('design:') === true
     draft.design ||= designMarker
 
@@ -313,6 +328,7 @@ function presentTurnsRange(
       if (openGroup && openGroup.completedAt === undefined) openGroup.completedAt = item.createdAt
     } else if (isStackedActivity(item)) {
       draft.workEntries.push({ item, index })
+      draft.lastStackedIndex = index
       const lastGroup = draft.activityGroups.at(-1)
       if (lastGroup?.lastIndex === index - 1) {
         lastGroup.entries.push({ item, index })
@@ -337,10 +353,13 @@ function presentTurnsRange(
       draft.latestOutputAt = item.createdAt
 
       if (item.type === 'reasoning') draft.workEntries.push({ item, index })
-      if (item.type === 'message' && item.role === 'user') draft.prompt ??= item
+      if (item.type === 'message' && item.role === 'user' && !draft.prompt) {
+        draft.prompt = item
+        draft.promptIndex = index
+      }
       if (item.type === 'message' && item.role === 'assistant') {
         draft.latestAssistantOutputAt = item.createdAt
-        if (item.status === 'completed') {
+        if (draft.stopped ? Boolean(item.text?.trim()) : item.status === 'completed') {
           draft.answers.push({ item, index })
           draft.workEntries.push({ item, index })
         }
@@ -350,18 +369,25 @@ function presentTurnsRange(
 
   const presentations = new Map<string, TurnPresentation>()
   for (const [turnId, draft] of drafts) {
+    // A stopped turn's answer is the text it was writing when it stopped, not
+    // narration from before a tool call that came after it.
+    const answers = draft.stopped
+      ? draft.answers.filter(({ index }) => index > draft.lastStackedIndex)
+      : draft.answers
     const finalAnswer =
-      draft.answers.findLast(({ item }) => item.phase === 'final_answer') ??
-      draft.answers.findLast(({ item }) => isLegacyFinalAnswer(item))
+      answers.findLast(({ item }) => item.phase === 'final_answer') ??
+      answers.findLast(({ item }) => isLegacyFinalAnswer(item))
     const timing = turnTiming[turnId]
     const elapsedMs =
       timing?.startedAt !== undefined && timing.completedAt !== undefined
         ? Math.max(0, timing.completedAt - timing.startedAt)
         : Math.max(0, draft.latest - draft.earliest)
+    // Work the stop cut short never finishes, so a stopped turn settles as it is.
     const complete =
       turnId !== activeTurnId &&
-      !draft.hasRunningActivity &&
-      (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning))
+      (draft.stopped ||
+        (!draft.hasRunningActivity &&
+          (finalAnswer !== undefined || (draft.activityCount > 1 && draft.onlyReasoning))))
     const liveActivityGroups = draft.activityGroups.map(
       ({ entries, lastIndex, startedAt, startsTurn, completedAt }) => ({
         items: entries.map(({ item }) => item),
@@ -399,6 +425,13 @@ function presentTurnsRange(
       prompt: draft.prompt,
       complete,
       design: draft.design,
+      stopped: draft.stopped,
+      endIndex:
+        finalAnswer?.index ??
+        activityGroups.at(-1)?.firstIndex ??
+        draft.promptIndex ??
+        draft.lastIndex,
+      lastIndex: draft.lastIndex,
     })
   }
   return presentations

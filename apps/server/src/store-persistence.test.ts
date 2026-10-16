@@ -38,6 +38,90 @@ const message = (text: string, createdAt = 1): DomainEvent => ({
 })
 
 describe('durable history ownership', () => {
+  it('retains distinct direct API connection identities after reopening and sidebar projection', () => {
+    const { store, root, location } = setup()
+    for (const connectionId of ['first', 'second']) {
+      store.addThread({
+        id: connectionId,
+        projectPath: root,
+        provider: 'api',
+        connectionId,
+        title: connectionId,
+      })
+    }
+    const reopened = new Store(location)
+    stores.push(reopened)
+    for (const connectionId of ['first', 'second']) {
+      expect(reopened.thread(connectionId)).toMatchObject({ provider: 'api', connectionId })
+      expect(reopened.sidebarThreads().find((thread) => thread.id === connectionId)).toMatchObject({
+        connectionId,
+      })
+    }
+    expect(reopened.thread('thread')?.connectionId).toBeUndefined()
+  })
+
+  it('keeps nightly usage history available through the indexed event log', () => {
+    const { store, root, location } = setup()
+    store.addThread({
+      id: 'api',
+      projectPath: root,
+      provider: 'api',
+      connectionId: 'first',
+      title: 'API',
+    })
+    store.append('thread', message('ordinary message'))
+    store.append('thread', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 10,
+        cachedInputTokens: 0,
+        outputTokens: 20,
+        reasoningTokens: 0,
+        totalTokens: 30,
+      },
+    })
+    store.append('api', {
+      type: 'usage.updated',
+      usage: {
+        inputTokens: 30,
+        cachedInputTokens: 0,
+        outputTokens: 40,
+        reasoningTokens: 0,
+        totalTokens: 70,
+      },
+    })
+    const reopened = new Store(location)
+    stores.push(reopened)
+    expect(
+      reopened
+        .usageEvents()
+        .map(({ threadId, provider, usage }) => ({ threadId, provider, usage })),
+    ).toEqual([
+      {
+        threadId: 'api',
+        provider: 'api',
+        usage: {
+          inputTokens: 30,
+          cachedInputTokens: 0,
+          outputTokens: 40,
+          reasoningTokens: 0,
+          totalTokens: 70,
+        },
+      },
+      {
+        threadId: 'thread',
+        provider: 'codex',
+        usage: {
+          inputTokens: 10,
+          cachedInputTokens: 0,
+          outputTokens: 20,
+          reasoningTokens: 0,
+          totalTokens: 30,
+        },
+      },
+    ])
+  })
+
   it.each(['before', 'between'])(
     'fills search pages after removing a project %s page requests',
     (when) => {

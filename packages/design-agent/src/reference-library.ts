@@ -3,12 +3,33 @@ import { existsSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import type { DesignBrief } from './brief.js'
-import { PAGE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
+import { isDashboardBrief, type DesignBrief } from './brief.js'
+import { DASHBOARD_REFERENCES_ENABLED } from './dashboard-references.js'
+import { PAGE_LAYOUT_FAMILIES, WEBSITE_LAYOUT_FAMILIES, type PageLayoutFamily } from './page.js'
 import { array, member, record, string, strings } from './parse.js'
-import type { ReferenceDirection } from './reference-directions.js'
+import {
+  REFERENCE_ROLES,
+  type ReferenceDirection,
+  type ReferenceRole,
+} from './reference-directions.js'
 import { readRasterMetadata } from './raster-metadata.js'
 import { generatedReferenceCandidates } from './reference-library-index.js'
+import {
+  referenceRelevance,
+  relevanceScore,
+  relevanceWords,
+  type ReferenceRelevance,
+} from './reference-relevance.js'
+import {
+  isStyleOutlier,
+  loadReferenceStyleProfiles,
+  MIN_SIMILAR_STYLE_SCORE,
+  referenceSite,
+  styleProfileSummary,
+  styleSimilarity,
+  type ReferenceStyleProfile,
+  type ReferenceStyleProfiles,
+} from './reference-style-profiles.js'
 import { containedWorkspaceFile, readWorkspaceFile } from './workspace-files.js'
 
 export function parseReferenceDeck(value: unknown): ReferenceDirection[] {
@@ -31,6 +52,9 @@ export function parseReferenceDeck(value: unknown): ReferenceDirection[] {
       ...(entry.source ? { source: string(entry.source, `${id}.source`) } : {}),
       ...(entry.group ? { group: string(entry.group, `${id}.group`) } : {}),
       ...(entry.tags ? { tags: strings(entry.tags, `${id}.tags`) } : {}),
+      ...(entry.site ? { site: string(entry.site, `${id}.site`) } : {}),
+      ...(entry.role ? { role: member(entry.role, REFERENCE_ROLES, `${id}.role`) } : {}),
+      ...(entry.style ? { style: string(entry.style, `${id}.style`) } : {}),
     }
   })
 }
@@ -55,14 +79,33 @@ export function referenceLibraryRoot(): string {
   return existsSync(unpacked) ? unpacked : bundled
 }
 
-export function loadReviewedReferences(root = referenceLibraryRoot()): ReferenceDirection[] {
+/**
+ * A loaded catalog entry. Dashboards keep their catalog words for domain relevance; a selected
+ * deck never contains them.
+ */
+export type LibraryReference = ReferenceDirection & { relevance?: ReferenceRelevance }
+
+function catalogText(value: unknown): string[] {
+  if (typeof value === 'string') return [value]
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === 'string')
+    : []
+}
+
+export function loadReviewedReferences(root = referenceLibraryRoot()): LibraryReference[] {
   try {
-    const catalog = record(
-      JSON.parse(readWorkspaceFile(path.join(root, 'catalog.json'), 2_000_000).toString()),
-      'reference catalog',
-    )
-    if (catalog.version !== 1) throw new Error('catalog version must be 1')
-    const listed = array(catalog.references, 'catalog.references')
+    const catalogFiles = ['catalog.json']
+    // A parked dashboard catalog is ignored, also in a configured library that still has one.
+    if (DASHBOARD_REFERENCES_ENABLED && existsSync(path.join(root, 'dashboard-catalog.json')))
+      catalogFiles.push('dashboard-catalog.json')
+    const listed = catalogFiles.flatMap((file) => {
+      const catalog = record(
+        JSON.parse(readWorkspaceFile(path.join(root, file), 8_000_000).toString()),
+        file,
+      )
+      if (catalog.version !== 1) throw new Error(`${file} version must be 1`)
+      return array(catalog.references, `${file}.references`)
+    })
     const listedIds = new Set(listed.map((entry) => record(entry, 'reference').id))
     const entries = [
       ...listed,
@@ -73,6 +116,12 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
       const entry = record(value, 'reference')
       return (
         (entry.reviewStatus === 'reviewed' || entry.reviewStatus === 'candidate') &&
+        (entry.family !== 'dashboard' ||
+          (DASHBOARD_REFERENCES_ENABLED &&
+            entry.reviewStatus === 'reviewed' &&
+            entry.assetType === 'generated-reference' &&
+            typeof entry.mobileImagePath === 'string' &&
+            entry.mobileImagePath.trim().length > 0)) &&
         ![entry.imagePath, entry.mobileImagePath].some(
           (file) => typeof file === 'string' && /(?:^|[\\/])threshold-/iu.test(file),
         )
@@ -88,11 +137,27 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
       if (!['https:', 'http:'].includes(source.protocol))
         throw new Error('reference source must be HTTP(S)')
       if (entry.mobileImagePath) string(entry.pairEvidence, 'pairEvidence')
-      const [reference] = parseReferenceDeck([entry])
+      // A catalog describes compositions; only the sampler assigns deck sites, roles and styles.
+      const [reference] = parseReferenceDeck([
+        { ...entry, site: undefined, role: undefined, style: undefined },
+      ])
       return [
         {
           ...reference!,
           cue: `${reference!.cue} Review: ${entry.reviewNotes}${entry.mobileImagePath ? ` Responsive pairing: ${entry.pairEvidence}` : ' No verified mobile reference: derive and visually test the responsive layout from this desktop composition.'}`,
+          // Review notes describe the inspection, not the product, so only catalog words count.
+          ...(reference!.family === 'dashboard'
+            ? {
+                relevance: referenceRelevance(
+                  [
+                    ...(reference!.tags ?? []),
+                    ...catalogText(entry.domain),
+                    ...catalogText(entry.sourceName),
+                  ],
+                  [reference!.cue, ...catalogText(entry.motifs)],
+                ),
+              }
+            : {}),
         },
       ]
     })
@@ -115,33 +180,52 @@ export function loadReviewedReferences(root = referenceLibraryRoot()): Reference
     }))
   } catch (error) {
     throw new Error(
-      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair catalog.json or its files, then restart Design mode.`,
+      `Design reference library could not be loaded: ${error instanceof Error ? error.message : String(error)}. Repair ${DASHBOARD_REFERENCES_ENABLED ? 'catalog.json, dashboard-catalog.json or their files' : 'catalog.json or its files'}, then restart Design mode.`,
     )
   }
 }
 
-/** Content topics can use a compatible image's geometry without relabeling that image. */
-export function referenceCandidatesForFamily(
+const COMPATIBLE_FAMILIES = {
+  stats: ['social_proof', 'about'],
+  pricing: ['feature'],
+  how_it_works: ['feature', 'about'],
+  contact: ['cta'],
+  cta: ['contact'],
+  faq: ['feature'],
+} as const satisfies Partial<Record<PageLayoutFamily, readonly PageLayoutFamily[]>>
+
+function compatibleFamilies(family: PageLayoutFamily): readonly PageLayoutFamily[] {
+  return COMPATIBLE_FAMILIES[family as keyof typeof COMPATIBLE_FAMILIES] ?? []
+}
+
+/** A family with fewer composition groups than this may borrow compatible geometry. */
+const MIN_FAMILY_GROUPS = 10
+
+function groupCount(references: readonly ReferenceDirection[]): number {
+  return new Set(references.map(groupOf)).size
+}
+
+function isSparseFamily(
   family: PageLayoutFamily,
   references: readonly ReferenceDirection[],
-): ReferenceDirection[] {
+): boolean {
+  return groupCount(references.filter((entry) => entry.family === family)) < MIN_FAMILY_GROUPS
+}
+
+/** Content topics can use a compatible image's geometry without relabeling that image. */
+export function referenceCandidatesForFamily<Entry extends ReferenceDirection>(
+  family: PageLayoutFamily,
+  references: readonly Entry[],
+): Entry[] {
   const native = references.filter((entry) => entry.family === family)
-  if (new Set(native.map((entry) => entry.group ?? entry.id)).size >= 10) return native
-  const compatible = {
-    stats: ['social_proof', 'about'],
-    pricing: ['feature'],
-    how_it_works: ['feature', 'about'],
-    contact: ['cta'],
-    cta: ['contact'],
-    faq: ['feature'],
-  } as const satisfies Partial<Record<PageLayoutFamily, readonly PageLayoutFamily[]>>
-  const alternatives = compatible[family as keyof typeof compatible] ?? []
+  if (!isSparseFamily(family, references)) return native
+  const alternatives = compatibleFamilies(family)
   const pool = references.filter(
     (entry) =>
       entry.family === family || alternatives.some((candidate) => candidate === entry.family),
   )
   // A deliberately small custom library remains authoritative; never pad it with duplicates.
-  return new Set(pool.map((entry) => entry.group ?? entry.id)).size >= 10 ? pool : native
+  return groupCount(pool) >= MIN_FAMILY_GROUPS ? pool : native
 }
 
 /** Ids share prefixes (`x-about`, `x-about-process`), so a mention must be a whole id. */
@@ -172,53 +256,204 @@ function containsSource(text: string, source: string): boolean {
   return false
 }
 
+function groupOf(entry: ReferenceDirection): string {
+  return entry.group ?? entry.id
+}
+
+/** Revisions share a vote: choose a group first, then one of its revisions. */
+function drawGroupFirst<Entry extends ReferenceDirection>(
+  pool: readonly Entry[],
+  chooseIndex: (length: number) => number,
+): Entry {
+  const groupNames = [...new Set(pool.map(groupOf))]
+  const chosenGroup = groupNames[chooseIndex(groupNames.length)]
+  const revisions = pool.filter((entry) => groupOf(entry) === chosenGroup)
+  return revisions[chooseIndex(revisions.length)]!
+}
+
+/** How many of the most similar close sites may supply a section the anchor site lacks. */
+const SIMILAR_SITE_COUNT = 3
+
+function configuredStyleProfiles(): ReferenceStyleProfiles {
+  try {
+    return loadReferenceStyleProfiles(referenceLibraryRoot())
+  } catch {
+    return new Map()
+  }
+}
+
+/**
+ * One page keeps one design language (owner decision, 2026-10-12). The first drawn section is the
+ * anchor, chosen uniformly by group like before; its source site defines the page's language.
+ * Every later section comes from the first non-empty tier: the requested family on the anchor
+ * site, then on the most similar close sites; for a sparse family only, compatible families on
+ * the anchor site, then on close sites; finally the uniform pool the family always used.
+ */
 export function selectReviewedReferences(
   brief: DesignBrief,
   references = loadReviewedReferences(),
   chooseIndex: (length: number) => number = randomInt,
+  styleProfiles?: ReferenceStyleProfiles,
 ): ReferenceDirection[] {
   const request =
     `${brief.originalRequest} ${(brief.explicitAnswers ?? []).map((answer) => answer.answer).join(' ')}`.toLowerCase()
   if (!references.length) throw new Error('No Design references are available')
+  const dashboard = isDashboardBrief(brief)
+  const families: readonly PageLayoutFamily[] = dashboard ? ['dashboard'] : WEBSITE_LAYOUT_FAMILIES
+  // Site profiles describe marketing pages; a dashboard deck is a single screen.
+  const profiles: ReferenceStyleProfiles = dashboard
+    ? new Map()
+    : (styleProfiles ?? configuredStyleProfiles())
+  const sectionReferences = references.filter((entry) => !entry.tags?.includes('native-component'))
   const selected: ReferenceDirection[] = []
   const groups = new Set<string>()
-  for (const family of PAGE_LAYOUT_FAMILIES) {
+  const unused = (entry: ReferenceDirection) => !groups.has(groupOf(entry))
+  // Every tier asks for sites again; parse each source URL once per selection.
+  const sites = new Map<ReferenceDirection, string | undefined>()
+  const siteOf = (entry: ReferenceDirection) => {
+    if (!sites.has(entry)) sites.set(entry, referenceSite(entry.source))
+    return sites.get(entry)
+  }
+  const consistent = (entry: ReferenceDirection) =>
+    !isStyleOutlier(profiles.get(siteOf(entry) ?? ''), entry)
+  let anchor: { site?: string | undefined; profile?: ReferenceStyleProfile | undefined } | undefined
+
+  // Unused, site-consistent entries of exactly these families.
+  const slotCandidates = (slotFamilies: readonly PageLayoutFamily[]) =>
+    sectionReferences.filter(
+      (entry) => unused(entry) && consistent(entry) && slotFamilies.includes(entry.family),
+    )
+  const onAnchorSite = (candidates: readonly LibraryReference[]) =>
+    anchor?.site ? candidates.filter((entry) => siteOf(entry) === anchor?.site) : []
+  // The best few other profiled sites that are genuinely close to the anchor, ties included.
+  // Without the minimum score, a family only one or two sites have would always come from them.
+  const similarSites = (candidates: readonly ReferenceDirection[]): Set<string> => {
+    const anchorProfile = anchor?.profile
+    if (!anchorProfile) return new Set()
+    const scores = new Map<string, number>()
+    for (const entry of candidates) {
+      const site = siteOf(entry)
+      const profile = site && site !== anchor?.site ? profiles.get(site) : undefined
+      if (site && profile && !scores.has(site))
+        scores.set(site, styleSimilarity(anchorProfile, profile))
+    }
+    const close = [...scores].filter(([, score]) => score >= MIN_SIMILAR_STYLE_SCORE)
+    const ranked = close.map(([, score]) => score).sort((a, b) => b - a)
+    const cutoff = ranked[Math.min(SIMILAR_SITE_COUNT, ranked.length) - 1] ?? Infinity
+    return new Set(close.filter(([, score]) => score >= cutoff).map(([site]) => site))
+  }
+  const onSimilarSites = (candidates: readonly LibraryReference[]) => {
+    const sites = similarSites(candidates)
+    return candidates.filter((entry) => sites.has(siteOf(entry) ?? ''))
+  }
+  const drawRelated = (
+    family: PageLayoutFamily,
+    uniformPool: readonly LibraryReference[],
+  ): { entry: LibraryReference; role: ReferenceRole } | undefined => {
+    // The requested family wins over compatible geometry, from the anchor site or a close one.
+    const exact = slotCandidates([family])
+    const tiers: [LibraryReference[], ReferenceRole][] = [
+      [onAnchorSite(exact), 'same-site'],
+      [onSimilarSites(exact), 'similar-site'],
+    ]
+    // Only a family too sparse to stand alone borrowed compatible geometry before; keep it so.
+    if (isSparseFamily(family, sectionReferences)) {
+      const compatible = slotCandidates(compatibleFamilies(family))
+      tiers.push(
+        [onAnchorSite(compatible), 'same-site'],
+        [onSimilarSites(compatible), 'similar-site'],
+      )
+    }
+    tiers.push([uniformPool.filter(unused), 'fallback'])
+    const tier = tiers.find(([pool]) => pool.length)
+    return tier && { entry: drawGroupFirst(tier[0], chooseIndex), role: tier[1] }
+  }
+  // A finance request should get a finance shell, not a random 3D or audio editor. Ties and
+  // requests without a matching domain stay uniform.
+  const requestWords = dashboard
+    ? relevanceWords(
+        [
+          brief.originalRequest ?? '',
+          brief.subject ?? '',
+          ...(brief.requiredContent ?? []),
+          ...(brief.explicitAnswers ?? []).map((answer) => answer.answer),
+        ].join(' '),
+      )
+    : new Set<string>()
+  const mostRelevant = (entries: LibraryReference[]): LibraryReference[] => {
+    const scores = entries.map((entry) =>
+      relevanceScore(
+        requestWords,
+        entry.relevance ?? referenceRelevance(entry.tags ?? [], [entry.cue]),
+      ),
+    )
+    const top = Math.max(0, ...scores)
+    return top > 0 ? entries.filter((_, index) => scores[index] === top) : entries
+  }
+  // An explicit pick is labeled by where the tiers would have placed its own family.
+  const relation = (entry: ReferenceDirection): ReferenceRole =>
+    anchor?.site && siteOf(entry) === anchor.site
+      ? 'same-site'
+      : similarSites(slotCandidates([entry.family])).has(siteOf(entry) ?? '')
+        ? 'similar-site'
+        : 'fallback'
+
+  for (const family of families) {
     // Section titles are free-form and multilingual. Let Page choose the needed
     // compositions from a complete deck instead of discarding families by keywords.
-    // Each composition gets the same chance, regardless of source site or style tags.
-    const familyEntries = referenceCandidatesForFamily(family, references).filter(
-      (entry) => !groups.has(entry.group ?? entry.id),
-    )
+    const familyEntries = referenceCandidatesForFamily(family, sectionReferences).filter(unused)
     if (!familyEntries.length) continue
     const explicit = familyEntries.filter((entry) => containsId(request, entry.id.toLowerCase()))
     const explicitSource = familyEntries.filter(
       (entry) => entry.source && containsSource(request, entry.source),
     )
-    // Revisions share a vote: choose a group first, then its eligible revision.
-    const pool = explicit.length ? explicit : explicitSource.length ? explicitSource : familyEntries
-    const groupNames = [...new Set(pool.map((entry) => entry.group ?? entry.id))]
+    const explicitPool = explicit.length ? explicit : explicitSource
+    const pool = explicitPool.length
+      ? explicitPool
+      : family === 'dashboard'
+        ? mostRelevant(familyEntries)
+        : familyEntries
     // Repeated content sections need distinct compositions within the same page too.
-    const count = Math.min(groupNames.length, family === 'feature' ? 3 : family === 'about' ? 2 : 1)
+    const count = Math.min(groupCount(pool), family === 'feature' ? 3 : family === 'about' ? 2 : 1)
     for (let index = 0; index < count; index++) {
-      const [chosenGroup] = groupNames.splice(chooseIndex(groupNames.length), 1)
-      const revisions = pool.filter((entry) => (entry.group ?? entry.id) === chosenGroup)
-      const entry = revisions[chooseIndex(revisions.length)]!
-      const group = entry.group ?? entry.id
-      if (groups.has(group)) continue
-      groups.add(group)
-      selected.push(
-        entry.family === family
-          ? entry
+      let pick: { entry: LibraryReference; role: ReferenceRole } | undefined
+      if (explicitPool.length) {
+        const entry = drawGroupFirst(explicitPool.filter(unused), chooseIndex)
+        pick = { entry, role: anchor ? relation(entry) : 'anchor' }
+      } else if (!anchor) {
+        // Outliers do not share their site's language, so they cannot define the page's.
+        const eligible = pool.filter(unused)
+        const coherent = eligible.filter(consistent)
+        pick = {
+          entry: drawGroupFirst(coherent.length ? coherent : eligible, chooseIndex),
+          role: 'anchor',
+        }
+      } else pick = drawRelated(family, pool)
+      if (!pick) break
+      const { entry, role } = pick
+      const site = siteOf(entry)
+      if (role === 'anchor') anchor = { site, profile: site ? profiles.get(site) : undefined }
+      groups.add(groupOf(entry))
+      const { site: _site, role: _role, style: _style, relevance: _relevance, ...base } = entry
+      const style = role === 'anchor' ? styleProfileSummary(anchor?.profile) : undefined
+      selected.push({
+        ...base,
+        ...(entry.family === family
+          ? {}
           : {
-              ...entry,
               cue: `${entry.cue} Sampled for ${family} content from compatible compositions; retain its actual ${entry.family} layout family and image geometry.`,
-            },
-      )
+            }),
+        ...(site ? { site } : {}),
+        role,
+        ...(style ? { style } : {}),
+      })
     }
   }
   if (!selected.length)
     throw new Error(
-      'No references match the requested sections. Add matching catalog entries or attach your own reference images.',
+      dashboard
+        ? 'No reviewed dashboard references are available. Add generated desktop/mobile pairs to dashboard-catalog.json.'
+        : 'No references match the requested sections. Add matching catalog entries or attach your own reference images.',
     )
   if (selected.length > 24)
     throw new Error(

@@ -279,30 +279,37 @@ describe('MCP settings', () => {
     expect(screen.getByText('status unavailable')).toBeTruthy()
   })
 
-  it('starts empty when the provider only reports global servers', async () => {
-    const transport = client(async () => ({
-      capabilities: {
-        inventory: true,
-        add: true,
-        update: true,
-        remove: true,
-        reload: false,
-        startOAuth: false,
-        cancelOAuth: false,
-      },
-      servers: [
-        {
-          id: 'provider-global',
-          scope: 'global',
-          enabled: true,
-          auth: { status: 'not_required' },
-          startup: { state: 'ready' },
-          tools: [],
-          resources: [],
-          resourceTemplates: [],
-        },
-      ],
-    }))
+  it('lists servers the provider already loads apart from the empty project list', async () => {
+    const requests: Array<[string, unknown]> = []
+    const transport = client(async (method, params) => {
+      if (method === 'mcp.list')
+        return {
+          capabilities: {
+            inventory: true,
+            add: true,
+            update: true,
+            remove: true,
+            reload: false,
+            startOAuth: false,
+            cancelOAuth: false,
+          },
+          servers: [
+            {
+              id: 'design-taste',
+              description: 'Reference library for design work.',
+              scope: 'global',
+              enabled: true,
+              auth: { status: 'not_required' },
+              startup: { state: 'ready' },
+              tools: [],
+              resources: [],
+              resourceTemplates: [],
+            },
+          ],
+        }
+      requests.push([method, params])
+      return {}
+    })
     render(
       <McpSettings
         transport={transport}
@@ -314,8 +321,63 @@ describe('MCP settings', () => {
     )
 
     expect(await screen.findByText('No MCP servers have been added to this project.')).toBeTruthy()
-    expect(screen.queryByText('provider-global')).toBeNull()
+    const inherited = screen.getByRole('region', { name: 'From Codex settings' })
+    expect(inherited.textContent).toContain('design-taste')
+    expect(inherited.textContent).toContain('Reference library for design work.')
+    expect(inherited.textContent).not.toContain('global')
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Disable design-taste for this project' }))
+    await screen.findByText('Server disabled for this project.')
+    expect(requests).toEqual([
+      [
+        'mcp.add',
+        {
+          provider: 'codex',
+          projectPath: '/work/project',
+          server: { id: 'design-taste', enabled: false },
+        },
+      ],
+    ])
+  })
+
+  it('offers no per-project switch for inherited servers without live inventory', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: false,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'inherited-docs',
+          scope: 'global',
+          enabled: true,
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="grok"
+        providerName="Grok"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const inherited = await screen.findByRole('region', { name: 'From Grok settings' })
+    expect(inherited.textContent).toContain('Change them in Grok.')
+    expect(screen.queryByRole('switch')).toBeNull()
   })
 
   it('shows no controls for unsupported providers', async () => {
@@ -341,7 +403,11 @@ describe('MCP settings', () => {
       />,
     )
 
-    expect(await screen.findByText(/Provider-global inventory is unavailable/)).toBeTruthy()
+    expect(
+      await screen.findByText(
+        /Claude Code chats still load the servers and plugins from Claude Code's own settings/,
+      ),
+    ).toBeTruthy()
     expect(screen.getByText('Claude Code · MCP inventory unavailable')).toBeTruthy()
     expect(screen.queryAllByRole('button')).toHaveLength(0)
   })
@@ -426,14 +492,14 @@ describe('MCP settings', () => {
     render(
       <McpSettings
         transport={transport}
-        provider="grok"
-        providerName="Grok"
+        provider="opencode"
+        providerName="OpenCode"
         projectPath="/work/project"
         projectName="Project"
       />,
     )
 
-    expect(await screen.findByText('Grok · MCP inventory unavailable')).toBeTruthy()
+    expect(await screen.findByText('OpenCode · MCP inventory unavailable')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 

@@ -38,6 +38,8 @@ type MenuBaseProps = {
   gap?: number
   disabled?: boolean
   label?: string
+  /** Tooltip for the trigger, for triggers that can shrink to an icon. */
+  triggerTitle?: string | undefined
   triggerClassName?: string
   panelRole?: 'menu' | 'dialog'
   panelLabel?: string
@@ -267,6 +269,7 @@ export function Menu(props: MenuProps) {
         aria-haspopup={props.panelRole ?? 'menu'}
         aria-controls={runtime.open ? panelId : undefined}
         aria-keyshortcuts={props.shortcutAria}
+        title={props.triggerTitle}
         {...(props.label ? { 'aria-label': props.label } : {})}
       >
         {props.trigger(runtime.open)}

@@ -20,7 +20,7 @@ function harness(input: Partial<CustomHarness> = {}): CustomHarness {
   return {
     id: 'custom-node',
     displayName: 'Custom Node',
-    provider: 'codex',
+    provider: 'pi',
     command: process.execPath,
     args: [],
     ...input,

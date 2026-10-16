@@ -8,7 +8,17 @@ import { z } from 'zod'
  * engine-specific may leak past an adapter.
  */
 
-export const ProviderIdSchema = z.enum(['codex', 'claude-code', 'grok'])
+export const ProviderIdSchema = z.enum([
+  'codex',
+  'claude-code',
+  'grok',
+  'cursor',
+  'opencode',
+  'antigravity',
+  'pi',
+  'acp',
+  'api',
+])
 export type ProviderId = z.infer<typeof ProviderIdSchema>
 
 /**
@@ -33,6 +43,37 @@ export type ItemStatus = z.infer<typeof ItemStatusSchema>
 
 export const AssistantPhaseSchema = z.enum(['commentary', 'final_answer'])
 export type AssistantPhase = z.infer<typeof AssistantPhaseSchema>
+
+export const SubagentStateSchema = z.enum(['running', 'completed', 'failed', 'interrupted'])
+export type SubagentState = z.infer<typeof SubagentStateSchema>
+
+/**
+ * A helper agent the main agent started for part of the turn. Its own steps
+ * stay out of the transcript; adapters fold them into these counters and send
+ * the whole snapshot again on the spawning `tool_call` item when it changes.
+ */
+export const SubagentSchema = z.object({
+  /** The provider's identity for this run, stable across updates. */
+  id: z.string().min(1),
+  /** The agent type or nickname the provider reports, such as "Explore". */
+  name: z.string().min(1).optional(),
+  /** What the main agent asked it to do, in the main agent's words. */
+  description: z.string().optional(),
+  /** Can still be `running` after the spawning call completed, for a background agent. */
+  state: SubagentStateSchema,
+  /** The main agent continued without waiting for the result. */
+  background: z.boolean().optional(),
+  /** Tool calls the subagent has made so far. */
+  toolUses: z.number().int().nonnegative().optional(),
+  /** Tokens the subagent has used so far, as the provider counts them. */
+  tokens: z.number().int().nonnegative().optional(),
+  durationMs: z.number().nonnegative().optional(),
+  /** Name of the newest tool the subagent called. */
+  lastTool: z.string().min(1).optional(),
+  /** The provider's short account of progress or of the result. */
+  summary: z.string().optional(),
+})
+export type Subagent = z.infer<typeof SubagentSchema>
 
 export const ItemSchema = z.object({
   /**
@@ -60,6 +101,11 @@ export const ItemSchema = z.object({
   path: z.string().optional(),
   linesAdded: z.number().optional(),
   linesRemoved: z.number().optional(),
+  /**
+   * Present on a `tool_call` that started a subagent. Absent on engines that
+   * only report subagents as plain tool calls.
+   */
+  subagent: SubagentSchema.optional(),
   createdAt: z.number(),
 })
 export type Item = z.infer<typeof ItemSchema>
@@ -72,14 +118,26 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
-export const ThreadSchema = z.object({
-  id: z.string(),
-  provider: ProviderIdSchema,
-  /** Absolute path to the workspace this thread operates on. */
-  workspacePath: z.string(),
-  title: z.string().optional(),
-  createdAt: z.number(),
-})
+export const ThreadSchema = z
+  .object({
+    id: z.string(),
+    provider: ProviderIdSchema,
+    /** Selects a server-owned model connection for the Harness API runtime. */
+    connectionId: z.string().min(1).optional(),
+    /** Absolute path to the workspace this thread operates on. */
+    workspacePath: z.string(),
+    title: z.string().optional(),
+    createdAt: z.number(),
+  })
+  .superRefine((thread, context) => {
+    if ((thread.provider === 'api') !== Boolean(thread.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api threads',
+      })
+    }
+  })
 export type Thread = z.infer<typeof ThreadSchema>
 
 /**
@@ -257,6 +315,12 @@ export const CapabilitiesSchema = z.object({
   images: z.boolean(),
   /** Absent when the engine decides its context on its own. */
   context: ContextControlSchema.optional(),
+  /**
+   * How the engine reports subagents on their spawning tool call. `summary`:
+   * identity and the final state only. `progress`: also live counters while
+   * one runs. Absent: subagents appear only as plain tool calls.
+   */
+  subagents: z.enum(['summary', 'progress']).optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -284,21 +348,61 @@ export const ModelSchema = z.object({
     )
     .default([]),
   defaultServiceTier: z.string().nullable().optional(),
+  /**
+   * Display name of the model's creator, such as "DeepSeek" or "Anthropic".
+   * Groups rows inside one source; a routing provider is not a lab.
+   */
+  lab: z.string().min(1).max(80).optional(),
+  /**
+   * Lineage key, unique within one source, such as "gpt-terra" or
+   * "deepseek-flash". Generations of one family replace each other.
+   */
+  family: z.string().min(1).max(120).optional(),
+  /** Dotted numeric version inside the family, compared part by part ("6.1" > "6"). */
+  generation: z
+    .string()
+    .max(32)
+    .regex(/^\d+(?:\.\d+)*$/, 'expected a dotted numeric version')
+    .optional(),
+  /** Release date as an ISO calendar date (YYYY-MM-DD). */
+  released: z.iso.date().optional(),
+  /** Part of the source's curated set that is visible before the user picks. */
+  recommended: z.boolean().optional(),
+  /** Still listed by the source but superseded or retiring; starts hidden. */
+  deprecated: z.boolean().optional(),
 })
 export type Model = z.infer<typeof ModelSchema>
 
 /**
  * The small model TasteCode uses for short product-owned writing such as thread
  * titles and commit-message drafts. Source identity stays explicit because
- * model ids are not globally unique across custom harnesses.
+ * model ids are not globally unique and API connections have their own bill.
  */
-export const BackgroundModelTargetSchema = z.object({
-  provider: ProviderIdSchema,
-  agent: z.string().min(1).optional(),
-  model: z.string().min(1),
-  effort: z.string().min(1).optional(),
-  serviceTier: z.string().min(1).optional(),
-})
+export const BackgroundModelTargetSchema = z
+  .object({
+    provider: ProviderIdSchema,
+    connectionId: z.string().min(1).optional(),
+    agent: z.string().min(1).optional(),
+    model: z.string().min(1),
+    effort: z.string().min(1).optional(),
+    serviceTier: z.string().min(1).optional(),
+  })
+  .superRefine((target, context) => {
+    if ((target.provider === 'api') !== Boolean(target.connectionId)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['connectionId'],
+        message: 'connectionId is required only for api background models',
+      })
+    }
+    if (target.provider === 'api' && target.agent) {
+      context.addIssue({
+        code: 'custom',
+        path: ['agent'],
+        message: 'api background models cannot select an agent',
+      })
+    }
+  })
 export type BackgroundModelTarget = z.infer<typeof BackgroundModelTargetSchema>
 
 export const BackgroundModelPreferenceSchema = z.discriminatedUnion('mode', [
@@ -311,6 +415,7 @@ export const BackgroundModelSourceSchema = z.object({
   id: z.string().min(1),
   displayName: z.string().min(1),
   provider: ProviderIdSchema,
+  connectionId: z.string().min(1).optional(),
   agent: z.string().min(1).optional(),
   models: z.array(ModelSchema),
 })
@@ -383,7 +488,16 @@ export type ProviderSetup = z.infer<typeof ProviderSetupSchema>
 export const CustomHarnessSchema = z.object({
   id: z.string().trim().min(1).max(128),
   displayName: z.string().trim().min(1).max(80),
-  provider: z.enum(['codex', 'claude-code', 'grok']),
+  provider: z.enum([
+    'codex',
+    'claude-code',
+    'grok',
+    'cursor',
+    'opencode',
+    'antigravity',
+    'pi',
+    'acp',
+  ]),
   command: z
     .string()
     .trim()

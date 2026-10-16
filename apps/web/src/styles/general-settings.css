@@ -167,7 +167,7 @@
 }
 
 /* A measuring scale, not a slider track: hairline run, ticks and a needle. The
-   run is logarithmic and ends at 90 days; past it a dashed tail runs out to
+   run is logarithmic and ends at 90 days; past it a dotted tail runs out to
    "never". */
 .settle-scale {
   --tail: 64px;
@@ -204,10 +204,14 @@
   background: var(--line-strong);
 }
 
+/* Dotted like the provider defaults' leaders, centred on the run's hairline. */
 .settle-scale__tail {
+  top: 7px;
   left: calc(var(--run) + 8px);
   right: 0;
-  background: linear-gradient(90deg, var(--line-strong) 50%, transparent 0) left / 4px 1px repeat-x;
+  height: 5px;
+  background: radial-gradient(circle, var(--line-strong) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
 }
 
 .settle-scale__tick,
@@ -381,11 +385,14 @@
   opacity: 0.45;
 }
 
+/* The Settled fold, in the provider defaults' dots set closer, to the
+   picture's scale. Whole dots only: the run is a few dots long, so a clipped
+   last one would show. */
 .gwin__fold {
-  height: 1px !important;
-  margin-top: 1px;
-  background: transparent !important;
-  border-top: 1px dashed var(--gw-quiet);
+  --gw-fold: var(--gw-quiet);
+
+  background: radial-gradient(circle, var(--gw-fold) 0.75px, transparent 1.15px) left center / 3px
+    100% space no-repeat !important;
   border-radius: 0 !important;
 }
 
@@ -398,7 +405,7 @@
 }
 
 .gwin[data-focus='sidebar'] .gwin__fold {
-  border-top-color: var(--gw-ink);
+  --gw-fold: var(--gw-ink);
 }
 
 /* main */
