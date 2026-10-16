@@ -30,6 +30,20 @@ describe('composer controls in a narrow chat column', () => {
     ).toContain('flex-shrink: 0;')
   })
 
+  it('draws icon-only chips as squares the size of Add, one gap apart', () => {
+    // The chips were 34px wide beside the 32px Add button, and their own
+    // wrapper kept an 8px gap while the row around them used 4px.
+    const compact = (
+      appCss.match(/@container chat-stage \(max-width: 620px\) \{[\s\S]*?\n\}/)?.[0] ?? ''
+    ).replaceAll('\n  ', '\n')
+    expect(rule(compact, '.tools,\n.composer__dictation-options-content')).toContain('gap: 6px;')
+    expect(
+      rule(compact, '.tools .composer__permission,\n.tools .composer__design-button-beam'),
+    ).toContain('width: var(--composer-control, 32px);')
+    expect(rule(appCss, '.tools .composer__add')).toContain('width: 32px;')
+    expect(appCss).toMatch(/\.tools \{\s*--composer-control: 34px;/)
+  })
+
   it('keeps the model trigger inside its shrinking wrapper', () => {
     expect(rule(triggerCss, '.menutrigger--model-selector')).toContain(
       'max-width: min(270px, 42vw, 100%);',
