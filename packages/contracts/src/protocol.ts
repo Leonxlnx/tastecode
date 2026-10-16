@@ -602,10 +602,18 @@ export const UsageHistoryResultSchema = z.object({
 export type UsageHistoryResult = z.infer<typeof UsageHistoryResultSchema>
 
 export const ProviderLimitSchema = z.object({
+  /**
+   * Stable identity of this window within its provider, such as "five_hour"
+   * or "codex:primary". Live updates merge into a snapshot by id; rows
+   * without one are replaced only by a full read.
+   */
+  id: z.string().min(1).max(80).optional(),
   label: z.string().min(1).max(120),
   usedPercent: z.number().min(0).max(100),
   /** Unix time in milliseconds. */
   resetsAt: z.number().int().nonnegative().optional(),
+  /** Length of a rolling window, so clients can place an even-pace marker. */
+  windowMinutes: z.number().int().positive().optional(),
   /** Non-percent rows (credit balances, reset counts) render this text instead of a bar. */
   valueLabel: z.string().min(1).max(160).optional(),
   /** Present when this row can be spent as a one-shot quota reset. */
@@ -622,17 +630,58 @@ export const ProviderLimitSchema = z.object({
 })
 export type ProviderLimit = z.infer<typeof ProviderLimitSchema>
 
+const LimitRefreshErrorSchema = z.string().min(1).max(300)
+const UnixMsSchema = z.number().int().nonnegative()
+
 export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
-  z.object({
-    provider: ProviderIdSchema,
-    status: z.literal('ready'),
-    /** A successful source can honestly report no plan limits. */
-    limits: z.array(ProviderLimitSchema),
-  }),
-  z.object({
-    provider: ProviderIdSchema,
-    status: z.literal('unavailable'),
-  }),
+  z
+    .object({
+      provider: ProviderIdSchema,
+      status: z.literal('ready'),
+      /** A successful source can honestly report no plan limits. */
+      limits: z.array(ProviderLimitSchema),
+      /** When the newest values were read or observed, in Unix milliseconds. */
+      checkedAt: UnixMsSchema.optional(),
+      /** `live` values came from a running session; `read` values from a full read. */
+      origin: z.enum(['live', 'read']).optional(),
+      /** The newest refresh failed, so these are the last known values. */
+      stale: z.literal(true).optional(),
+      /** Stable, user-readable reason the newest refresh failed. Only with `stale`. */
+      refreshError: LimitRefreshErrorSchema.optional(),
+      /** When the server tries again on its own, in Unix milliseconds. Only with `stale`. */
+      retryAt: UnixMsSchema.optional(),
+    })
+    .superRefine((source, context) => {
+      for (const key of ['refreshError', 'retryAt'] as const) {
+        if (source[key] !== undefined && !source.stale)
+          context.addIssue({ code: 'custom', path: [key], message: `${key} requires stale` })
+      }
+    }),
+  z
+    .object({
+      provider: ProviderIdSchema,
+      status: z.literal('unavailable'),
+      /**
+       * `unsupported`: this provider or version reports no limits. `noPlan`:
+       * the account has no plan with limits. `failed`: no read has succeeded
+       * yet. Absent on older servers.
+       */
+      reason: z.enum(['unsupported', 'noPlan', 'failed']).optional(),
+      /** Stable, user-readable reason for a failed read. Only with `failed`. */
+      error: LimitRefreshErrorSchema.optional(),
+      /** When the server tries again on its own, in Unix milliseconds. Only with `failed`. */
+      retryAt: UnixMsSchema.optional(),
+    })
+    .superRefine((source, context) => {
+      for (const key of ['error', 'retryAt'] as const) {
+        if (source[key] !== undefined && source.reason !== 'failed')
+          context.addIssue({
+            code: 'custom',
+            path: [key],
+            message: `${key} requires reason failed`,
+          })
+      }
+    }),
 ])
 export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
 
