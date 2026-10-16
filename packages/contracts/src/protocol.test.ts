@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DomainEventSchema, ItemSchema } from './domain.js'
+import { CapabilitiesSchema, DomainEventSchema, ItemSchema } from './domain.js'
 import {
   channels,
   DiffFileSchema,
@@ -1926,5 +1926,81 @@ describe('limit freshness contracts', () => {
       intent: 'visible',
     })
     expect(params.safeParse({ provider: 'codex', intent: 'always' }).success).toBe(false)
+  })
+})
+
+describe('subagent contracts', () => {
+  const call = {
+    id: 'toolu_1-call',
+    turnId: 't1',
+    type: 'tool_call',
+    status: 'started',
+    text: 'Agent',
+    createdAt: 1,
+  }
+  const subagent = {
+    id: 'toolu_1',
+    name: 'Explore',
+    description: 'Find the config loader',
+    state: 'running',
+    background: true,
+    toolUses: 4,
+    tokens: 12_345,
+    durationMs: 8_200.5,
+    lastTool: 'Grep',
+    summary: 'Reading apps/server/src/config.ts',
+  }
+  const capabilities = {
+    steer: true,
+    fork: false,
+    interrupt: true,
+    reasoningItems: true,
+    approvals: true,
+    images: true,
+  }
+
+  it('keeps tool calls without a subagent valid', () => {
+    expect(ItemSchema.parse(call)).toEqual(call)
+    expect(ItemSchema.parse(call).subagent).toBeUndefined()
+  })
+
+  it('round-trips a subagent snapshot on its spawning tool call', () => {
+    const item = { ...call, subagent }
+    expect(ItemSchema.parse(item)).toEqual(item)
+    expect(
+      DomainEventSchema.parse({
+        type: 'item.completed',
+        item: { ...item, status: 'completed', subagent: { id: 'toolu_1', state: 'completed' } },
+      }),
+    ).toMatchObject({ item: { subagent: { id: 'toolu_1', state: 'completed' } } })
+    for (const state of ['running', 'completed', 'failed', 'interrupted'])
+      expect(ItemSchema.parse({ ...call, subagent: { id: 'a', state } }).subagent?.state).toBe(
+        state,
+      )
+  })
+
+  it.each([
+    ['empty id', { id: '' }],
+    ['missing state', { state: undefined }],
+    ['unknown state', { state: 'queued' }],
+    ['negative tool uses', { toolUses: -1 }],
+    ['fractional tool uses', { toolUses: 1.5 }],
+    ['negative tokens', { tokens: -3 }],
+    ['negative duration', { durationMs: -1 }],
+    ['empty last tool', { lastTool: '' }],
+    ['empty name', { name: '' }],
+    ['string background', { background: 'yes' }],
+  ])('rejects a subagent with %s', (_name, change) => {
+    expect(ItemSchema.safeParse({ ...call, subagent: { ...subagent, ...change } }).success).toBe(
+      false,
+    )
+  })
+
+  it('declares how an engine reports subagents, absent for plain tool calls', () => {
+    expect(CapabilitiesSchema.parse(capabilities).subagents).toBeUndefined()
+    for (const subagents of ['summary', 'progress'])
+      expect(CapabilitiesSchema.parse({ ...capabilities, subagents }).subagents).toBe(subagents)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: 'live' }).success).toBe(false)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: true }).success).toBe(false)
   })
 })
