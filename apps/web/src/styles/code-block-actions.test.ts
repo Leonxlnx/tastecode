@@ -65,7 +65,7 @@ describe('code block controls layout', () => {
       /\.md \[data-streamdown='code-block'\] \{\s*container: code-block \/ inline-size;\s*\}/,
     )
     expect(markdownCss).toMatch(
-      /@container code-block \(max-width: 360px\) \{\s*\.md \[data-streamdown='code-block-download-button'\] \{\s*display: none;/s,
+      /@container code-block \(max-width: 360px\) \{\s*\.md \[data-streamdown='code-block'\] button\[data-streamdown='code-block-download-button'\] \{\s*display: none;/s,
     )
   })
 
