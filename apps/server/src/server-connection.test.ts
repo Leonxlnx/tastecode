@@ -11,7 +11,7 @@ import { startServer } from './server.js'
 const state = vi.hoisted(() => ({
   servers: [] as WebSocketServer[],
   projects: [] as Array<{ path: string }>,
-  threads: new Map<string, { projectPath: string; worktreePath?: string }>(),
+  threads: new Map<string, { projectPath: string; worktreePath?: string; provider?: string }>(),
   historyPage: vi.fn(),
   read: [] as string[],
   reservedPreviewPorts: [] as Array<ReadonlySet<number> | undefined>,
@@ -28,6 +28,7 @@ const state = vi.hoisted(() => ({
   historyChanged: new Set<string>(),
   prewarmed: 0,
   recovered: 0,
+  historyScans: new Map<string, Promise<void>>(),
 }))
 const temporary: string[] = []
 
@@ -115,6 +116,9 @@ vi.mock('./provider-history.js', () => ({
     refresh() {
       return state.historyRefresh
     }
+    scanned(provider: string) {
+      return state.historyScans.get(provider) ?? state.historyRefresh
+    }
     async load(threadId: string) {
       state.historyLoads.push(threadId)
       return state.historyChanged.has(threadId)
@@ -170,6 +174,7 @@ afterEach(async () => {
   state.historyChanged.clear()
   state.prewarmed = 0
   state.recovered = 0
+  state.historyScans.clear()
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -678,6 +683,38 @@ describe('chat history during the first provider scan', () => {
         ),
       )
       expect(state.historyLoads).toEqual(expect.arrayContaining(['local', 'external:codex:s']))
+    } finally {
+      viewer.client.terminate()
+    }
+  })
+
+  it("starts a turn after its own provider's scan, not every provider's", async () => {
+    let finishClaude!: () => void
+    state.historyScans.set('claude-code', new Promise<void>((resolve) => (finishClaude = resolve)))
+    state.historyScans.set('codex', Promise.resolve())
+    state.historyRefresh = new Promise<void>(() => undefined)
+    state.threads.set('codex-chat', { projectPath: '/work', provider: 'codex' })
+    state.threads.set('claude-chat', { projectPath: '/work', provider: 'claude-code' })
+    const { port } = await listen()
+    const viewer = await connect(port)
+    const send = (id: string) =>
+      viewer.client.send(
+        JSON.stringify({ id, method: 'thread.sendTurn', params: { threadId: id, text: 'hi' } }),
+      )
+    try {
+      send('codex-chat')
+      send('claude-chat')
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'codex-chat' })),
+      )
+      expect(state.historyLoads).toEqual(['codex-chat'])
+      expect(viewer.messages.some((message) => message.id === 'claude-chat')).toBe(false)
+
+      finishClaude()
+      await vi.waitFor(() =>
+        expect(viewer.messages).toContainEqual(expect.objectContaining({ id: 'claude-chat' })),
+      )
+      expect(state.historyLoads).toEqual(['codex-chat', 'claude-chat'])
     } finally {
       viewer.client.terminate()
     }

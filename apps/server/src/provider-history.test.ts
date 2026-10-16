@@ -98,6 +98,58 @@ describe('provider history integration', () => {
     await expect(history.refresh()).resolves.toBe(false)
   })
 
+  it("says when one provider's first scan is done while another still runs", async () => {
+    let finishClaude!: (sessions: ProviderHistorySession[]) => void
+    const claude: ProviderHistorySource = {
+      list: vi.fn(
+        () => new Promise<ProviderHistorySession[]>((resolve) => (finishClaude = resolve)),
+      ),
+      read: vi.fn(async () => []),
+    }
+    const codex: ProviderHistorySource = {
+      list: vi.fn(async () => [metadata()]),
+      read: vi.fn(async (session) => transcript(session.id)),
+    }
+    const history = new ProviderHistory(
+      store,
+      [
+        { provider: 'codex', history: codex },
+        { provider: 'claude-code', history: claude },
+      ],
+      { isBusy: () => false, changed: vi.fn(), log: vi.fn() },
+    )
+    histories.push(history)
+    const done = { codex: false, claude: false }
+    void history.scanned('codex').then(() => (done.codex = true))
+    void history.scanned('claude-code').then(() => (done.claude = true))
+    const refresh = history.refresh()
+    await vi.waitFor(() => expect(done.codex).toBe(true))
+    expect(done.claude).toBe(false)
+    expect(store.thread('external:codex:native')).toBeDefined()
+
+    finishClaude([])
+    await refresh
+    expect(done.claude).toBe(true)
+    // A provider without a source and a closed history never hold anyone.
+    await expect(history.scanned('grok')).resolves.toBeUndefined()
+  })
+
+  it('lets nobody wait on a first scan after close', async () => {
+    const source: ProviderHistorySource = {
+      list: vi.fn(() => new Promise<ProviderHistorySession[]>(() => undefined)),
+      read: vi.fn(async () => []),
+    }
+    const history = new ProviderHistory(store, [{ provider: 'codex', history: source }], {
+      isBusy: () => false,
+      changed: vi.fn(),
+      log: vi.fn(),
+    })
+    const waiting = history.scanned('codex')
+    void history.refresh()
+    void history.close()
+    await expect(waiting).resolves.toBeUndefined()
+  })
+
   it('honors a temporary-session tombstone created after discovery started and before its first scan', async () => {
     const { history, source } = setup()
     source.resolveSessionId = (id) => id.replace(/^local-/, '')

@@ -396,8 +396,8 @@ export function startServer(
     historySchedule.activity()
     let history: ProviderHistory
     try {
-      if (!initialProviderHistory) throw new Error('Provider history is closed')
-      history = await initialProviderHistory
+      if (!providerHistory) throw new Error('Provider history is closed')
+      history = await providerHistory
     } catch (error) {
       // Only an imported chat depends on the history service for its transcript.
       if (threadId.startsWith('external:')) throw error
@@ -406,7 +406,18 @@ export function startServer(
     for (const [prefix, reason] of unavailableHistory) {
       if (threadId.startsWith(prefix)) throw reason
     }
+    // Revisions and ownership must be fresh before a read or turn, but only for
+    // the chat's own provider: a turn waited for every provider's first scan,
+    // which took 30-180 s on a large Claude history.
+    const provider = historyProvider(threadId)
+    if (provider) await history.scanned(provider)
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
+  }
+
+  function historyProvider(threadId: string): ProviderId | undefined {
+    const imported = /^external:([^:]+):/.exec(threadId)?.[1]
+    if (imported === undefined) return store.thread(threadId)?.provider
+    return historySources.find(({ provider }) => provider === imported)?.provider
   }
 
   wss.on('connection', (socket, request) => {
