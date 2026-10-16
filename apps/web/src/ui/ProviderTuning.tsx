@@ -379,7 +379,7 @@ function ModelDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} default model: ${value}${effortLabel ? `, ${effortLabel}` : ''}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelRole="dialog"
       panelLabel={`${props.name} default model`}
       panelClassName="menu--compact provider-tune__menu"
@@ -549,7 +549,7 @@ function AccessDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} default access: ${current.short}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelLabel={`${props.name} default access`}
       panelClassName="menu--compact menu--permissions"
       trigger={(open) => (
@@ -642,7 +642,7 @@ function ContextDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} context: ${summary}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelRole="dialog"
       panelLabel={`${props.name} context`}
       panelClassName="menu--compact provider-tune__menu provider-tune__menu--context"
