@@ -10,6 +10,7 @@ export {
   invalidateCommandCache,
   isInstalled,
   locateCommand,
+  nativeShimTarget,
   runCli,
   spawnCli,
 } from './cli.js'

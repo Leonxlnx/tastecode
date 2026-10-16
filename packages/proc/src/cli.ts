@@ -1,6 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { accessSync, constants, realpathSync, statSync } from 'node:fs'
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { applyDesktopPath, desktopPath } from './desktop-path.js'
 import { killTree, spawnOwned } from './kill.js'
@@ -248,6 +248,40 @@ export function locateCommand(
   const env = { ...environment }
   applyDesktopPath(env)
   return resolveWindowsExecutableAsync(command, env)
+}
+
+/** npm's forwarding shim for a package whose bin is a native executable, LF line ends. */
+const NPM_NATIVE_SHIM =
+  /^@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT \/b\n:start\nSETLOCAL\nCALL :find_dp0\n"%dp0%\\([^"%\n]+\.exe)"[ \t]+%\*$/i
+
+/**
+ * The native executable an npm shim forwards to, on Windows.
+ *
+ * npm installs a CLI that ships a Windows binary (opencode-ai, for one) as a
+ * `.cmd` file whose only work is to start `node_modules\...\<name>.exe`.
+ * Launched through it, the real program is cmd.exe's child: the pid a caller
+ * holds is the shim's, and a long-lived server can outlive a cleanup that only
+ * reached cmd.exe. Starting the executable directly avoids both. Any other
+ * shim, a node script among them, gives undefined, and the caller keeps
+ * launching the command as before.
+ */
+export async function nativeShimTarget(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  if (process.platform !== 'win32') return undefined
+  const shim = await locateCommand(command, environment)
+  if (!shim || !/\.cmd$/i.test(shim)) return undefined
+  let text: string
+  try {
+    text = await readFile(shim, 'utf8')
+  } catch {
+    return undefined
+  }
+  const target = NPM_NATIVE_SHIM.exec(text.replace(/\r\n/g, '\n').trim())?.[1]
+  if (!target) return undefined
+  const executable = path.win32.join(path.win32.dirname(shim), target)
+  return (await isFileAsync(executable)) ? executable : undefined
 }
 
 /**
