@@ -80,6 +80,20 @@ export function quoteCmdArgument(value: string, batch = false): string {
   return batch ? escapeCmdToken(escaped) : escaped
 }
 
+// The same few CLIs start dozens of times a session, and one PATH × PATHEXT walk
+// is hundreds of synchronous stats (35-77 ms measured) on the server's only
+// thread. A found command costs one stat to reuse. A missing one is looked up
+// again after a few seconds, so a CLI installed meanwhile shows up.
+const FOUND_COMMAND_TTL_MS = 5 * 60_000
+const MISSING_COMMAND_TTL_MS = 5_000
+const COMMAND_CACHE_LIMIT = 256
+const commandCache = new Map<string, { path: string | undefined; expiresAt: number }>()
+
+/** Forget every command lookup, for example after an install or update finished. */
+export function invalidateCommandCache(): void {
+  commandCache.clear()
+}
+
 function resolveWindowsExecutable(
   command: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -89,7 +103,25 @@ function resolveWindowsExecutable(
     Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
   const searchPath = envValue('PATH') ?? ''
   const pathExt = envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD'
-  return searchWindowsExecutable(command, searchPath, pathExt, /[\\/]/.test(command), cwd)
+  const relative = /[\\/]/.test(command)
+  // cwd only matters to a command that names a directory.
+  const key = [command, searchPath, pathExt, relative ? cwd : ''].join('\0')
+  const cached = commandCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) {
+    if (cached.path === undefined || isFile(cached.path)) return cached.path
+  }
+  const found = searchWindowsExecutable(command, searchPath, pathExt, relative, cwd)
+  // Re-inserting keeps the oldest lookup first for the size limit below.
+  commandCache.delete(key)
+  commandCache.set(key, {
+    path: found,
+    expiresAt: Date.now() + (found ? FOUND_COMMAND_TTL_MS : MISSING_COMMAND_TTL_MS),
+  })
+  if (commandCache.size > COMMAND_CACHE_LIMIT) {
+    const oldest = commandCache.keys().next().value
+    if (oldest !== undefined) commandCache.delete(oldest)
+  }
+  return found
 }
 
 function searchWindowsExecutable(

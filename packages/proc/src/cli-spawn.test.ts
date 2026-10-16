@@ -1,6 +1,6 @@
 import { statSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { quoteCmdArgument, spawnCli } from './cli.js'
+import { invalidateCommandCache, quoteCmdArgument, spawnCli } from './cli.js'
 import { spawnOwned } from './kill.js'
 
 vi.mock('node:fs', async (original) => ({
@@ -24,8 +24,18 @@ beforeEach(() => {
 })
 afterEach(() => {
   Object.defineProperty(process, 'platform', platform)
+  invalidateCommandCache()
+  vi.useRealTimers()
   vi.resetAllMocks()
 })
+
+/** Make exactly these files exist for the mocked statSync. */
+function files(...existing: string[]) {
+  vi.mocked(statSync).mockImplementation((filename) => {
+    if (!existing.includes(String(filename))) throw new Error('not found')
+    return { isFile: () => true } as ReturnType<typeof statSync>
+  })
+}
 
 describe('Windows CLI dispatch', () => {
   it('resolves extensionless native CLIs without sending their arguments through cmd', () => {
@@ -106,5 +116,67 @@ describe('Windows CLI dispatch', () => {
   it('rejects line breaks before starting a shell', () => {
     expect(() => spawnCli('agent.cmd', ['first\nsecond'], options)).toThrow('line breaks')
     expect(spawnOwned).not.toHaveBeenCalled()
+  })
+})
+
+describe('Windows command lookup cache', () => {
+  const search = {
+    cwd: 'C:\\work',
+    replaceEnv: true,
+    env: { Path: 'C:\\a;C:\\b;C:\\tools', PATHEXT: '.EXE;.CMD' },
+  }
+  const launched = () => vi.mocked(spawnOwned).mock.calls.at(-1)
+
+  it('keeps PATH order before PATHEXT order', () => {
+    files('C:\\a\\gh.CMD', 'C:\\b\\gh.EXE')
+    spawnCli('gh', [], search)
+    expect(launched()?.[1]).toEqual(['/d', '/s', '/v:off', '/c', '"C:\\a\\gh.CMD"'])
+  })
+
+  it('reuses a found command after one stat', () => {
+    files('C:\\tools\\gh.EXE')
+    spawnCli('gh', [], search)
+    // C:\a and C:\b each miss .EXE and .CMD before C:\tools has gh.EXE.
+    expect(statSync).toHaveBeenCalledTimes(5)
+    vi.mocked(statSync).mockClear()
+    spawnCli('gh', ['status'], search)
+    expect(statSync).toHaveBeenCalledTimes(1)
+    expect(launched()).toEqual(['C:\\tools\\gh.EXE', ['status'], expect.anything()])
+  })
+
+  it('searches again when the found file is gone', () => {
+    files('C:\\tools\\gh.EXE')
+    spawnCli('gh', [], search)
+    files('C:\\b\\gh.EXE')
+    spawnCli('gh', [], search)
+    expect(launched()?.[0]).toBe('C:\\b\\gh.EXE')
+  })
+
+  it('looks for a missing command again after a few seconds', () => {
+    vi.useFakeTimers()
+    spawnCli('fresh-cli', [], search)
+    expect(launched()?.[0]).toBe('cmd.exe')
+    files('C:\\tools\\fresh-cli.EXE')
+    vi.mocked(statSync).mockClear()
+    spawnCli('fresh-cli', [], search)
+    expect(statSync).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(5_001)
+    spawnCli('fresh-cli', [], search)
+    expect(launched()?.[0]).toBe('C:\\tools\\fresh-cli.EXE')
+  })
+
+  it('forgets every lookup when asked, so a finished install is found at once', () => {
+    spawnCli('fresh-cli', [], search)
+    files('C:\\tools\\fresh-cli.EXE')
+    invalidateCommandCache()
+    spawnCli('fresh-cli', [], search)
+    expect(launched()?.[0]).toBe('C:\\tools\\fresh-cli.EXE')
+  })
+
+  it('keys a lookup by the PATH it searched', () => {
+    files('C:\\tools\\gh.EXE', 'C:\\other\\gh.EXE')
+    spawnCli('gh', [], search)
+    spawnCli('gh', [], { ...search, env: { ...search.env, Path: 'C:\\other' } })
+    expect(launched()?.[0]).toBe('C:\\other\\gh.EXE')
   })
 })
