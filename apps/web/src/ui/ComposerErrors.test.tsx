@@ -42,4 +42,21 @@ describe('ComposerErrors', () => {
     view.rerender(<ComposerErrors errors={errors} />)
     expect(screen.queryByRole('alert')).toBeNull()
   })
+
+  it('offers Report on errors the app made reportable, but never on status rows', () => {
+    const report = vi.fn()
+    render(
+      <ComposerErrors
+        errors={[
+          { id: 'turn:1', message: 'Codex exited unexpectedly', report },
+          { id: 'offline', message: 'Reconnecting to the server…', role: 'status', report },
+          { id: 'plain', message: 'Attachment too large' },
+        ]}
+      />,
+    )
+    const buttons = screen.getAllByRole('button', { name: 'Report' })
+    expect(buttons).toHaveLength(1)
+    fireEvent.click(buttons[0]!)
+    expect(report).toHaveBeenCalledOnce()
+  })
 })

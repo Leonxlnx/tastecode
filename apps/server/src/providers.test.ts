@@ -202,6 +202,29 @@ describe('detectProviders', () => {
     expect(acp.version).toBe('Kimi CLI, Qwen Code')
   })
 
+  it('declares what each provider source must name, installed or not', async () => {
+    const direct = { agent: 'optional', connection: false, direct: true }
+    for (const installed of [false, true]) {
+      const providers = await detectProviders(
+        system({
+          isInstalled: async () => installed,
+          acpAgents: async () => [{ name: 'Kimi CLI', installed }],
+        }),
+      )
+
+      expect(Object.fromEntries(providers.map((entry) => [entry.id, entry.source]))).toEqual({
+        'claude-code': direct,
+        codex: direct,
+        grok: direct,
+        cursor: direct,
+        opencode: direct,
+        antigravity: direct,
+        pi: { agent: 'required', connection: false, direct: true },
+        acp: { agent: 'required', connection: false, direct: false },
+      })
+    }
+  })
+
   it('lists Claude Code first, then Codex, Grok, the other CLIs and ACP', async () => {
     const providers = await detectProviders(system())
 
