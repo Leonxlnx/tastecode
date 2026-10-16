@@ -741,6 +741,49 @@ describe('local usage history', () => {
     expect(raw.totals.providerReportedTokens).toBe(60)
   })
 
+  it('counts every archived session in sources, not only the selected range', async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    const entry = (sessionId: string, date: string) => ({
+      date,
+      model: 'claude-sonnet-4-5',
+      sessionId,
+      longContext: false,
+      tokens: {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 0,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 10,
+        reasoningTokens: 0,
+        providerReportedCostUsd: 0,
+      },
+    })
+    writeFileSync(
+      cacheFile,
+      JSON.stringify(
+        cacheFixture(8, [
+          {
+            path: path.join(root, 'claude.jsonl'),
+            provider: 'claude-code',
+            mtimeMs: 1,
+            size: 1,
+            entries: [entry('older', '2026-07-01'), entry('recent', '2026-08-08')],
+          },
+        ]),
+      ),
+    )
+
+    const history = await cachedHistory(cacheFile, '7d')
+    expect(history.sessionCount).toBe(1)
+    expect(history.sources.find((source) => source.provider === 'claude-code')).toEqual({
+      provider: 'claude-code',
+      available: true,
+      sessionCount: 2,
+    })
+    expect(history.sources.find((source) => source.provider === 'codex')?.sessionCount).toBe(0)
+  })
+
   it('migrates a per-message v7 cache in place without reparsing any file', async () => {
     const root = temporaryDirectory()
     const claudeRoot = path.join(root, 'claude')

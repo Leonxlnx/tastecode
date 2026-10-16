@@ -303,21 +303,19 @@ export class UsageHistoryService {
   #aggregate(range: UsageHistoryRange): UsageHistoryResult {
     const now = this.#now()
     const endDate = localDateKey(now)
-    const localEntries: AttributedUsageRecord[] = (this.#cache?.files ?? []).flatMap((file) =>
-      file.entries.map((entry) => ({ ...entry, provider: file.provider })),
-    )
-    const richProviders = new Set(localEntries.map((entry) => entry.provider))
+    const files = this.#cache?.files ?? []
+    const richProviders = new Set<ProviderId>()
+    for (const file of files) if (file.entries.length > 0) richProviders.add(file.provider)
     const harnessEntries = harnessUsageRecords(
       this.#cachedHarnessUsage(now.getTime()),
       richProviders,
     )
-    const allEntries = [...localEntries, ...harnessEntries]
-    const earliestDate = allEntries.reduce<string | undefined>(
-      (earliest, entry) => (!earliest || entry.date < earliest ? entry.date : earliest),
-      undefined,
-    )
-    const startDate = rangeStartDate(range, endDate, earliestDate)
-    const entries = allEntries.filter((entry) => entry.date >= startDate && entry.date <= endDate)
+    // 'all' starts at the earliest record, so it only needs the end bound.
+    const fixedStartDate = range === 'all' ? undefined : rangeStartDate(range, endDate, undefined)
+    let earliestDate: string | undefined
+    const providerSessions = new Map<ProviderId, Set<string>>()
+    /** Rates by model and date; the price table is string matching, so each pair is looked up once. */
+    const rates = new Map<string, ModelRate | null>()
 
     const totals = emptyTotals()
     const sessions = new Set<string>()
@@ -331,22 +329,39 @@ export class UsageHistoryService {
       MutableBucket & { providers: Map<ProviderId, { tokens: number; estimatedCostUsd: number }> }
     >()
 
-    for (const entry of entries) {
-      const sessionKey = `${entry.provider}:${entry.sessionId}`
-      const priced = priceEntry(entry.model, entry.date, entry.tokens, entry.longContext)
+    const addRecord = (providerId: ProviderId, entry: LocalUsageRecord) => {
+      if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
+      let knownSessions = providerSessions.get(providerId)
+      if (!knownSessions) {
+        knownSessions = new Set()
+        providerSessions.set(providerId, knownSessions)
+      }
+      knownSessions.add(entry.sessionId)
+      if (entry.date > endDate || (fixedStartDate !== undefined && entry.date < fixedStartDate)) {
+        return
+      }
+
+      const sessionKey = `${providerId}:${entry.sessionId}`
+      const rateKey = `${entry.model}\u0000${entry.date}`
+      let rate = rates.get(rateKey)
+      if (rate === undefined) {
+        rate = modelRate(entry.model, entry.date) ?? null
+        rates.set(rateKey, rate)
+      }
+      const priced = priceEntry(rate, entry.tokens, entry.longContext)
       addEntry(totals, entry.tokens, priced)
       sessions.add(sessionKey)
 
-      const provider = getBucket(providerBuckets, entry.provider)
+      const provider = getBucket(providerBuckets, providerId)
       addEntry(provider.totals, entry.tokens, priced)
       provider.sessions.add(sessionKey)
 
-      const modelKey = `${entry.provider}:${entry.model}`
+      const modelKey = `${providerId}:${entry.model}`
       let model = modelBuckets.get(modelKey)
       if (!model) {
         model = {
           ...newBucket(),
-          provider: entry.provider,
+          provider: providerId,
           model: entry.model,
           pricing: priced.pricing,
         }
@@ -363,7 +378,7 @@ export class UsageHistoryService {
       }
       addEntry(day.totals, entry.tokens, priced)
       day.sessions.add(sessionKey)
-      const providerDay = day.providers.get(entry.provider) ?? {
+      const providerDay = day.providers.get(providerId) ?? {
         tokens: 0,
         estimatedCostUsd: 0,
       }
@@ -372,8 +387,13 @@ export class UsageHistoryService {
         entry.tokens.providerReportedCostUsd > 0
           ? entry.tokens.providerReportedCostUsd
           : priced.estimatedCostUsd
-      day.providers.set(entry.provider, providerDay)
+      day.providers.set(providerId, providerDay)
     }
+    for (const file of files) {
+      for (const entry of file.entries) addRecord(file.provider, entry)
+    }
+    for (const entry of harnessEntries) addRecord(entry.provider, entry)
+    const startDate = fixedStartDate ?? rangeStartDate(range, endDate, earliestDate)
 
     const providers: UsageHistoryProvider[] = [...providerBuckets.entries()]
       .map(([provider, bucket]) => ({
@@ -413,13 +433,11 @@ export class UsageHistoryService {
 
     const sourceProviders = new Set<ProviderId>([
       ...this.#sources.map((source) => source.provider),
-      ...allEntries.map((entry) => entry.provider),
+      ...providerSessions.keys(),
     ])
     const sources = [...sourceProviders].map((provider) => {
       const localSource = this.#sources.find((source) => source.provider === provider)
-      const sessionCount = new Set(
-        allEntries.filter((entry) => entry.provider === provider).map((entry) => entry.sessionId),
-      ).size
+      const sessionCount = providerSessions.get(provider)?.size ?? 0
       return {
         provider,
         available: (localSource?.available ?? false) || sessionCount > 0,
@@ -875,8 +893,7 @@ function subtractTokenCounts(current: TokenCounts, prior: TokenCounts | undefine
   }
 }
 
-function priceEntry(model: string, date: string, tokens: TokenCounts, longContext: boolean) {
-  const rate = modelRate(model, date)
+function priceEntry(rate: ModelRate | null, tokens: TokenCounts, longContext: boolean) {
   if (!rate) return { pricing: 'unpriced' as const, estimatedCostUsd: 0, cacheSavingsUsd: 0 }
   const inputMultiplier = longContext ? (rate.longContextMultipliers?.input ?? 1) : 1
   const outputMultiplier = longContext ? (rate.longContextMultipliers?.output ?? 1) : 1
