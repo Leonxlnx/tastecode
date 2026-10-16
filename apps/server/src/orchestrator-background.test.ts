@@ -393,7 +393,10 @@ describe('background title source discovery', () => {
 
     // The read that began before sign-out still answers its own request, but
     // nothing after the change sees it: Codex is read again and found signed out.
-    expect(started).toEqual([
+    // The two overlapped titles start in either order.
+    expect(
+      started.slice().sort((left, right) => left.provider.localeCompare(right.provider)),
+    ).toEqual([
       { provider: 'codex', model: 'gpt-5.6-luna' },
       { provider: 'grok', model: 'grok-4.6' },
       { provider: 'grok', model: 'grok-4.6' },
