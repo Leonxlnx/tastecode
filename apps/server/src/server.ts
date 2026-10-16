@@ -41,6 +41,7 @@ import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
+import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
@@ -292,11 +293,14 @@ export function startServer(
   /** Set once background work starts; see startBackgroundWork. */
   let providerHistory: Promise<ProviderHistory> | undefined
   let initialProviderHistory: Promise<ProviderHistory> | undefined
-  let providerHistoryTimer: ReturnType<typeof setInterval> | undefined
+  const historySchedule = new HistoryRefreshSchedule(async () =>
+    historyClosing || !providerHistory ? false : (await providerHistory).refresh(),
+  )
   const refreshProviderHistory = () => {
     // Before background work starts, its first scan will pick the change up.
-    if (!historyClosing)
-      void providerHistory?.then((history) => history.refresh()).catch(() => undefined)
+    if (historyClosing) return
+    historySchedule.activity()
+    void providerHistory?.then((history) => history.refresh()).catch(() => undefined)
   }
   // That first scan reads every saved provider session and can take seconds
   // (about 10 s on a large ~/.claude). A native chat's transcript is already
@@ -316,8 +320,7 @@ export function startServer(
       return history
     })
     initialProviderHistory = initial
-    providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
-    providerHistoryTimer.unref()
+    historySchedule.start()
     void initial
       .then(async (history) => {
         initialProviderHistorySettled = true
@@ -381,6 +384,7 @@ export function startServer(
   async function loadProviderHistory(threadId: string): Promise<void> {
     // An imported chat or a turn needs the scan now, not after the start delay.
     startBackgroundWork()
+    historySchedule.activity()
     let history: ProviderHistory
     try {
       if (!initialProviderHistory) throw new Error('Provider history is closed')
@@ -853,6 +857,7 @@ export function startServer(
 
       case 'projects.list': {
         reportStartupMilestone('server-projects-requested')
+        historySchedule.activity()
         lifecycleScheduler.refreshIfDue()
         const projects = store.projects()
         const threads = store.sidebarThreads()
@@ -1004,6 +1009,7 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
+        historySchedule.activity()
         await loadProviderHistoryForRead(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
@@ -1292,7 +1298,7 @@ export function startServer(
     close: async () => {
       historyClosing = true
       clearTimeout(backgroundTimer)
-      clearInterval(providerHistoryTimer)
+      historySchedule.stop()
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
