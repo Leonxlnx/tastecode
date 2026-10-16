@@ -108,6 +108,8 @@ export function mcpShellEnvironmentConfig(
 
 function auth(status: ParsedMcpServerStatus['authStatus']): McpAuth {
   switch (status) {
+    case 'unknown':
+      return { status: 'unsupported' }
     case 'notLoggedIn':
       return { status: 'sign_in_required', method: 'oauth' }
     case 'bearerToken':
