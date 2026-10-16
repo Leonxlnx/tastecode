@@ -306,6 +306,14 @@ export type PullRequestAction = z.infer<typeof PullRequestActionSchema>
 export const PullRequestActionResultSchema = z.object({ message: z.string().min(1) })
 export type PullRequestActionResult = z.infer<typeof PullRequestActionResultSchema>
 
+/** A branch name the server passes to git or gh as one argument, never as an option. */
+const BranchNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .refine((value) => !value.startsWith('-') && !/[\s\0]/.test(value), 'expected a branch name')
+
 /** All checks folded into one word. `none` means the head commit has no checks. */
 export const PullRequestChecksSummarySchema = z.enum(['passing', 'failing', 'pending', 'none'])
 export type PullRequestChecksSummary = z.infer<typeof PullRequestChecksSummarySchema>
@@ -377,6 +385,21 @@ export const CheckoutPullRequestResultSchema = z
     }
   })
 export type CheckoutPullRequestResult = z.infer<typeof CheckoutPullRequestResultSchema>
+
+/** Open a pull request from a checkout's pushed branch. The server runs gh. */
+export const PullRequestCreateSchema = z.object({
+  title: z.string().trim().min(1).max(256),
+  body: z.string().max(1_000_000),
+  /** Target branch. Absent means the repository's default branch. */
+  base: BranchNameSchema.optional(),
+  draft: z.boolean(),
+})
+export type PullRequestCreate = z.infer<typeof PullRequestCreateSchema>
+
+export const PullRequestCreateResultSchema = PullRequestTargetSchema.extend({
+  url: z.string().url().startsWith('https://github.com/'),
+})
+export type PullRequestCreateResult = z.infer<typeof PullRequestCreateResultSchema>
 
 /** A repository file or GitHub upload embedded in pull-request Markdown. */
 export const PullRequestImageUrlSchema = z
