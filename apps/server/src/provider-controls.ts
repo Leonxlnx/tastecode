@@ -116,6 +116,10 @@ export type ProviderControlsOptions = {
   unavailableLimitCacheMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
+  /** How long a signed-in account read answers later reads without starting the CLI again. */
+  accountCacheMs?: number
+  /** How long the last confirmed sign-in answers when a later account read fails. */
+  accountFallbackMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -150,6 +154,12 @@ type LimitEntry = {
   reading?: Promise<ProviderLimitSource> | undefined
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
+}
+type AccountEntry = {
+  /** The last read that answered; a failed read never replaces it. */
+  value?: Account | undefined
+  at: number
+  reading?: Promise<Account> | undefined
 }
 
 const defaultServices = {
@@ -203,6 +213,10 @@ export class ProviderControls {
   readonly #unavailableLimitCacheMs: number
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  readonly #accountCacheMs: number
+  readonly #accountFallbackMs: number
+  /** Keyed by provider and agent; an auth change deletes the provider's entries. */
+  readonly #accounts = new Map<string, AccountEntry>()
   #shared: ProcessEntry | undefined
   #users = 0
   #idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -225,6 +239,12 @@ export class ProviderControls {
     // turn from repeating that scan.
     this.#unavailableLimitCacheMs = duration(options.unavailableLimitCacheMs, 30 * 60_000, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
+    // An account read starts the vendor CLI, which takes seconds on a busy
+    // machine. App and Settings ask at once and again on every switch, so one
+    // read serves them all, and a slow or failed read keeps the last sign-in
+    // instead of reporting a signed-in account as unavailable.
+    this.#accountCacheMs = duration(options.accountCacheMs, 60_000, 0)
+    this.#accountFallbackMs = duration(options.accountFallbackMs, 30 * 60_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
@@ -283,6 +303,7 @@ export class ProviderControls {
     this.#mcp.clear()
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
+    this.#accounts.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
     // Stopping the control process also cancels its browser login. Sending a
     // cancellation RPC while stopping that same process would race its exit.
@@ -340,8 +361,8 @@ export class ProviderControls {
     const control: ProviderControl = {
       capabilities,
       account: async (agent) => {
-        const account = await this.#read(
-          async () => (await services.account?.(agent)) ?? { signedIn: false },
+        const account = await this.#cachedAccount(provider, agent, () =>
+          this.#read(async () => (await services.account?.(agent)) ?? { signedIn: false }),
         )
         return agent === undefined ? this.#accountRead(provider, account) : account
       },
@@ -384,7 +405,12 @@ export class ProviderControls {
     return {
       ...control,
       account: async () =>
-        this.#accountRead(provider, await this.#withShared((adapter) => adapter.account())),
+        this.#accountRead(
+          provider,
+          await this.#cachedAccount(provider, undefined, () =>
+            this.#withShared((adapter) => adapter.account()),
+          ),
+        ),
       listModels: (agent) =>
         agent
           ? this.#readModels(provider, agent)
@@ -526,7 +552,71 @@ export class ProviderControls {
   #authChanged(provider: ProviderId): void {
     // The next account read describes the new account; it is no further change.
     this.#invalidateLimits(provider, true).account = undefined
+    this.#forgetAccounts(provider)
     this.#options.onAuthChanged?.(provider)
+  }
+
+  /**
+   * Concurrent callers share one read, a signed-in answer serves later callers
+   * for a short while, and a failed read falls back to the last sign-in it
+   * confirmed. A signed-out answer is never reused, so a sign-in finished in
+   * the provider's own terminal shows at the next read.
+   */
+  #cachedAccount(
+    provider: ProviderId,
+    agent: string | undefined,
+    read: () => Promise<Account>,
+  ): Promise<Account> {
+    this.#assertOpen()
+    const key = accountKey(provider, agent)
+    let entry = this.#accounts.get(key)
+    if (!entry) {
+      entry = { at: 0 }
+      this.#accounts.set(key, entry)
+    }
+    if (entry.reading) return entry.reading
+    if (entry.value?.signedIn && Date.now() - entry.at < this.#accountCacheMs) {
+      return Promise.resolve(entry.value)
+    }
+    const current = entry
+    // An auth change or reset deletes the entry; a read that began before it
+    // still answers its own caller but cannot answer anyone after the change.
+    const owned = () => this.#accounts.get(key) === current
+    const reading = read()
+      .then(
+        (account) => {
+          if (owned()) {
+            current.value = account
+            current.at = Date.now()
+          }
+          return account
+        },
+        (error: unknown) => {
+          const known = current.value
+          if (!owned() || !known?.signedIn || Date.now() - current.at >= this.#accountFallbackMs) {
+            throw error
+          }
+          const reason = error instanceof Error ? error.message : String(error)
+          this.#options.onLog?.(
+            provider,
+            `Account check failed (${reason}); using the last known sign-in.`,
+          )
+          return known
+        },
+      )
+      .finally(() => {
+        if (current.reading === reading) current.reading = undefined
+      })
+    current.reading = reading
+    return reading
+  }
+
+  #forgetAccounts(provider: ProviderId): void {
+    const prefix = accountKey(provider, undefined)
+    // Deleting the entry being visited is safe while iterating a Map.
+    for (const key of this.#accounts.keys()) {
+      if (key === prefix || key.startsWith(`${prefix}\u0000`)) this.#accounts.delete(key)
+    }
   }
 
   /** A sign-in or account switch in the provider's own CLI reaches the app only here. */
@@ -921,6 +1011,10 @@ export class ProviderControls {
     )
     return canceling
   }
+}
+
+function accountKey(provider: ProviderId, agent: string | undefined): string {
+  return agent === undefined ? provider : `${provider}\u0000${agent}`
 }
 
 function duration(value: number | undefined, fallback: number, minimum: number): number {
