@@ -34,7 +34,6 @@ type Probe = {
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
   updater?: CliUpdateSource
-  supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
   /**
@@ -316,7 +315,6 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
   }
 
   const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
-  const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -325,11 +323,6 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     setup: entry.setup,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
-    ...(unsupported
-      ? {
-          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-        }
-      : {}),
   }
 }
 
