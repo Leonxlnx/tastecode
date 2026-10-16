@@ -12,7 +12,7 @@ import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { ProviderSettings, Settings } from './Settings.js'
+import { ProviderSettings, Settings, type SettingsSection } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 import * as bridge from '../bridge.js'
 
@@ -39,7 +39,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    initialSection?: SettingsSection
     showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
@@ -237,6 +237,27 @@ describe('settings viewport layout', () => {
   })
 })
 
+describe('settings panel names', () => {
+  it.each([
+    ['workflows', 'General'],
+    ['appearance', 'Appearance'],
+    ['keybinds', 'Keybinds'],
+    ['models', 'Models'],
+    ['skills', 'Agent Skills'],
+    ['data', 'Data & privacy'],
+    ['debug', 'Debug'],
+    ['about', 'About'],
+  ] as const)('labels the %s panel by its heading', (section, title) => {
+    renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const heading = screen.getByRole('heading', { level: 1, name: title })
+    expect(screen.getByRole('region', { name: title }).contains(heading)).toBe(true)
+  })
+})
 describe('about status grammar', () => {
   it.each([
     [
