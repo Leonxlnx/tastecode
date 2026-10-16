@@ -753,6 +753,44 @@ describe('Composer attachment source switching', () => {
   })
 })
 
+describe('Composer attachment preview', () => {
+  it.each([
+    ['resolves without a preview', (settle: Deferred) => settle.resolve(undefined)],
+    ['fails', (settle: Deferred) => settle.reject(new Error('unreadable'))],
+  ])('says the preview is unavailable once the attempt %s', async (_, finish) => {
+    const settle = deferred()
+    bridge.previewViewedImage.mockReturnValue(settle.promise)
+    bridge.pickFiles.mockResolvedValue(['/work/dot.png'])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const loading = await screen.findByRole('button', { name: 'Loading preview of dot.png' })
+    expect((loading as HTMLButtonElement).disabled).toBe(true)
+
+    await act(async () => finish(settle))
+    const unavailable = await screen.findByRole('button', {
+      name: 'Preview unavailable for dot.png',
+    })
+    expect((unavailable as HTMLButtonElement).disabled).toBe(true)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('opens the attachment once its preview resolves', async () => {
+    bridge.previewViewedImage.mockResolvedValue({
+      path: '/work/dot.png',
+      name: 'dot.png',
+      mediaType: 'image',
+      previewUrl: 'tastecode-attachment://preview/dot',
+    })
+    bridge.pickFiles.mockResolvedValue(['/work/dot.png'])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
 describe('Composer send handoff', () => {
   it('switches directly to Stop without starting a looping send animation', () => {
     const onSend = vi.fn()
@@ -2084,6 +2122,22 @@ describe('Composer prompt recall', () => {
     expect(composer.value).toBe('other chat draft')
   })
 })
+
+type Deferred = {
+  promise: Promise<unknown>
+  resolve: (value: unknown) => void
+  reject: (reason: unknown) => void
+}
+
+function deferred(): Deferred {
+  let resolve!: Deferred['resolve']
+  let reject!: Deferred['reject']
+  const promise = new Promise<unknown>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
 function renderComposer(
   onSend: (text: string, attachments: string[]) => void,
