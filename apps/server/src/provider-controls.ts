@@ -102,6 +102,8 @@ export type ProviderControlsOptions = {
   onLog?: (provider: ProviderId, line: string) => void
   onLogin?: (provider: ProviderId, result: ProviderLoginResult) => void
   onUsageChanged?: (provider: ProviderId) => void
+  /** A provider's held limits changed; `source` is the newest snapshot. */
+  onLimitsChanged?: (provider: ProviderId, source: ProviderLimitSource) => void
   onMcpChanged?: (provider: ProviderId, projectPath: string) => void
   onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
@@ -118,6 +120,8 @@ export type ProviderControlsOptions = {
   limitReadIntervalMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
+  /** Minimum spacing of published limit snapshots per provider. */
+  limitPublishIntervalMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -160,6 +164,10 @@ type LimitEntry = {
   failure?: LimitFailure | undefined
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
+  /** Windows a live session reported, by id, so a read that started earlier cannot revert them. */
+  live?: Map<string, { limit: ProviderLimit; at: number }> | undefined
+  publishedAt: number
+  publishTimer?: ReturnType<typeof setTimeout> | undefined
 }
 type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
 type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
@@ -171,6 +179,38 @@ const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
 function heldValues(source: ReadyLimitSource): ReadyLimitSource {
   const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = source
   return values
+}
+
+/** Live rows carry only the fields they know; the held row keeps the rest, such as a reset time. */
+function mergeLimit(held: ProviderLimit, update: ProviderLimit): ProviderLimit {
+  return { ...held, ...update }
+}
+
+/** A merged row keeps the held row's key order, so equal values serialize alike. */
+function sameLimit(left: ProviderLimit, right: ProviderLimit): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/** Overlays live windows newer than a read onto that read's rows. */
+function withLiveWindows(
+  limits: ProviderLimit[],
+  live: Map<string, { limit: ProviderLimit; at: number }> | undefined,
+  readStartedAt: number,
+): ProviderLimit[] {
+  if (!live?.size) return limits
+  let merged = limits
+  for (const [id, window] of live) {
+    // The read already saw this window or something newer.
+    if (window.at < readStartedAt) {
+      live.delete(id)
+      continue
+    }
+    const index = merged.findIndex((limit) => limit.id === id)
+    if (index === -1) continue
+    if (merged === limits) merged = [...limits]
+    merged[index] = mergeLimit(merged[index]!, window.limit)
+  }
+  return merged
 }
 
 /**
@@ -271,6 +311,7 @@ export class ProviderControls {
   readonly #unavailableLimitCacheMs: number
   readonly #limitReadIntervalMs: number | undefined
   readonly #limitChangeIntervalMs: number
+  readonly #limitPublishIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
   #shared: ProcessEntry | undefined
   #users = 0
@@ -298,6 +339,8 @@ export class ProviderControls {
         ? undefined
         : duration(options.limitReadIntervalMs, 0, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
+    // Codex reports its windows beside nearly every token update.
+    this.#limitPublishIntervalMs = duration(options.limitPublishIntervalMs, 1_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
     this.#mcp = new WatchLeases(watchTtlMs)
@@ -345,6 +388,42 @@ export class ProviderControls {
     entry.notifyTimer.unref?.()
   }
 
+  /**
+   * Folds plan-limit windows a live session reported into the held snapshot
+   * by id. A known window takes the reported fields, other windows stay, and
+   * rows without an id are left to full reads. When every row matches, the
+   * snapshot stays the same object and nothing is published.
+   */
+  applyLimitRows(provider: ProviderId, rows: readonly ProviderLimit[]): void {
+    if (this.#closed) return
+    const entry = this.#limitEntry(provider)
+    const held = entry.value
+    // An account without plan limits keeps that answer until it changes.
+    if (held?.status === 'unavailable') return
+    const limits = held?.limits ?? []
+    const now = Date.now()
+    let next: ProviderLimit[] | undefined
+    for (const row of rows) {
+      if (row.id === undefined) continue
+      const current = next ?? limits
+      const index = current.findIndex((limit) => limit.id === row.id)
+      const merged = index === -1 ? row : mergeLimit(current[index]!, row)
+      if (index !== -1 && sameLimit(current[index]!, merged)) continue
+      next ??= [...limits]
+      if (index === -1) next.push(merged)
+      else next[index] = merged
+      entry.live ??= new Map()
+      const seen = entry.live.get(row.id)
+      entry.live.set(row.id, { limit: seen ? mergeLimit(seen.limit, row) : row, at: now })
+    }
+    if (!next) return
+    // Live values are current, so they are no longer the last known ones.
+    entry.value = held
+      ? { ...heldValues(held), limits: next, checkedAt: now, origin: 'live' }
+      : { provider, status: 'ready', limits: next, checkedAt: now, origin: 'live' }
+    this.#publishLimits(provider, entry)
+  }
+
   /** Failed cleanup retains ownership, so a subsequent call can retry it. */
   disposeAll(): Promise<void> {
     if (this.#disposing) return this.#disposing
@@ -355,7 +434,10 @@ export class ProviderControls {
     clearTimeout(this.#watchTimer)
     this.#skills.clear()
     this.#mcp.clear()
-    for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
+    for (const entry of this.#limits.values()) {
+      clearTimeout(entry.notifyTimer)
+      clearTimeout(entry.publishTimer)
+    }
     this.#limits.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
     // Stopping the control process also cancels its browser login. Sending a
@@ -548,6 +630,7 @@ export class ProviderControls {
         readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
         notifiedAt: Number.NEGATIVE_INFINITY,
+        publishedAt: Number.NEGATIVE_INFINITY,
       }
       this.#limits.set(provider, entry)
     }
@@ -565,6 +648,7 @@ export class ProviderControls {
       entry.accountVersion += 1
       // Another account starts without this one's values, failures or read times.
       entry.value = undefined
+      entry.live = undefined
       entry.failure = undefined
       entry.readAt = Number.NEGATIVE_INFINITY
     }
@@ -622,9 +706,13 @@ export class ProviderControls {
         (answer) => {
           const now = Date.now()
           // Clients label values by when they were read, not when they were asked for.
-          const value: ProviderLimitSource =
+          let value: ProviderLimitSource =
             answer.status === 'ready' ? { ...answer, checkedAt: now, origin: 'read' } : answer
           if (!current()) return value
+          if (value.status === 'ready' && entry.live) {
+            const limits = withLiveWindows(value.limits, entry.live, startedAt)
+            if (limits !== value.limits) value = { ...value, limits }
+          }
           const interval = this.#limitReadInterval(provider)
           const unavailable = value.status === 'unavailable'
           entry.stored = sequence
@@ -658,6 +746,29 @@ export class ProviderControls {
       })
     entry.reading = reading
     return reading
+  }
+
+  /**
+   * Sends the held snapshot at a bounded rate: the first change at once, a
+   * burst after it as one trailing snapshot with the newest values.
+   */
+  #publishLimits(provider: ProviderId, entry: LimitEntry): void {
+    if (!this.#options.onLimitsChanged || entry.publishTimer) return
+    const send = () => {
+      if (this.#limits.get(provider) !== entry || this.#closed || !entry.value) return
+      entry.publishedAt = Date.now()
+      this.#options.onLimitsChanged?.(provider, entry.value)
+    }
+    const wait = entry.publishedAt + this.#limitPublishIntervalMs - Date.now()
+    if (wait <= 0) {
+      send()
+      return
+    }
+    entry.publishTimer = setTimeout(() => {
+      entry.publishTimer = undefined
+      send()
+    }, wait)
+    entry.publishTimer.unref?.()
   }
 
   #authChanged(provider: ProviderId): void {

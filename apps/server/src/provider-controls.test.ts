@@ -55,6 +55,7 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     onLog: vi.fn(),
     onLogin: vi.fn(),
     onUsageChanged: vi.fn(),
+    onLimitsChanged: vi.fn(),
     onMcpChanged: vi.fn(),
     onSkillsChanged: vi.fn(),
     onAuthChanged: vi.fn(),
@@ -1110,6 +1111,146 @@ describe('last-known limits', () => {
     await grok.usageLimitSource()
     await vi.advanceTimersByTimeAsync(1_000)
     await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+  })
+})
+
+describe('live limit windows', () => {
+  const session = { id: 'five_hour', label: '5-hour', usedPercent: 10, resetsAt: 9_000_000 }
+  const week = { id: 'seven_day', label: 'Weekly', usedPercent: 20, windowMinutes: 10_080 }
+  const credits = { label: 'Credits', usedPercent: 0, valueLabel: '5 left' }
+  const read = (limits: ProviderLimit[] = [session, week, credits]) =>
+    vi.fn(async () => ({ status: 'ready' as const, limits }))
+
+  it('merges reported windows by id, keeps the others and publishes the snapshot', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(2_000)
+    registry.applyLimitRows('grok', [
+      { id: 'five_hour', label: '5-hour', usedPercent: 15 },
+      { label: 'Without id', usedPercent: 99 },
+    ])
+    const expected = {
+      provider: 'grok',
+      status: 'ready',
+      // The live row has no reset time, so the read's stays.
+      limits: [{ ...session, usedPercent: 15 }, week, credits],
+      checkedAt: 2_000,
+      origin: 'live',
+    }
+    expect(hooks.onLimitsChanged).toHaveBeenCalledExactlyOnceWith('grok', expected)
+    // A live merge is no reason for a new read.
+    await expect(grok.usageLimitSource()).resolves.toEqual(expected)
+  })
+
+  it('keeps the same snapshot and publishes nothing when every window matches', async () => {
+    const usageLimitSource = read()
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const held = await grok.usageLimitSource()
+    registry.applyLimitRows('grok', [
+      { id: 'five_hour', label: '5-hour', usedPercent: 10 },
+      { id: 'seven_day', label: 'Weekly', usedPercent: 20 },
+    ])
+    registry.applyLimitRows('grok', [])
+    expect(hooks.onLimitsChanged).not.toHaveBeenCalled()
+    await expect(grok.usageLimitSource()).resolves.toBe(held)
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('collapses a burst into one leading and one trailing snapshot', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    await registry.forProvider('grok').usageLimitSource()
+    for (let tick = 1; tick <= 20; tick += 1) {
+      registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: tick }])
+      await vi.advanceTimersByTimeAsync(10)
+    }
+    expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(hooks.onLimitsChanged).toHaveBeenCalledTimes(2)
+    expect(hooks.onLimitsChanged.mock.lastCall?.[1]).toMatchObject({
+      limits: [{ id: 'five_hour', usedPercent: 20 }, week, credits],
+    })
+  })
+
+  it('makes last known values current again', async () => {
+    const usageLimitSource = read()
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    usageLimitSource.mockRejectedValueOnce(new Error('fixture-limits-failed'))
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ stale: true })
+    registry.applyLimitRows('grok', [{ id: 'seven_day', label: 'Weekly', usedPercent: 30 }])
+    const current = await grok.usageLimitSource()
+    expect(current).toMatchObject({ origin: 'live', checkedAt: 60_000 })
+    for (const key of ['stale', 'refreshError', 'retryAt']) expect(current).not.toHaveProperty(key)
+  })
+
+  it('starts a snapshot from live windows and leaves an account without plan limits alone', async () => {
+    const { registry, hooks } = setup({
+      services: { 'claude-code': { usageLimitSource: async () => ({ status: 'unavailable' }) } },
+    })
+    registry.applyLimitRows('grok', [session])
+    expect(hooks.onLimitsChanged).toHaveBeenCalledExactlyOnceWith('grok', {
+      provider: 'grok',
+      status: 'ready',
+      limits: [session],
+      checkedAt: 0,
+      origin: 'live',
+    })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    registry.applyLimitRows('claude-code', [session])
+    await expect(claude.usageLimitSource()).resolves.toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+    })
+    expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
+  })
+
+  it('does not let a read that started earlier revert a newer live window', async () => {
+    const answer = deferred<{ status: 'ready'; limits: ProviderLimit[] }>()
+    const usageLimitSource = vi.fn().mockReturnValueOnce(answer.promise)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const reading = grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 30 }])
+    answer.resolve({ status: 'ready', limits: [session, week] })
+    await expect(reading).resolves.toMatchObject({
+      origin: 'read',
+      limits: [{ ...session, usedPercent: 30 }, week],
+    })
+    // A later read is newer than that window.
+    usageLimitSource.mockResolvedValue({ status: 'ready', limits: [session, week] })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ limits: [session, week] })
+  })
+
+  it('forgets live windows when the account changes', async () => {
+    const usageLimitSource = read([session, week])
+    const { registry } = setup({
+      services: { grok: { usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 30 }])
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      origin: 'read',
+      limits: [session, week],
+    })
+  })
+
+  it('drops a pending trailing snapshot on reset', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    await registry.forProvider('grok').usageLimitSource()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 12 }])
+    await registry.disposeAll()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
   })
 })
 
