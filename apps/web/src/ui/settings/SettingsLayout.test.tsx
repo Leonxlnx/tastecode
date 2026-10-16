@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
-import { SettingsPage, SettingsRow, SettingsSection } from './SettingsLayout.js'
+import {
+  SettingsEmpty,
+  SettingsNotice,
+  SettingsPage,
+  SettingsRow,
+  SettingsSection,
+} from './SettingsLayout.js'
 
 afterEach(cleanup)
 
@@ -47,5 +53,29 @@ describe('settings layout primitives', () => {
     expect(
       within(row as HTMLElement).getByRole('button', { name: 'Check for updates' }),
     ).toBeTruthy()
+  })
+
+  it('announces notices by tone and keeps empty states to one plain line', () => {
+    render(
+      <>
+        <SettingsNotice tone="progress">Scanning sessions…</SettingsNotice>
+        <SettingsNotice tone="error" action={<button type="button">Try again</button>}>
+          Connection to the server was lost.
+        </SettingsNotice>
+        <SettingsEmpty
+          title="No MCP servers yet"
+          detail="Add one to use it in every chat."
+          action={<button type="button">Add server</button>}
+        />
+      </>,
+    )
+
+    expect(screen.getByRole('status').textContent).toContain('Scanning sessions…')
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('Connection to the server was lost.')
+    expect(within(alert).getByRole('button', { name: 'Try again' })).toBeTruthy()
+    expect(screen.getByText('No MCP servers yet').className).toBe('set-empty__title')
+    expect(screen.getByText('Add one to use it in every chat.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
   })
 })

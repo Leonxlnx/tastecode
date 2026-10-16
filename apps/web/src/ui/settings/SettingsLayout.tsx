@@ -1,4 +1,9 @@
 import { useId, type ReactNode } from 'react'
+import {
+  IconAlertCircle as AlertCircle,
+  IconInfoCircle as Info,
+  IconLoader2 as LoaderCircle,
+} from '@tabler/icons-react'
 import '../../styles/settings-system.css'
 
 /*
@@ -84,6 +89,51 @@ export function SettingsRow(props: {
       <span className="set-leader" aria-hidden />
       <div className="set-row__value">{props.children}</div>
       {props.note ? <p className="set-row__note">{props.note}</p> : null}
+    </div>
+  )
+}
+
+const NOTICE_ICONS = { info: Info, progress: LoaderCircle, error: AlertCircle } as const
+
+/** A page-level message above the rows it concerns. A row-level error stays a RowIssue. */
+export function SettingsNotice(props: {
+  tone: keyof typeof NOTICE_ICONS
+  action?: ReactNode
+  children: ReactNode
+}) {
+  const Icon = NOTICE_ICONS[props.tone]
+  return (
+    <div
+      className="set-notice"
+      data-tone={props.tone}
+      role={props.tone === 'error' ? 'alert' : 'status'}
+    >
+      <Icon className="set-notice__icon" size={14} aria-hidden />
+      <p className="set-notice__text">{props.children}</p>
+      {props.action ? <div className="set-notice__action">{props.action}</div> : null}
+    </div>
+  )
+}
+
+/** Nothing to list yet: one plain line where the rows would start, never a centred card. */
+export function SettingsEmpty(props: {
+  icon?: ReactNode
+  title: ReactNode
+  detail?: ReactNode
+  action?: ReactNode
+}) {
+  return (
+    <div className="set-empty">
+      {props.icon ? (
+        <span className="set-empty__icon" aria-hidden>
+          {props.icon}
+        </span>
+      ) : null}
+      <div className="set-empty__copy">
+        <p className="set-empty__title">{props.title}</p>
+        {props.detail ? <p className="set-empty__detail">{props.detail}</p> : null}
+        {props.action ? <div className="set-empty__action">{props.action}</div> : null}
+      </div>
     </div>
   )
 }
