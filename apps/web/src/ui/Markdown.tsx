@@ -425,7 +425,9 @@ function appendLiveMarkdown(
   fade: boolean,
 ): void {
   const update =
-    text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN ? dom.parser.appendLarge(text) : dom.parser.append(text)
+    text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
+      ? dom.parser.appendLarge(text)
+      : dom.parser.append(text)
   applyLiveMarkdown(
     root,
     dom,
