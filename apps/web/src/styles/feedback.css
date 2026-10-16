@@ -13,6 +13,12 @@
   outline: none;
 }
 
+/* On a short window the panel scrolls; its fields keep their size instead of
+   being squeezed by the column. */
+.feedback > * {
+  flex-shrink: 0;
+}
+
 .feedback__head {
   display: flex;
   align-items: center;
@@ -129,7 +135,7 @@
 }
 
 .feedback__message {
-  min-height: 108px;
+  min-height: clamp(76px, 13vh, 108px);
   max-height: 40vh;
   margin-bottom: 12px;
   padding: 9px 11px;
@@ -239,7 +245,7 @@
 }
 
 .feedback__payload pre {
-  max-height: 200px;
+  max-height: clamp(120px, 18vh, 200px);
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
