@@ -1,3 +1,4 @@
+import type { CompatibleProvider } from '@harness/adapter-api'
 import type { ClaudeCodeAdapter } from '@harness/adapter-claude-code'
 import type { GrokAdapter } from '@harness/adapter-grok'
 import type {
@@ -11,6 +12,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ModelConnectionPreset,
   ProviderContextSettings,
   ProviderId,
   StoredModelConnection,
@@ -78,6 +80,19 @@ export type StartOptions = {
   resumeState?: unknown
 }
 
+const COMPATIBLE_PROVIDER_BY_PRESET = {
+  openai: 'custom',
+  anthropic: 'custom',
+  openrouter: 'openrouter',
+  kimi: 'kimi',
+  zai: 'zai',
+  custom: 'custom',
+} satisfies Record<ModelConnectionPreset, CompatibleProvider>
+
+export function compatibleProviderFor(preset: ModelConnectionPreset): CompatibleProvider {
+  return COMPATIBLE_PROVIDER_BY_PRESET[preset]
+}
+
 export function apiRuntime(
   connection: StoredModelConnection,
   apiKey: string,
@@ -97,12 +112,7 @@ export function apiRuntime(
           ? createAnthropicMessagesTransport({ apiKey, baseUrl: connection.baseUrl })
           : createOpenAiCompatibleTransport({
               apiKey,
-              provider:
-                connection.preset === 'openrouter' ||
-                connection.preset === 'kimi' ||
-                connection.preset === 'zai'
-                  ? connection.preset
-                  : 'custom',
+              provider: compatibleProviderFor(connection.preset),
               baseUrl: connection.baseUrl,
             })
     const workspaceTools = createApiWorkspaceTools(workspacePath, options.approval)
@@ -155,12 +165,7 @@ export function apiRuntime(
       if (connection.transport === 'anthropic-messages') return listAnthropicModels(options)
       return listOpenAiCompatibleModels({
         ...options,
-        provider:
-          connection.preset === 'openrouter' ||
-          connection.preset === 'kimi' ||
-          connection.preset === 'zai'
-            ? connection.preset
-            : 'custom',
+        provider: compatibleProviderFor(connection.preset),
       })
     },
   }
