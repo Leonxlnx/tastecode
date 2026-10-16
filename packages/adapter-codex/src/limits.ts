@@ -5,9 +5,12 @@ import {
 } from './schemas.js'
 
 export type ProviderLimit = {
+  /** Stable within Codex, so a live update replaces exactly this row. */
+  id?: string | undefined
   label: string
   usedPercent: number
   resetsAt?: number | undefined
+  windowMinutes?: number | undefined
   valueLabel?: string | undefined
   action?: 'consume-reset' | undefined
   resetCredits?: { id?: string | undefined; expiresAt: number | null }[] | undefined
@@ -51,6 +54,7 @@ export function mapCodexRateLimits(response: CodexRateLimitResponse): ProviderLi
       ]
     })
     rows.push({
+      id: 'resets',
       label: 'Rate limit resets',
       usedPercent: 0,
       valueLabel: `${Math.floor(availableResets)} available`,
@@ -74,13 +78,19 @@ function bucketRows(
     const usedPercent = finitePercent(window.usedPercent)
     if (usedPercent === undefined) return []
     const resetsAt = resetTimestamp(window.resetsAt)
+    const minutes = window.windowDurationMins
     return [
       {
+        // primary and secondary are slots, not durations, so the slot names the row.
+        id: `${limitId}:${index === 0 ? 'primary' : 'secondary'}`,
         label:
           friendlyLimitLabel(limitId, snapshot.limitName, window.windowDurationMins) ??
           prefix + rateLimitLabel(window.windowDurationMins, index === 0 ? 'Primary' : 'Secondary'),
         usedPercent,
         ...(!(resetsAt === undefined) ? { resetsAt } : {}),
+        ...(minutes !== null && Number.isInteger(minutes) && minutes > 0
+          ? { windowMinutes: minutes }
+          : {}),
       },
     ]
   })
@@ -92,6 +102,7 @@ function creditRows(credits: CodexRateLimitSnapshot['credits'] | undefined): Pro
   if (credits.unlimited) {
     return [
       {
+        id: 'credits',
         label: 'Credits',
         usedPercent: 0,
         valueLabel: 'Unlimited',
@@ -103,6 +114,7 @@ function creditRows(credits: CodexRateLimitSnapshot['credits'] | undefined): Pro
   if (!Number.isFinite(balance)) return []
   return [
     {
+      id: 'credits',
       label: 'Credits',
       usedPercent: 0,
       valueLabel: `$${(balance * CREDIT_USD_RATE).toFixed(2)} · ${balance} credits`,

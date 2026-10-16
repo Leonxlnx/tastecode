@@ -147,6 +147,7 @@ describe('Codex rate-limit source', () => {
       status: 'ready',
       limits: [
         {
+          id: 'resets',
           label: 'Rate limit resets',
           usedPercent: 0,
           valueLabel: '2 available',
@@ -190,6 +191,7 @@ describe('Codex rate-limit source', () => {
       status: 'ready',
       limits: [
         {
+          id: 'resets',
           label: 'Rate limit resets',
           usedPercent: 0,
           valueLabel: '5 available',
