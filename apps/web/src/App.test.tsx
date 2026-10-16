@@ -2389,7 +2389,7 @@ describe('web client', () => {
     }
   })
 
-  it.each(['4', '5', '6', '7'])(
+  it.each(['4', '5', '6', '7', MODEL_VISIBILITY_VERSION])(
     'brings a profile saved at version %s to the current Claude lineup while Grok fails',
     async (version) => {
       serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
@@ -2397,9 +2397,8 @@ describe('web client', () => {
       localStorage.setItem(
         'harness.hiddenModels',
         JSON.stringify(
-          version === MODEL_VISIBILITY_VERSION
-            ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS
-            : OLDER_BUILD_HIDDEN_MODELS,
+          // Version 7 already moved Claude Code onto its current lineup.
+          Number(version) >= 7 ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS : OLDER_BUILD_HIDDEN_MODELS,
         ),
       )
       localStorage.setItem(
