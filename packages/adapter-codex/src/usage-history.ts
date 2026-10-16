@@ -1,6 +1,9 @@
 import { createReadStream } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import readline from 'node:readline'
-import type { LocalUsageRecord } from '@harness/contracts'
+import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
+import { discoverJsonlArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
 
 type CodexUsage = {
   inputTokens: number
@@ -9,6 +12,15 @@ type CodexUsage = {
   outputTokens: number
   reasoningTokens: number
   totalTokens: number
+}
+
+/** Codex writes one JSONL rollout per session under `<CODEX_HOME>/sessions`. */
+export const CODEX_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
+  provider: 'codex',
+  label: 'Codex',
+  root: (home = process.env['CODEX_HOME'] ?? path.join(os.homedir(), '.codex')) =>
+    path.join(home, 'sessions'),
+  discover: (root) => discoverJsonlArchive(root, readCodexUsageHistory),
 }
 
 /** Reads Codex JSONL without exposing its cumulative wire format to the core. */
