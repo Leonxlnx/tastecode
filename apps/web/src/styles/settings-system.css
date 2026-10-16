@@ -1,0 +1,295 @@
+/* ---------- settings v1 system ----------
+   One page header, open sections and leader rows for every Settings tab; cards
+   are left to dashboards and forms. Five text roles: the 26px title, the
+   13.5px row name and value, the 12.5px section heading and note, and 11.5px
+   fine print. Weights stay at 400, 500 and 550. Spacing steps are 4, 8, 12,
+   16 and 24, plus 28 under the page header and 36 between sections. */
+
+@property --set-leader {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: transparent;
+}
+
+/* Page header */
+
+.settings .set-page__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 28px;
+}
+
+.settings .set-page__heading {
+  min-width: 0;
+}
+
+.settings .set-page__head .settings__title {
+  margin: 0;
+}
+
+.settings .set-page__description {
+  max-width: 64ch;
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  line-height: 1.45;
+}
+
+/* Centred on the title's own line (26px at 1.2). */
+.settings .set-page__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(var(--t-2xl) * 1.2);
+}
+
+/* Sections */
+
+/* A page may open with loose rows; a titled section after them keeps the
+   same distance as one section after another. */
+.settings .set-section + .set-section,
+.settings .set-row + .set-section {
+  margin-top: 36px;
+}
+
+.settings .set-section__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 4px;
+}
+
+.settings .set-section__title {
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.settings .set-section__note {
+  max-width: 64ch;
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+/* Rows: name, leader, value. No fill, no divider; only the leader and the
+   name's ink answer the pointer. */
+
+.settings .set-row {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
+  /* Centred, not baseline-aligned: a button's baseline comes from its icon,
+     which would drop the name below the button's label. */
+  align-items: center;
+  min-height: 40px;
+  padding-block: 10px;
+  font-size: var(--t-md);
+  line-height: 1.35;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+/* A 28px control would make its row 48px; trimming the padding keeps every
+   row on the same 40px rhythm. */
+.settings .set-row:has(> .set-row__value > :is(button, .app-select, .settings__switch-skeleton)) {
+  padding-block: 6px;
+}
+
+.settings .set-row:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.settings .set-row[data-tone='muted'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 28%, transparent);
+}
+
+.settings .set-row[data-tone='active'] {
+  --set-leader: var(--text-2);
+}
+
+.settings .set-row[data-tone='error'] {
+  --set-leader: var(--error);
+}
+
+.settings .set-row__name {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-2);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-row:is(:hover, :focus-within) .set-row__name {
+  color: var(--text);
+}
+
+/* Small and close-set, so it reads as a line, not beads. Centring puts it at
+   mid-line; the nudge sets it back on the name's baseline. */
+.settings .set-leader {
+  height: 5px;
+  margin-inline: 14px;
+  translate: 0 0.17em;
+  background: radial-gradient(circle, var(--set-leader) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
+}
+
+.settings .set-row__value {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+}
+
+/* A value reads at the row's own size; only status lines step down. */
+.settings .set-row__value > .settings-meta {
+  color: var(--text);
+  font-size: inherit;
+}
+
+.settings .set-row__value .state-label {
+  font-size: var(--t-sm);
+}
+
+.settings .set-row__note {
+  grid-column: 1 / -1;
+  max-width: 60ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-row .switch {
+  width: 30px;
+  height: 18px;
+}
+
+.settings .set-row .switch__thumb {
+  width: 12px;
+  height: 12px;
+}
+
+.settings .set-row .switch.is-on .switch__thumb {
+  transform: translateX(12px);
+}
+
+@container settings-content (max-width: 560px) {
+  .settings .set-leader {
+    display: none;
+  }
+
+  .settings .set-row {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    column-gap: 16px;
+  }
+
+  .settings .set-row__value {
+    flex-wrap: wrap;
+  }
+}
+
+/* Page-level notice */
+
+.settings .set-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-notice__icon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.settings .set-notice__text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.settings .set-notice__action {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-block: -4px;
+}
+
+.settings .set-notice[data-tone='progress'] .set-notice__icon {
+  animation: spin 0.9s linear infinite;
+}
+
+.settings .set-notice[data-tone='error'] {
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  border-color: color-mix(in srgb, var(--error) 22%, transparent);
+  color: var(--text);
+}
+
+.settings .set-notice[data-tone='error'] .set-notice__icon {
+  color: var(--error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .set-notice[data-tone='progress'] .set-notice__icon {
+    animation: none;
+  }
+}
+
+/* Empty state: where the rows would start, left-aligned, no card. */
+
+.settings .set-empty {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding-block: 12px;
+}
+
+.settings .set-empty__icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 1px;
+  color: var(--text-3);
+}
+
+.settings .set-empty__icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.settings .set-empty__title {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--t-md);
+  line-height: 1.35;
+}
+
+.settings .set-empty__detail {
+  max-width: 60ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-empty__action {
+  margin-top: 12px;
+}

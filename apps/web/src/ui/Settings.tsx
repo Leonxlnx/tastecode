@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -149,6 +150,11 @@ import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
+import {
+  SettingsPage,
+  SettingsSection,
+  SettingsRow as SettingsLeaderRow,
+} from './settings/SettingsLayout.js'
 import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
@@ -322,6 +328,13 @@ function SettingsComponent(props: {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
 
+  // Every tab shares one scroller; a tab opens at its top, not at the offset
+  // the previous tab was left at.
+  const main = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0
+  }, [section])
+
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
@@ -420,7 +433,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'mcp'}
             icon={<Network size={15} aria-hidden />}
-            label="MCP"
+            label="MCP servers"
             onClick={() => setSection('mcp')}
           />
           <SettingsNavItem
@@ -458,7 +471,7 @@ function SettingsComponent(props: {
         </nav>
       </aside>
 
-      <main className="settings__main">
+      <main className="settings__main" ref={main}>
         <div
           className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
         >
@@ -497,26 +510,27 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'debug' ? (
-            <SettingsPanel title="Debug">
-              <SettingsRow title="Onboarding">
+            <SettingsPage title="Debug">
+              <SettingsLeaderRow name="Onboarding">
                 <button
-                  className="btn"
+                  className="settings__action"
+                  type="button"
                   onClick={props.onForceOnboarding}
                   disabled={!props.onForceOnboarding}
                 >
                   Force onboarding
                 </button>
-              </SettingsRow>
+              </SettingsLeaderRow>
               <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
-              <SettingsRow
+              <SettingsSection
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
-                className="settings__row--roomy"
-              />
-              <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
-            </SettingsPanel>
+              >
+                <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
+              </SettingsSection>
+            </SettingsPage>
           ) : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
@@ -536,10 +550,9 @@ function AppUpdateSimulationRow() {
   useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
 
   return (
-    <SettingsRow
-      title="Simulate app update"
+    <SettingsLeaderRow
+      name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
-      className="settings__row--roomy"
     >
       {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
@@ -559,7 +572,7 @@ function AppUpdateSimulationRow() {
       >
         Stop
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -572,10 +585,9 @@ const PROVIDER_UPDATE_SIMULATIONS = [
 function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
-    <SettingsRow
-      title="Simulate provider updates"
+    <SettingsLeaderRow
+      name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
-      className="settings__row--roomy"
     >
       {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
@@ -596,7 +608,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
       >
         Stop
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -1364,8 +1376,10 @@ function ModelSettings(props: {
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
-  const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
-  const sources = groupModelsBySource(catalogModels)
+  const sources = useMemo(
+    () => groupModelsBySource(props.models.filter((choice) => !isCustomModelChoice(choice))),
+    [props.models],
+  )
 
   return (
     <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
@@ -1525,11 +1539,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
     <section className="background-model-settings" aria-label="Background work">
       <header>
         <h2>Background work</h2>
-        <p>
-          Used for session titles, commit-message drafts, and other short writing. Automatic uses
-          Luna at low on a Codex subscription, Grok 4.6 at low when Grok is connected, or the newest
-          cost-oriented model at its lowest effort elsewhere.
-        </p>
+        <p>Used for session titles, commit-message drafts, and other short writing.</p>
       </header>
       <div className="settings__group">
         <SettingsRow
@@ -2056,7 +2066,11 @@ function DataSettings(props: {
   const [confirming, setConfirming] = useState(false)
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
-  const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
+  // The row names what the reset clears; the note names what it leaves alone.
+  const kept =
+    props.projectCount === 0
+      ? 'Projects, workspaces, files, chat history and credentials stay.'
+      : `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'}, workspaces, files, chat history and credentials stay.`
 
   useEffect(() => {
     let cancelled = false
@@ -2084,12 +2098,11 @@ function DataSettings(props: {
   }
 
   return (
-    <SettingsPanel title="Data & privacy">
+    <SettingsPage title="Data & privacy">
       {isDesktop ? (
-        <SettingsRow
-          title="Local diagnostics"
+        <SettingsLeaderRow
+          name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
-          className="settings__row--roomy"
         >
           {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
           {diagnosticsEnabled ? (
@@ -2107,7 +2120,7 @@ function DataSettings(props: {
                 label="Loading local diagnostics…"
                 className="settings__switch-skeleton"
               >
-                <Skeleton width={36} height={22} />
+                <Skeleton width={30} height={18} />
               </SkeletonStatus>
             )
           ) : (
@@ -2122,28 +2135,31 @@ function DataSettings(props: {
               <span className="switch__thumb" />
             </button>
           )}
-        </SettingsRow>
+        </SettingsLeaderRow>
       ) : null}
-      <SettingsRow
-        title={
-          props.projectsLoading ? (
-            <SettingsValueSkeleton label="Loading project count…" width={176} />
-          ) : (
-            projectLabel
-          )
+      <SettingsLeaderRow
+        name="Reset app preferences"
+        note={
+          <>
+            Clears appearance, layout and model choices.{' '}
+            {props.projectsLoading ? (
+              <SettingsValueSkeleton label="Loading project count…" width={176} />
+            ) : (
+              kept
+            )}
+          </>
         }
-        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
-        className="settings__row--roomy"
       >
         <button
           className="settings__action is-danger"
           type="button"
+          aria-label="Reset app preferences"
           onClick={() => setConfirming(true)}
         >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app preferences</span>
+          <span>Reset…</span>
         </button>
-      </SettingsRow>
+      </SettingsLeaderRow>
       {confirming ? (
         <ResetConfirmation
           onCancel={() => setConfirming(false)}
@@ -2153,7 +2169,7 @@ function DataSettings(props: {
           }}
         />
       ) : null}
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2244,9 +2260,9 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
 
 export function DebugSettings(props: { transport: Transport }) {
   return (
-    <SettingsPanel title="Debug">
+    <SettingsPage title="Debug">
       <UsageHistoryReset transport={props.transport} />
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2267,10 +2283,9 @@ function UsageHistoryReset(props: { transport: Transport }) {
   }
 
   return (
-    <SettingsRow
-      title="Usage history index"
+    <SettingsLeaderRow
+      name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
-      className="settings__row--roomy"
     >
       {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
       {state === 'error' && error ? (
@@ -2285,7 +2300,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
         <RotateCcw size={13} aria-hidden />
         <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -2363,8 +2378,8 @@ function AboutSettings(props: { transport: Transport }) {
             : undefined
 
   return (
-    <SettingsPanel title="About">
-      <SettingsRow title="TasteCode">
+    <SettingsPage title="About">
+      <SettingsLeaderRow name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2372,8 +2387,8 @@ function AboutSettings(props: { transport: Transport }) {
             `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
           )}
         </SettingsMeta>
-      </SettingsRow>
-      <SettingsRow title="Updates">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2411,8 +2426,8 @@ function AboutSettings(props: { transport: Transport }) {
                   ? 'Checking…'
                   : 'Check for updates'}
         </button>
-      </SettingsRow>
-      <SettingsRow title="Source">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Source">
         <button
           className="settings__action"
           type="button"
@@ -2422,17 +2437,19 @@ function AboutSettings(props: { transport: Transport }) {
         >
           GitHub
         </button>
-      </SettingsRow>
-    </SettingsPanel>
+      </SettingsLeaderRow>
+    </SettingsPage>
   )
 }
 
 // No group subtitle between the title and the card: one heading carries a
 // panel, and the removed line was repeating it in smaller type.
 function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
+  // An id derived from the title breaks on spaces ("Data & privacy").
+  const titleId = useId()
   return (
-    <section className="settings__panel" aria-labelledby={`settings-${props.title.toLowerCase()}`}>
-      <h1 className="settings__title" id={`settings-${props.title.toLowerCase()}`}>
+    <section className="settings__panel" aria-labelledby={titleId}>
+      <h1 className="settings__title" id={titleId}>
         {props.title}
       </h1>
       <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>

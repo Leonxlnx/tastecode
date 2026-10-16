@@ -12,7 +12,7 @@ import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { ProviderSettings, Settings } from './Settings.js'
+import { ProviderSettings, Settings, type SettingsSection } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 import * as bridge from '../bridge.js'
 
@@ -39,7 +39,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    initialSection?: SettingsSection
     showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
@@ -152,6 +152,18 @@ describe('settings viewport layout', () => {
     ).toBe('page')
   })
 
+  it('opens every tab at its top, not at the last tab scroll offset', () => {
+    const { container } = renderSettings({ initialSection: 'keybinds' })
+    const main = container.querySelector<HTMLElement>('.settings__main')!
+    main.scrollTop = 500
+    expect(main.scrollTop).toBe(500)
+
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    fireEvent.click(within(categories).getByRole('button', { name: 'Appearance' }))
+
+    expect(screen.getByRole('heading', { name: 'Appearance', level: 1 })).toBeTruthy()
+    expect(main.scrollTop).toBe(0)
+  })
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
@@ -237,6 +249,56 @@ describe('settings viewport layout', () => {
   })
 })
 
+describe('settings panel names', () => {
+  it.each([
+    ['workflows', 'General'],
+    ['appearance', 'Appearance'],
+    ['keybinds', 'Keybinds'],
+    ['models', 'Models'],
+    ['skills', 'Skills'],
+    ['data', 'Data & privacy'],
+    ['debug', 'Debug'],
+    ['about', 'About'],
+    ['mcp', 'MCP servers'],
+  ] as const)('labels the %s panel by its heading', (section, title) => {
+    renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const heading = screen.getByRole('heading', { level: 1, name: title })
+    expect(screen.getByRole('region', { name: title }).contains(heading)).toBe(true)
+    // The category that opened the panel carries the same name.
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    const current = within(categories).getByRole('button', { current: 'page' })
+    expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
+  })
+})
+describe('settings v1 pages', () => {
+  it.each([
+    ['data', ['Reset app preferences']],
+    ['about', ['TasteCode', 'Updates', 'Source']],
+    [
+      'debug',
+      ['Onboarding', 'Usage history index', 'Simulate app update', 'Simulate provider updates'],
+    ],
+  ] as const)('lays %s out as open rows without a card', (section, names) => {
+    const { container } = renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const content = container.querySelector('.settings__content')!
+    expect(content.querySelector('.settings__group, .settings__row')).toBeNull()
+    expect(
+      [...content.querySelectorAll(':scope > section > .set-row .set-row__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(names)
+  })
+})
 describe('about status grammar', () => {
   it.each([
     [
@@ -408,7 +470,7 @@ describe('settings reset confirmation', () => {
 
     expect(
       screen.getByText(
-        'Reset only clears this renderer\u2019s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials.',
+        'Clears appearance, layout and model choices. Projects, workspaces, files, chat history and credentials stay.',
       ),
     ).toBeTruthy()
     const reset = screen.getByRole('button', { name: 'Reset app preferences' })
@@ -600,8 +662,9 @@ describe('settings loading values', () => {
       const loading = screen.getByText('Loading local diagnostics…').closest('[role="status"]')!
       expect(loading.getAttribute('aria-busy')).toBe('true')
       expect(loading.classList.contains('settings__switch-skeleton')).toBe(true)
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 36px')
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 22px')
+      // Sized like the 30x18 switch the open row settles into.
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 30px')
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 18px')
       expect(screen.queryByRole('switch', { name: 'Local diagnostics' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull()
 
@@ -629,11 +692,15 @@ describe('settings loading values', () => {
     const loading = screen.getByText('Loading project count…')
     expect(loading.className).toBe('visually-hidden')
     expect(loading.closest('[aria-busy="true"]')?.querySelector('.skeleton')).toBeTruthy()
-    expect(screen.queryByText('0 projects on this machine')).toBeNull()
+    expect(screen.queryByText(/projects, workspaces/i)).toBeNull()
     expect(screen.getByRole('button', { name: 'Reset app preferences' })).toBeTruthy()
     rerenderSettings({ projectsLoading: false, projectCount: 3 })
     expect(screen.queryByText('Loading project count…')).toBeNull()
-    expect(screen.getByText('3 projects on this machine')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Clears appearance, layout and model choices. 3 projects, workspaces, files, chat history and credentials stay.',
+      ),
+    ).toBeTruthy()
     await act(async () => {})
   })
 
