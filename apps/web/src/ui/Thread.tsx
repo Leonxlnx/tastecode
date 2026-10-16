@@ -21,11 +21,9 @@ import {
   IconArrowBarToDown as ArrowDownToLine,
   IconBook2 as BookOpen,
   IconBrain as Brain,
-  IconCheck as Check,
   IconChevronRight as ChevronRight,
   IconAlertCircle as CircleAlert,
   IconHelpCircle as CircleQuestionMark,
-  IconCopy as Copy,
   IconFilePencil as FilePenLine,
   IconHistory as History,
   IconLibraryPhoto as Images,
@@ -46,7 +44,6 @@ import {
   knownViewedImagePreview,
   previewViewedImage,
   revealPath,
-  writeClipboardText,
 } from '../bridge.js'
 import {
   isEditableTarget,
@@ -58,7 +55,7 @@ import type { Transport } from '../transport.js'
 import { Approval } from './Approval.js'
 import { ChangeStats, Diff, parseDiff } from './Diff.js'
 import { parseToolCall, toolArgumentEntries, toolArgumentSnippet } from './tool-call-text.js'
-import { IconMorph } from './IconMorph.js'
+import { CopyButton } from './CopyButton.js'
 import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaViewer.js'
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
@@ -1482,7 +1479,7 @@ const Row = memo(function Row({
         {item.text ? <p className="said__text">{item.text}</p> : null}
         {item.text ? (
           <div className="response-actions said__actions" aria-label="Prompt actions">
-            <CopyAction text={item.text} label="Copy prompt" />
+            <CopyButton text={item.text} label="Copy prompt" />
             {onEditMessage ? (
               <button
                 type="button"
@@ -2791,7 +2788,7 @@ function ResponseActions({
 }) {
   return (
     <div className="response-actions" aria-label="Response actions">
-      <CopyAction text={text} label="Copy response" />
+      <CopyButton text={text} label="Copy response" />
       {checkpoint && onRevertCheckpoint ? (
         <button
           type="button"
@@ -2804,51 +2801,6 @@ function ResponseActions({
       ) : null}
       <time dateTime={new Date(createdAt).toISOString()}>{RESPONSE_TIME.format(createdAt)}</time>
     </div>
-  )
-}
-
-function CopyAction({ text, label }: { text: string; label: string }) {
-  const [copied, setCopied] = useState(false)
-  const [failed, setFailed] = useState(false)
-  // Rows are virtualized, so this unmounts the moment it scrolls out of the
-  // overscan window — the tick-reset timer must not outlive it.
-  const resetTimer = useRef<number | undefined>(undefined)
-  useEffect(() => () => window.clearTimeout(resetTimer.current), [])
-
-  const copy = async () => {
-    try {
-      await writeClipboardText(text)
-      setFailed(false)
-      setCopied(true)
-      window.clearTimeout(resetTimer.current)
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      window.clearTimeout(resetTimer.current)
-      setCopied(false)
-      setFailed(true)
-    }
-  }
-
-  return (
-    <span className={`copy-action${failed ? ' is-failed' : ''}`}>
-      <button
-        type="button"
-        onClick={() => void copy()}
-        aria-label={label}
-        title={failed ? 'Copy failed — click to retry' : 'Copy'}
-      >
-        <IconMorph active={failed ? 2 : copied ? 1 : 0}>
-          <Copy aria-hidden />
-          <Check aria-hidden />
-          <CircleAlert aria-hidden />
-        </IconMorph>
-      </button>
-      {failed ? (
-        <span className="copy-action__error" role="alert">
-          Copy failed
-        </span>
-      ) : null}
-    </span>
   )
 }
 
