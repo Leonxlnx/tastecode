@@ -22,6 +22,7 @@ import {
   UsageSchema,
 } from './domain.js'
 import {
+  CheckoutPullRequestResultSchema,
   GitHubRepositoryNameSchema,
   PullRequestActionResultSchema,
   PullRequestActionSchema,
@@ -1172,6 +1173,20 @@ export const methods = {
       action: PullRequestActionSchema,
     }),
     result: PullRequestActionResultSchema,
+  },
+  /**
+   * The pull request whose head is a chat's checkout branch: the session's
+   * private worktree when it has one, otherwise the project folder. Answers
+   * from a short server cache unless `refresh`. Older servers answer
+   * `unknown method`, which clients treat as no pull request.
+   */
+  'pullRequests.forCheckout': {
+    params: z.object({
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+      refresh: z.boolean().optional(),
+    }),
+    result: CheckoutPullRequestResultSchema,
   },
   /**
    * Load a repository file or upload embedded as an image. The
