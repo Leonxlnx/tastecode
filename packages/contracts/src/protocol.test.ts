@@ -1911,4 +1911,20 @@ describe('limit freshness contracts', () => {
   ])('rejects an unavailable source with %s', (_name, change) => {
     expect(summary({ provider: 'grok', status: 'unavailable', ...change }).success).toBe(false)
   })
+
+  it('pushes a provider source and accepts a read intent', () => {
+    const source = { provider: 'codex', status: 'ready', limits: [row], origin: 'live' }
+    expect(channels['usage.limits'].parse({ source })).toEqual({ source })
+    expect(channels['usage.limits'].safeParse({ source: { provider: 'codex' } }).success).toBe(
+      false,
+    )
+    const params = methods['usage.summary'].params
+    for (const intent of ['background', 'visible', 'retry'])
+      expect(params.parse({ provider: 'codex', intent })).toEqual({ provider: 'codex', intent })
+    expect(params.parse({ threadId: 'th1', intent: 'visible' })).toEqual({
+      threadId: 'th1',
+      intent: 'visible',
+    })
+    expect(params.safeParse({ provider: 'codex', intent: 'always' }).success).toBe(false)
+  })
 })

@@ -685,6 +685,17 @@ export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
 ])
 export type ProviderLimitSource = z.infer<typeof ProviderLimitSourceSchema>
 
+/**
+ * Why a client asks for limits, so the server can keep expensive vendor reads
+ * to moments someone is looking. `background`: a passive figure; answer from
+ * held values. `visible`: the limits view is open; a full read is fine when
+ * held values are older than the provider's minimum interval. `retry`: the
+ * user asked again; skip the failure backoff once. Absent keeps the older
+ * behaviour, which servers treat like `visible`.
+ */
+export const UsageReadIntentSchema = z.enum(['background', 'visible', 'retry'])
+export type UsageReadIntent = z.infer<typeof UsageReadIntentSchema>
+
 const UsageSummaryResultSchema = z
   .object({
     session: UsageSchema.omit({
@@ -1618,7 +1629,10 @@ export const methods = {
   },
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
-    params: z.union([z.object({ threadId: z.string() }), z.object({ provider: ProviderIdSchema })]),
+    params: z.union([
+      z.object({ threadId: z.string(), intent: UsageReadIntentSchema.optional() }),
+      z.object({ provider: ProviderIdSchema, intent: UsageReadIntentSchema.optional() }),
+    ]),
     result: UsageSummaryResultSchema,
   },
   /**
@@ -1911,6 +1925,12 @@ export const channels = {
   'usage.changed': z.object({
     provider: ProviderIdSchema,
   }),
+  /**
+   * The server's newest limits for one provider, sent when a live session or
+   * a background read changed them. Clients replace that provider's source
+   * without another request; older clients ignore the push.
+   */
+  'usage.limits': z.object({ source: ProviderLimitSourceSchema }),
   'thread.event': z.object({
     threadId: z.string(),
     event: DomainEventSchema,
