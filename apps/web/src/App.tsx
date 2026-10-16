@@ -2468,9 +2468,11 @@ export function App() {
         setAccountCheck({
           provider,
           state: 'failed',
+          // Send stays available, so this informs rather than interrupts.
           error: {
             id: `account:${provider}:${revision}`,
-            message: `Could not check this account. ${cause instanceof Error ? cause.message : String(cause)}`,
+            role: 'status',
+            message: `Could not confirm this account, but you can still send. ${cause instanceof Error ? cause.message : String(cause)}`,
           },
         })
       })
