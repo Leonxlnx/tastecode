@@ -1660,3 +1660,50 @@ describe('feedback contracts', () => {
     })
   })
 })
+
+describe('model metadata contracts', () => {
+  const base = {
+    id: 'gpt-6.1-sol',
+    displayName: 'GPT-6.1-Sol',
+    isDefault: true,
+    reasoningEfforts: ['low', 'medium', 'high'],
+  }
+  const result = methods['models.list'].result
+
+  it('keeps lists without metadata valid for older adapters', () => {
+    expect(result.parse({ models: [base] })).toEqual({
+      models: [{ ...base, serviceTiers: [] }],
+    })
+  })
+
+  it('accepts lab, family, generation, release date and curation flags', () => {
+    const model = {
+      ...base,
+      lab: 'OpenAI',
+      family: 'gpt-sol',
+      generation: '6.1',
+      released: '2026-10-02',
+      recommended: true,
+      deprecated: false,
+    }
+    expect(result.parse({ models: [model] }).models[0]).toMatchObject(model)
+    expect(result.parse({ models: [{ ...base, generation: '6' }] }).models[0]?.generation).toBe('6')
+  })
+
+  it.each([
+    { generation: 6 },
+    { generation: '' },
+    { generation: '6.x' },
+    { generation: 'v6.1' },
+    { generation: '6.' },
+    { released: '2026-10' },
+    { released: '02.10.2026' },
+    { released: '2026-10-02T12:00:00Z' },
+    { lab: '' },
+    { family: '' },
+    { recommended: 'yes' },
+    { deprecated: 1 },
+  ])('rejects malformed metadata: %j', (metadata) => {
+    expect(result.safeParse({ models: [{ ...base, ...metadata }] }).success).toBe(false)
+  })
+})
