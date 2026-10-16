@@ -1586,8 +1586,8 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
       { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'haiku', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.some((model) => model.id === 'default')).toBe(false)
@@ -1660,8 +1660,8 @@ describe('Claude Agent SDK session', () => {
       { id: 'claude-opus-4-8', displayName: 'Opus 4.8', isDefault: false },
       { id: 'claude-opus-4-7', displayName: 'Opus 4.7', isDefault: false },
       { id: 'claude-opus-4-6', displayName: 'Opus 4.6', isDefault: false },
-      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-sonnet-4-6', displayName: 'Sonnet 4.6', isDefault: false },
+      { id: 'claude-opus-4-5', displayName: 'Opus 4.5', isDefault: false },
       { id: 'claude-haiku-4-5', displayName: 'Haiku 4.5', isDefault: false },
     ])
     expect(models.find((model) => model.id === 'haiku')?.reasoningEfforts).toEqual([...efforts])
@@ -1691,7 +1691,7 @@ describe('Claude Agent SDK session', () => {
     adapter.dispose()
   })
 
-  it('places models the catalog does not list after the current lineup, newest first', async () => {
+  it('lets a release the catalog does not know lead its tier and moves the row it replaces down', async () => {
     const fake = harness([
       {
         value: 'default',
@@ -1737,23 +1737,26 @@ describe('Claude Agent SDK session', () => {
     const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
     const models = await adapter.listModels()
     expect(models.map((model) => model.displayName)).toEqual([
+      // The newest generation of each tier, in tier order.
       'Fable 5.1',
+      'Opus 6',
+      'Sonnet 5.6',
+      'Haiku 6',
+      // Older generations, newest first and in tier order within one.
       'Opus 5.5',
       'Sonnet 5.5',
       'Haiku 5.5',
-      'Opus 6',
-      'Haiku 6',
-      'Sonnet 5.6',
-      'Experimental',
       'Fable 5',
       'Opus 5',
       'Sonnet 5',
       'Opus 4.8',
       'Opus 4.7',
       'Opus 4.6',
-      'Opus 4.5',
       'Sonnet 4.6',
+      'Opus 4.5',
       'Haiku 4.5',
+      // Unversioned rows keep their order last.
+      'Experimental',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('opus')
     expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
@@ -1774,8 +1777,8 @@ describe('Claude static model catalog', () => {
       'claude-opus-4-8',
       'claude-opus-4-7',
       'claude-opus-4-6',
-      'claude-opus-4-5',
       'claude-sonnet-4-6',
+      'claude-opus-4-5',
       'claude-haiku-4-5',
     ])
     expect(CLAUDE_MODELS.filter((model) => model.isDefault).map((model) => model.id)).toEqual([
