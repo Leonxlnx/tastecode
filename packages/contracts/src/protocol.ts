@@ -1794,6 +1794,17 @@ export const channels = {
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
   }),
+  /**
+   * A source's model list changed after `models.list` answered, for example a
+   * background refresh found models a CLI update added. Clients call
+   * `models.list` again with the same provider and agent; `agent` is absent for
+   * the provider's own models. Older clients ignore the push and see the new
+   * list on their next request.
+   */
+  'models.changed': z.object({
+    provider: ProviderIdSchema,
+    agent: z.string().min(1).optional(),
+  }),
   /** A provider reported that its subscription usage or limits changed. */
   'usage.changed': z.object({
     provider: ProviderIdSchema,
