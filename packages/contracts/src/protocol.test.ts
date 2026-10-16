@@ -1817,3 +1817,98 @@ describe('MCP inventory state contracts', () => {
     expect(result.safeParse({ capabilities, servers: [], loading: 1 }).success).toBe(false)
   })
 })
+
+describe('limit freshness contracts', () => {
+  const usage = {
+    inputTokens: 0,
+    cachedInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    totalTokens: 0,
+  }
+  const summary = (source: unknown) =>
+    methods['usage.summary'].result.safeParse({
+      session: usage,
+      today: usage,
+      limits:
+        typeof source === 'object' && source !== null && 'limits' in source
+          ? (source as { limits: unknown }).limits
+          : [],
+      limitSource: source,
+    })
+  const row = {
+    id: 'five_hour',
+    label: 'Session',
+    usedPercent: 40,
+    resetsAt: 1_800_000,
+    windowMinutes: 300,
+  }
+
+  it('keeps the old shapes valid', () => {
+    expect(summary({ provider: 'codex', status: 'ready', limits: [] }).success).toBe(true)
+    expect(summary({ provider: 'api', status: 'unavailable' }).success).toBe(true)
+    expect(
+      summary({
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5 hours', usedPercent: 25 }],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('carries ids, windows and last-known state through the mirrored limits', () => {
+    const source = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [row, { id: 'seven_day', label: 'Weekly', usedPercent: 10, windowMinutes: 10_080 }],
+      checkedAt: 1_760_000_000_000,
+      origin: 'live',
+      stale: true,
+      refreshError: 'Claude did not report its limits in time.',
+      retryAt: 1_760_000_300_000,
+    }
+    const parsed = summary(source)
+    expect(parsed.success).toBe(true)
+    expect(parsed.data?.limitSource).toEqual(source)
+    expect(parsed.data?.limits).toEqual(source.limits)
+  })
+
+  it('reports why limits are unavailable and when the server retries', () => {
+    const failed = {
+      provider: 'grok',
+      status: 'unavailable',
+      reason: 'failed',
+      error: 'Grok Build did not report its credits.',
+      retryAt: 1_760_000_120_000,
+    }
+    expect(summary(failed).data?.limitSource).toEqual(failed)
+    for (const reason of ['unsupported', 'noPlan'])
+      expect(summary({ provider: 'api', status: 'unavailable', reason }).success).toBe(true)
+  })
+
+  it.each([
+    ['empty id', { limits: [{ ...row, id: '' }] }],
+    ['long id', { limits: [{ ...row, id: 'x'.repeat(81) }] }],
+    ['zero window', { limits: [{ ...row, windowMinutes: 0 }] }],
+    ['fractional window', { limits: [{ ...row, windowMinutes: 1.5 }] }],
+    ['negative check time', { checkedAt: -1 }],
+    ['unknown origin', { origin: 'cache' }],
+    ['stale false', { stale: false }],
+    ['error without stale', { refreshError: 'Failed.' }],
+    ['retry without stale', { retryAt: 1 }],
+    ['empty error', { stale: true, refreshError: '' }],
+    ['long error', { stale: true, refreshError: 'x'.repeat(301) }],
+  ])('rejects a ready source with %s', (_name, change) => {
+    const source = { provider: 'claude-code', status: 'ready', limits: [row], ...change }
+    expect(summary(source).success).toBe(false)
+  })
+
+  it.each([
+    ['unknown reason', { reason: 'offline' }],
+    ['error without failed', { reason: 'noPlan', error: 'No plan.' }],
+    ['retry without reason', { retryAt: 1 }],
+    ['negative retry', { reason: 'failed', retryAt: -1 }],
+  ])('rejects an unavailable source with %s', (_name, change) => {
+    expect(summary({ provider: 'grok', status: 'unavailable', ...change }).success).toBe(false)
+  })
+})
