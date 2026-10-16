@@ -120,6 +120,9 @@
   min-width: 0;
   min-height: 0;
   overflow-y: auto;
+  /* Reserve the scrollbar's lane on every tab, so the centred column does not
+     jump sideways between a short tab and one that scrolls. */
+  scrollbar-gutter: stable;
   -webkit-app-region: no-drag;
 }
 
