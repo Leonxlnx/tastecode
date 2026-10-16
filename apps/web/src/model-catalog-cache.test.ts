@@ -3,6 +3,8 @@ import { choicesFor } from './model-catalog.js'
 import {
   freshModelCatalogChoices,
   isModelCatalogSourceFresh,
+  MAX_CACHE_CHARACTERS,
+  MAX_CACHED_MODELS,
   MODEL_CATALOG_CACHE_FRESH_MS,
   parseModelCatalogCache,
   serializeModelCatalogCache,
@@ -98,8 +100,40 @@ describe('model catalog cache', () => {
     ).toBeUndefined()
   })
 
+  it('never serializes a snapshot the reader would reject', () => {
+    const codexRows = (count: number, description = '') =>
+      choicesFor(
+        { provider: 'codex', sourceName: 'Codex', mark: 'openai' },
+        Array.from({ length: count }, (_, index) => ({
+          ...model,
+          id: `gpt-model-${index}`,
+          description,
+          isDefault: index === 0,
+        })),
+      )
+
+    const largest = serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS))
+    expect(parseModelCatalogCache(largest)?.models).toHaveLength(MAX_CACHED_MODELS)
+    expect(serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS + 1))).toBeUndefined()
+    // Few rows, but each one carries a long description.
+    const wordy = codexRows(3, 'x'.repeat(Math.ceil(MAX_CACHE_CHARACTERS / 3)))
+    expect(serializeModelCatalogCache(wordy)).toBeUndefined()
+    expect(serializeModelCatalogCache(catalog, { validatedAt: Number.NaN })).toBeUndefined()
+  })
+
+  it('leaves out a validated source that has no rows', () => {
+    // A connection that listed nothing used to make the whole snapshot unreadable.
+    const cache = parseModelCatalogCache(
+      serializeModelCatalogCache([catalog[0]!], {
+        validatedSources: ['codex', 'api:empty-connection'],
+        validatedAt: 1_000,
+      }),
+    )
+    expect(cache?.validatedSources).toEqual(new Map([['codex', 1_000]]))
+  })
+
   it('keeps schema defaults and rejects invalid nested model data', () => {
-    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])) as {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
       models: Array<{ model: Record<string, unknown> }>
     }
     delete cached.models[0]!.model['serviceTiers']
