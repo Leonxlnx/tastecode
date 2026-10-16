@@ -4310,6 +4310,82 @@ describe('web client', () => {
     expect(transport.ensureHealthy).toHaveBeenCalledTimes(1)
   })
 
+  describe('provider re-check on focus', () => {
+    const calls = (name: string) =>
+      transport.request.mock.calls.filter(([method]) => method === name).length
+    const focusLater = (ms: number) => {
+      vi.setSystemTime(Date.now() + ms)
+      act(() => window.dispatchEvent(new Event('focus')))
+    }
+    const missingCursor: TestServerProvider = {
+      id: 'cursor',
+      displayName: 'Cursor',
+      installed: false,
+      auth: 'unknown',
+      problem: 'cursor-agent is not on PATH',
+    }
+
+    afterEach(() => vi.useRealTimers())
+
+    it('scans once per 30 seconds while a provider is missing and keeps the catalog', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = [...serverProviders, missingCursor]
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      focusLater(10_000)
+      expect(calls('providers.list')).toBe(1)
+      focusLater(20_000)
+      focusLater(1_000)
+      await waitFor(() => expect(calls('providers.list')).toBe(2))
+      expect(calls('models.list')).toBe(1)
+    })
+
+    it('reloads the catalog when the scan finds the missing provider', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = [...serverProviders, missingCursor]
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      serverProviders = serverProviders.map((entry) =>
+        entry.id === 'cursor' ? { id: 'cursor', displayName: 'Cursor', capabilities: {} } : entry,
+      )
+      focusLater(30_000)
+
+      await waitFor(() => expect(calls('providers.list')).toBe(3))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'cursor' }),
+      )
+    })
+
+    it('asks again on focus for an account that could not be confirmed', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = serverProviders.map((entry) => ({ ...entry, auth: 'unknown' }))
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'auth.status' ? Promise.reject(new Error('timed out')) : request(method, params),
+      )
+      render(<App />)
+      expect(await screen.findByText(/Could not confirm this account/)).toBeTruthy()
+
+      focusLater(30_000)
+
+      await waitFor(() => expect(calls('auth.status')).toBe(2))
+      expect(calls('providers.list')).toBe(1)
+    })
+
+    it('leaves providers alone on focus when everything is ready', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      focusLater(60_000)
+
+      expect(calls('providers.list')).toBe(1)
+      expect(calls('auth.status')).toBe(1)
+    })
+  })
+
   it('does not expose or initialize desktop dictation', async () => {
     render(<App />)
     await waitFor(() => expect(document.querySelectorAll('.sessrow')).toHaveLength(1))

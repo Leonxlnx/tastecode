@@ -160,6 +160,7 @@ import { KeybindSettings } from './KeybindSettings.js'
 import { GeneralSettings } from './GeneralSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
+import { useInstallCheck } from '../provider-recheck.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
@@ -2472,6 +2473,8 @@ function InstallableRow(props: {
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const { onInstalled } = props
+  // Someone may install it outside the app; this looks again on request.
+  const recheck = useInstallCheck(props.transport, props.target, onInstalled)
 
   // Latched: the succeeded state persists across renders (see the unmount
   // cleanup below), and onInstalled may get a new identity from any parent
@@ -2525,7 +2528,9 @@ function InstallableRow(props: {
         ? 'Installed · refreshing…'
         : install?.phase === 'failed' || startError
           ? 'Install failed'
-          : 'Not installed'
+          : recheck.checking
+            ? 'Checking…'
+            : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
@@ -2539,7 +2544,7 @@ function InstallableRow(props: {
           }
         : undefined
   const setup = props.provider.setup
-  const details: ProviderAction | undefined =
+  const secondary: ProviderAction | undefined =
     install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
@@ -2547,7 +2552,7 @@ function InstallableRow(props: {
           controls: detailsId,
           onClick: () => setShowTerminal((visible) => !visible),
         }
-      : undefined
+      : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2567,10 +2572,10 @@ function InstallableRow(props: {
         provider={props.provider}
         status={status}
         link="none"
-        live={install?.phase === 'running' || install?.phase === 'succeeded'}
+        live={install?.phase === 'running' || install?.phase === 'succeeded' || recheck.checking}
         issue={issue}
         primary={primary}
-        secondary={details}
+        secondary={secondary}
       />
       {install ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>

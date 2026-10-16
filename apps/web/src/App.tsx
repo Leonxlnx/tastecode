@@ -165,6 +165,7 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
+import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
 import {
   pinnedModelChoice,
   readProviderDefaults,
@@ -4930,6 +4931,25 @@ export function App() {
   }, [refreshCatalog, openSettings])
   // Settings would run the same read that just failed; asking again is the fix.
   const retryAccountCheck = useCallback(() => setAuthStatusRequest((current) => current + 1), [])
+  // A CLI installed or signed in outside the app shows up when the window gets
+  // focus back. A scan that finds nothing new leaves the model catalog alone.
+  const accountUnconfirmed = accountCheck.provider === provider && accountCheck.state === 'failed'
+  const providerMissing = providerStatuses.some((status) => !status.installed)
+  useRecheckOnFocus(
+    catalogAvailability === 'failed' || providerMissing || accountUnconfirmed,
+    () => {
+      if (accountUnconfirmed) retryAccountCheck()
+      if (catalogAvailability === 'failed') refreshCatalog()
+      if (catalogAvailability !== 'ready' || !providerMissing) return
+      const known = providerStatuses
+      void transport.request('providers.list', {}).then(
+        ({ providers }) => {
+          if (providerScanChanged(known, providers)) refreshCatalog()
+        },
+        () => undefined,
+      )
+    },
+  )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
