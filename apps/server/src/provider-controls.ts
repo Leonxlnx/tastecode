@@ -135,11 +135,15 @@ type LoginEntry = {
   earlyResults: ProviderLoginResult[]
 }
 type LimitEntry = {
-  /** Bumped by every change so a read that started earlier cannot refresh the cache. */
+  /** Bumped by every change so a read that started earlier cannot stay fresh. */
   version: number
+  /** Bumped by a change that must reach the next read, such as a redeemed reset. */
+  forcedVersion: number
   /** Bumped only when the account may have changed; usage changes leave it alone. */
   accountVersion: number
-  /** Counts cached answers, so an older read never replaces a newer one. */
+  /** Numbers reads in start order, so an older read never replaces a newer answer. */
+  reads: number
+  /** The number of the read behind `value`. */
   stored: number
   /** The last account read, which shows a sign-in or switch made outside the app. */
   account?: string | undefined
@@ -262,11 +266,12 @@ export class ProviderControls {
   /**
    * Marks cached limits stale and forwards the signal at a bounded rate: the
    * first change notifies at once, a burst after it collapses into one
-   * trailing notification per interval.
+   * trailing notification per interval. An `immediate` change, such as a
+   * redeemed reset, also reaches the next limit read.
    */
   usageChanged(provider: ProviderId, immediate = false): void {
     if (this.#closed) return
-    const entry = this.#invalidateLimits(provider, false)
+    const entry = this.#invalidateLimits(provider, false, immediate)
     const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
     if (wait <= 0) {
       clearTimeout(entry.notifyTimer)
@@ -481,7 +486,9 @@ export class ProviderControls {
     if (!entry) {
       entry = {
         version: 0,
+        forcedVersion: 0,
         accountVersion: 0,
+        reads: 0,
         stored: 0,
         freshUntil: 0,
         notifiedAt: Number.NEGATIVE_INFINITY,
@@ -491,7 +498,7 @@ export class ProviderControls {
     return entry
   }
 
-  #invalidateLimits(provider: ProviderId, accountChanged: boolean): LimitEntry {
+  #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
     if (accountChanged) {
       entry.accountVersion += 1
@@ -503,9 +510,13 @@ export class ProviderControls {
     else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
     entry.freshUntil = 0
-    // A read already in flight may predate the change; the next caller starts its own.
+    if (forced) entry.forcedVersion += 1
+    // A read in flight answers for the old account or predates the forced
+    // change, so the next caller starts its own. Usage moves during every
+    // turn instead: the read in flight still answers its callers rather than
+    // a second process starting beside it, and its answer is stored stale.
     // A failing source keeps its retry time: spending usage does not repair it.
-    entry.reading = undefined
+    if (accountChanged || forced) entry.reading = undefined
     return entry
   }
 
@@ -523,24 +534,30 @@ export class ProviderControls {
     const now = Date.now()
     if (entry.value && now < entry.freshUntil) return Promise.resolve(entry.value)
     if (entry.failure && now < entry.failure.retryAt) return Promise.reject(entry.failure.error)
-    const { version, accountVersion, stored } = entry
+    const { version, forcedVersion, accountVersion } = entry
+    const sequence = ++entry.reads
+    // An answer for another account, or one older than the stored answer, changes nothing.
     const current = () =>
-      this.#limits.get(provider) === entry && entry.accountVersion === accountVersion
+      this.#limits.get(provider) === entry &&
+      entry.accountVersion === accountVersion &&
+      sequence > entry.stored
     const reading = read()
       .then(
         (value) => {
+          if (!current()) return value
           const unavailable = value.status === 'unavailable'
-          if (
-            current() &&
-            // A usage change during the read leaves an unavailable answer true.
-            (entry.version === version || (unavailable && entry.stored === stored))
-          ) {
-            entry.stored += 1
-            entry.value = value
-            entry.failure = undefined
-            entry.freshUntil =
-              Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
-          }
+          entry.stored = sequence
+          entry.value = value
+          entry.failure = undefined
+          entry.freshUntil =
+            entry.forcedVersion !== forcedVersion
+              ? 0
+              : // A usage change during the read leaves an unavailable answer true.
+                unavailable
+                ? Date.now() + this.#unavailableLimitCacheMs
+                : entry.version === version
+                  ? Date.now() + this.#limitCacheMs
+                  : 0
           return value
         },
         (error: unknown) => {

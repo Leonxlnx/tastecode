@@ -577,7 +577,7 @@ describe('cached usage limits', () => {
     expect(createCodex).toHaveBeenCalledTimes(2)
   })
 
-  it('rereads after a change signal and does not cache a read that predates it', async () => {
+  it('keeps a read in flight through a change signal, then rereads once', async () => {
     const limits = deferred<{ status: 'ready'; limits: ProviderLimit[] }>()
     const first = new FakeCodex()
     first.rateLimitSource.mockReturnValueOnce(limits.promise)
@@ -591,8 +591,12 @@ describe('cached usage limits', () => {
     const stale = codex.usageLimitSource()
     await flush()
     registry.usageChanged('codex')
+    // A caller after the change joins the read instead of starting a second process.
+    const joined = codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledOnce()
     limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
     await expect(stale).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await expect(joined).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
     await expect(codex.usageLimitSource()).resolves.toMatchObject({
       limits: [{ usedPercent: 40 }],
     })
@@ -687,7 +691,8 @@ describe('cached usage limits', () => {
     const grok = registry.forProvider('grok')
     const first = grok.usageLimitSource()
     await flush()
-    registry.usageChanged('grok')
+    // Only a forced change starts a read beside the one in flight.
+    registry.usageChanged('grok', true)
     await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
     stale.resolve({ status: 'unavailable' })
     await first
