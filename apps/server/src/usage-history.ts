@@ -19,7 +19,12 @@ import type {
 } from '@harness/contracts'
 import type { StoredUsageEvent } from './store.js'
 
-const CACHE_VERSION = 7
+const CACHE_VERSION = 8
+/**
+ * Version 7 holds the same parser output as version 8, one record per message
+ * instead of compacted. It is migrated in place so upgrading needs no rescan.
+ */
+const UNCOMPACTED_CACHE_VERSION = 7
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
@@ -483,7 +488,7 @@ export async function runUsageHistoryScan(
   reportProgress()
   await mapWithConcurrency(changed, PARSE_CONCURRENCY, async (file) => {
     try {
-      const entries = await file.read(file.path)
+      const entries = compactUsageRecords(await file.read(file.path))
       nextFiles.set(file.path, {
         path: file.path,
         provider: file.provider,
@@ -526,12 +531,15 @@ export async function runUsageHistoryScan(
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
-    if (value.version === CACHE_VERSION && isCachedUsageFiles(value.files)) {
+    const uncompacted = value.version === UNCOMPACTED_CACHE_VERSION
+    if ((value.version === CACHE_VERSION || uncompacted) && isCachedUsageFiles(value.files)) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
       return {
         version: CACHE_VERSION,
         generatedAt: typeof value.generatedAt === 'number' ? value.generatedAt : 0,
-        files: value.files,
+        files: uncompacted
+          ? value.files.map((file) => ({ ...file, entries: compactUsageRecords(file.entries) }))
+          : value.files,
         sources: Array.isArray(value.sources)
           ? mergeSources(value.sources)
           : emptySources().map((source) => ({
@@ -547,6 +555,67 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
     // A missing or interrupted cache write is equivalent to a cold start.
   }
   return emptyUsageCache()
+}
+
+/**
+ * Merges the records of one file that no usage figure can tell apart: same day,
+ * model, session and long-context flag, and either all or none carrying a
+ * provider-reported cost. Pricing and every total are linear in the token
+ * counts, so a merged record adds up to exactly what its members did. Claude
+ * Code logs one record per message, which made the cache grow by megabytes a
+ * day; this keeps one record per session, model and day.
+ */
+export function compactUsageRecords(entries: readonly LocalUsageRecord[]): LocalUsageRecord[] {
+  const merged = new Map<string, LocalUsageRecord>()
+  for (const entry of entries) {
+    const key = [
+      entry.date,
+      entry.model,
+      entry.sessionId,
+      entry.longContext,
+      entry.tokens.providerReportedCostUsd > 0,
+    ].join('\u0000')
+    const prior = merged.get(key)
+    merged.set(
+      key,
+      prior ? { ...prior, tokens: addTokenCounts(prior.tokens, entry.tokens) } : entry,
+    )
+  }
+  return [...merged.values()]
+}
+
+/**
+ * Sums two records' counts without changing what the aggregation reads. A
+ * provider total present on only one side is completed from the other side's
+ * parts, which is the value the aggregation would have derived for it.
+ */
+function addTokenCounts(left: TokenCounts, right: TokenCounts): TokenCounts {
+  const tokens: TokenCounts = {
+    uncachedInputTokens: left.uncachedInputTokens + right.uncachedInputTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    cacheWrite5mInputTokens: left.cacheWrite5mInputTokens + right.cacheWrite5mInputTokens,
+    cacheWrite1hInputTokens: left.cacheWrite1hInputTokens + right.cacheWrite1hInputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    providerReportedCostUsd: left.providerReportedCostUsd + right.providerReportedCostUsd,
+  }
+  if (left.observedInputTokens !== undefined || right.observedInputTokens !== undefined) {
+    tokens.observedInputTokens = observedInputTokens(left) + observedInputTokens(right)
+  }
+  if (left.processedTokens !== undefined || right.processedTokens !== undefined) {
+    tokens.processedTokens = processedTokens(left) + processedTokens(right)
+  }
+  return tokens
+}
+
+function observedInputTokens(tokens: TokenCounts): number {
+  return (
+    tokens.observedInputTokens ??
+    tokens.uncachedInputTokens +
+      tokens.cachedInputTokens +
+      tokens.cacheWrite5mInputTokens +
+      tokens.cacheWrite1hInputTokens
+  )
 }
 
 function isCachedUsageFiles(value: unknown): value is CachedUsageFile[] {
