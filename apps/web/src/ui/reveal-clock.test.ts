@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { createRevealClock } from './reveal-clock.js'
+import { REVEAL_FRESH, createRevealClock } from './reveal-clock.js'
 import { fakeRevealEnvironment as fakeEnvironment, visibleText } from './reveal-clock.fixture.js'
 
 function liveRoot() {
@@ -11,6 +11,18 @@ function liveRoot() {
   root.append(paragraph)
   document.body.append(root)
   return { root, paragraph, text }
+}
+
+/** Characters of text before (node, offset). */
+function offsetOf(root: HTMLElement, node: Node, offset: number): number {
+  if (node === root) return 0
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  let count = 0
+  for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+    if (text === node) return count + offset
+    count += (text as Text).length
+  }
+  return count
 }
 
 const prose = (length: number) =>
@@ -289,5 +301,82 @@ describe('reveal clock', () => {
     expect(fake.ranges()).toHaveLength(0)
     fake.frame(16)
     expect(fake.pendingFrames()).toBe(0)
+  })
+})
+
+describe('reveal clock leading edge', () => {
+  it('fades the last characters in through three contiguous bands', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    const widths: number[] = []
+    for (let frame = 0; frame < 120; frame += 1) {
+      text.appendData('words ')
+      cursor.appended(6)
+      fake.frame(16)
+      if (frame < 40) continue
+      const [veil] = fake.ranges()
+      const bands = REVEAL_FRESH.map((name) => fake.ranges(name)[0])
+      expect(veil).toBeDefined()
+      expect(bands.every(Boolean)).toBe(true)
+      const [nearest, middle, farthest] = bands as [AbstractRange, AbstractRange, AbstractRange]
+      // Each band ends where the next one nearer the edge starts.
+      expect([nearest.endContainer, nearest.endOffset]).toEqual([
+        veil!.startContainer,
+        veil!.startOffset,
+      ])
+      expect([middle.endContainer, middle.endOffset]).toEqual([
+        nearest.startContainer,
+        nearest.startOffset,
+      ])
+      expect([farthest.endContainer, farthest.endOffset]).toEqual([
+        middle.startContainer,
+        middle.startOffset,
+      ])
+      widths.push(
+        offsetOf(root, veil!.startContainer, veil!.startOffset) -
+          offsetOf(root, farthest.startContainer, farthest.startOffset),
+      )
+    }
+    widths.sort((a, b) => a - b)
+    const median = widths[Math.floor(widths.length / 2)]!
+    // About 12 characters at this speed (375 per second).
+    expect(median).toBeGreaterThanOrEqual(8)
+    expect(median).toBeLessThanOrEqual(16)
+  })
+
+  it('lets the bands close once the edge stops, and drains only then', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const onDrained = vi.fn()
+    const cursor = createRevealClock(fake.env).attach(root, { onDrained })
+    for (let frame = 0; frame < 30; frame += 1) {
+      text.appendData('words ')
+      cursor.appended(6)
+      fake.frame(16)
+    }
+    cursor.finish()
+    let shownAt: number | undefined
+    while (fake.pendingFrames() > 0 && fake.time < 5000) {
+      fake.frame(16)
+      if (shownAt === undefined && fake.ranges().length === 0) shownAt = fake.time
+      if (fake.pendingFrames() > 0) expect(onDrained).not.toHaveBeenCalled()
+    }
+
+    expect(onDrained).toHaveBeenCalledOnce()
+    for (const name of REVEAL_FRESH) expect(fake.ranges(name)).toHaveLength(0)
+    // The last characters finish fading within the longest ramp.
+    expect(fake.time - shownAt!).toBeLessThanOrEqual(110 + 16)
+  })
+
+  it('draws no bands where nothing is veiled', () => {
+    const fake = fakeEnvironment()
+    fake.setMotion(false)
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    text.appendData(prose(100))
+    cursor.appended(100)
+    fake.frame(16)
+    for (const name of REVEAL_FRESH) expect(fake.ranges(name)).toHaveLength(0)
   })
 })

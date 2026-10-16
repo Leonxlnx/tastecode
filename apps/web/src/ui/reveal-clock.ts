@@ -58,7 +58,19 @@ const FIRST_FRAME_MS = 16
 /** A finished reply drains on frames; without frames (a hidden window) it shows at once. */
 const FINISH_FALLBACK_MS = 1000
 
+/**
+ * The soft leading edge: freshly shown characters fade in through three
+ * steps over about this many characters at the current speed...
+ */
+const RAMP_CHARACTERS = 12
+/** ...but never quicker or slower than these, and re-timed at most this often. */
+const RAMP_MIN_MS = 30
+const RAMP_MAX_MS = 110
+const RAMP_RETIME_MS = 250
+
 export const REVEAL_VEIL = 'md-veil'
+/** The fade bands behind the edge, nearest first. */
+export const REVEAL_FRESH = ['md-fresh-1', 'md-fresh-2', 'md-fresh-3'] as const
 
 /** Text inside these is chrome, not reply text: the reveal steps over it. */
 const LABEL_SELECTOR = "[data-streamdown='code-block-header']"
@@ -99,6 +111,11 @@ class RevealPace {
     this.lastGrowth = at
     this.total += characters
     this.arrivals.push([at, this.total])
+  }
+
+  /** chars/ms */
+  get speed(): number {
+    return this.revealRate
   }
 
   /** Counts `total` characters, all of them shown. */
@@ -264,6 +281,8 @@ class TextPosition {
 interface ClockInternals {
   env: RevealEnvironment
   veil: RevealHighlight
+  /** Nearest the edge first. */
+  fresh: readonly [RevealHighlight, RevealHighlight, RevealHighlight]
   wake(cursor: Cursor): void
   forget(cursor: Cursor): void
 }
@@ -273,7 +292,18 @@ class Cursor implements RevealCursor {
   private readonly pace = new RevealPace()
   /** The first hidden character. */
   private readonly edge: TextPosition
+  /**
+   * Where the fade bands behind the edge start, nearest first: where the
+   * edge was a third, two thirds and all of the ramp time ago.
+   */
+  private readonly trail: readonly [TextPosition, TextPosition, TextPosition]
   private veil: AbstractRange | undefined
+  private readonly bands: Array<AbstractRange | undefined> = [undefined, undefined, undefined]
+  /** Recent frames: when, and how many characters the edge had passed. */
+  private readonly times: number[] = []
+  private readonly counts: number[] = []
+  private rampMs = RAMP_MAX_MS
+  private rampSetAt = -Infinity
   private lastTick: number | undefined
   private finishing = false
   private drained = false
@@ -286,6 +316,7 @@ class Cursor implements RevealCursor {
     private readonly onDrained: (() => void) | undefined,
   ) {
     this.edge = new TextPosition(root)
+    this.trail = [new TextPosition(root), new TextPosition(root), new TextPosition(root)]
   }
 
   appended(characters: number): void {
@@ -304,13 +335,14 @@ class Cursor implements RevealCursor {
   reset(): void {
     if (this.disposed) return
     this.edge.rewind()
+    for (const position of this.trail) position.rewind()
     this.showAll()
   }
 
   finish(): void {
     if (this.disposed || this.finishing) return
     this.finishing = true
-    if (!this.clock.env.motionAllowed() || this.edge.count >= this.pace.total) {
+    if (!this.clock.env.motionAllowed() || !this.moving()) {
       this.showAll()
       this.drain()
       return
@@ -328,6 +360,10 @@ class Cursor implements RevealCursor {
     if (this.fallback !== undefined) this.clock.env.clearTimer(this.fallback)
     if (this.veil) this.clock.veil.delete(this.veil)
     this.veil = undefined
+    this.bands.forEach((band, index) => {
+      if (band) this.clock.fresh[index]!.delete(band)
+      this.bands[index] = undefined
+    })
     this.clock.forget(this)
   }
 
@@ -341,9 +377,21 @@ class Cursor implements RevealCursor {
   private showAll(): void {
     if (this.disposed) return
     this.edge.seek(Number.POSITIVE_INFINITY)
+    for (const position of this.trail) position.seek(this.edge.count)
     this.pace.settle(this.edge.count)
     this.lastTick = undefined
+    this.times.length = 0
+    this.counts.length = 0
     this.paint()
+  }
+
+  private positionSum(): number {
+    return this.edge.count + this.trail[0].count + this.trail[1].count + this.trail[2].count
+  }
+
+  /** Characters still hidden, or still fading in. */
+  private moving(): boolean {
+    return this.edge.count < this.pace.total || this.trail[2].count < this.edge.count
   }
 
   /** One frame; returns whether the cursor needs another one. */
@@ -352,17 +400,80 @@ class Cursor implements RevealCursor {
     const dt =
       this.lastTick === undefined ? FIRST_FRAME_MS : clamp(now - this.lastTick, 1, MAX_FRAME_MS)
     this.lastTick = now
+    // Where the edge stood a frame ago, so the first characters fade too.
+    if (this.times.length === 0) this.record(now - dt)
+    // Positions only move forward, so an unchanged sum means nothing moved.
+    const before = this.positionSum()
+    let changed = false
     const target = Math.floor(this.pace.step(now, dt, this.finishing) + 1e-6)
     if (target > this.edge.count) {
       this.edge.seek(target)
       // Fewer characters in the DOM than were counted: what is there is all.
-      if (this.edge.count < target) this.pace.settle(this.edge.count)
-      this.paint()
+      if (this.edge.count < target) {
+        this.pace.settle(this.edge.count)
+        changed = true
+      }
     }
-    if (this.edge.count < this.pace.total) return true
+    this.record(now)
+    this.follow(now)
+    if (changed || this.positionSum() !== before) this.paint()
+    if (this.moving()) return true
     this.lastTick = undefined
+    this.times.length = 0
+    this.counts.length = 0
     if (this.finishing) this.drain()
     return false
+  }
+
+  private record(at: number): void {
+    this.times.push(at)
+    this.counts.push(this.edge.count)
+    // Keep what the ramp can still ask about.
+    let stale = 0
+    while (stale + 2 < this.times.length && this.times[stale + 1]! <= at - RAMP_MAX_MS) stale += 1
+    if (stale > 0) {
+      this.times.splice(0, stale)
+      this.counts.splice(0, stale)
+    }
+  }
+
+  /** How many characters the edge had passed at `at`, between frames linearly. */
+  private countAt(at: number): number {
+    const times = this.times
+    const counts = this.counts
+    if (at <= times[0]!) return counts[0]!
+    for (let index = times.length - 1; index > 0; index -= 1) {
+      const before = times[index - 1]!
+      if (at < before) continue
+      const after = times[index]!
+      if (at >= after) return counts[index]!
+      const share = (at - before) / (after - before)
+      return counts[index - 1]! + (counts[index]! - counts[index - 1]!) * share
+    }
+    return counts[0]!
+  }
+
+  /** Moves the band starts up behind the edge. */
+  private follow(now: number): void {
+    // The ramp spans about RAMP_CHARACTERS at the current speed, re-timed at
+    // most every RAMP_RETIME_MS so its width does not flicker.
+    if (now - this.rampSetAt >= RAMP_RETIME_MS) {
+      this.rampSetAt = now
+      this.rampMs = clamp(
+        RAMP_CHARACTERS / Math.max(this.pace.speed, 1e-3),
+        RAMP_MIN_MS,
+        RAMP_MAX_MS,
+      )
+    }
+    let limit = this.edge.count
+    this.trail.forEach((position, index) => {
+      const target = Math.min(
+        limit,
+        Math.floor(this.countAt(now - ((index + 1) * this.rampMs) / 3)),
+      )
+      position.seek(target)
+      limit = position.count
+    })
   }
 
   private drain(): void {
@@ -374,21 +485,39 @@ class Cursor implements RevealCursor {
   }
 
   private paint(): void {
+    const { env, veil, fresh } = this.clock
     const previous = this.veil
     this.veil =
       this.edge.count < this.pace.total
-        ? this.clock.env.createRange({
+        ? env.createRange({
             startContainer: this.edge.container,
             startOffset: this.edge.boundary,
             endContainer: this.root,
             endOffset: this.root.childNodes.length,
           })
         : undefined
-    if (previous) this.clock.veil.delete(previous)
-    if (this.veil) this.clock.veil.add(this.veil)
+    if (previous) veil.delete(previous)
+    if (this.veil) veil.add(this.veil)
+
+    let end = this.edge
+    this.trail.forEach((start, index) => {
+      const band = this.bands[index]
+      if (band) fresh[index]!.delete(band)
+      const next =
+        start.count < end.count
+          ? env.createRange({
+              startContainer: start.container,
+              startOffset: start.boundary,
+              endContainer: end.container,
+              endOffset: end.boundary,
+            })
+          : undefined
+      this.bands[index] = next
+      if (next) fresh[index]!.add(next)
+      end = start
+    })
   }
 }
-
 /** Where nothing is ever veiled: no API, so text shows as it lands. */
 class InertCursor implements RevealCursor {
   readonly tracking = false
@@ -406,7 +535,8 @@ class InertCursor implements RevealCursor {
 
 export function createRevealClock(env: RevealEnvironment): RevealClock {
   const veil = env.highlight(REVEAL_VEIL)
-  if (!veil) {
+  const [nearest, middle, farthest] = REVEAL_FRESH.map((name) => env.highlight(name))
+  if (!veil || !nearest || !middle || !farthest) {
     return {
       attach: (_root, options) => new InertCursor(options?.onDrained),
       enabled: () => false,
@@ -423,6 +553,7 @@ export function createRevealClock(env: RevealEnvironment): RevealClock {
   const internals: ClockInternals = {
     env,
     veil,
+    fresh: [nearest, middle, farthest],
     wake(cursor) {
       awake.add(cursor)
       frame ??= env.requestFrame(tick)
