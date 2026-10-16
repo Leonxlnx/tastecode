@@ -77,11 +77,15 @@ async function terminate(child: KillableProcess): Promise<void> {
     // taskkill takes about half a second. Run it asynchronously: a synchronous
     // call would stop the server's only event loop, and every stream with it.
     // taskkill can finish before Node observes the child's exit event.
-    if (
-      (await taskkillTree(child.pid, 1_500)) &&
-      (await waitUntil(() => child.exitCode != null || child.signalCode != null, 500))
-    )
-      return
+    const exited = () => child.exitCode != null || child.signalCode != null
+    const outcome = await stopWindowsTree(child.pid, () => {
+      // Every late run failed, so no taskkill is walking the tree any more.
+      if (!exited()) child.kill()
+    })
+    // taskkill still owns this stop. Killing the shim now would orphan the CLI
+    // it started, so the stop is left to the run that is still going.
+    if (outcome === 'running') return
+    if (outcome === 'stopped' && (await waitUntil(exited, 500))) return
   }
   // Unregistered children and test doubles have no group ownership. Never
   // signal a guessed group, which could include the app or another task.
@@ -94,33 +98,96 @@ async function terminate(child: KillableProcess): Promise<void> {
   }
 }
 
-/** Resolves true when `taskkill /T /F` exits cleanly within `timeoutMs`. */
-function taskkillTree(pid: number, timeoutMs: number): Promise<boolean> {
+/**
+ * One `taskkill /T /F` run. `exit` resolves with its exit code, or null when it
+ * could not start; `release` lets this process exit while the run continues.
+ */
+export type TaskkillRun = { exit: Promise<number | null>; release(): void }
+export type TaskkillLauncher = (pid: number) => TaskkillRun
+
+// taskkill usually needs half a second, but it has taken 30 s on a loaded PC.
+// A second run starts when the first is slow or fails, and the caller stops
+// waiting after the whole budget.
+const TASKKILL_RETRY_AFTER_MS = 5_000
+const TASKKILL_BUDGET_MS = 15_000
+
+const launchTaskkillProcess: TaskkillLauncher = (pid) => {
+  let killer: ChildProcess
+  try {
+    killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+      windowsHide: true,
+      stdio: 'ignore',
+    })
+  } catch {
+    return { exit: Promise.resolve(null), release: () => undefined }
+  }
+  const exit = new Promise<number | null>((resolve) => {
+    killer.once('error', () => resolve(null))
+    killer.once('exit', (code) => resolve(code))
+  })
+  return { exit, release: () => killer.unref() }
+}
+
+let launchTaskkill = launchTaskkillProcess
+
+/** Replace the taskkill launcher in tests; no argument restores the real one. */
+export function setTaskkillLauncherForTests(launcher?: TaskkillLauncher): void {
+  launchTaskkill = launcher ?? launchTaskkillProcess
+}
+
+/**
+ * Stop a Windows process tree with `taskkill /T /F`, never by killing taskkill.
+ *
+ * Every npm CLI starts as cmd.exe running a .cmd shim, so `pid` is the shim and
+ * the real CLI is its child. Windows does not stop children with their parent,
+ * and once the shim is gone `taskkill /T` can no longer find the tree. Killing
+ * a slow taskkill and then the shim is how dozens of `opencode serve` processes
+ * outlived the app. A slow run keeps going while a second one is tried. After
+ * the budget the runs are left to finish on their own, and `onLateFailure`
+ * runs if every one of them then fails.
+ *
+ * `stopped`: a run exited cleanly. `failed`: every run exited with an error and
+ * none is still running. `running`: the budget ran out with taskkill still busy.
+ */
+async function stopWindowsTree(
+  pid: number,
+  onLateFailure: () => void,
+): Promise<'stopped' | 'failed' | 'running'> {
+  const startedAt = Date.now()
+  const runs = [launchTaskkill(pid)]
+  if ((await taskkillOutcome(runs, TASKKILL_RETRY_AFTER_MS)) === 'stopped') return 'stopped'
+  runs.push(launchTaskkill(pid))
+  const outcome = await taskkillOutcome(runs, TASKKILL_BUDGET_MS - (Date.now() - startedAt))
+  if (outcome === 'running') {
+    for (const run of runs) run.release()
+    void taskkillOutcome(runs).then((late) => {
+      if (late === 'failed') onLateFailure()
+    })
+  }
+  return outcome
+}
+
+/** Wait, up to `timeoutMs` when given, for any run to exit cleanly or for all to fail. */
+function taskkillOutcome(
+  runs: TaskkillRun[],
+  timeoutMs?: number,
+): Promise<'stopped' | 'failed' | 'running'> {
   return new Promise((resolve) => {
-    let settled = false
-    let timer: NodeJS.Timeout | undefined
-    const finish = (ok: boolean) => {
-      if (settled) return
-      settled = true
-      if (timer) clearTimeout(timer)
-      resolve(ok)
+    let failed = 0
+    const timer =
+      timeoutMs === undefined
+        ? undefined
+        : setTimeout(() => resolve('running'), Math.max(0, timeoutMs))
+    const settle = (outcome: 'stopped' | 'failed') => {
+      clearTimeout(timer)
+      resolve(outcome)
     }
-    let killer: ChildProcess
-    try {
-      killer = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
-        windowsHide: true,
-        stdio: 'ignore',
+    for (const run of runs) {
+      void run.exit.then((code) => {
+        if (code === 0) settle('stopped')
+        else if (++failed === runs.length) settle('failed')
       })
-    } catch {
-      finish(false)
-      return
     }
-    timer = setTimeout(() => {
-      killer.kill()
-      finish(false)
-    }, timeoutMs)
-    killer.once('error', () => finish(false))
-    killer.once('exit', (code) => finish(code === 0))
   })
 }
 
