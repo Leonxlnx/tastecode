@@ -38,6 +38,8 @@ import {
   toUsage,
   type ClaudeEvent,
 } from './events.js'
+import { readClaudeSessionRecords } from './history.js'
+import type { SavedRecord } from './history-items.js'
 import {
   claudeSdkSpawner,
   createClaudeQuery,
@@ -189,6 +191,72 @@ function updatedClaudeTask(
     ...(status !== undefined ? { status } : {}),
     ...(subject !== undefined ? { subject } : {}),
   })
+}
+
+function noteClaudeTaskTools(pending: Map<string, PendingTaskTool>, event: ClaudeEvent): void {
+  for (const block of event.message?.content ?? []) {
+    if (block.type !== 'tool_use' || !block.id) continue
+    if (block.name === 'TaskCreate') {
+      pending.set(block.id, { kind: 'create' })
+      continue
+    }
+    if (block.name !== 'TaskUpdate') continue
+    const parsed = TaskUpdateInputSchema.safeParse(block.input ?? {})
+    const input = parsed.success ? parsed.data : {}
+    pending.set(block.id, {
+      kind: 'update',
+      ...(input.subject !== undefined ? { subject: input.subject } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+    })
+  }
+}
+
+function applyClaudeTaskResult(
+  tasks: readonly ClaudeTask[],
+  pending: Map<string, PendingTaskTool>,
+  event: ClaudeEvent,
+): ClaudeTask[] | undefined {
+  const results = (event.message?.content ?? []).filter((block) => block.type === 'tool_result')
+  const block = results.length === 1 ? results[0] : undefined
+  const toolUseId = block?.tool_use_id
+  if (!block || !toolUseId) return undefined
+  const noted = pending.get(toolUseId)
+  if (!noted) return undefined
+  pending.delete(toolUseId)
+  if (block.is_error) return undefined
+  return noted.kind === 'create'
+    ? createdClaudeTask(tasks, event.tool_use_result)
+    : updatedClaudeTask(tasks, noted, event.tool_use_result)
+}
+
+/**
+ * The live stream marks a subagent row with parent_tool_use_id. The session file marks
+ * that same row with isSidechain, and stores the tool payload on toolUseResult.
+ */
+function claudeTranscriptEvent(row: SavedRecord): ClaudeEvent | undefined {
+  if (row.isSidechain === true) return undefined
+  if (row.type !== 'assistant' && row.type !== 'user') return undefined
+  const parsed = ClaudeEventSchema.safeParse({
+    type: row.type,
+    message: row.message,
+    tool_use_result: row.toolUseResult,
+  })
+  return parsed.success ? parsed.data : undefined
+}
+
+async function tasksFromClaudeTranscript(sessionId: string): Promise<ClaudeTask[]> {
+  const pending = new Map<string, PendingTaskTool>()
+  let tasks: ClaudeTask[] = []
+  for (const row of await readClaudeSessionRecords(sessionId)) {
+    const event = claudeTranscriptEvent(row)
+    if (!event) continue
+    if (event.type === 'assistant') noteClaudeTaskTools(pending, event)
+    else {
+      const next = applyClaudeTaskResult(tasks, pending, event)
+      if (next) tasks = next
+    }
+  }
+  return tasks
 }
 
 /** claude 2.1.302 omits TaskCreate and TaskUpdate unless this is set. */
@@ -860,7 +928,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): Promise<void> {
     if (this.#query || this.#promptQueue || this.#starting)
       throw new Error('Claude adapter already has a session')
-    this.#tasks = []
+    this.#tasks = resume ? await tasksFromClaudeTranscript(sessionId) : []
     this.#pendingTaskTools.clear()
     this.#disposed = false
     this.#sessionGeneration += 1
@@ -883,6 +951,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#promptQueue = undefined
         this.#query = undefined
         this.#resumeOnRestart = false
+        this.#tasks = []
+        this.#pendingTaskTools.clear()
         await this.#startQuery(undefined)
       })
       .catch(async (error: unknown) => {
@@ -1125,7 +1195,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
             }
           : event
       this.#emitDomainEvents(toDomainEvents(filtered, turnId, this.#toolCalls))
-      this.#noteTaskTools(event)
+      noteClaudeTaskTools(this.#pendingTaskTools, event)
       this.#emitTodoPlan(event)
       return
     }
@@ -1352,39 +1422,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
-  #noteTaskTools(event: ClaudeEvent): void {
-    for (const block of event.message?.content ?? []) {
-      if (block.type !== 'tool_use' || !block.id) continue
-      if (block.name === 'TaskCreate') {
-        this.#pendingTaskTools.set(block.id, { kind: 'create' })
-        continue
-      }
-      if (block.name !== 'TaskUpdate') continue
-      const parsed = TaskUpdateInputSchema.safeParse(block.input ?? {})
-      const input = parsed.success ? parsed.data : {}
-      this.#pendingTaskTools.set(block.id, {
-        kind: 'update',
-        ...(input.subject !== undefined ? { subject: input.subject } : {}),
-        ...(input.status !== undefined ? { status: input.status } : {}),
-      })
-    }
-  }
-
   #applyTaskResult(event: ClaudeEvent): void {
     const turnId = this.#activeTurnId
     if (!turnId) return
-    const results = (event.message?.content ?? []).filter((block) => block.type === 'tool_result')
-    const block = results.length === 1 ? results[0] : undefined
-    const toolUseId = block?.tool_use_id
-    if (!block || !toolUseId) return
-    const pending = this.#pendingTaskTools.get(toolUseId)
-    if (!pending) return
-    this.#pendingTaskTools.delete(toolUseId)
-    if (block.is_error) return
-    const next =
-      pending.kind === 'create'
-        ? createdClaudeTask(this.#tasks, event.tool_use_result)
-        : updatedClaudeTask(this.#tasks, pending, event.tool_use_result)
+    const next = applyClaudeTaskResult(this.#tasks, this.#pendingTaskTools, event)
     if (!next) return
     this.#tasks = next
     this.emit('event', { type: 'plan.updated', turnId, steps: claudePlanSteps(this.#tasks) })
