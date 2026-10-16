@@ -5547,6 +5547,54 @@ describe('new chats', () => {
     expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
   })
 
+  it('keeps a delete whose request fails for the next start', async () => {
+    const nativeTimeout = globalThis.setTimeout
+    vi.spyOn(globalThis, 'setTimeout').mockImplementation(
+      (...args: Parameters<typeof setTimeout>) => {
+        if (args[1] === 10_000) args[1] = 50
+        return nativeTimeout(...args)
+      },
+    )
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('The chat is still starting.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('The chat is still starting.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+  })
+
+  it('retries a delete the closed connection failed once on the next start', async () => {
+    await openNewSession()
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'thread.delete'
+        ? Promise.reject(new Error('Connection closed.'))
+        : request(method, params),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Delete New session' }))
+    await screen.findByText('Chat deleted')
+
+    cleanup()
+    await waitFor(() => expect(rpcCount('thread.delete')).toBe(1))
+    expect(JSON.parse(localStorage.getItem(PENDING_CHAT_DELETES_KEY)!)).toEqual([
+      { threadId: 'untouched-thread', checkout: 'keep' },
+    ])
+
+    transport.request.mockClear()
+    render(<App />)
+    expect((await screen.findByRole('alert')).textContent).toBe('Connection closed.')
+    expect(await screen.findByRole('button', { name: 'Delete New session' })).toBeTruthy()
+    expect(rpcCount('thread.delete')).toBe(1)
+    expect(localStorage.getItem(PENDING_CHAT_DELETES_KEY)).toBeNull()
+  })
+
   it('reconciles workspace ownership when a running session is archived', async () => {
     const nativeTimeout = globalThis.setTimeout
     vi.spyOn(globalThis, 'setTimeout').mockImplementation(
