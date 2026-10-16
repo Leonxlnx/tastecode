@@ -112,6 +112,8 @@ export type ProviderControlsOptions = {
   limitCacheMs?: number
   /** How long an account without plan limits keeps that answer through usage changes. */
   unavailableLimitCacheMs?: number
+  /** Replaces every provider's declared `limitReadIntervalMs`. */
+  limitReadIntervalMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
@@ -148,6 +150,8 @@ type LimitEntry = {
   /** The last account read, which shows a sign-in or switch made outside the app. */
   account?: string | undefined
   value?: ProviderLimitSource | undefined
+  /** When the read behind `value` started. */
+  readAt: number
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
   /** The last failed read; later reads reject with it until `retryAt`. */
@@ -219,6 +223,7 @@ export class ProviderControls {
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
   readonly #unavailableLimitCacheMs: number
+  readonly #limitReadIntervalMs: number | undefined
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
   #shared: ProcessEntry | undefined
@@ -242,6 +247,10 @@ export class ProviderControls {
     // turn reports a usage change, so only a longer, bounded cache stops each
     // turn from repeating that scan.
     this.#unavailableLimitCacheMs = duration(options.unavailableLimitCacheMs, 30 * 60_000, 0)
+    this.#limitReadIntervalMs =
+      options.limitReadIntervalMs === undefined
+        ? undefined
+        : duration(options.limitReadIntervalMs, 0, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     const watchTtlMs = duration(options.watchTtlMs, 60_000, 1)
     this.#skills = new WatchLeases(watchTtlMs)
@@ -490,6 +499,7 @@ export class ProviderControls {
         accountVersion: 0,
         reads: 0,
         stored: 0,
+        readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
         notifiedAt: Number.NEGATIVE_INFINITY,
       }
@@ -498,25 +508,39 @@ export class ProviderControls {
     return entry
   }
 
+  #limitReadInterval(provider: ProviderId): number {
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    return this.#limitReadIntervalMs ?? capabilities.limitReadIntervalMs
+  }
+
   #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
     if (accountChanged) {
       entry.accountVersion += 1
-      // Another account starts without this one's failures.
+      // Another account starts without this one's failures or read times.
       entry.failure = undefined
+      entry.readAt = Number.NEGATIVE_INFINITY
     }
     // Spending usage cannot give an account the plan limits it lacks, so only
     // an account change discards that answer.
     else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
-    entry.freshUntil = 0
-    if (forced) entry.forcedVersion += 1
-    // A read in flight answers for the old account or predates the forced
-    // change, so the next caller starts its own. Usage moves during every
-    // turn instead: the read in flight still answers its callers rather than
-    // a second process starting beside it, and its answer is stored stale.
-    // A failing source keeps its retry time: spending usage does not repair it.
-    if (accountChanged || forced) entry.reading = undefined
+    if (accountChanged || forced) {
+      if (forced) entry.forcedVersion += 1
+      entry.freshUntil = 0
+      // A read in flight answers for the old account or predates the forced
+      // change, so the next caller starts its own.
+      entry.reading = undefined
+    } else {
+      // Usage moves during every turn. A read in flight still answers its
+      // callers instead of a second process starting beside it, and a stored
+      // answer stays until the provider's read interval has passed. A failing
+      // source keeps its retry time: spending usage does not repair it.
+      entry.freshUntil = Math.min(
+        entry.freshUntil,
+        entry.readAt + this.#limitReadInterval(provider),
+      )
+    }
     return entry
   }
 
@@ -531,9 +555,11 @@ export class ProviderControls {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
-    const now = Date.now()
-    if (entry.value && now < entry.freshUntil) return Promise.resolve(entry.value)
-    if (entry.failure && now < entry.failure.retryAt) return Promise.reject(entry.failure.error)
+    const startedAt = Date.now()
+    if (entry.value && startedAt < entry.freshUntil) return Promise.resolve(entry.value)
+    if (entry.failure && startedAt < entry.failure.retryAt) {
+      return Promise.reject(entry.failure.error)
+    }
     const { version, forcedVersion, accountVersion } = entry
     const sequence = ++entry.reads
     // An answer for another account, or one older than the stored answer, changes nothing.
@@ -545,19 +571,22 @@ export class ProviderControls {
       .then(
         (value) => {
           if (!current()) return value
+          const interval = this.#limitReadInterval(provider)
           const unavailable = value.status === 'unavailable'
+          const now = Date.now()
           entry.stored = sequence
           entry.value = value
+          entry.readAt = startedAt
           entry.failure = undefined
           entry.freshUntil =
             entry.forcedVersion !== forcedVersion
               ? 0
               : // A usage change during the read leaves an unavailable answer true.
                 unavailable
-                ? Date.now() + this.#unavailableLimitCacheMs
+                ? now + this.#unavailableLimitCacheMs
                 : entry.version === version
-                  ? Date.now() + this.#limitCacheMs
-                  : 0
+                  ? now + Math.max(this.#limitCacheMs, interval)
+                  : startedAt + interval
           return value
         },
         (error: unknown) => {

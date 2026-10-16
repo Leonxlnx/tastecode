@@ -15,6 +15,12 @@ export type ProviderControlCapabilities = Readonly<{
   signOut: boolean
   usageLimits: boolean
   rateLimitReset: boolean
+  /**
+   * Minimum spacing of full plan-limit reads, each of which starts a vendor
+   * process. A successful read answers at least this long, and a usage change
+   * cannot force an earlier one.
+   */
+  limitReadIntervalMs: number
 }>
 
 const unsupported: ProviderControlCapabilities = {
@@ -31,7 +37,11 @@ const unsupported: ProviderControlCapabilities = {
   signOut: false,
   usageLimits: false,
   rateLimitReset: false,
+  limitReadIntervalMs: 0,
 }
+
+/** Codex and Grok start a short-lived process per read and report changes during turns. */
+const LIVE_LIMIT_READ_INTERVAL_MS = 30_000
 
 export const PROVIDER_CAPABILITIES = {
   acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
@@ -46,6 +56,8 @@ export const PROVIDER_CAPABILITIES = {
     login: true,
     signOut: true,
     usageLimits: true,
+    // Each read starts a full Claude CLI, and every turn reports a usage change.
+    limitReadIntervalMs: 15 * 60_000,
   },
   codex: {
     resume: true,
@@ -61,6 +73,7 @@ export const PROVIDER_CAPABILITIES = {
     signOut: true,
     usageLimits: true,
     rateLimitReset: true,
+    limitReadIntervalMs: LIVE_LIMIT_READ_INTERVAL_MS,
   },
   cursor: {
     ...unsupported,
@@ -78,6 +91,7 @@ export const PROVIDER_CAPABILITIES = {
     account: true,
     signOut: true,
     usageLimits: true,
+    limitReadIntervalMs: LIVE_LIMIT_READ_INTERVAL_MS,
   },
   opencode: { ...unsupported, resume: true, managedMcp: true, nativeModels: true },
   pi: { ...unsupported, nativeModels: true },

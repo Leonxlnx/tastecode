@@ -67,6 +67,8 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     controlIdleMs: 10,
     watchTtlMs: 100,
     loginTtlMs: 200,
+    // Tests of the declared read intervals pass `limitReadIntervalMs: undefined`.
+    limitReadIntervalMs: 0,
     ...options,
   })
   registries.push(registry)
@@ -843,6 +845,72 @@ describe('limit read backoff and intervals', () => {
     await grok.signOut()
     await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
     expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('reads Claude limits at most every 15 minutes, through usage changes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadIntervalMs).toBe(15 * 60_000)
+    const usageLimitSource = vi.fn(async (): Promise<ReadyLimits> => ({
+      status: 'ready',
+      limits: [],
+    }))
+    const { registry } = setup({
+      limitReadIntervalMs: undefined,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 1)
+    registry.usageChanged('claude-code')
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('spaces Codex reads by 30 seconds, and a redeemed reset reaches the next read', async () => {
+    expect(PROVIDER_CAPABILITIES.codex.limitReadIntervalMs).toBe(30_000)
+    expect(PROVIDER_CAPABILITIES.grok.limitReadIntervalMs).toBe(30_000)
+    const { registry, codex, createCodex } = setup({ limitReadIntervalMs: undefined })
+    await codex.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(10_000)
+    registry.usageChanged('codex')
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(20_000)
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    // The reset runs in its own process; the read after it does not wait.
+    await codex.consumeRateLimitReset!('fixture-idempotency-key')
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(4)
+  })
+
+  it('stores a read that a usage change interrupted until the interval has passed', async () => {
+    const limits = deferred<ReadyLimits>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(limits.promise)
+      .mockResolvedValue({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 40 }] })
+    const { registry } = setup({
+      limitReadIntervalMs: 30_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    const reading = grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(5_000)
+    registry.usageChanged('grok')
+    limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
+    await reading
+    await vi.advanceTimersByTimeAsync(24_999)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      limits: [{ usedPercent: 10 }],
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      limits: [{ usedPercent: 40 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
   })
 })
 
