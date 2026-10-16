@@ -17,7 +17,8 @@
   font-size: var(--t-md);
   font-weight: 400;
   line-height: 1.52;
-  max-width: 72ch;
+  /* Replies use the whole transcript column, out to the edge user bubbles end
+     on. A 72ch measure left a wide empty band beside every answer. */
 }
 
 .reply--notice > .md > p:first-child {
