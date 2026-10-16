@@ -112,6 +112,26 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
   return { status: 'ready', limits }
 }
 
+/**
+ * The limit read starts a full CLI only to ask one control question, so it
+ * turns off the startup work an interactive session does. All four names are
+ * read by Claude Code 2.1.296; a CLI that does not know one ignores it.
+ */
+function limitReadEnvironment(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...base }
+  // claude.ai connectors are fetched outside the filesystem settings, so
+  // `settingSources: []` and `strictMcpConfig` alone do not stop that request.
+  env.ENABLE_CLAUDEAI_MCP_SERVERS = 'false'
+  // IDE detection walks the process list; on Windows every read would start a
+  // `tasklist | findstr` process tree.
+  env.CLAUDE_CODE_AUTO_CONNECT_IDE = '0'
+  // A read must never install an IDE extension.
+  env.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL = '1'
+  // An inherited value would make the CLI treat the read as an IDE terminal.
+  delete env.FORCE_CODE_TERMINAL
+  return env
+}
+
 /** Read Claude's own structured /usage data without accessing its credentials. */
 export async function claudeLimitSource(
   options: ClaudeLimitSourceOptions = {},
@@ -128,7 +148,7 @@ export async function claudeLimitSource(
       mcpServers: {},
       strictMcpConfig: true,
       settingSources: [],
-      env: { ...(options.environment ?? process.env) },
+      env: limitReadEnvironment(options.environment ?? process.env),
       spawnClaudeCodeProcess: claudeSdkSpawner(options.spawn),
     },
   })

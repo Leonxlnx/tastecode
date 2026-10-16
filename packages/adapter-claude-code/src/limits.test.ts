@@ -110,6 +110,39 @@ describe('Claude Code subscription limits', () => {
     expect(input?.options.abortController?.signal.aborted).toBe(true)
   })
 
+  it('turns off IDE and claude.ai connector startup work for the read only', async () => {
+    const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
+      close: vi.fn(),
+      usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET: vi
+        .fn()
+        .mockResolvedValue({ rate_limits_available: false, rate_limits: null }),
+    }))
+    const environment: NodeJS.ProcessEnv = {
+      PATH: 'fixture-path',
+      CLAUDE_CONFIG_DIR: 'fixture-config',
+      FORCE_CODE_TERMINAL: '1',
+      CLAUDE_CODE_AUTO_CONNECT_IDE: '1',
+    }
+
+    await claudeLimitSource({ createQuery, environment })
+
+    const env = createQuery.mock.calls[0]?.[0].options.env
+    expect(env).toEqual({
+      PATH: 'fixture-path',
+      CLAUDE_CONFIG_DIR: 'fixture-config',
+      ENABLE_CLAUDEAI_MCP_SERVERS: 'false',
+      CLAUDE_CODE_AUTO_CONNECT_IDE: '0',
+      CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL: '1',
+    })
+    // The caller's environment, and with it every chat session, is untouched.
+    expect(environment).toEqual({
+      PATH: 'fixture-path',
+      CLAUDE_CONFIG_DIR: 'fixture-config',
+      FORCE_CODE_TERMINAL: '1',
+      CLAUDE_CODE_AUTO_CONNECT_IDE: '1',
+    })
+  })
+
   it('closes a failed query and reports a stable error', async () => {
     const close = vi.fn()
     const createQuery = vi.fn<ClaudeUsageQueryFactory>(() => ({
