@@ -44,6 +44,7 @@ import {
   type KeybindingId,
   type Shortcut,
 } from './shortcuts.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 import { readTerminalPlacement, subscribeTerminalPlacement } from './terminal-placement.js'
 import { ProviderUpdateNotice } from './ui/ProviderUpdates.js'
 import { IndeterminateRequestError, Transport } from './transport.js'
@@ -5935,7 +5936,7 @@ function displayName(project: { path: string; name?: string | undefined }): stri
 /** The first thing a user types is the best title we get for free. */
 export function titleFrom(text: string): string {
   const clean = text.trim().replace(/\s+/g, ' ')
-  return clean.length > 40 ? `${clean.slice(0, 40)}…` : clean
+  return clean.length > 40 ? `${sliceCodeUnits(clean, 40)}…` : clean
 }
 
 /**
