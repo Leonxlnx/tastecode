@@ -1057,26 +1057,24 @@ function ComposerComponent(props: {
   }, [props.draftRequest?.request])
 
   const hydrateAttachmentPreview = (reference: string) => {
-    void previewViewedImage(reference)
-      .catch(() => undefined)
-      .then((preview) => {
-        if (!mounted.current) return
-        setAttachments((current) =>
-          current.map((attachment) => {
-            if (attachment.path !== reference) return attachment
-            if (!preview?.mediaType || !preview.previewUrl)
-              return { ...attachment, previewSettled: true }
-            const { mediaType, name, previewUrl, thumbnailUrl } = preview
-            return {
-              ...attachment,
-              name,
-              mediaType,
-              previewUrl,
-              ...(thumbnailUrl ? { thumbnailUrl } : {}),
-            }
-          }),
-        )
-      })
+    void previewViewedImage(reference).then((preview) => {
+      if (!mounted.current) return
+      setAttachments((current) =>
+        current.map((attachment) => {
+          if (attachment.path !== reference) return attachment
+          if (!preview?.mediaType || !preview.previewUrl)
+            return { ...attachment, previewSettled: true }
+          const { mediaType, name, previewUrl, thumbnailUrl } = preview
+          return {
+            ...attachment,
+            name,
+            mediaType,
+            previewUrl,
+            ...(thumbnailUrl ? { thumbnailUrl } : {}),
+          }
+        }),
+      )
+    })
   }
 
   const addFiles = (files: Array<PickedAttachment | string>) => {
