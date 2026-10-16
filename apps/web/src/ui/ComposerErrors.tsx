@@ -7,6 +7,8 @@ export type ComposerError = {
   message: string
   role?: 'alert' | 'status'
   action?: { label: string; run: () => void }
+  /** Opens the feedback dialog with this error attached. Never sends anything itself. */
+  report?: () => void
   dismiss?: () => void
 }
 
@@ -49,6 +51,16 @@ export function ComposerErrors({
             <button className="composer__provider-action" type="button" onClick={error.action.run}>
               {error.action.label}
               <IconArrowRight size={13} aria-hidden />
+            </button>
+          ) : null}
+          {error.report && error.role !== 'status' ? (
+            <button
+              className="composer__error-report"
+              type="button"
+              title="Send this error to the TasteCode team"
+              onClick={error.report}
+            >
+              Report
             </button>
           ) : null}
           <button
