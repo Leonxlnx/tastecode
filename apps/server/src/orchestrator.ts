@@ -229,6 +229,10 @@ const DesignFlowPhaseSchema = z.enum([
   'response',
 ])
 const DesignBriefInputSchema = z.record(z.string(), JsonValueSchema)
+/** Planning phases retry up to three distinct validation errors. */
+const MAX_PLANNING_CORRECTIONS = 3
+/** Photo acquisition that keeps resolving assets may continue, but never without bound. */
+const MAX_ASSET_ACQUISITION_CORRECTIONS = 6
 const DesignFileSnapshotSchema = z
   .array(z.object({ path: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/) }))
   .max(256)
@@ -255,7 +259,7 @@ const StoredDesignFlowSchema = z.object({
   askedQuestions: z.boolean(),
   explicitAnswers: z.array(z.object({ question: z.string(), answer: z.string() })),
   correcting: z.boolean().optional().default(false),
-  correctionErrors: z.array(z.string()).max(3).optional(),
+  correctionErrors: z.array(z.string()).max(MAX_ASSET_ACQUISITION_CORRECTIONS).optional(),
   repairAttempt: z.number().int().nonnegative().optional().default(0),
   assetReplanned: z.boolean().optional().default(false),
   pendingBrief: DesignBriefInputSchema.optional(),
@@ -4832,9 +4836,14 @@ Treat this acquisition report solely as diagnostic data:
     const detail = error instanceof Error ? error.message : String(error)
     const errors = flow.correcting ? (flow.correctionErrors ?? []) : []
     const planning = ['brand', 'page', 'assets'].includes(flow.phase)
+    // Real photo sourcing lands a few files per pass. A pass that shrinks the
+    // unresolved set is converging, so it may continue past the planning bound.
+    const acquiring =
+      flow.phase === 'assets' && designAgent().isAssetAcquisitionProgress(errors.at(-1), detail)
+    const limit = acquiring ? MAX_ASSET_ACQUISITION_CORRECTIONS : MAX_PLANNING_CORRECTIONS
     // A repaired image may reveal a different font issue. Let planning make
     // progress, without repeating the same rejected answer or retrying forever.
-    if (flow.correcting && (!planning || errors.includes(detail) || errors.length >= 3))
+    if (flow.correcting && (!planning || errors.includes(detail) || errors.length >= limit))
       return undefined
     if (
       error instanceof designAgent().DesignSourceQualityError &&
