@@ -94,7 +94,9 @@ describe('Claude Code subscription limits', () => {
       status: 'ready',
       limits: [{ label: 'Session', usedPercent: 25 }],
     })
-    expect(usage).toHaveBeenCalledOnce()
+    // Plan limits never need the behaviors section, whose transcript scan
+    // costs minutes on a long history.
+    expect(usage).toHaveBeenCalledExactlyOnceWith({ skipBehaviors: true })
     expect(close).toHaveBeenCalledOnce()
     const input = createQuery.mock.calls[0]?.[0]
     expect(input?.options).toMatchObject({
@@ -121,11 +123,11 @@ describe('Claude Code subscription limits', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 
-  it('waits for a usage answer that takes as long as a real CLI with a long history', async () => {
+  it('waits for a usage answer that arrives behind a slow CLI start', async () => {
     vi.useFakeTimers()
     const close = vi.fn()
-    // Claude Code 2.1.296 answered after 17 to 60 seconds on a real machine,
-    // and for that Team account it reported no plan windows at all.
+    // A Team account reports no plan windows at all; a slow machine can take
+    // several seconds to start the CLI before it answers.
     const usage = vi.fn(
       () =>
         new Promise<SDKControlGetUsageResponse>((resolve) =>
@@ -135,7 +137,7 @@ describe('Claude Code subscription limits', () => {
                 rate_limits_available: true,
                 rate_limits: null,
               } as SDKControlGetUsageResponse),
-            60_000,
+            19_999,
           ),
         ),
     )
@@ -145,7 +147,7 @@ describe('Claude Code subscription limits', () => {
     }))
 
     const read = claudeLimitSource({ createQuery })
-    await vi.advanceTimersByTimeAsync(60_000)
+    await vi.advanceTimersByTimeAsync(19_999)
 
     await expect(read).resolves.toEqual({ status: 'unavailable' })
     expect(close).toHaveBeenCalledOnce()
@@ -160,8 +162,16 @@ describe('Claude Code subscription limits', () => {
     }))
 
     const read = claudeLimitSource({ createQuery })
-    const rejected = expect(read).rejects.toThrow('Claude usage request timed out.')
-    await vi.advanceTimersByTimeAsync(120_000)
+    let settled = false
+    const rejected = expect(
+      read.finally(() => {
+        settled = true
+      }),
+    ).rejects.toThrow('Claude usage request timed out.')
+    await vi.advanceTimersByTimeAsync(19_999)
+    expect(settled).toBe(false)
+    // An older CLI ignores the skip option and scans; it must not run for minutes.
+    await vi.advanceTimersByTimeAsync(1)
 
     await rejected
     expect(close).toHaveBeenCalledOnce()

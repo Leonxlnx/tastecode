@@ -25,14 +25,16 @@ export type ClaudeLimitSourceOptions = {
 }
 
 /**
- * Claude answers the usage request only after it has scanned the local
- * transcripts behind `/usage`. Captured against Claude Code 2.1.296 on a
- * machine with about 10 GB of history, the request itself took 17 to 60
- * seconds after a 2-second start, so a 10-second deadline reported a working
- * account as a failure. A slow answer is still an answer; only a stuck one is
- * cut off, with headroom because the scan grows with the history.
+ * The read asks Claude to skip the local transcript scan behind `/usage`'s
+ * behaviors section, which plan limits never use. With the scan, Claude Code
+ * 2.1.296 needed 17 to 60 seconds on about 10 GB of history and did not
+ * answer within two minutes on 17 GB; without it the answer follows the CLI's
+ * own start of a few seconds. An older CLI that predates the option ignores
+ * it and scans, so on a long history it reports a timeout here rather than
+ * keeping a heavy scan running.
  */
-const TIMEOUT_MS = 120_000
+const TIMEOUT_MS = 20_000
+const USAGE_REQUEST = { skipBehaviors: true } as const
 const TIMED_OUT = 'Claude usage request timed out.'
 const PercentSchema = z
   .number()
@@ -133,7 +135,7 @@ export async function claudeLimitSource(
   let usage: unknown
   try {
     usage = await withTimeout(
-      query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(),
+      query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET(USAGE_REQUEST),
       options.timeoutMs ?? TIMEOUT_MS,
     )
   } catch (error) {
