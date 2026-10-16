@@ -513,7 +513,7 @@ function SettingsComponent(props: {
             <SettingsPage title="Debug">
               <SettingsLeaderRow name="Onboarding">
                 <button
-                  className="settings__action"
+                  className="set-button"
                   type="button"
                   onClick={props.onForceOnboarding}
                   disabled={!props.onForceOnboarding}
@@ -557,7 +557,7 @@ function AppUpdateSimulationRow() {
       {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
           key={scenario}
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() => void simulateAppUpdate(scenario)}
         >
@@ -565,7 +565,7 @@ function AppUpdateSimulationRow() {
         </button>
       ))}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         disabled={!running}
         onClick={stopAppUpdateSimulation}
@@ -592,7 +592,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
       {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
           key={scenario}
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() => store.simulate(scenario)}
         >
@@ -600,7 +600,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
         </button>
       ))}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         aria-label="Stop provider update simulation"
         disabled={!state.simulation}
@@ -1158,7 +1158,7 @@ export function ProviderSettings(props: {
         provider={provider}
         status="Signed in"
         issue={accountError ? { message: accountError, announce: true } : undefined}
-        secondary={{
+        primary={{
           label: agentBusy === agent.id ? 'Signing out…' : 'Sign out',
           disabled: agentBusy === agent.id,
           danger: true,
@@ -1244,7 +1244,7 @@ export function ProviderSettings(props: {
             />
             <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
             <button
-              className="settings__action is-danger"
+              className="set-button set-button--danger"
               type="button"
               onClick={() => {
                 void props.transport
@@ -1334,11 +1334,15 @@ export function ProviderSettings(props: {
           </label>
           {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
           <div className="provider-form__actions">
-            <button className="ghost" type="button" onClick={() => setAddingConnection(false)}>
+            <button
+              className="set-button set-button--quiet"
+              type="button"
+              onClick={() => setAddingConnection(false)}
+            >
               Cancel
             </button>
             <button
-              className="btn"
+              className="set-button set-button--primary"
               type="button"
               disabled={
                 connectionSaving ||
@@ -1354,7 +1358,7 @@ export function ProviderSettings(props: {
         </div>
       ) : (
         <button
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() => setAddingConnection(true)}
         >
@@ -2107,7 +2111,7 @@ function DataSettings(props: {
           {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
           {diagnosticsEnabled ? (
             <button
-              className="settings__action"
+              className="set-button"
               type="button"
               onClick={() => void openLocalDiagnostics()}
             >
@@ -2151,7 +2155,7 @@ function DataSettings(props: {
         }
       >
         <button
-          className="settings__action is-danger"
+          className="set-button set-button--danger"
           type="button"
           aria-label="Reset app preferences"
           onClick={() => setConfirming(true)}
@@ -2292,7 +2296,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
         <RowIssue message={error} tip="Restart the app, then try the reset again." />
       ) : null}
       <button
-        className="settings__action"
+        className="set-button"
         type="button"
         disabled={state === 'resetting'}
         onClick={() => void resetUsage()}
@@ -2410,7 +2414,7 @@ function AboutSettings(props: { transport: Transport }) {
           <StateLabel {...updateStatus} live />
         ) : null}
         <button
-          className="settings__action"
+          className="set-button"
           type="button"
           disabled={checking || nativeChecking || nativeDownloading || nativePreparing}
           onClick={() => void (nativeReady ? installAppUpdate() : check())}
@@ -2429,7 +2433,7 @@ function AboutSettings(props: { transport: Transport }) {
       </SettingsLeaderRow>
       <SettingsLeaderRow name="Source">
         <button
-          className="settings__action"
+          className="set-button"
           type="button"
           onClick={() =>
             window.open('https://github.com/Leonxlnx/tastecode', '_blank', 'noopener,noreferrer')
@@ -2745,7 +2749,7 @@ function CliSignInRow(props: {
               <span className="signin-card__hint">Confirm this code in your browser</span>
               <code className="signin-card__code">{code}</code>
               <button
-                className="settings__action"
+                className="set-button"
                 type="button"
                 onClick={() => {
                   void writeClipboardText(code).then(
@@ -2766,7 +2770,7 @@ function CliSignInRow(props: {
           )}
           {login.openedAuthUrl ? (
             <button
-              className="settings__action"
+              className="set-button"
               type="button"
               onClick={() => window.open(login.openedAuthUrl, '_blank', 'noopener,noreferrer')}
             >

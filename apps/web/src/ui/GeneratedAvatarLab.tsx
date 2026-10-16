@@ -80,7 +80,7 @@ export function GeneratedAvatarLab(props: { initialName?: string | undefined }) 
             onChange={(event) => setName(event.target.value)}
           />
         </label>
-        <button className="settings__action" type="button" onClick={() => setName(randomName())}>
+        <button className="set-button" type="button" onClick={() => setName(randomName())}>
           <Shuffle size={14} aria-hidden />
           <span>Random name</span>
         </button>

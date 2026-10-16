@@ -215,7 +215,7 @@ export function SkillsSettings(props: {
         </div>
         {props.projectPath && currentInventory?.capabilities.install ? (
           <button
-            className="settings__action"
+            className="set-button"
             type="button"
             disabled={busy.size > 0}
             onClick={() => void install()}
@@ -230,7 +230,7 @@ export function SkillsSettings(props: {
         <p className="skills-settings__error" role="alert">
           {currentError}{' '}
           <button
-            className="settings__action"
+            className="set-button"
             type="button"
             onClick={() => setReload((n) => n + 1)}
           >

@@ -365,7 +365,7 @@ export function KeybindSettings(props: {
                           >
                             {rowFault?.conflict && rowFault.attempt ? (
                               <button
-                                className="keybind-row__action is-primary"
+                                className="set-button keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -379,7 +379,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {fallback && !sameShortcut(shortcut, fallback) ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -398,7 +398,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {shortcut ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 aria-label={`Clear ${definition.label} keybind`}
                                 onMouseDown={keepFocus}

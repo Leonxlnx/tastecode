@@ -474,7 +474,7 @@ describe('settings reset confirmation', () => {
       ),
     ).toBeTruthy()
     const reset = screen.getByRole('button', { name: 'Reset app preferences' })
-    expect(reset.classList.contains('is-danger')).toBe(true)
+    expect(reset.classList.contains('set-button--danger')).toBe(true)
 
     reset.focus()
     fireEvent.click(reset)
@@ -835,13 +835,10 @@ describe('provider authentication states', () => {
     for (const row of [codex, claude, grok]) {
       expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     }
-    expect(within(claude).getByRole('button', { name: 'Sign in' }).className).toContain(
-      'is-primary',
-    )
+    expect(within(claude).getByRole('button', { name: 'Sign in' }).className).toBe('set-button')
     const signOut = within(codex).getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-primary')
-    expect(signOut.className).toContain('is-danger')
-    expect(signOut.className).not.toContain('is-quiet')
+    expect(signOut.className).toBe('set-button set-button--danger')
+    expect(signOut.closest('.provider-row__primary')).toBeTruthy()
     fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
     expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
@@ -1644,6 +1641,11 @@ describe('provider settings', () => {
     )
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(3))
+    // Kimi's sign-out is the same danger button, in the same column, as every other provider's.
+    for (const signOut of screen.getAllByRole('button', { name: 'Sign out' })) {
+      expect(signOut.className).toBe('set-button set-button--danger')
+      expect(signOut.closest('.provider-row__primary')).toBeTruthy()
+    }
     expect(screen.getAllByText('Codex')).toHaveLength(1)
 
     const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')

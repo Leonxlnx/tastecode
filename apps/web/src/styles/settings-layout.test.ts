@@ -103,9 +103,29 @@ describe('settings viewport CSS', () => {
       /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
     )
     expect(settingsCss).toMatch(/\.provider-row__status \{[^}]*grid-column: 4;[^}]*min-width: 0;/s)
+    expect(settingsCss).toMatch(/\.provider-row \.set-button \{[^}]*min-width: 70px;/s)
+    // Only a quiet action bleeds to the edge; a boxed one keeps its border on it.
     expect(settingsCss).toMatch(
-      /\.provider-row \.settings__action \{[^}]*min-width: 70px;[^}]*min-height: 28px;/s,
+      /\.provider-row__secondary:has\(> \.set-button--quiet\):has\(\+ \.provider-row__primary:empty\) \{[^}]*margin-right: -10px;/s,
     )
+  })
+
+  it('draws every settings button from one 28px set', () => {
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button, \.settings__action\) \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-button--primary \{[^}]*background: var\(--text\);[^}]*color: var\(--bg\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button--danger, \.settings__action\.is-danger\):hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-button--quiet, \.settings__action\.is-secondary\) \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
+    )
+    // The old per-feature button looks are gone.
+    expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
+    expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
   })
 
   it('draws the provider account wire from the link state', () => {
