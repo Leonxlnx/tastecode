@@ -2430,9 +2430,11 @@ function AboutSettings(props: { transport: Transport }) {
 // No group subtitle between the title and the card: one heading carries a
 // panel, and the removed line was repeating it in smaller type.
 function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
+  // An id derived from the title breaks on spaces ("Data & privacy").
+  const titleId = useId()
   return (
-    <section className="settings__panel" aria-labelledby={`settings-${props.title.toLowerCase()}`}>
-      <h1 className="settings__title" id={`settings-${props.title.toLowerCase()}`}>
+    <section className="settings__panel" aria-labelledby={titleId}>
+      <h1 className="settings__title" id={titleId}>
         {props.title}
       </h1>
       <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>
