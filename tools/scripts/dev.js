@@ -279,6 +279,8 @@ async function shutdown(exitCode = 0) {
 
 process.on('SIGINT', () => void shutdown(0))
 process.on('SIGTERM', () => void shutdown(0))
+// Children lead their own process groups, so a closed terminal's hangup reaches only this launcher.
+process.on('SIGHUP', () => void shutdown(0))
 
 await clearDevPorts()
 const self = (await processSnapshot()).find((candidate) => candidate.pid === process.pid)
