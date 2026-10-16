@@ -14,6 +14,7 @@ import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode
 import {
   JsonRpcValueSchema,
   killTree,
+  nativeShimTarget,
   readSseData,
   spawnCli,
   type JsonRpcValue,
@@ -195,6 +196,8 @@ type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
+  /** Only the default launch looks for the executable behind npm's shim. */
+  readonly #customSpawn: boolean
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
@@ -233,6 +236,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   ) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#customSpawn = options.spawn !== undefined
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
@@ -270,7 +274,11 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      server = await launchOpenCodeServer(config, this.#spawn)
+      server = await launchOpenCodeServer(
+        config,
+        this.#spawn,
+        this.#customSpawn ? 'opencode' : ((await nativeShimTarget('opencode')) ?? 'opencode'),
+      )
     } catch {
       throw new Error('OpenCode is unavailable. Install it and run `opencode` once to sign in.')
     }
@@ -903,6 +911,8 @@ function openCodeV2Model(
 async function launchOpenCodeServer(
   config: Record<string, JsonRpcValue>,
   spawn: Spawn = spawnCli,
+  /** opencode.exe itself where npm installed it, so its pid is the server's and cleanup reaches it. */
+  command = 'opencode',
 ): Promise<{
   url: string
   authorization: string
@@ -914,7 +924,7 @@ async function launchOpenCodeServer(
   const password = randomUUID()
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
   return new Promise((resolve, reject) => {
-    const child = spawn('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
+    const child = spawn(command, ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
