@@ -206,6 +206,61 @@ function isHighSurrogate(code: number): boolean {
   return code >= 0xd800 && code <= 0xdbff
 }
 
+/** A forward-only position in a root's text: `count` characters in, at (node, offset). */
+class TextPosition {
+  node: Text | null = null
+  offset = 0
+  count = 0
+  private readonly walker: TreeWalker
+
+  constructor(private readonly root: HTMLElement) {
+    this.walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, SKIP_LABELS)
+  }
+
+  /** Moves forward to `target` characters, as far as the DOM goes. */
+  seek(target: number): void {
+    let node = this.node
+    let offset = this.offset
+    let count = this.count
+    while (count < target) {
+      if (node && offset < node.length) {
+        const step = Math.min(node.length - offset, target - count)
+        offset += step
+        count += step
+        // Never between the halves of a surrogate pair.
+        if (offset < node.length && isHighSurrogate(node.data.charCodeAt(offset - 1))) {
+          offset += 1
+          count += 1
+        }
+        continue
+      }
+      const next = this.walker.nextNode() as Text | null
+      if (!next) break
+      node = next
+      offset = 0
+    }
+    this.node = node
+    this.offset = offset
+    this.count = count
+  }
+
+  rewind(): void {
+    this.walker.currentNode = this.root
+    this.node = null
+    this.offset = 0
+    this.count = 0
+  }
+
+  /** A range boundary here. */
+  get container(): Node {
+    return this.node ?? this.root
+  }
+
+  get boundary(): number {
+    return this.node ? this.offset : 0
+  }
+}
+
 interface ClockInternals {
   env: RevealEnvironment
   veil: RevealHighlight
@@ -216,11 +271,8 @@ interface ClockInternals {
 class Cursor implements RevealCursor {
   readonly tracking = true
   private readonly pace = new RevealPace()
-  private readonly walker: TreeWalker
-  /** The DOM position of the first hidden character: (node, offset), `position` characters in. */
-  private node: Text | null = null
-  private offset = 0
-  private position = 0
+  /** The first hidden character. */
+  private readonly edge: TextPosition
   private veil: AbstractRange | undefined
   private lastTick: number | undefined
   private finishing = false
@@ -233,7 +285,7 @@ class Cursor implements RevealCursor {
     private readonly root: HTMLElement,
     private readonly onDrained: (() => void) | undefined,
   ) {
-    this.walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, SKIP_LABELS)
+    this.edge = new TextPosition(root)
   }
 
   appended(characters: number): void {
@@ -246,22 +298,19 @@ class Cursor implements RevealCursor {
     // The old veil ended where the root ended; new text past it would show
     // for a frame. Repaint it before the browser paints.
     this.paint()
-    if (this.position < this.pace.total) this.clock.wake(this)
+    if (this.edge.count < this.pace.total) this.clock.wake(this)
   }
 
   reset(): void {
     if (this.disposed) return
-    this.walker.currentNode = this.root
-    this.node = null
-    this.offset = 0
-    this.position = 0
+    this.edge.rewind()
     this.showAll()
   }
 
   finish(): void {
     if (this.disposed || this.finishing) return
     this.finishing = true
-    if (!this.clock.env.motionAllowed() || this.position >= this.pace.total) {
+    if (!this.clock.env.motionAllowed() || this.edge.count >= this.pace.total) {
       this.showAll()
       this.drain()
       return
@@ -291,8 +340,8 @@ class Cursor implements RevealCursor {
   /** Everything in the DOM counts as shown, from now on. */
   private showAll(): void {
     if (this.disposed) return
-    this.seek(Number.POSITIVE_INFINITY)
-    this.pace.settle(this.position)
+    this.edge.seek(Number.POSITIVE_INFINITY)
+    this.pace.settle(this.edge.count)
     this.lastTick = undefined
     this.paint()
   }
@@ -304,13 +353,13 @@ class Cursor implements RevealCursor {
       this.lastTick === undefined ? FIRST_FRAME_MS : clamp(now - this.lastTick, 1, MAX_FRAME_MS)
     this.lastTick = now
     const target = Math.floor(this.pace.step(now, dt, this.finishing) + 1e-6)
-    if (target > this.position) {
-      this.seek(target)
+    if (target > this.edge.count) {
+      this.edge.seek(target)
       // Fewer characters in the DOM than were counted: what is there is all.
-      if (this.position < target) this.pace.settle(this.position)
+      if (this.edge.count < target) this.pace.settle(this.edge.count)
       this.paint()
     }
-    if (this.position < this.pace.total) return true
+    if (this.edge.count < this.pace.total) return true
     this.lastTick = undefined
     if (this.finishing) this.drain()
     return false
@@ -324,40 +373,13 @@ class Cursor implements RevealCursor {
     this.onDrained?.()
   }
 
-  /** Moves the cursor forward to `target` characters, as far as the DOM goes. */
-  private seek(target: number): void {
-    let node = this.node
-    let offset = this.offset
-    let position = this.position
-    while (position < target) {
-      if (node && offset < node.length) {
-        const step = Math.min(node.length - offset, target - position)
-        offset += step
-        position += step
-        // Never between the halves of a surrogate pair.
-        if (offset < node.length && isHighSurrogate(node.data.charCodeAt(offset - 1))) {
-          offset += 1
-          position += 1
-        }
-        continue
-      }
-      const next = this.walker.nextNode() as Text | null
-      if (!next) break
-      node = next
-      offset = 0
-    }
-    this.node = node
-    this.offset = offset
-    this.position = position
-  }
-
   private paint(): void {
     const previous = this.veil
     this.veil =
-      this.position < this.pace.total
+      this.edge.count < this.pace.total
         ? this.clock.env.createRange({
-            startContainer: this.node ?? this.root,
-            startOffset: this.node ? this.offset : 0,
+            startContainer: this.edge.container,
+            startOffset: this.edge.boundary,
             endContainer: this.root,
             endOffset: this.root.childNodes.length,
           })
