@@ -169,6 +169,7 @@ export function startServer(
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onLimitsChanged: (source) => push.broadcast('usage.limits', { source }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
