@@ -1358,11 +1358,7 @@ export function ProviderSettings(props: {
           </div>
         </div>
       ) : (
-        <button
-          className="set-button"
-          type="button"
-          onClick={() => setAddingConnection(true)}
-        >
+        <button className="set-button" type="button" onClick={() => setAddingConnection(true)}>
           <KeyRound size={15} aria-hidden />
           Connect another plan or API
         </button>

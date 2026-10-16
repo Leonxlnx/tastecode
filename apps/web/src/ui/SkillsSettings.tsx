@@ -229,11 +229,7 @@ export function SkillsSettings(props: {
       {currentError ? (
         <p className="skills-settings__error" role="alert">
           {currentError}{' '}
-          <button
-            className="set-button"
-            type="button"
-            onClick={() => setReload((n) => n + 1)}
-          >
+          <button className="set-button" type="button" onClick={() => setReload((n) => n + 1)}>
             Retry
           </button>
         </p>
