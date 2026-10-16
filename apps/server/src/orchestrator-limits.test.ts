@@ -236,7 +236,9 @@ describe('provider limit sources', () => {
       checkedAt: expect.any(Number),
       origin: 'live',
     }
-    expect(pushed).toEqual([merged])
+    // The read's own snapshot, then the merged one, spaced by the publish interval.
+    await vi.waitFor(() => expect(pushed).toHaveLength(2), { timeout: 5_000 })
+    expect(pushed[1]).toEqual(merged)
     await expect(instance.usageLimitSource('claude-code')).resolves.toEqual(merged)
     expect(sources.claude).toHaveBeenCalledOnce()
     await instance.disposeAll()

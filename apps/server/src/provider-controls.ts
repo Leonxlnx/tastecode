@@ -191,6 +191,13 @@ function sameLimit(left: ProviderLimit, right: ProviderLimit): boolean {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+/** What a client shows of a source; when it was checked is not part of it. */
+function shownLimits(source: ProviderLimitSource | undefined): string {
+  return JSON.stringify(
+    source?.status === 'ready' ? [source.limits, source.stale ?? false] : (source?.status ?? null),
+  )
+}
+
 /** Overlays live windows newer than a read onto that read's rows. */
 function withLiveWindows(
   limits: ProviderLimit[],
@@ -715,6 +722,7 @@ export class ProviderControls {
           }
           const interval = this.#limitReadInterval(provider)
           const unavailable = value.status === 'unavailable'
+          const previous = entry.value
           entry.stored = sequence
           entry.value = value
           entry.readAt = startedAt
@@ -728,6 +736,7 @@ export class ProviderControls {
                 : entry.version === version
                   ? now + Math.max(this.#limitCacheMs, interval)
                   : startedAt + interval
+          this.#heldReplaced(provider, entry, previous)
           return value
         },
         (error: unknown) => {
@@ -736,9 +745,12 @@ export class ProviderControls {
           const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
           entry.failure = failure
           // One failed refresh does not make the account's known limits unknown.
-          if (entry.value?.status !== 'ready') throw error
-          entry.value = lastKnownLimits(entry.value, failure)
-          return entry.value
+          const previous = entry.value
+          if (previous?.status !== 'ready') throw error
+          const lastKnown = lastKnownLimits(previous, failure)
+          entry.value = lastKnown
+          this.#heldReplaced(provider, entry, previous)
+          return lastKnown
         },
       )
       .finally(() => {
@@ -746,6 +758,18 @@ export class ProviderControls {
       })
     entry.reading = reading
     return reading
+  }
+
+  /**
+   * A read or a failed refresh replaced the held snapshot. Clients that apply
+   * pushed snapshots get it; clients that only re-pull after a usage change
+   * are told when what they show changed, which a background refresh needs.
+   */
+  #heldReplaced(provider: ProviderId, entry: LimitEntry, previous?: ProviderLimitSource): void {
+    this.#publishLimits(provider, entry)
+    if (previous && shownLimits(previous) !== shownLimits(entry.value)) {
+      this.#options.onUsageChanged?.(provider)
+    }
   }
 
   /**
