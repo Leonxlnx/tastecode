@@ -151,6 +151,11 @@ import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import {
+  SettingsPage,
+  SettingsSection,
+  SettingsRow as SettingsLeaderRow,
+} from './settings/SettingsLayout.js'
+import {
   DEFAULT_KEYBINDINGS,
   isComposingKey,
   type KeybindingId,
@@ -505,26 +510,27 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'debug' ? (
-            <SettingsPanel title="Debug">
-              <SettingsRow title="Onboarding">
+            <SettingsPage title="Debug">
+              <SettingsLeaderRow name="Onboarding">
                 <button
-                  className="btn"
+                  className="settings__action"
+                  type="button"
                   onClick={props.onForceOnboarding}
                   disabled={!props.onForceOnboarding}
                 >
                   Force onboarding
                 </button>
-              </SettingsRow>
+              </SettingsLeaderRow>
               <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
-              <SettingsRow
+              <SettingsSection
                 title="Avatar generator"
                 note="The picture a profile gets from its name when no photo is uploaded. Same name, same picture, on every provider."
-                className="settings__row--roomy"
-              />
-              <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
-            </SettingsPanel>
+              >
+                <GeneratedAvatarLab initialName={props.profileIdentity?.displayName} />
+              </SettingsSection>
+            </SettingsPage>
           ) : null}
           {section === 'about' ? <AboutSettings transport={props.transport} /> : null}
         </div>
@@ -544,10 +550,9 @@ function AppUpdateSimulationRow() {
   useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
 
   return (
-    <SettingsRow
-      title="Simulate app update"
+    <SettingsLeaderRow
+      name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
-      className="settings__row--roomy"
     >
       {UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
@@ -567,7 +572,7 @@ function AppUpdateSimulationRow() {
       >
         Stop
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -580,10 +585,9 @@ const PROVIDER_UPDATE_SIMULATIONS = [
 function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
-    <SettingsRow
-      title="Simulate provider updates"
+    <SettingsLeaderRow
+      name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
-      className="settings__row--roomy"
     >
       {PROVIDER_UPDATE_SIMULATIONS.map(({ scenario, label }) => (
         <button
@@ -604,7 +608,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
       >
         Stop
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -2094,12 +2098,11 @@ function DataSettings(props: {
   }
 
   return (
-    <SettingsPanel title="Data & privacy">
+    <SettingsPage title="Data & privacy">
       {isDesktop ? (
-        <SettingsRow
-          title="Local diagnostics"
+        <SettingsLeaderRow
+          name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
-          className="settings__row--roomy"
         >
           {diagnosticsError ? <RowIssue message={diagnosticsError} /> : null}
           {diagnosticsEnabled ? (
@@ -2117,7 +2120,7 @@ function DataSettings(props: {
                 label="Loading local diagnostics…"
                 className="settings__switch-skeleton"
               >
-                <Skeleton width={36} height={22} />
+                <Skeleton width={30} height={18} />
               </SkeletonStatus>
             )
           ) : (
@@ -2132,10 +2135,10 @@ function DataSettings(props: {
               <span className="switch__thumb" />
             </button>
           )}
-        </SettingsRow>
+        </SettingsLeaderRow>
       ) : null}
-      <SettingsRow
-        title="Reset app preferences"
+      <SettingsLeaderRow
+        name="Reset app preferences"
         note={
           <>
             Clears appearance, layout and model choices.{' '}
@@ -2146,7 +2149,6 @@ function DataSettings(props: {
             )}
           </>
         }
-        className="settings__row--roomy"
       >
         <button
           className="settings__action is-danger"
@@ -2157,7 +2159,7 @@ function DataSettings(props: {
           <RotateCcw size={13} aria-hidden />
           <span>Reset…</span>
         </button>
-      </SettingsRow>
+      </SettingsLeaderRow>
       {confirming ? (
         <ResetConfirmation
           onCancel={() => setConfirming(false)}
@@ -2167,7 +2169,7 @@ function DataSettings(props: {
           }}
         />
       ) : null}
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2258,9 +2260,9 @@ function ResetConfirmation(props: { onCancel: () => void; onConfirm: () => void 
 
 export function DebugSettings(props: { transport: Transport }) {
   return (
-    <SettingsPanel title="Debug">
+    <SettingsPage title="Debug">
       <UsageHistoryReset transport={props.transport} />
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -2281,10 +2283,9 @@ function UsageHistoryReset(props: { transport: Transport }) {
   }
 
   return (
-    <SettingsRow
-      title="Usage history index"
+    <SettingsLeaderRow
+      name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
-      className="settings__row--roomy"
     >
       {state === 'started' ? <StateLabel state="checking" detail="Scan started" live /> : null}
       {state === 'error' && error ? (
@@ -2299,7 +2300,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
         <RotateCcw size={13} aria-hidden />
         <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
       </button>
-    </SettingsRow>
+    </SettingsLeaderRow>
   )
 }
 
@@ -2377,8 +2378,8 @@ function AboutSettings(props: { transport: Transport }) {
             : undefined
 
   return (
-    <SettingsPanel title="About">
-      <SettingsRow title="TasteCode">
+    <SettingsPage title="About">
+      <SettingsLeaderRow name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2386,8 +2387,8 @@ function AboutSettings(props: { transport: Transport }) {
             `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
           )}
         </SettingsMeta>
-      </SettingsRow>
-      <SettingsRow title="Updates">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2425,8 +2426,8 @@ function AboutSettings(props: { transport: Transport }) {
                   ? 'Checking…'
                   : 'Check for updates'}
         </button>
-      </SettingsRow>
-      <SettingsRow title="Source">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Source">
         <button
           className="settings__action"
           type="button"
@@ -2436,8 +2437,8 @@ function AboutSettings(props: { transport: Transport }) {
         >
           GitHub
         </button>
-      </SettingsRow>
-    </SettingsPanel>
+      </SettingsLeaderRow>
+    </SettingsPage>
   )
 }
 

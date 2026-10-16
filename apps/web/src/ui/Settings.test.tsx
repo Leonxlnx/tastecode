@@ -275,6 +275,30 @@ describe('settings panel names', () => {
     expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
   })
 })
+describe('settings v1 pages', () => {
+  it.each([
+    ['data', ['Reset app preferences']],
+    ['about', ['TasteCode', 'Updates', 'Source']],
+    [
+      'debug',
+      ['Onboarding', 'Usage history index', 'Simulate app update', 'Simulate provider updates'],
+    ],
+  ] as const)('lays %s out as open rows without a card', (section, names) => {
+    const { container } = renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const content = container.querySelector('.settings__content')!
+    expect(content.querySelector('.settings__group, .settings__row')).toBeNull()
+    expect(
+      [...content.querySelectorAll(':scope > section > .set-row .set-row__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(names)
+  })
+})
 describe('about status grammar', () => {
   it.each([
     [
@@ -638,8 +662,9 @@ describe('settings loading values', () => {
       const loading = screen.getByText('Loading local diagnostics…').closest('[role="status"]')!
       expect(loading.getAttribute('aria-busy')).toBe('true')
       expect(loading.classList.contains('settings__switch-skeleton')).toBe(true)
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 36px')
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 22px')
+      // Sized like the 30x18 switch the open row settles into.
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 30px')
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 18px')
       expect(screen.queryByRole('switch', { name: 'Local diagnostics' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull()
 
