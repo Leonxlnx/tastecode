@@ -1,4 +1,5 @@
 import type { Item } from '@harness/contracts'
+import { sliceCodeUnits } from './slice-code-units.js'
 
 export type CheckpointEntry = {
   label: string
@@ -62,7 +63,7 @@ export function checkpointForItem<T extends CheckpointEntry>(
       turns.add(prompt.turnId)
       // Provider-native and imported timestamps do not share submission-time semantics.
       if (!prompt.id.startsWith('local:') || !prompt.text) continue
-      const label = prompt.text.trim().slice(0, 60) || 'Turn'
+      const label = sliceCodeUnits(prompt.text.trim(), 60) || 'Turn'
       const group = prompts.get(label) ?? []
       group.push(prompt)
       prompts.set(label, group)

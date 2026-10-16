@@ -12,6 +12,7 @@ import type {
 } from '@harness/contracts'
 import type { ProviderRuntime, TurnOptions } from './adapters.js'
 import { StartupCleanupError } from './provider-session.js'
+import { sliceCodeUnits } from './slice-code-units.js'
 
 const BACKGROUND_TIMEOUT_MS = 45_000
 const MAX_COMMIT_DIFF_CHARS = 80_000
@@ -394,7 +395,7 @@ export function cleanGeneratedTitle(output: string, fallback: string): string {
     .replace(/^(?:title\s*:\s*)/i, '')
     .replace(/^["'`]+|["'`.]+$/g, '')
     .trim()
-  return (title || fallback).slice(0, 60).trim() || fallback
+  return sliceCodeUnits(title || fallback, 60).trim() || fallback
 }
 
 export function commitMessagePrompt(diff: SessionDiff): string {
