@@ -543,6 +543,8 @@ describe('fresh usage controls', () => {
     await expect(codex.usageLimitSource()).rejects.toThrow('fixture-stop-failed')
     expect(createCodex).toHaveBeenCalledOnce()
     failed.dispose.mockResolvedValue()
+    // The failed limit read waits out its retry time before the next attempt.
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
     await codex.usageLimitSource()
     expect(replacement.start).toHaveBeenCalledOnce()
     expect(replacement.dispose).toHaveBeenCalledOnce()
@@ -596,24 +598,6 @@ describe('cached usage limits', () => {
     })
     await codex.usageLimitSource()
     expect(createCodex).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not cache a failed read', async () => {
-    const usageLimitSource = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
-      .mockResolvedValue({ status: 'ready', limits: [] })
-    const { registry } = setup({
-      services: { grok: { usageLimitSource, signOut: async () => {} } },
-    })
-    await expect(registry.forProvider('grok').usageLimitSource()).rejects.toThrow(
-      'fixture-limits-failed',
-    )
-    await expect(registry.forProvider('grok').usageLimitSource()).resolves.toMatchObject({
-      status: 'ready',
-    })
-    await registry.forProvider('grok').usageLimitSource()
-    expect(usageLimitSource).toHaveBeenCalledTimes(2)
   })
 
   it('rereads after sign-out', async () => {
@@ -780,6 +764,80 @@ describe('cached usage limits', () => {
     await registry.disposeAll()
     await vi.advanceTimersByTimeAsync(1_000)
     expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('limit read backoff and intervals', () => {
+  type ReadyLimits = { status: 'ready'; limits: ProviderLimit[] }
+  const failing = (error: () => Error = () => new Error('fixture-limits-failed')) =>
+    vi.fn(async (): Promise<ReadyLimits> => {
+      throw error()
+    })
+
+  it('answers a failed read with its error until a retry time that doubles to 30 minutes', async () => {
+    const usageLimitSource = failing()
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const attempt = () => expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await attempt()
+    await attempt()
+    // Spending usage during a turn does not repair a failing source.
+    registry.usageChanged('grok')
+    registry.usageChanged('grok', true)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    for (const [index, minutes] of [5, 10, 20, 30, 30].entries()) {
+      await vi.advanceTimersByTimeAsync(minutes * 60_000 - 1)
+      await attempt()
+      expect(usageLimitSource).toHaveBeenCalledTimes(index + 1)
+      await vi.advanceTimersByTimeAsync(1)
+      await attempt()
+      expect(usageLimitSource).toHaveBeenCalledTimes(index + 2)
+    }
+  })
+
+  it('forgets earlier failures after a successful read', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValueOnce({ status: 'ready', limits: [] })
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    registry.usageChanged('grok')
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    // The next wait starts at 5 minutes again, not 20.
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    expect(usageLimitSource).toHaveBeenCalledTimes(5)
+  })
+
+  it('retries at once when an account read reports another account or after sign-out', async () => {
+    const usageLimitSource = failing()
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
+    const { registry } = setup({
+      services: { grok: { account, usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
   })
 })
 

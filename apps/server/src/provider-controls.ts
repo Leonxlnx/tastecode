@@ -146,8 +146,24 @@ type LimitEntry = {
   value?: ProviderLimitSource | undefined
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
+  /** The last failed read; later reads reject with it until `retryAt`. */
+  failure?: LimitFailure | undefined
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
+}
+type LimitFailure = { error: unknown; count: number; retryAt: number }
+
+/** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
+const LIMIT_RETRY_MIN_MS = 5 * 60_000
+const LIMIT_RETRY_MAX_MS = 30 * 60_000
+
+function limitRetryDelay(failures: number): number {
+  return Math.min(LIMIT_RETRY_MIN_MS * 2 ** (failures - 1), LIMIT_RETRY_MAX_MS)
+}
+
+function limitFailure(previous: LimitFailure | undefined, error: unknown): LimitFailure {
+  const count = (previous?.count ?? 0) + 1
+  return { error, count, retryAt: Date.now() + limitRetryDelay(count) }
 }
 
 const defaultServices = {
@@ -477,18 +493,26 @@ export class ProviderControls {
 
   #invalidateLimits(provider: ProviderId, accountChanged: boolean): LimitEntry {
     const entry = this.#limitEntry(provider)
-    if (accountChanged) entry.accountVersion += 1
+    if (accountChanged) {
+      entry.accountVersion += 1
+      // Another account starts without this one's failures.
+      entry.failure = undefined
+    }
     // Spending usage cannot give an account the plan limits it lacks, so only
     // an account change discards that answer.
     else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
     entry.freshUntil = 0
     // A read already in flight may predate the change; the next caller starts its own.
+    // A failing source keeps its retry time: spending usage does not repair it.
     entry.reading = undefined
     return entry
   }
 
-  /** One read serves concurrent callers, and a fresh result serves later ones. */
+  /**
+   * One read serves concurrent callers, a fresh result serves later ones, and
+   * a failed read answers them until its retry time.
+   */
   #cachedLimits(
     provider: ProviderId,
     read: () => Promise<ProviderLimitSource>,
@@ -496,24 +520,34 @@ export class ProviderControls {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
-    if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
+    const now = Date.now()
+    if (entry.value && now < entry.freshUntil) return Promise.resolve(entry.value)
+    if (entry.failure && now < entry.failure.retryAt) return Promise.reject(entry.failure.error)
     const { version, accountVersion, stored } = entry
+    const current = () =>
+      this.#limits.get(provider) === entry && entry.accountVersion === accountVersion
     const reading = read()
-      .then((value) => {
-        const unavailable = value.status === 'unavailable'
-        if (
-          this.#limits.get(provider) === entry &&
-          entry.accountVersion === accountVersion &&
-          // A usage change during the read leaves an unavailable answer true.
-          (entry.version === version || (unavailable && entry.stored === stored))
-        ) {
-          entry.stored += 1
-          entry.value = value
-          entry.freshUntil =
-            Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
-        }
-        return value
-      })
+      .then(
+        (value) => {
+          const unavailable = value.status === 'unavailable'
+          if (
+            current() &&
+            // A usage change during the read leaves an unavailable answer true.
+            (entry.version === version || (unavailable && entry.stored === stored))
+          ) {
+            entry.stored += 1
+            entry.value = value
+            entry.failure = undefined
+            entry.freshUntil =
+              Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
+          }
+          return value
+        },
+        (error: unknown) => {
+          if (current()) entry.failure = limitFailure(entry.failure, error)
+          throw error
+        },
+      )
       .finally(() => {
         if (entry.reading === reading) entry.reading = undefined
       })
