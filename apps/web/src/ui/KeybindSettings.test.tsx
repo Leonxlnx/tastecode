@@ -253,7 +253,7 @@ describe('keybind settings', () => {
     expect(commandPalette.querySelector('kbd')?.textContent).toBe('Ctrl+K')
 
     const nextChat = screen.getByRole('button', { name: 'Change Next chat keybind' })
-    expect(nextChat.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+ArrowDown')
+    expect(nextChat.querySelector('kbd')?.textContent).toBe('Ctrl+Alt+↓')
     expect(nextChat.querySelector('[data-shortcut-icon="option"]')).toBeNull()
     fireEvent.click(commandPalette)
     fireEvent.keyDown(commandPalette, { key: 'g', ctrlKey: true, altKey: true })
