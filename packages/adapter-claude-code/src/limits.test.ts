@@ -31,11 +31,80 @@ describe('Claude Code subscription limits', () => {
     ).toEqual({
       status: 'ready',
       limits: [
-        { label: 'Session', usedPercent: 42.5, resetsAt: Date.parse('2026-08-22T10:00:00Z') },
-        { label: 'Weekly', usedPercent: 80, resetsAt: Date.parse('2026-08-25T00:00:00Z') },
-        { label: 'Sonnet weekly', usedPercent: 0 },
-        { label: 'Fable weekly', usedPercent: 55, resetsAt: Date.parse('2026-08-26T00:00:00Z') },
-        { label: 'Extra usage', usedPercent: 12 },
+        {
+          id: 'five_hour',
+          label: 'Session',
+          usedPercent: 42.5,
+          resetsAt: Date.parse('2026-08-22T10:00:00Z'),
+          windowMinutes: 300,
+        },
+        {
+          id: 'seven_day',
+          label: 'Weekly',
+          usedPercent: 80,
+          resetsAt: Date.parse('2026-08-25T00:00:00Z'),
+          windowMinutes: 10_080,
+        },
+        { id: 'seven_day_sonnet', label: 'Sonnet weekly', usedPercent: 0, windowMinutes: 10_080 },
+        {
+          id: 'model:fable',
+          label: 'Fable weekly',
+          usedPercent: 55,
+          resetsAt: Date.parse('2026-08-26T00:00:00Z'),
+          windowMinutes: 10_080,
+        },
+        { id: 'extra_usage', label: 'Extra usage', usedPercent: 12 },
+      ],
+    })
+  })
+
+  it('maps the rate limits Claude Code 2.1.296 reports today', () => {
+    // Shape captured from get_usage with skipBehaviors on 2026-10-17, rate limits only.
+    expect(
+      mapClaudeUsage({
+        rate_limits_available: true,
+        subscription_type: 'max',
+        rate_limits: {
+          five_hour: {
+            utilization: 49,
+            resets_at: '2026-10-17T01:09:59.645762+00:00',
+            used_dollars: null,
+            limit_dollars: null,
+            remaining_dollars: null,
+            locked_reason: null,
+          },
+          seven_day: null,
+          seven_day_oauth_apps: null,
+          seven_day_opus: null,
+          seven_day_sonnet: null,
+          seven_day_cowork: null,
+          extra_usage: { is_enabled: false, utilization: null },
+          limits: [
+            { kind: 'session', group: 'session', percent: 49, is_active: true },
+            { kind: 'weekly_scoped', group: 'weekly', percent: 0, is_active: false },
+          ],
+          model_scoped: [
+            { display_name: 'Fable', utilization: 0, resets_at: '2026-10-23T06:00:00+00:00' },
+          ],
+        },
+      }),
+    ).toEqual({
+      status: 'ready',
+      limits: [
+        {
+          id: 'five_hour',
+          label: 'Session',
+          usedPercent: 49,
+          resetsAt: Date.parse('2026-10-17T01:09:59.645762+00:00'),
+          windowMinutes: 300,
+        },
+        {
+          id: 'model:fable',
+          label: 'Fable weekly',
+          usedPercent: 0,
+          resetsAt: Date.parse('2026-10-23T06:00:00+00:00'),
+          windowMinutes: 10_080,
+        },
       ],
     })
   })
@@ -54,7 +123,9 @@ describe('Claude Code subscription limits', () => {
       }),
     ).toEqual({
       status: 'ready',
-      limits: [{ label: 'Sonnet weekly', usedPercent: 100 }],
+      limits: [
+        { id: 'seven_day_sonnet', label: 'Sonnet weekly', usedPercent: 100, windowMinutes: 10_080 },
+      ],
     })
   })
 
@@ -92,7 +163,7 @@ describe('Claude Code subscription limits', () => {
 
     await expect(claudeLimitSource({ createQuery })).resolves.toEqual({
       status: 'ready',
-      limits: [{ label: 'Session', usedPercent: 25 }],
+      limits: [{ id: 'five_hour', label: 'Session', usedPercent: 25, windowMinutes: 300 }],
     })
     // Plan limits never need the behaviors section, whose transcript scan
     // costs minutes on a long history.

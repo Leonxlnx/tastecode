@@ -8,9 +8,12 @@ import {
 } from './sdk-runtime.js'
 
 export type ProviderLimit = {
+  /** Stable within Claude, so a live window replaces exactly this row. */
+  id?: string | undefined
   label: string
   usedPercent: number
   resetsAt?: number | undefined
+  windowMinutes?: number | undefined
   valueLabel?: string | undefined
 }
 
@@ -71,15 +74,32 @@ const UsageResponseSchema = z.looseObject({
 
 type UsageWindow = z.infer<typeof UsageWindowSchema>
 
-function windowRow(label: string, window: UsageWindow | null | undefined): ProviderLimit[] {
+const SESSION_MINUTES = 5 * 60
+const WEEK_MINUTES = 7 * 24 * 60
+
+function windowRow(
+  id: string,
+  label: string,
+  window: UsageWindow | null | undefined,
+  windowMinutes?: number,
+): ProviderLimit[] {
   if (!window || window.utilization === null) return []
   return [
     {
+      id,
       label,
       usedPercent: window.utilization,
       ...(window.resets_at === null ? {} : { resetsAt: window.resets_at }),
+      ...(windowMinutes === undefined ? {} : { windowMinutes }),
     },
   ]
+}
+
+function modelSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
@@ -89,11 +109,16 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
   if (!available || rateLimits === null) return { status: 'unavailable' }
 
   const limits = [
-    ...windowRow('Session', rateLimits.five_hour),
-    ...windowRow('Weekly', rateLimits.seven_day),
-    ...windowRow('Sonnet weekly', rateLimits.seven_day_sonnet),
-    ...windowRow('Opus weekly', rateLimits.seven_day_opus),
-    ...windowRow('OAuth apps weekly', rateLimits.seven_day_oauth_apps),
+    ...windowRow('five_hour', 'Session', rateLimits.five_hour, SESSION_MINUTES),
+    ...windowRow('seven_day', 'Weekly', rateLimits.seven_day, WEEK_MINUTES),
+    ...windowRow('seven_day_sonnet', 'Sonnet weekly', rateLimits.seven_day_sonnet, WEEK_MINUTES),
+    ...windowRow('seven_day_opus', 'Opus weekly', rateLimits.seven_day_opus, WEEK_MINUTES),
+    ...windowRow(
+      'seven_day_oauth_apps',
+      'OAuth apps weekly',
+      rateLimits.seven_day_oauth_apps,
+      WEEK_MINUTES,
+    ),
   ]
   const labels = new Set(limits.map((limit) => limit.label))
   for (const window of rateLimits.model_scoped ?? []) {
@@ -101,13 +126,17 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
     if (!name) continue
     const label = `${name.charAt(0).toUpperCase()}${name.slice(1)} weekly`
     if (labels.has(label)) continue
-    const [row] = windowRow(label, window)
+    const slug = modelSlug(name)
+    if (!slug) continue
+    const [row] = windowRow(`model:${slug}`, label, window, WEEK_MINUTES)
     if (!row) continue
     limits.push(row)
     labels.add(label)
   }
   if (rateLimits.extra_usage?.is_enabled) {
-    limits.push(...windowRow('Extra usage', { ...rateLimits.extra_usage, resets_at: null }))
+    limits.push(
+      ...windowRow('extra_usage', 'Extra usage', { ...rateLimits.extra_usage, resets_at: null }),
+    )
   }
   return { status: 'ready', limits }
 }
