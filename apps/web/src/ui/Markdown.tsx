@@ -269,15 +269,16 @@ function mountLiveTaskMarker(parent: HTMLElement, checked: boolean): void {
 /**
  * Applies parser operations to the live DOM and returns how many characters
  * of text it appended after the last reset. Sealed leaves fold back into
- * their neighbours unless `compact` is false: a reveal cursor holds a
+ * their neighbours unless the reveal is tracking the reply: it holds a
  * position inside those text nodes until the reply is complete.
  */
 function applyLiveMarkdown(
   root: HTMLElement,
   dom: LiveMarkdownDom,
   operations: LiveMarkdownOperation[],
-  compact: boolean,
+  reveal: RevealCursor,
 ): number {
+  const compact = !reveal.tracking
   const pendingLeaves = new Map<number, { parent: HTMLElement; text: string[] }>()
   let appended = 0
   let bufferedParent: HTMLElement | undefined
@@ -313,6 +314,8 @@ function applyLiveMarkdown(
     if (operation.type === 'node.open') {
       flushText()
       openLiveMarkdownNode(parent, dom, operation)
+      // A code chip laid out ahead would show as an empty box until its text arrives.
+      if (operation.node === 'inline-code') reveal.holdBox(dom.stack.at(-1)!)
       continue
     }
     if (operation.type === 'node.close') {
@@ -374,26 +377,26 @@ function appendLiveMarkdown(
   root: HTMLElement,
   dom: LiveMarkdownDom,
   text: string,
-  compact: boolean,
+  reveal: RevealCursor,
 ): number {
   const update =
     text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
       ? dom.parser.appendLarge(text)
       : dom.parser.append(text)
-  return applyLiveMarkdown(root, dom, update.operations, compact)
+  return applyLiveMarkdown(root, dom, update.operations, reveal)
 }
 
 function replaceLiveMarkdown(
   root: HTMLElement,
   dom: LiveMarkdownDom,
   text: string,
-  compact: boolean,
+  reveal: RevealCursor,
 ): number {
   const update =
     text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
       ? dom.parser.replaceLarge(text)
       : dom.parser.replace(text)
-  return applyLiveMarkdown(root, dom, update.operations, compact)
+  return applyLiveMarkdown(root, dom, update.operations, reveal)
 }
 
 /**
@@ -459,13 +462,12 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
       // Mounted again over text that is already shown.
       if (initialized.current) reveal.reset()
     }
-    const compact = !reveal.tracking
     /** The text the parser has seen. */
     let consumed = text
 
     if (!initialized.current) {
       initialized.current = true
-      const appended = replaceLiveMarkdown(element, live, text, compact)
+      const appended = replaceLiveMarkdown(element, live, text, reveal)
       if (busy && appended <= INITIAL_REVEAL_MAX_CHARACTERS) reveal.appended(appended)
       else reveal.reset()
     } else if (liveUpdate && updateVersion !== lastVersion.current) {
@@ -474,9 +476,9 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
         text.length === lastText.current.length + liveUpdate.text.length &&
         text.endsWith(liveUpdate.text)
       if (exactAppend) {
-        reveal.appended(appendLiveMarkdown(element, live, liveUpdate.text, compact))
+        reveal.appended(appendLiveMarkdown(element, live, liveUpdate.text, reveal))
       } else {
-        replaceLiveMarkdown(element, live, text, compact)
+        replaceLiveMarkdown(element, live, text, reveal)
         reveal.reset()
       }
     } else if (text !== lastText.current) {
@@ -484,11 +486,11 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
       // The last words of a reply can come with its completion instead of a
       // delta, and a finished summary is trimmed: neither starts over.
       if (text.startsWith(shown)) {
-        reveal.appended(appendLiveMarkdown(element, live, text.slice(shown.length), compact))
+        reveal.appended(appendLiveMarkdown(element, live, text.slice(shown.length), reveal))
       } else if (shown.startsWith(text) && shown.slice(text.length).trim() === '') {
         consumed = shown
       } else {
-        replaceLiveMarkdown(element, live, text, compact)
+        replaceLiveMarkdown(element, live, text, reveal)
         reveal.reset()
       }
     }

@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { describe, expect, it, vi } from 'vitest'
-import { REVEAL_FRESH, createRevealClock } from './reveal-clock.js'
+import { REVEAL_FRESH, REVEAL_PENDING_ATTRIBUTE, createRevealClock } from './reveal-clock.js'
 import { fakeRevealEnvironment as fakeEnvironment, visibleText } from './reveal-clock.fixture.js'
 
 function liveRoot() {
@@ -378,5 +378,49 @@ describe('reveal clock leading edge', () => {
     cursor.appended(100)
     fake.frame(16)
     for (const name of REVEAL_FRESH) expect(fake.ranges(name)).toHaveLength(0)
+  })
+})
+
+describe('reveal clock held boxes', () => {
+  it('shows a held box only once the edge reaches its text', () => {
+    const fake = fakeEnvironment()
+    const { root, paragraph, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    text.appendData('Run the tests with ')
+    const code = document.createElement('code')
+    paragraph.append(code)
+    cursor.holdBox(code)
+    code.append('pnpm test')
+    cursor.appended(19 + 9)
+    expect(code.hasAttribute(REVEAL_PENDING_ATTRIBUTE)).toBe(true)
+
+    while (fake.pendingFrames() > 0) {
+      fake.frame(16)
+      const shown = visibleText(root, fake.ranges()).length
+      // Held while the edge is in the prose before it, shown from its first character.
+      if (shown <= 19) expect(code.hasAttribute(REVEAL_PENDING_ATTRIBUTE)).toBe(true)
+      if (shown > 19) expect(code.hasAttribute(REVEAL_PENDING_ATTRIBUTE)).toBe(false)
+    }
+    expect(visibleText(root, fake.ranges())).toBe('Run the tests with pnpm test')
+  })
+
+  it('lets every held box go when everything shows, and holds none without motion', () => {
+    const fake = fakeEnvironment()
+    const { root, paragraph, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    text.appendData(prose(100))
+    const code = document.createElement('code')
+    code.append('later')
+    paragraph.append(code)
+    cursor.holdBox(code)
+    cursor.appended(105)
+    cursor.reset()
+    expect(code.hasAttribute(REVEAL_PENDING_ATTRIBUTE)).toBe(false)
+
+    fake.setMotion(false)
+    const another = document.createElement('code')
+    paragraph.append(another)
+    cursor.holdBox(another)
+    expect(another.hasAttribute(REVEAL_PENDING_ATTRIBUTE)).toBe(false)
   })
 })

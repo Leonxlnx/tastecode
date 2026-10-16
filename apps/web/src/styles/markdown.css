@@ -541,6 +541,16 @@
   text-decoration-color: transparent;
 }
 
+/* A code chip whose text is still veiled would show as an empty box; it
+   fades in once the reveal reaches its first character. */
+.md[data-streaming-markdown] :not(pre) > code {
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.md [data-reveal-pending] {
+  background-color: transparent;
+}
+
 /* The soft leading edge: the characters shown last fade in through three
    steps. A highlight's currentColor is not the colour of the text it covers,
    so every element that sets its own text colour names it here as well. */

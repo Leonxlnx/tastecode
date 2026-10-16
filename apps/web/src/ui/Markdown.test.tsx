@@ -483,6 +483,15 @@ describe('Markdown streaming reveal', () => {
     expect(shown(container)).toBe('Hello there')
   })
 
+  it('shows a code chip once the reveal reaches it, not ahead of its text', () => {
+    const { container } = render(<Markdown text="Now run `pnpm test` again" streaming />)
+    const code = () => container.querySelector('code')!
+    expect(code().hasAttribute('data-reveal-pending')).toBe(true)
+    frames(40)
+    expect(shown(container)).toBe('Now run pnpm test again')
+    expect(code().hasAttribute('data-reveal-pending')).toBe(false)
+  })
+
   it('shows a reply opened mid-stream at once', () => {
     const text = 'Opened later. '.repeat(40)
     const { container } = render(<Markdown text={text} streaming />)

@@ -75,6 +75,8 @@ const RAMP_RETIME_MS = 250
 export const REVEAL_VEIL = 'md-veil'
 /** The fade bands behind the edge, nearest first. */
 export const REVEAL_FRESH = ['md-fresh-1', 'md-fresh-2', 'md-fresh-3'] as const
+/** Marks a held box; see RevealCursor.holdBox. */
+export const REVEAL_PENDING_ATTRIBUTE = 'data-reveal-pending'
 
 /** Text inside these is chrome, not reply text: the reveal steps over it. */
 const LABEL_SELECTOR = "[data-streamdown='code-block-header']"
@@ -201,6 +203,12 @@ export interface RevealCursor {
   finish(): void
   dispose(): void
   /**
+   * An element whose own box (an inline code chip's background) should
+   * appear only once the reveal reaches its text, instead of ahead of it. It
+   * carries REVEAL_PENDING_ATTRIBUTE until then.
+   */
+  holdBox(element: Element): void
+  /**
    * True while the root's text nodes must stay where they are: the cursor
    * holds a position inside them. False where nothing is ever veiled.
    */
@@ -231,7 +239,11 @@ class TextPosition {
   count = 0
   private readonly walker: TreeWalker
 
-  constructor(private readonly root: HTMLElement) {
+  constructor(
+    private readonly root: HTMLElement,
+    /** Called for each text node the position moves into. */
+    private readonly onEnter?: (node: Text) => void,
+  ) {
     this.walker = root.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT, SKIP_LABELS)
   }
 
@@ -256,6 +268,7 @@ class TextPosition {
       if (!next) break
       node = next
       offset = 0
+      this.onEnter?.(next)
     }
     this.node = node
     this.offset = offset
@@ -303,6 +316,8 @@ class Cursor implements RevealCursor {
   /** Recent frames: when, and how many characters the edge had passed. */
   private readonly times: number[] = []
   private readonly counts: number[] = []
+  /** Boxes waiting for the edge; see holdBox. */
+  private readonly held = new Set<Element>()
   private rampMs = RAMP_MAX_MS
   private rampSetAt = -Infinity
   private lastTick: number | undefined
@@ -316,7 +331,7 @@ class Cursor implements RevealCursor {
     private readonly root: HTMLElement,
     private readonly onDrained: (() => void) | undefined,
   ) {
-    this.edge = new TextPosition(root)
+    this.edge = new TextPosition(root, (node) => this.enter(node))
     this.trail = [new TextPosition(root), new TextPosition(root), new TextPosition(root)]
   }
 
@@ -361,11 +376,32 @@ class Cursor implements RevealCursor {
     if (this.fallback !== undefined) this.clock.env.clearTimer(this.fallback)
     if (this.veil) this.clock.veil.delete(this.veil)
     this.veil = undefined
+    this.releaseBoxes()
     this.bands.forEach((band, index) => {
       if (band) this.clock.fresh[index]!.delete(band)
       this.bands[index] = undefined
     })
     this.clock.forget(this)
+  }
+
+  holdBox(element: Element): void {
+    if (this.disposed || !this.clock.env.motionAllowed()) return
+    element.setAttribute(REVEAL_PENDING_ATTRIBUTE, '')
+    this.held.add(element)
+  }
+
+  /** The edge reached `node`: the boxes around it show. */
+  private enter(node: Text): void {
+    if (this.held.size === 0) return
+    for (let element = node.parentElement; element && element !== this.root;) {
+      if (this.held.delete(element)) element.removeAttribute(REVEAL_PENDING_ATTRIBUTE)
+      element = element.parentElement
+    }
+  }
+
+  private releaseBoxes(): void {
+    for (const element of this.held) element.removeAttribute(REVEAL_PENDING_ATTRIBUTE)
+    this.held.clear()
   }
 
   /** Shows everything at once; a finished reply has drained. */
@@ -378,6 +414,7 @@ class Cursor implements RevealCursor {
   private showAll(): void {
     if (this.disposed) return
     this.edge.seek(Number.POSITIVE_INFINITY)
+    this.releaseBoxes()
     for (const position of this.trail) position.seek(this.edge.count)
     this.pace.settle(this.edge.count)
     this.lastTick = undefined
@@ -525,6 +562,7 @@ class InertCursor implements RevealCursor {
   private drained = false
   constructor(private readonly onDrained: (() => void) | undefined) {}
   appended(): void {}
+  holdBox(): void {}
   reset(): void {}
   finish(): void {
     if (this.drained) return
