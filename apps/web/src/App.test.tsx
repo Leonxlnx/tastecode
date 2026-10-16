@@ -1820,10 +1820,13 @@ describe('web client', () => {
       },
     ]
     // The names the adapters give these rows; the defaults read their generation there.
-    const names: Record<string, string> = { opus: 'Opus 5.5', 'claude-opus-4-8': 'Opus 4.8' }
+    const names = new Map([
+      ['opus', 'Opus 5.5'],
+      ['claude-opus-4-8', 'Opus 4.8'],
+    ])
     const listed = (id: string, isDefault = false) => ({
       id,
-      displayName: names[id] ?? id,
+      displayName: names.get(id) ?? id,
       isDefault,
       reasoningEfforts: [],
       serviceTiers: [],
@@ -2492,10 +2495,13 @@ describe('web client', () => {
           },
         },
       ]
-      const names: Record<string, string> = { opus: 'Opus 5.5', 'claude-opus-5': 'Opus 5' }
+      const names = new Map([
+        ['opus', 'Opus 5.5'],
+        ['claude-opus-5', 'Opus 5'],
+      ])
       const listedModel = (id: string) => ({
         id,
-        displayName: names[id] ?? id,
+        displayName: names.get(id) ?? id,
         isDefault: false,
         reasoningEfforts: [],
         serviceTiers: [],
