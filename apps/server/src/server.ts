@@ -44,6 +44,8 @@ import { ProviderHistory } from './provider-history.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
+/** When no client has asked for its projects by then, background work starts anyway. */
+const BACKGROUND_WORK_DELAY_MS = 1_500
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -344,11 +346,21 @@ export function startServer(
 
   // Background startup work starts CLIs for their versions, reads the Windows
   // PATH from the registry, scans every saved provider session and recovers
-  // worktrees.
+  // worktrees. Much of it holds the event loop for seconds (a Codex index read,
+  // version probes, adapter modules loading), and the renderer's first
+  // requests waited behind all of it. It now starts once the first client has
+  // its project list, or shortly after listening when no client comes.
   let backgroundStarted = false
+  let backgroundTimer: ReturnType<typeof setTimeout> | undefined
+  wss.once('listening', () => {
+    if (backgroundStarted || historyClosing) return
+    backgroundTimer = setTimeout(startBackgroundWork, BACKGROUND_WORK_DELAY_MS)
+    backgroundTimer.unref()
+  })
   function startBackgroundWork(): void {
     if (backgroundStarted || historyClosing) return
     backgroundStarted = true
+    clearTimeout(backgroundTimer)
     void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
     startProviderHistory()
     // A previous run killed mid-session leaves git believing in checkouts that
@@ -356,7 +368,6 @@ export function startServer(
     // starts instead of failing with a message about our own leftovers.
     void orchestrator.recoverWorktrees().catch(() => undefined)
   }
-  startBackgroundWork()
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -368,6 +379,8 @@ export function startServer(
   }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
+    // An imported chat or a turn needs the scan now, not after the start delay.
+    startBackgroundWork()
     let history: ProviderHistory
     try {
       if (!initialProviderHistory) throw new Error('Provider history is closed')
@@ -468,6 +481,8 @@ export function startServer(
       )
     } finally {
       if (createsSession) historySessionStarts -= 1
+      // One turn of the event loop first, so the answer leaves before the work starts.
+      if (method === 'projects.list' && !backgroundStarted) setImmediate(startBackgroundWork)
     }
   }
 
@@ -1276,6 +1291,7 @@ export function startServer(
     port,
     close: async () => {
       historyClosing = true
+      clearTimeout(backgroundTimer)
       clearInterval(providerHistoryTimer)
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
