@@ -76,6 +76,29 @@ describe('checkpoint index', () => {
     expect(checkpointForItem(steered, index, [first, steered])).toBeUndefined()
   })
 
+  it('matches a local prompt cut inside an emoji to the 59-character label', () => {
+    const text = 'y'.repeat(59) + '🌊 reply with ok'
+    const item = prompt('wave', 10, text)
+    const index = createCheckpointIndex([{ id: 1, label: 'y'.repeat(59), createdAt: 15 }])
+    expect(item.id).toBe('local:wave')
+    expect(checkpointForItem(item, index, [item])).toEqual({
+      id: 1,
+      label: 'y'.repeat(59),
+      createdAt: 15,
+    })
+  })
+
+  it('cuts a long ascii prompt label at 60 code units', () => {
+    const text = 'a'.repeat(80)
+    const item = prompt('ascii', 10, text)
+    const index = createCheckpointIndex([{ id: 1, label: 'a'.repeat(60), createdAt: 15 }])
+    expect(checkpointForItem(item, index, [item])).toEqual({
+      id: 1,
+      label: 'a'.repeat(60),
+      createdAt: 15,
+    })
+  })
+
   it('ignores non-user items and indexes a transcript only once', () => {
     let reads = 0
     const first = prompt('first', 10)

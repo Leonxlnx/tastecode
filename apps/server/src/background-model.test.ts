@@ -484,6 +484,14 @@ describe('background output shaping', () => {
     )
   })
 
+  it('drops the high surrogate when a generated title is cut inside an emoji', () => {
+    expect(cleanGeneratedTitle('z'.repeat(59) + '🌊 tail', 'Fallback')).toBe('z'.repeat(59))
+  })
+
+  it('cuts a long ascii generated title at 60 code units', () => {
+    expect(cleanGeneratedTitle('m'.repeat(80), 'Fallback')).toBe('m'.repeat(60))
+  })
+
   it('renders a bounded structured diff for commit-message drafting', () => {
     const prompt = commitMessagePrompt({
       threadId: 'workspace',
