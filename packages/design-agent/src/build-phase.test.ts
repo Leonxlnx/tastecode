@@ -107,6 +107,25 @@ describe('build phase', () => {
     ).toMatchObject({ status: 'complete', files: ['src/App.tsx'] })
   })
 
+  it('accepts reported folders, as Codex lists generated output', () => {
+    const report = (files: string[]) =>
+      JSON.stringify({ status: 'complete', summary: 'Built.', files, checks: [] })
+    const output = parseBuildPhaseOutput(report(['index.html', 'dist/', '.taste\\evidence\\']))
+    expect(output.files).toEqual(['index.html', 'dist', '.taste\\evidence'])
+    expect(() => parseBuildPhaseOutput(report(['../outside/']))).toThrow('relative paths')
+    expect(() => parseBuildPhaseOutput(report(['/']))).toThrow('relative paths')
+
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-reported-folder-'))
+    try {
+      mkdirSync(path.join(workspace, 'dist'))
+      writeFileSync(path.join(workspace, 'dist', 'index.html'), '<main>Roastery</main>')
+      expect(() => validateDesignSourceQuality(workspace, output.files.slice(1, 2))).not.toThrow()
+      expect(() => validateDesignSourceQuality(workspace, ['missing'])).toThrow('does not exist')
+    } finally {
+      rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
   it('rejects generated one-sided card rails before Preview', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-source-quality-'))
     try {
