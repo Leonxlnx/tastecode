@@ -89,6 +89,114 @@ const TodoInputSchema = z.object({
     }),
   ),
 })
+const TaskUpdateInputSchema = z.object({
+  subject: z.string().optional(),
+  status: z.string().optional(),
+})
+const TaskCreateResultSchema = z.object({
+  task: z.object({
+    id: z.string(),
+    subject: z.string(),
+  }),
+})
+const TaskUpdateResultSchema = z.object({
+  success: z.boolean().optional(),
+  taskId: z.string(),
+  updatedFields: z.array(z.string()).optional(),
+  statusChange: z
+    .object({
+      to: z.string(),
+    })
+    .optional(),
+})
+
+type ClaudeTask = {
+  id: string
+  subject: string
+  status: string
+}
+
+type PendingTaskTool = { kind: 'create' } | { kind: 'update'; subject?: string; status?: string }
+
+function claudePlanStatus(status: string): 'done' | 'running' | 'pending' {
+  if (status === 'completed') return 'done'
+  if (status === 'in_progress') return 'running'
+  return 'pending'
+}
+
+function claudePlanSteps(tasks: readonly ClaudeTask[]) {
+  return tasks.flatMap((task) => {
+    const text = task.subject.trim()
+    if (!text) return []
+    return [{ text, status: claudePlanStatus(task.status) }]
+  })
+}
+
+function insertClaudeTask(
+  tasks: readonly ClaudeTask[],
+  id: string,
+  subject: string,
+): ClaudeTask[] | undefined {
+  const taskId = id.trim()
+  const text = subject.trim()
+  if (!taskId || !text) return undefined
+  const index = tasks.findIndex((task) => task.id === taskId)
+  if (index === -1) return [...tasks, { id: taskId, subject: text, status: 'pending' }]
+  const current = tasks[index]
+  if (!current || current.subject === text) return undefined
+  const next = tasks.slice()
+  next[index] = { ...current, subject: text }
+  return next
+}
+
+function changeClaudeTask(
+  tasks: readonly ClaudeTask[],
+  id: string,
+  change: { subject?: string; status?: string },
+): ClaudeTask[] | undefined {
+  const index = tasks.findIndex((task) => task.id === id)
+  if (index === -1) return undefined
+  if (change.status === 'deleted') return tasks.filter((task) => task.id !== id)
+  const current = tasks[index]
+  if (!current) return undefined
+  const text = change.subject?.trim()
+  const subject = text ? text : current.subject
+  const status = change.status ?? current.status
+  if (subject === current.subject && status === current.status) return undefined
+  const next = tasks.slice()
+  next[index] = { id: current.id, subject, status }
+  return next
+}
+
+function createdClaudeTask(tasks: readonly ClaudeTask[], raw: unknown): ClaudeTask[] | undefined {
+  const parsed = TaskCreateResultSchema.safeParse(raw)
+  if (!parsed.success) return undefined
+  return insertClaudeTask(tasks, parsed.data.task.id, parsed.data.task.subject)
+}
+
+function updatedClaudeTask(
+  tasks: readonly ClaudeTask[],
+  pending: Extract<PendingTaskTool, { kind: 'update' }>,
+  raw: unknown,
+): ClaudeTask[] | undefined {
+  const parsed = TaskUpdateResultSchema.safeParse(raw)
+  if (!parsed.success || parsed.data.success === false) return undefined
+  const fields = parsed.data.updatedFields
+  const mentioned = (field: string) => fields === undefined || fields.includes(field)
+  const status = parsed.data.statusChange?.to ?? (mentioned('status') ? pending.status : undefined)
+  const subject = mentioned('subject') ? pending.subject : undefined
+  return changeClaudeTask(tasks, parsed.data.taskId.trim(), {
+    ...(status !== undefined ? { status } : {}),
+    ...(subject !== undefined ? { subject } : {}),
+  })
+}
+
+/** claude 2.1.302 omits TaskCreate and TaskUpdate unless this is set. */
+function withClaudeTodoTools(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (environment['CLAUDE_CODE_ENABLE_TODO_TOOLS'] !== undefined) return environment
+  return { ...environment, CLAUDE_CODE_ENABLE_TODO_TOOLS: '1' }
+}
+
 const UserInputSchema = z.object({
   questions: z.array(
     z.object({
@@ -429,6 +537,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
   readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
+  #tasks: ClaudeTask[] = []
+  readonly #pendingTaskTools = new Map<string, PendingTaskTool>()
 
   constructor(
     options: {
@@ -750,6 +860,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   ): Promise<void> {
     if (this.#query || this.#promptQueue || this.#starting)
       throw new Error('Claude adapter already has a session')
+    this.#tasks = []
+    this.#pendingTaskTools.clear()
     this.#disposed = false
     this.#sessionGeneration += 1
     this.#threadId = threadId
@@ -877,7 +989,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const line = chunk.trimEnd()
       if (line) this.emit('log', line)
     }
-    return {
+    const options: ClaudeQueryOptions = {
       pathToClaudeCodeExecutable: 'claude',
       env: { ...this.#environment },
       spawnClaudeCodeProcess: claudeSdkSpawner(
@@ -897,6 +1009,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       ),
       ...overrides,
     }
+    options.env = withClaudeTodoTools(options.env ?? {})
+    return options
   }
 
   /** The runtime can still decline Ultracode, for example after dynamic workflows were turned off. */
@@ -1011,6 +1125,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
             }
           : event
       this.#emitDomainEvents(toDomainEvents(filtered, turnId, this.#toolCalls))
+      this.#noteTaskTools(event)
       this.#emitTodoPlan(event)
       return
     }
@@ -1023,6 +1138,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         return
       }
       this.#emitDomainEvents(toDomainEvents(parsed.data, this.#activeTurnId, this.#toolCalls))
+      this.#applyTaskResult(parsed.data)
       return
     }
 
@@ -1236,6 +1352,44 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     }
   }
 
+  #noteTaskTools(event: ClaudeEvent): void {
+    for (const block of event.message?.content ?? []) {
+      if (block.type !== 'tool_use' || !block.id) continue
+      if (block.name === 'TaskCreate') {
+        this.#pendingTaskTools.set(block.id, { kind: 'create' })
+        continue
+      }
+      if (block.name !== 'TaskUpdate') continue
+      const parsed = TaskUpdateInputSchema.safeParse(block.input ?? {})
+      const input = parsed.success ? parsed.data : {}
+      this.#pendingTaskTools.set(block.id, {
+        kind: 'update',
+        ...(input.subject !== undefined ? { subject: input.subject } : {}),
+        ...(input.status !== undefined ? { status: input.status } : {}),
+      })
+    }
+  }
+
+  #applyTaskResult(event: ClaudeEvent): void {
+    const turnId = this.#activeTurnId
+    if (!turnId) return
+    const results = (event.message?.content ?? []).filter((block) => block.type === 'tool_result')
+    const block = results.length === 1 ? results[0] : undefined
+    const toolUseId = block?.tool_use_id
+    if (!block || !toolUseId) return
+    const pending = this.#pendingTaskTools.get(toolUseId)
+    if (!pending) return
+    this.#pendingTaskTools.delete(toolUseId)
+    if (block.is_error) return
+    const next =
+      pending.kind === 'create'
+        ? createdClaudeTask(this.#tasks, event.tool_use_result)
+        : updatedClaudeTask(this.#tasks, pending, event.tool_use_result)
+    if (!next) return
+    this.#tasks = next
+    this.emit('event', { type: 'plan.updated', turnId, steps: claudePlanSteps(this.#tasks) })
+  }
+
   #emitTodoPlan(event: ClaudeEvent): void {
     const content = event.message?.content ?? []
     for (const block of content) {
@@ -1246,18 +1400,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const steps = parsed.data.todos.flatMap((todo) => {
         const text = todo.content.trim()
         if (!text) return []
-        const rawStatus = todo.status ?? 'pending'
-        return [
-          {
-            text,
-            status:
-              rawStatus === 'completed'
-                ? ('done' as const)
-                : rawStatus === 'in_progress'
-                  ? ('running' as const)
-                  : ('pending' as const),
-          },
-        ]
+        return [{ text, status: claudePlanStatus(todo.status ?? 'pending') }]
       })
       if (steps.length > 0 && this.#activeTurnId) {
         this.emit('event', { type: 'plan.updated', turnId: this.#activeTurnId, steps })
@@ -1417,6 +1560,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamItems.clear()
     this.#toolCalls.clear()
     this.#streamedMessageIds.clear()
+    this.#pendingTaskTools.clear()
   }
 
   #completeStreamingItems(status: 'completed' | 'failed'): void {
