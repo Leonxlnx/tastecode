@@ -167,15 +167,20 @@ type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
 const REFRESH_ERROR_LIMIT = 300
 const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
 
+/** A held source without the marks of an earlier failed refresh. */
+function heldValues(source: ReadyLimitSource): ReadyLimitSource {
+  const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = source
+  return values
+}
+
 /**
  * The held values of a source whose newest refresh failed. They keep the
  * time they were read, so clients can say how old they are.
  */
 function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLimitSource {
-  const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = held
   const message = failure.error instanceof Error ? failure.error.message.trim() : ''
   return {
-    ...values,
+    ...heldValues(held),
     stale: true,
     refreshError: message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK,
     // A source that ran out of timeouts waits for an account change, not a time.
