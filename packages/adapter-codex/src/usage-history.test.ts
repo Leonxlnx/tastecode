@@ -1,8 +1,8 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
-import { readCodexUsageHistory } from './usage-history.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CODEX_USAGE_HISTORY, readCodexUsageHistory } from './usage-history.js'
 
 const temporaryDirectories: string[] = []
 
@@ -198,6 +198,31 @@ describe('Codex usage history', () => {
           processedTokens: 250,
         }),
       }),
+    ])
+  })
+})
+
+describe('Codex usage history source', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('reads rollouts from the sessions folder of the given home, CODEX_HOME or ~/.codex', async () => {
+    const account = path.join(os.tmpdir(), 'codex-account')
+    expect(CODEX_USAGE_HISTORY.root(account)).toBe(path.join(account, 'sessions'))
+
+    vi.stubEnv('CODEX_HOME', path.join(os.tmpdir(), 'codex-home'))
+    expect(CODEX_USAGE_HISTORY.root()).toBe(path.join(os.tmpdir(), 'codex-home', 'sessions'))
+
+    vi.stubEnv('CODEX_HOME', undefined)
+    expect(CODEX_USAGE_HISTORY.root()).toBe(path.join(os.homedir(), '.codex', 'sessions'))
+
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-codex-sessions-'))
+    temporaryDirectories.push(directory)
+    await writeFile(path.join(directory, 'rollout.jsonl'), '{}\n')
+    const archive = await CODEX_USAGE_HISTORY.discover(directory)
+    expect(archive.files.map((file) => [path.basename(file.path), file.read])).toEqual([
+      ['rollout.jsonl', readCodexUsageHistory],
     ])
   })
 })
