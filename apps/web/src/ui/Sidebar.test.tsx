@@ -816,6 +816,15 @@ describe('Sidebar chat actions', () => {
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'TasteCode' }))
   })
 
+  it('names the project rename field after the project', () => {
+    renderProjectCatalog([{ path: '/work/proj', name: 'proj', sessions: [] }])
+
+    fireEvent.contextMenu(screen.getByRole('button', { name: 'proj' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit name' }))
+
+    expect(screen.getByRole('textbox', { name: 'Rename proj' })).toBeTruthy()
+  })
+
   it('confirms bulk archive and sidebar removal before acting', async () => {
     const onArchiveProject = vi.fn()
     const onRemoveProject = vi.fn()
