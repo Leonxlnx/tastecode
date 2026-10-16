@@ -817,7 +817,7 @@
 
 .settings__group-note {
   margin: 0;
-  padding: 10px 12px;
+  padding: 10px 14px;
   border-top: 1px solid var(--line);
 }
 
@@ -826,7 +826,7 @@
 }
 
 .settings__group-title--inside {
-  margin: 12px 12px 4px;
+  margin: 12px 14px 4px;
 }
 
 .provider-settings__status,
@@ -1329,7 +1329,7 @@
 }
 
 .background-model-settings > header {
-  padding: 10px 12px;
+  padding: 10px 14px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1359,7 +1359,7 @@
 }
 
 .background-model-settings__error {
-  padding: 10px 16px;
+  padding: 10px 14px;
   border-top: 1px solid var(--line);
   color: var(--error);
   font-size: var(--t-sm);
@@ -1380,7 +1380,7 @@
   align-items: center;
   gap: 10px;
   min-height: 60px;
-  padding: 12px;
+  padding: 12px 14px;
   background: var(--bg-rail);
   border: 1px solid var(--chrome-border);
   border-radius: var(--r-lg);
@@ -1401,7 +1401,7 @@
   align-items: center;
   gap: 12px;
   min-height: 40px;
-  padding: 6px 12px;
+  padding: 6px 14px;
   color: var(--text);
 }
 
@@ -1773,7 +1773,8 @@
   align-items: center;
   flex-direction: row;
   gap: 20px;
-  padding: 12px;
+  /* Same inset as every other row in a card, so titles line up down the card. */
+  padding: 12px 14px;
 }
 
 .settings .settings__row-control:has(> :is(.switch, .settings__switch-skeleton)) {
@@ -2281,7 +2282,7 @@
 
   .model-visibility__source,
   .model-visibility__model {
-    padding-inline: 12px;
+    padding-inline: 14px;
   }
 
   .model-visibility__model {
