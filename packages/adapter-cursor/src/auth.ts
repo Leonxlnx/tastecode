@@ -1,8 +1,13 @@
 import type { Account } from '@harness/contracts'
-import { killTree, runCli, spawnCli } from '@harness/proc'
+import { killTree, type runCli } from '@harness/proc'
+import { CURSOR_COMMAND_TIMEOUT_MS, runCursorAgent, spawnCursorAgent } from './launch.js'
 
-export async function cursorAccount(run: typeof runCli = runCli): Promise<Account> {
-  const status = await run('cursor-agent', ['status'])
+/**
+ * A read that runs out of time rejects, so the caller keeps the last answer
+ * it had instead of hearing that a signed-in account is signed out.
+ */
+export async function cursorAccount(run: typeof runCli = runCursorAgent): Promise<Account> {
+  const status = await run('cursor-agent', ['status'], CURSOR_COMMAND_TIMEOUT_MS)
   if (status.code !== 0 || !isCursorSignedIn(status.stdout)) return { signedIn: false }
   // `status` calls any stored token pair logged in, even one that expired
   // weeks ago. It only adds that it could not fetch the user, which an
@@ -11,7 +16,9 @@ export async function cursorAccount(run: typeof runCli = runCli): Promise<Accoun
   // expired sign-in becomes signed out and the app offers Sign in again,
   // while an offline machine with a valid sign-in stays signed in.
   if (!/unable to fetch user details/i.test(status.stdout)) return { signedIn: true }
-  const probe = await run('cursor-agent', ['models']).catch(() => undefined)
+  const probe = await run('cursor-agent', ['models'], CURSOR_COMMAND_TIMEOUT_MS).catch(
+    () => undefined,
+  )
   return { signedIn: !(probe && cursorNeedsSignIn(probe)) }
 }
 
@@ -48,7 +55,7 @@ export function startCursorLogin(
   onComplete: (result: { loginId: string; success: boolean; error: string | null }) => void,
 ): CursorLogin {
   const loginId = crypto.randomUUID()
-  const child = spawnCli('cursor-agent', ['login'])
+  const child = spawnCursorAgent('cursor-agent', ['login'])
   // Nothing reads these pipes; an undrained pipe blocks the CLI once it has
   // written a buffer's worth (device codes, verbose retries) and the sign-in
   // would hang forever.
@@ -77,6 +84,6 @@ export function startCursorLogin(
 }
 
 export async function signOutCursor(): Promise<void> {
-  const result = await runCli('cursor-agent', ['logout'], 15_000)
+  const result = await runCursorAgent('cursor-agent', ['logout'])
   if (result.code !== 0) throw new Error('Cursor could not sign out.')
 }

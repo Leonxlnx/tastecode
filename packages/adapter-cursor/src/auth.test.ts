@@ -13,8 +13,10 @@ const capture = JSON.parse(
 
 function runs(answers: Record<string, CapturedRun | Error>) {
   const calls: string[] = []
-  const run = async (command: string, args: string[]) => {
+  const run = async (command: string, args: string[], timeoutMs?: number) => {
     expect(command).toBe('cursor-agent')
+    // Measured 3.5–14.5 s on a busy machine; the five-second default failed it.
+    expect(timeoutMs).toBe(30_000)
     const key = args.join(' ')
     calls.push(key)
     const answer = answers[key]
@@ -62,6 +64,15 @@ describe('Cursor authentication', () => {
     })
 
     await expect(cursorAccount(run)).resolves.toEqual({ signedIn: true })
+    expect(calls).toEqual(['status'])
+  })
+
+  it('rejects when status does not answer in time, so the last answer stays', async () => {
+    const { run, calls } = runs({
+      status: new Error('cursor-agent did not answer within 30 seconds.'),
+    })
+
+    await expect(cursorAccount(run)).rejects.toThrow('did not answer within 30 seconds')
     expect(calls).toEqual(['status'])
   })
 })
