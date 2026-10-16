@@ -392,6 +392,10 @@ function ProviderMcpSettings(props: {
   const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
   const projectServers =
     currentInventory?.servers.filter((server) => server.scope === 'project') ?? []
+  // The provider loads these in every chat whether or not the project adds anything;
+  // hiding them made a fully configured provider read as having no MCP servers.
+  const inheritedServers =
+    currentInventory?.servers.filter((server) => server.scope === 'global') ?? []
   const providerStatus = !props.projectPath
     ? 'Select a project to check MCP support.'
     : currentError && !currentInventory
@@ -408,7 +412,7 @@ function ProviderMcpSettings(props: {
         ? undefined
         : projectServers.length === 0
           ? !currentInventory.capabilities.inventory
-            ? `No project MCP servers have been added for ${props.providerName}. Provider-global inventory is unavailable here.`
+            ? `No MCP servers have been added to this project. ${props.providerName} chats still load the servers and plugins from ${props.providerName}'s own settings, which TasteCode cannot list here.`
             : 'No MCP servers have been added to this project.'
           : undefined
 
@@ -521,6 +525,34 @@ function ProviderMcpSettings(props: {
           ))}
         </div>
       ) : null}
+      {currentInventory && inheritedServers.length > 0 ? (
+        <section className="mcp-inherited" aria-labelledby="mcp-inherited-title">
+          <header className="mcp-inherited__header">
+            <h2 id="mcp-inherited-title">From {props.providerName} settings</h2>
+            <p>
+              Every {props.providerName} chat in this project loads these. Change them in{' '}
+              {props.providerName}
+              {currentInventory.capabilities.add && currentInventory.capabilities.inventory
+                ? ', or turn one off for this project only.'
+                : '.'}
+            </p>
+          </header>
+          <div className="settings__group">
+            {inheritedServers.map((server) => (
+              <ServerRow
+                key={server.id}
+                server={server}
+                capabilities={currentInventory.capabilities}
+                busy={busy.has(server.id)}
+                onSignIn={() => void signIn(server)}
+                onToggle={() => toggle(server)}
+                onEdit={() => undefined}
+                onRemove={() => undefined}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
     </section>
   )
 }
@@ -536,6 +568,7 @@ function ServerRow(props: {
 }) {
   const auth = props.server.auth
   const startup = props.server.startup
+  const inherited = props.server.scope === 'global'
   const needsOAuth =
     props.capabilities.startOAuth && auth?.status === 'sign_in_required' && auth.method === 'oauth'
   const canToggle =
@@ -551,12 +584,19 @@ function ServerRow(props: {
       <div className="settings__row-copy">
         <div className="mcp-row__heading">
           <h2>{props.server.displayName ?? props.server.id}</h2>
-          <span>{props.server.scope}</span>
+          {/* Inherited rows sit under their own heading, which already names the source. */}
+          {inherited ? null : <span>{props.server.scope}</span>}
           <span>
             {props.server.enabled ? (startup?.state ?? 'status unavailable') : 'disabled'}
           </span>
         </div>
-        <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
+        {inherited && !props.server.transport ? (
+          props.server.description ? (
+            <p className="mcp-row__transport">{props.server.description}</p>
+          ) : null
+        ) : (
+          <p className="mcp-row__transport">{transportLabel(props.server.transport)}</p>
+        )}
         {startup?.state === 'failed' ? (
           <p className="mcp-row__failure" role="alert">
             <AlertTriangle size={13} aria-hidden />

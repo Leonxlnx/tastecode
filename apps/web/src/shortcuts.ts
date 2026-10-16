@@ -309,7 +309,7 @@ export function shortcutLabel(shortcut: Shortcut, macOS: boolean): string {
       shortcut.primary ? 'Ctrl' : undefined,
       shortcut.alt ? 'Alt' : undefined,
       shortcut.shift ? 'Shift' : undefined,
-      ariaKey(shortcut.key),
+      windowsKey(shortcut.key),
     ]
       .filter(Boolean)
       .join('+')
@@ -477,6 +477,27 @@ function displayKey(key: string): string {
       return '⇥'
     default:
       return key.length === 1 ? key.toUpperCase() : key.replace(/^f/, 'F')
+  }
+}
+
+/**
+ * Key names the way Windows and Linux apps print them: arrows as arrows (the
+ * browser's own Alt+Left hint already does), Esc and Del abbreviated, the rest
+ * spelled out. The DOM names (ArrowDown) stay in aria-keyshortcuts only.
+ */
+function windowsKey(key: string): string {
+  switch (key) {
+    case 'arrowup':
+    case 'arrowdown':
+    case 'arrowleft':
+    case 'arrowright':
+      return displayKey(key)
+    case 'escape':
+      return 'Esc'
+    case 'delete':
+      return 'Del'
+    default:
+      return ariaKey(key)
   }
 }
 

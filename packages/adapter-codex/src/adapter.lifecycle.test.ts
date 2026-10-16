@@ -6,6 +6,18 @@ import type { JsonRpcValue } from '@harness/proc'
 import { CodexAdapter } from './adapter.js'
 
 const failures = vi.hoisted(() => [] as ((error: Error) => void)[])
+const stops = vi.hoisted(() => ({ failNext: 0 }))
+vi.mock('../../proc/src/kill.js', async (original) => {
+  const real = await original<typeof import('../../proc/src/kill.js')>()
+  return {
+    ...real,
+    killTree: (child: Parameters<typeof real.killTree>[0]) => {
+      if (stops.failNext <= 0) return real.killTree(child)
+      stops.failNext -= 1
+      return Promise.reject(new Error('Child process did not exit after forced termination'))
+    },
+  }
+})
 // Test the new proc interface from source without rebuilding a live server's dist.
 vi.mock('@harness/proc', async (original) => {
   const { StdioJsonRpc } = await import('../../proc/src/jsonrpc.js')
@@ -247,6 +259,17 @@ describe('Codex transport lifetime', () => {
     expect(disconnected).not.toHaveBeenCalled()
     await expect(adapter.account()).rejects.toThrow('adapter not started')
     expect(spawn).toHaveBeenCalledOnce()
+  })
+
+  it('tries to stop its process again after a failed stop', async () => {
+    const { adapter, first } = fixture()
+    await adapter.start()
+    stops.failNext = 1
+
+    await expect(adapter.dispose()).rejects.toThrow('did not exit after forced termination')
+    expect(first.child.exitCode).toBeNull()
+    await expect(adapter.dispose()).resolves.toBeUndefined()
+    expect(first.child.exitCode).toBe(0)
   })
 })
 

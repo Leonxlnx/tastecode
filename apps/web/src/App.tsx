@@ -129,11 +129,12 @@ import {
   choicesFor,
   customModelChoice,
   customModelKey,
+  defaultHiddenModelKeys,
+  defaultHiddenModels,
   isCustomModelChoice,
   migratePendingHiddenModels,
   MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
-  modelVisibleByDefault,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
@@ -1950,7 +1951,7 @@ export function App() {
         const current = hiddenModelsRef.current
         const candidates = modelVisibilityInitialized.current
           ? unlistedHiddenModels(models, listedModelsRef.current)
-          : models.filter((choice) => !modelVisibleByDefault(choice.model))
+          : defaultHiddenModels(models)
         const additions = candidates.filter((choice) => !current.has(choice.key))
         if (additions.length === 0) return
         const next = new Set(current)
@@ -2210,11 +2211,7 @@ export function App() {
       let hidden = hiddenModelsRef.current
       let hiddenChanged = false
       if (!modelVisibilityInitialized.current && catalogReady && catalog.length > 0) {
-        hidden = new Set(
-          catalog
-            .filter((choice) => !modelVisibleByDefault(choice.model))
-            .map((choice) => choice.key),
-        )
+        hidden = defaultHiddenModelKeys(catalog)
         modelVisibilityInitialized.current = true
         hiddenChanged = true
       } else if (catalogReady) {
@@ -4896,6 +4893,11 @@ export function App() {
       setSearchJump((current) => (current?.request === request ? undefined : current)),
     [],
   )
+  // Leaving a chat before its jump lands abandons the jump. Kept, it would run
+  // on the next entry to that chat, which must open at the end instead.
+  useEffect(() => {
+    setSearchJump((current) => (current && current.threadId !== activeId ? undefined : current))
+  }, [activeId])
   const openSettings = useCallback((section: SettingsSection = 'workflows') => {
     setSettingsSection(requestSettingsSection(section))
     setSettingsOpen(true)
@@ -4940,9 +4942,7 @@ export function App() {
     modelVisibilityInitialized.current = true
     setHiddenModels((current) => {
       const next = new Set(current)
-      for (const choice of created ?? []) {
-        if (!modelVisibleByDefault(choice.model)) next.add(choice.key)
-      }
+      for (const hiddenKey of defaultHiddenModelKeys(created ?? [])) next.add(hiddenKey)
       if (visible) next.delete(key)
       else next.add(key)
       return next
@@ -5609,194 +5609,194 @@ export function App() {
                 />
               </Suspense>
             ) : (
-              <>
-                <StageHeader
-                  sessionId={active?.session.id}
-                  title={active?.session.title}
-                  pinned={active?.session.pinned ?? false}
-                  projectPath={activePath}
-                  checkpointCount={thread.running ? 0 : checkpoints.length}
-                  worktreeBranch={active?.session.worktreeBranch}
-                  keybindings={keybindings}
-                  menuActions={keybindingActions}
-                  onOpenRollback={openRollback}
-                  onRenameSession={renameSidebarSession}
-                  onToggleSessionPin={toggleSidebarSessionPin}
-                  onArchiveSession={deleteSidebarSession}
-                />
+              <StageHeader
+                sessionId={active?.session.id}
+                title={active?.session.title}
+                pinned={active?.session.pinned ?? false}
+                projectPath={activePath}
+                checkpointCount={thread.running ? 0 : checkpoints.length}
+                worktreeBranch={active?.session.worktreeBranch}
+                keybindings={keybindings}
+                menuActions={keybindingActions}
+                onOpenRollback={openRollback}
+                onRenameSession={renameSidebarSession}
+                onToggleSessionPin={toggleSidebarSessionPin}
+                onArchiveSession={deleteSidebarSession}
+              />
+            )}
 
-                <div
-                  className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
-                >
-                  <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
-                    {activeId ? (
-                      <Suspense fallback={<ThreadSkeleton />}>
-                        <LazyThread
-                          key={threadEntryKey}
-                          frameStore={threadFrameStore}
-                          errorsInComposer
-                          stopping={stopping}
-                          loading={loadingThreadId === activeId}
-                          loadFailure={
-                            historyFailure?.threadId === activeId
-                              ? historyFailure.message
-                              : undefined
-                          }
-                          onRetryLoad={retryOpenedHistory}
-                          projectPath={activePath}
-                          threadId={activeId}
-                          transport={transport}
-                          searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
-                          onSearchJumpDone={finishSearchJump}
-                          revealRequest={threadRevealRequest}
-                          checkpoints={checkpoints}
-                          onDecide={decideApproval}
-                          onAnswerUserInput={answerUserInput}
-                          onEditMessage={editMessage}
-                          onRevertCheckpoint={revertCheckpoint}
-                          onUndoChanges={undoTurnChanges}
-                          onLoadOlderHistory={loadOlderHistory}
-                          onLoadCompleteHistory={loadCompleteHistory}
-                        />
-                      </Suspense>
-                    ) : (
-                      <Empty
-                        projects={projects}
-                        activePath={activePath}
-                        status={projectsStatus}
-                        startupProjectName={startupProjectName}
-                        onAddProject={addSidebarProject}
-                        onRetry={retryProjects}
+            {/* The pull requests view covers the stage, but the bottom panel stays
+                mounted behind it so its tabs and running shells survive the visit. */}
+            <div
+              className={`stage__body${activeId ? '' : ' is-new-session'}${activePath && terminalOpen ? ' has-terminal' : ''}`}
+              hidden={surface === 'pull-requests'}
+            >
+              {surface === 'chat' ? (
+                <div className={`stage__conversation${activeId ? '' : ' is-new-session'}`}>
+                  {activeId ? (
+                    <Suspense fallback={<ThreadSkeleton />}>
+                      <LazyThread
+                        key={threadEntryKey}
+                        frameStore={threadFrameStore}
+                        errorsInComposer
+                        stopping={stopping}
+                        loading={loadingThreadId === activeId}
+                        loadFailure={
+                          historyFailure?.threadId === activeId ? historyFailure.message : undefined
+                        }
+                        onRetryLoad={retryOpenedHistory}
+                        projectPath={activePath}
+                        threadId={activeId}
+                        transport={transport}
+                        searchJump={searchJump?.threadId === activeId ? searchJump : undefined}
+                        onSearchJumpDone={finishSearchJump}
+                        revealRequest={threadRevealRequest}
+                        checkpoints={checkpoints}
+                        onDecide={decideApproval}
+                        onAnswerUserInput={answerUserInput}
+                        onEditMessage={editMessage}
+                        onRevertCheckpoint={revertCheckpoint}
+                        onUndoChanges={undoTurnChanges}
+                        onLoadOlderHistory={loadOlderHistory}
+                        onLoadCompleteHistory={loadCompleteHistory}
                       />
-                    )}
+                    </Suspense>
+                  ) : (
+                    <Empty
+                      projects={projects}
+                      activePath={activePath}
+                      status={projectsStatus}
+                      startupProjectName={startupProjectName}
+                      onAddProject={addSidebarProject}
+                      onRetry={retryProjects}
+                    />
+                  )}
 
-                    <Composer
+                  <Composer
+                    transport={transport}
+                    provider={provider}
+                    projects={projectChoices}
+                    projectPath={activePath}
+                    projectName={activeProject ? displayName(activeProject) : undefined}
+                    projectsLoading={projectsStatus === 'loading'}
+                    branch={
+                      (!activeId && activePath
+                        ? projectBranches.current.get(activePath)
+                        : undefined) ??
+                      active?.session.worktreeBranch ??
+                      workspace?.branch ??
+                      branches[0]
+                    }
+                    branches={branches}
+                    branchesLoading={Boolean(activePath) && branchesPath !== activePath}
+                    models={selectableModels}
+                    modelsLoaded={modelsLoaded}
+                    modelId={selectedModelChoice?.key}
+                    modelChoice={selectedModelChoice}
+                    modelPending={modelChoicePending}
+                    effort={selectedEffort}
+                    serviceTier={selectedServiceTier}
+                    usage={thread.usage}
+                    approval={displayedApproval}
+                    approvalLoading={approvalLoading}
+                    autoReviewSupported={autoReviewSupported}
+                    attachmentsSupported={attachmentsSupported}
+                    attachmentsLoading={catalogAvailability === 'loading'}
+                    voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
+                    voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
+                    disabled={stopping}
+                    placeholder={stopping ? 'Stopping…' : undefined}
+                    sendAvailability={sendAvailability}
+                    errors={composerErrors}
+                    errorsVisible={!settingsOpen && surface === 'chat'}
+                    providerError={composerProviderError}
+                    providerSignInRequired={providerStatuses.some(
+                      (status) => status.id === provider && status.installed,
+                    )}
+                    running={visibleRunning}
+                    newSession={!activeId}
+                    isolate={active?.session.worktreeBranch ? true : isolateSession}
+                    designMode={designMode}
+                    keybindings={keybindings}
+                    focusRequest={composerFocusRequest}
+                    draftRequest={composerDraft}
+                    onDraftChange={updateComposerDraftText}
+                    onAttachmentsChange={updateComposerDraftAttachments}
+                    onPendingAttachment={keepPendingAttachment}
+                    onPendingQueuedEdit={keepQueuedEdit}
+                    onResourcesChange={updateComposerDraftResources}
+                    onRecallLastPrompt={recallLastPrompt}
+                    onReady={handleComposerReady}
+                    queuedTurns={queuedTurns}
+                    canSteerQueue={canSteerQueue}
+                    onModelChange={selectModel}
+                    onEffortChange={changeEffort}
+                    onServiceTierChange={changeServiceTier}
+                    onApprovalChange={changeApproval}
+                    onIsolateChange={setIsolateSession}
+                    onDesignModeChange={changeDesignMode}
+                    onTranscribeVoice={transcribeVoice}
+                    onCancelVoice={cancelVoice}
+                    onProjectChange={selectProject}
+                    onBranchChange={changeBranch}
+                    onProjectRequired={requireProject}
+                    onSetupProvider={openProviderSetup}
+                    onSend={sendTurn}
+                    onSteer={steerTurn}
+                    onInterrupt={interrupt}
+                    stopping={stopping}
+                    onDeleteQueuedTurn={deleteQueuedTurn}
+                    onMoveQueuedTurn={moveQueuedTurn}
+                    onSteerQueuedTurn={steerQueuedTurn}
+                  />
+                </div>
+              ) : null}
+
+              {activePath && bottomTerminalMounted ? (
+                <div
+                  className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
+                  style={{ height: terminalHeight }}
+                  data-testid="bottom-terminal"
+                  aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
+                  inert={
+                    bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
+                      ? true
+                      : undefined
+                  }
+                  onTransitionEnd={finishBottomTerminalMotion}
+                >
+                  <Suspense
+                    fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
+                  >
+                    <BottomWorkspacePanel
+                      placement="bottom"
+                      open={terminalOpen}
+                      expanded={false}
+                      width={terminalHeight}
                       transport={transport}
-                      provider={provider}
-                      projects={projectChoices}
+                      threadId={activeId}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
-                      projectsLoading={projectsStatus === 'loading'}
-                      branch={
-                        (!activeId && activePath
-                          ? projectBranches.current.get(activePath)
-                          : undefined) ??
-                        active?.session.worktreeBranch ??
-                        workspace?.branch ??
-                        branches[0]
+                      branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                      theme={themeColorScheme}
+                      sideChatParentStatus={sideChatParentStatus}
+                      sideChatStartOptions={sideChatStartOptions}
+                      nativeSurfacesVisible={
+                        surface === 'chat' &&
+                        !settingsOpen &&
+                        paletteScope === null &&
+                        !rollbackOpen &&
+                        !checkoutDelete
                       }
-                      branches={branches}
-                      branchesLoading={Boolean(activePath) && branchesPath !== activePath}
-                      models={selectableModels}
-                      modelsLoaded={modelsLoaded}
-                      modelId={selectedModelChoice?.key}
-                      modelChoice={selectedModelChoice}
-                      modelPending={modelChoicePending}
-                      effort={selectedEffort}
-                      serviceTier={selectedServiceTier}
-                      usage={thread.usage}
-                      approval={displayedApproval}
-                      approvalLoading={approvalLoading}
-                      autoReviewSupported={autoReviewSupported}
-                      attachmentsSupported={attachmentsSupported}
-                      attachmentsLoading={catalogAvailability === 'loading'}
-                      voiceAvailable={isDesktop && provider === 'codex' && voiceAvailable}
-                      voiceLoading={isDesktop && provider === 'codex' && voiceStatusLoading}
-                      disabled={stopping}
-                      placeholder={stopping ? 'Stopping…' : undefined}
-                      sendAvailability={sendAvailability}
-                      errors={composerErrors}
-                      errorsVisible={!settingsOpen && surface === 'chat'}
-                      providerError={composerProviderError}
-                      providerSignInRequired={providerStatuses.some(
-                        (status) => status.id === provider && status.installed,
-                      )}
-                      running={visibleRunning}
-                      newSession={!activeId}
-                      isolate={active?.session.worktreeBranch ? true : isolateSession}
-                      designMode={designMode}
-                      keybindings={keybindings}
-                      focusRequest={composerFocusRequest}
-                      draftRequest={composerDraft}
-                      onDraftChange={updateComposerDraftText}
-                      onAttachmentsChange={updateComposerDraftAttachments}
-                      onPendingAttachment={keepPendingAttachment}
-                      onPendingQueuedEdit={keepQueuedEdit}
-                      onResourcesChange={updateComposerDraftResources}
-                      onRecallLastPrompt={recallLastPrompt}
-                      onReady={handleComposerReady}
-                      queuedTurns={queuedTurns}
-                      canSteerQueue={canSteerQueue}
-                      onModelChange={selectModel}
-                      onEffortChange={changeEffort}
-                      onServiceTierChange={changeServiceTier}
-                      onApprovalChange={changeApproval}
-                      onIsolateChange={setIsolateSession}
-                      onDesignModeChange={changeDesignMode}
-                      onTranscribeVoice={transcribeVoice}
-                      onCancelVoice={cancelVoice}
-                      onProjectChange={selectProject}
-                      onBranchChange={changeBranch}
-                      onProjectRequired={requireProject}
-                      onSetupProvider={openProviderSetup}
-                      onSend={sendTurn}
-                      onSteer={steerTurn}
-                      onInterrupt={interrupt}
-                      stopping={stopping}
-                      onDeleteQueuedTurn={deleteQueuedTurn}
-                      onMoveQueuedTurn={moveQueuedTurn}
-                      onSteerQueuedTurn={steerQueuedTurn}
+                      onOpen={openBottomPanel}
+                      onClose={closeTerminal}
+                      onWidthChange={setTerminalHeight}
+                      terminalToggleRequest={bottomTerminalToggleRequest}
                     />
-                  </div>
-
-                  {activePath && bottomTerminalMounted ? (
-                    <div
-                      className={`bottom-terminal${terminalOpen ? ' is-open' : ''}${bottomTerminalPhase === 'closing' ? ' is-closing' : ''}${bottomTerminalPhase === 'closed' ? ' is-parked' : ''}`}
-                      style={{ height: terminalHeight }}
-                      data-testid="bottom-terminal"
-                      aria-hidden={bottomTerminalPhase === 'closed' ? true : undefined}
-                      inert={
-                        bottomTerminalPhase === 'closing' || bottomTerminalPhase === 'closed'
-                          ? true
-                          : undefined
-                      }
-                      onTransitionEnd={finishBottomTerminalMotion}
-                    >
-                      <Suspense
-                        fallback={<WorkspacePanelSkeleton placement="bottom" open={terminalOpen} />}
-                      >
-                        <BottomWorkspacePanel
-                          placement="bottom"
-                          open={terminalOpen}
-                          expanded={false}
-                          width={terminalHeight}
-                          transport={transport}
-                          threadId={activeId}
-                          projectPath={activePath}
-                          projectName={activeProject ? displayName(activeProject) : undefined}
-                          branch={
-                            active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]
-                          }
-                          theme={themeColorScheme}
-                          sideChatParentStatus={sideChatParentStatus}
-                          sideChatStartOptions={sideChatStartOptions}
-                          nativeSurfacesVisible={
-                            !settingsOpen &&
-                            paletteScope === null &&
-                            !rollbackOpen &&
-                            !checkoutDelete
-                          }
-                          onOpen={openBottomPanel}
-                          onClose={closeTerminal}
-                          onWidthChange={setTerminalHeight}
-                          terminalToggleRequest={bottomTerminalToggleRequest}
-                        />
-                      </Suspense>
-                    </div>
-                  ) : null}
+                  </Suspense>
                 </div>
-              </>
-            )}
+              ) : null}
+            </div>
           </main>
 
           {workspacePanelHasMounted ? (
@@ -5952,7 +5952,8 @@ export function App() {
       <SessionSearchHost
         ref={sessionSearch}
         transport={transport}
-        projects={projects}
+        projects={archiveProjects}
+        hiddenThreadIds={archivingIds}
         onSelect={selectSessionSearchResult}
       />
 

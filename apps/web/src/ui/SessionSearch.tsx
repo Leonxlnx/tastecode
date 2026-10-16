@@ -78,6 +78,8 @@ function SessionSearchSkeleton() {
 function SessionSearchComponent(props: {
   transport: Transport
   projects: SessionSearchProject[]
+  /** Chats whose deletion is still pending; the server can still find them. */
+  hiddenThreadIds?: readonly string[] | undefined
   initialProjectPath?: string | undefined
   onSelect: (threadId: string, turnId?: string) => void
   onClose: () => void
@@ -140,11 +142,17 @@ function SessionSearchComponent(props: {
     }))
   }, [projectPath, provider, searchable, sources, terms, titleIndex])
 
+  const { hiddenThreadIds } = props
   const displayResults = useMemo<DisplaySearchResult[]>(() => {
     const legacyOccurrences = new Map<string, number>()
+    const hidden = new Set(hiddenThreadIds)
+    // Opening a chat cancels its pending deletion, so search must not offer one.
+    const visibleResults = hidden.size
+      ? results.filter((result) => !hidden.has(result.threadId))
+      : results
     return [
       ...titleResults,
-      ...results.map((result) => ({
+      ...visibleResults.map((result) => ({
         key: contentResultKey(result, legacyOccurrences),
         kind: 'content' as const,
         projectName: result.projectName,
@@ -158,7 +166,7 @@ function SessionSearchComponent(props: {
         snippet: result.snippet,
       })),
     ]
-  }, [results, sources, titleResults])
+  }, [hiddenThreadIds, results, sources, titleResults])
   const selected = useMemo(() => {
     if (displayResults.length === 0) return -1
     const index = displayResults.findIndex((result) => result.key === selectedKey)

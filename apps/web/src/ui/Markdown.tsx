@@ -390,7 +390,11 @@ function applyBufferedLiveMarkdown(
     if (operation.type === 'leaf.append') {
       if (!leaf) continue
       flushText()
-      leaf.append(operation.text)
+      // One text node per leaf: a node per paced step left dozens of
+      // fragments in a paragraph for the leaf's close to merge.
+      const last = leaf.lastChild
+      if (last instanceof Text) last.appendData(operation.text)
+      else leaf.append(operation.text)
     } else if (leaf) {
       flushText()
       compactTextWrapper(leaf)
@@ -414,6 +418,80 @@ function applyLiveMarkdown(
   else applyBufferedLiveMarkdown(root, dom, operations)
 }
 
+function appendLiveMarkdown(
+  root: HTMLElement,
+  dom: LiveMarkdownDom,
+  text: string,
+  fade: boolean,
+): void {
+  const update =
+    text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
+      ? dom.parser.appendLarge(text)
+      : dom.parser.append(text)
+  applyLiveMarkdown(
+    root,
+    dom,
+    update.operations,
+    fade && update.scannedCharacters <= LIVE_MARKDOWN_ANIMATION_CHARACTER_LIMIT,
+  )
+}
+
+/*
+ * Providers deliver text in bursts: several words at once, then nothing for
+ * 50-150 ms. Shown as it lands, a reply grows in jerks. While the reader
+ * allows motion, appended text waits in a small buffer that drains every
+ * frame in proportion to what is waiting, never slower than a reading
+ * floor, so the reply grows continuously about LIVE_TEXT_LAG_MS behind the
+ * provider. The buffer costs a string append per delta; parsing and DOM work
+ * happen once per frame, as before.
+ */
+const LIVE_TEXT_LAG_MS = 90
+const LIVE_TEXT_MIN_CHARS_PER_MS = 0.3
+const LIVE_TEXT_BUFFER_LIMIT = 4 * 1024
+let motionQuery: MediaQueryList | undefined
+
+function paceLiveText(): boolean {
+  if (typeof window.matchMedia !== 'function' || typeof requestAnimationFrame !== 'function') {
+    return false
+  }
+  motionQuery ??= window.matchMedia('(prefers-reduced-motion: no-preference)')
+  return motionQuery.matches && document.visibilityState === 'visible'
+}
+
+/** Steps closer together than this wait for the next frame (about 60 a second). */
+const LIVE_TEXT_STEP_MS = 15
+const LIVE_TEXT_WORD_REACH = 32
+
+function isLiveTextSpace(code: number): boolean {
+  return code === 32 || code === 10 || code === 9
+}
+
+/**
+ * How much of the buffer the step shows. It ends where a word ends: half a
+ * word at a line end jumps to the next line when the rest arrives. A word
+ * still arriving at the end of the buffer waits for its end while
+ * `holdTail` is set. Words longer than the reach (URLs, hashes) may split;
+ * a surrogate pair never does.
+ */
+function liveTextStep(waiting: string, elapsed: number, holdTail: boolean): number {
+  const proportional = Math.ceil((waiting.length * elapsed) / LIVE_TEXT_LAG_MS)
+  const floor = Math.ceil(LIVE_TEXT_MIN_CHARS_PER_MS * elapsed)
+  let count = Math.min(waiting.length, Math.max(1, proportional, floor))
+  const reach = Math.min(waiting.length, count + LIVE_TEXT_WORD_REACH)
+  while (count < reach && !isLiveTextSpace(waiting.charCodeAt(count))) count += 1
+  // The space after the word goes with it, so the next step starts on a word
+  // and no text node made of a lone space sits at a line break.
+  if (count < reach) return count + 1
+  if (count < waiting.length) {
+    const last = waiting.charCodeAt(count - 1)
+    return last >= 0xd800 && last <= 0xdbff ? count + 1 : count
+  }
+  if (!holdTail || isLiveTextSpace(waiting.charCodeAt(waiting.length - 1))) return waiting.length
+  let end = waiting.length
+  while (end > 0 && !isLiveTextSpace(waiting.charCodeAt(end - 1))) end -= 1
+  return end
+}
+
 const StreamingMarkdown = memo(function StreamingMarkdown({
   text,
   liveUpdate,
@@ -432,6 +510,9 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
   const lastVersion = useRef<number | undefined>(undefined)
   const lastText = useRef(text)
   const completedRendererRequested = useRef(false)
+  /** Appended text the reader has not been shown yet; see LIVE_TEXT_LAG_MS. */
+  const waiting = useRef('')
+  const pacing = useRef<{ frame: number; last: number; arrived: number } | undefined>(undefined)
 
   useEffect(() => {
     if (completedRendererRequested.current) return
@@ -441,50 +522,96 @@ const StreamingMarkdown = memo(function StreamingMarkdown({
     void loadCompletedMarkdown()
   }, [liveUpdate, text, updateVersion])
 
+  useEffect(
+    () => () => {
+      if (pacing.current) cancelAnimationFrame(pacing.current.frame)
+    },
+    [],
+  )
+
   useLayoutEffect(() => {
     const element = root.current
     if (!element) return
-    dom.current ??= { parser: new LiveMarkdownParser(), stack: [], leaves: new Map() }
+    const live = (dom.current ??= {
+      parser: new LiveMarkdownParser(),
+      stack: [],
+      leaves: new Map(),
+    })
+
+    const stopPacing = () => {
+      if (pacing.current) cancelAnimationFrame(pacing.current.frame)
+      pacing.current = undefined
+    }
+    const showWaiting = () => {
+      stopPacing()
+      const text = waiting.current
+      waiting.current = ''
+      if (text) appendLiveMarkdown(element, live, text, true)
+    }
+    const pace = (now: number) => {
+      const state = pacing.current
+      if (!state) return
+      const elapsed = now - state.last
+      if (elapsed >= LIVE_TEXT_STEP_MS) {
+        // A word cut off by the provider waits for its end, unless the
+        // provider has gone quiet.
+        const holdTail = now - state.arrived < LIVE_TEXT_LAG_MS
+        const count = liveTextStep(waiting.current, elapsed, holdTail)
+        state.last = now
+        const shown = waiting.current.slice(0, count)
+        waiting.current = waiting.current.slice(count)
+        // The steady pace is the motion. A fade per step kept ~20 inline
+        // animations repainting the reply on every frame.
+        if (shown) appendLiveMarkdown(element, live, shown, false)
+      }
+      if (waiting.current) state.frame = requestAnimationFrame(pace)
+      else pacing.current = undefined
+    }
 
     let update
     if (!initialized.current) {
       update =
         text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
-          ? dom.current.parser.replaceLarge(text)
-          : dom.current.parser.replace(text)
+          ? live.parser.replaceLarge(text)
+          : live.parser.replace(text)
       initialized.current = true
     } else if (liveUpdate && updateVersion !== lastVersion.current) {
       const exactAppend =
         liveUpdate.kind === 'append' &&
         text.length === lastText.current.length + liveUpdate.text.length &&
         text.endsWith(liveUpdate.text)
-      if (exactAppend) {
-        update =
-          liveUpdate.text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
-            ? dom.current.parser.appendLarge(liveUpdate.text)
-            : dom.current.parser.append(liveUpdate.text)
+      if (
+        exactAppend &&
+        liveUpdate.text.length + waiting.current.length <= LIVE_TEXT_BUFFER_LIMIT &&
+        paceLiveText()
+      ) {
+        waiting.current += liveUpdate.text
+        const now = performance.now()
+        if (pacing.current) pacing.current.arrived = now
+        else pacing.current = { frame: requestAnimationFrame(pace), last: now, arrived: now }
+      } else if (exactAppend) {
+        showWaiting()
+        appendLiveMarkdown(element, live, liveUpdate.text, true)
       } else {
+        stopPacing()
+        waiting.current = ''
         update =
           text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
-            ? dom.current.parser.replaceLarge(text)
-            : dom.current.parser.replace(text)
+            ? live.parser.replaceLarge(text)
+            : live.parser.replace(text)
       }
     } else if (text !== lastText.current) {
+      stopPacing()
+      waiting.current = ''
       update =
         text.length >= LIVE_MARKDOWN_BULK_TEXT_MIN
-          ? dom.current.parser.replaceLarge(text)
-          : dom.current.parser.replace(text)
+          ? live.parser.replaceLarge(text)
+          : live.parser.replace(text)
     }
 
-    if (update) {
-      applyLiveMarkdown(
-        element,
-        dom.current,
-        update.operations,
-        update.kind === 'append' &&
-          update.scannedCharacters <= LIVE_MARKDOWN_ANIMATION_CHARACTER_LIMIT,
-      )
-    }
+    if (update) applyLiveMarkdown(element, live, update.operations, false)
+    // A finished reply shows everything at once.
+    if (!liveUpdate) showWaiting()
     if (liveUpdate) lastVersion.current = updateVersion
     lastText.current = text
   }, [liveUpdate, text, updateVersion])

@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { PickedImagePaths, viewedImagePath } from './viewed-image-path.js'
 import { attachmentPreviewFromUrl, pickedAttachment } from './attachment-preview.js'
+
+const canSymlink = canCreateSymlinks()
 
 const temporaryDirectories: string[] = []
 
@@ -45,7 +48,21 @@ describe('viewed image paths', () => {
     await expect(viewedImagePath(picked, pasted, new PickedImagePaths())).resolves.toBeUndefined()
   })
 
-  it('does not widen picked-file grants to directories, siblings or retargeted symlinks', async () => {
+  it('does not widen picked-file grants to directories or siblings', async () => {
+    const { root, pasted } = await fixture()
+    const picked = path.join(root, 'picked.png')
+    const privateFile = path.join(root, 'private.png')
+    await writeFile(picked, 'picked')
+    await writeFile(privateFile, 'private')
+    const grants = new PickedImagePaths()
+    await grants.authorize(picked)
+    await grants.authorize(root)
+    await expect(viewedImagePath(picked, pasted, grants)).resolves.toBe(await realpath(picked))
+    await expect(viewedImagePath(root, pasted, grants)).resolves.toBeUndefined()
+    await expect(viewedImagePath(privateFile, pasted, grants)).resolves.toBeUndefined()
+  })
+
+  it.skipIf(!canSymlink)('does not widen picked-file grants to retargeted symlinks', async () => {
     const { root, pasted } = await fixture()
     const picked = path.join(root, 'picked.png')
     const privateFile = path.join(root, 'private.png')
@@ -55,9 +72,7 @@ describe('viewed image paths', () => {
     await symlink(picked, link)
     const grants = new PickedImagePaths()
     await grants.authorize(link)
-    await grants.authorize(root)
     await expect(viewedImagePath(link, pasted, grants)).resolves.toBe(await realpath(picked))
-    await expect(viewedImagePath(root, pasted, grants)).resolves.toBeUndefined()
     await expect(viewedImagePath(privateFile, pasted, grants)).resolves.toBeUndefined()
     await rm(link)
     await symlink(privateFile, link)
@@ -90,14 +105,21 @@ describe('viewed image paths', () => {
     )
   })
 
-  it('rejects absolute paths, traversal, and symlinks that leave the paste folder', async () => {
+  it('rejects absolute paths and traversal that leave the paste folder', async () => {
+    const { root, pasted } = await fixture()
+    const outside = path.join(root, 'outside.png')
+    await writeFile(outside, 'private')
+
+    await expect(viewedImagePath(outside, pasted)).resolves.toBeUndefined()
+    await expect(viewedImagePath('../outside.png', pasted)).resolves.toBeUndefined()
+  })
+
+  it.skipIf(!canSymlink)('rejects a symlink that leaves the paste folder', async () => {
     const { root, pasted } = await fixture()
     const outside = path.join(root, 'outside.png')
     await writeFile(outside, 'private')
     await symlink(outside, path.join(pasted, 'linked.png'))
 
-    await expect(viewedImagePath(outside, pasted)).resolves.toBeUndefined()
-    await expect(viewedImagePath('../outside.png', pasted)).resolves.toBeUndefined()
     await expect(viewedImagePath('linked.png', pasted)).resolves.toBeUndefined()
   })
 })

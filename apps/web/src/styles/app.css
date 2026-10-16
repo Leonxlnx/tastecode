@@ -1253,6 +1253,10 @@
   border-top-left-radius: inherit;
 }
 
+.stage__body[hidden] {
+  display: none;
+}
+
 .stage__conversation {
   position: relative;
   display: grid;
@@ -3275,15 +3279,20 @@
 
 /* ---------- empty & notice ---------- */
 
+/* Icon-only chips: squares the size of Add, one gap between every control. */
 @container chat-stage (max-width: 620px) {
+  .tools,
+  .composer__dictation-options-content {
+    gap: 6px;
+  }
+
   .tools {
-    gap: 4px;
     padding-inline: 6px;
   }
 
   .tools .composer__permission,
   .tools .composer__design-button-beam {
-    width: 34px;
+    width: var(--composer-control, 32px);
   }
 
   .tools .composer__permission,
@@ -3553,6 +3562,7 @@
 
   /* Keep phone controls on one line: truncate the model name and pin Send right. */
   .tools {
+    --composer-control: 34px;
     flex-wrap: nowrap;
   }
 

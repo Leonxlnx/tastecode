@@ -112,7 +112,7 @@
 }
 
 .keybind-row {
-  --keybind-wire: color-mix(in srgb, var(--text-3) 55%, transparent);
+  --keybind-wire: color-mix(in srgb, var(--text-3) 46%, transparent);
 
   position: relative;
   display: grid;
@@ -129,7 +129,11 @@
   --keybind-wire: color-mix(in srgb, var(--text-3) 28%, transparent);
 }
 
-.keybind-row:is(:hover, :focus-within, [data-recording]) {
+.keybind-row:is(:hover, :focus-within) {
+  --keybind-wire: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.keybind-row[data-recording] {
   --keybind-wire: var(--text-2);
 }
 
@@ -149,11 +153,12 @@
   transition: color var(--dur-fast) var(--ease-out);
 }
 
+/* The provider defaults' leader, dot for dot. */
 .keybind-row__leader {
   height: 5px;
   margin-inline: 14px;
-  background: radial-gradient(circle, var(--keybind-wire) 0.9px, transparent 1.35px) left center /
-    8px 100% repeat-x;
+  background: radial-gradient(circle, var(--keybind-wire) 0.75px, transparent 1.15px) left center /
+    5px 100% repeat-x;
 }
 
 /* Recording: the leader runs towards the keys, as work in flight runs along

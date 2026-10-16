@@ -10,6 +10,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
+import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { readDesignArtifact, writeDesignArtifact } from './artifact-store.js'
 import {
   snapshotDesignAssets,
@@ -22,7 +23,6 @@ import {
   readWorkspaceFile,
   workspaceEntries,
 } from './workspace-files.js'
-import { canCreateSymlinks } from './symlink.test-support.js'
 
 const canSymlink = canCreateSymlinks()
 

@@ -45,8 +45,11 @@ import {
   designSourceQualityBaseline,
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
+  parseAssetManifest,
+  validateResolvedDesignAssets,
 } from '@harness/design-agent'
-import { encodeHistoryCursor } from './history-page.js'
+import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
+import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
 import { StartupCleanupError } from './provider-session.js'
@@ -2156,6 +2159,75 @@ describe('history replay', () => {
       await orchestrator.disposeAll()
     })
 
+    it('opens a long thread from the end of its event log', async () => {
+      const { orchestrator, store } = harness()
+      const thread = await orchestrator.startThread('codex', '/repo')
+      for (let index = 0; index < 150; index += 1) appendTurn(store, thread.id, index)
+      const history = vi.spyOn(store, 'history')
+      const save = vi.spyOn(store, 'saveReplaySnapshot')
+
+      const newest = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+      expect(history).not.toHaveBeenCalled()
+      expect(save).not.toHaveBeenCalled()
+      history.mockRestore()
+      expect(newest).toEqual(
+        readHistoryPage(thread.id, compactHistoryReplay(store.history(thread.id)), {
+          turnLimit: 10,
+        }),
+      )
+
+      const older = await orchestrator.historyPage(thread.id, {
+        before: newest.page.olderCursor!,
+        turnLimit: 20,
+      })
+      expect(older.reset).toBeUndefined()
+      expect(turnIds(older.events)).toEqual(
+        Array.from({ length: 20 }, (_, index) => `turn-${120 + index}`),
+      )
+      await orchestrator.disposeAll()
+    })
+
+    it('indexes a thread another build wrote to on its next full read', async () => {
+      const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-history-index-'))
+      const database = path.join(directory, 'state.db')
+      try {
+        const first = new Store(database)
+        const { orchestrator: writer } = harness(undefined, first)
+        const thread = await writer.startThread('codex', '/repo')
+        for (let index = 0; index < 150; index += 1) appendTurn(first, thread.id, index)
+        await writer.disposeAll()
+        first.close()
+        const raw = new DatabaseSync(database)
+        raw.prepare(`INSERT INTO events (thread_id, at, payload) VALUES (?, ?, ?)`).run(
+          thread.id,
+          0,
+          JSON.stringify({
+            type: 'turn.started',
+            turn: { id: 'elsewhere', threadId: thread.id, status: 'running', createdAt: 0 },
+          }),
+        )
+        raw.close()
+
+        const store = new Store(database)
+        const { orchestrator } = harness(undefined, store)
+        expect(store.historyIndexed(thread.id)).toBe(false)
+        const history = vi.spyOn(store, 'history')
+        await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+        expect(history).toHaveBeenCalledTimes(1)
+        expect(store.historyIndexed(thread.id)).toBe(true)
+
+        appendTurn(store, thread.id, 150)
+        history.mockClear()
+        const newest = await orchestrator.historyPage(thread.id, { turnLimit: 10 })
+        expect(history).not.toHaveBeenCalled()
+        expect(turnIds(newest.events).at(-1)).toBe('turn-150')
+        await orchestrator.disposeAll()
+        store.close()
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    })
+
     it('keeps a replay that read past an unreadable newest row for warm opens', async () => {
       const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-unreadable-tail-'))
       const database = path.join(directory, 'state.db')
@@ -3233,6 +3305,84 @@ describe('provider-neutral design briefing', () => {
       await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    [
+      'continues photo acquisition while each pass resolves assets',
+      ['beans', 'harbor', 'roaster'],
+      3,
+      true,
+    ],
+    ['stops photo acquisition when a pass opens another asset', ['beans', 'portrait'], 3, false],
+    ['stops photo acquisition at its bound', ['beans', 'harbor', 'roaster'], 6, false],
+  ] as const)('%s', async (_name, previous, stored, continues) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-acquisition-'))
+    writePreviewArtifacts(workspace)
+    const page = readPageBlueprint(workspace)
+    page.sections[0] = { ...page.sections[0]!, assetNeeds: ['beans', 'harbor'] }
+    writePageBlueprint(workspace, page)
+    const photos = (ids: readonly string[]) => ({
+      version: 1,
+      assets: ids.map((id) => ({
+        id,
+        kind: 'image',
+        role: 'photography',
+        status: 'needed',
+        purpose: 'Show the roastery',
+        requirements: ['A licensed photograph'],
+        sectionIds: ['hero'],
+        aspectRatio: '4:3',
+        composition: 'The roaster at work.',
+      })),
+    })
+    const unresolved = (ids: readonly string[]) => {
+      try {
+        validateResolvedDesignAssets(parseAssetManifest(photos(ids)))
+      } catch (error) {
+        return (error as Error).message
+      }
+      throw new Error('expected unresolved photos')
+    }
+    const earlier = Array.from({ length: stored - 1 }, (_, index) => `Earlier error ${index}`)
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({ id: 'photos', projectPath: workspace, provider: 'codex', title: 'Roastery' })
+    store.setDesignRun('photos', {
+      ...approvalSnapshot(workspace),
+      originalRequest: 'Build a roastery landing page.',
+      phase: 'assets',
+      askedQuestions: false,
+      explicitAnswers: [],
+      assetReplanned: true,
+      correcting: true,
+      correctionErrors: [...earlier, unresolved(previous)],
+    })
+    const { orchestrator, sessions, received } = harness(undefined, store)
+    try {
+      const queued = await orchestrator.submitTurn('photos', 'Afterward')
+      if (queued.queued) orchestrator.deleteQueuedTurn('photos', queued.queuedTurn.id)
+      sessions[0]?.emit(message(JSON.stringify(photos(['beans', 'harbor'])), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      if (continues) {
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(sessions[0]?.sent.at(-1)).toContain('Complete the acquisition')
+        expect(store.designRun('photos')).toMatchObject({
+          phase: 'assets',
+          correctionErrors: [...earlier, unresolved(previous), unresolved(['beans', 'harbor'])],
+        })
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      } else {
+        await vi.waitFor(() => expect(store.designRun('photos')).toBeUndefined())
+        expect(
+          received.filter(({ event }) => event.type === 'thread.error').at(-1)?.event,
+        ).toMatchObject({ message: expect.stringContaining('beans, harbor') })
+      }
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
 

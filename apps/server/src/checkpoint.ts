@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process'
-import { lstat, mkdtemp, rm } from 'node:fs/promises'
-import { realpathSync } from 'node:fs'
+import { lstat, mkdtemp, rm, stat, utimes } from 'node:fs/promises'
+import { createReadStream, createWriteStream, realpathSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 import { canonicalCheckoutRoot } from './checkout-access.js'
 
@@ -78,12 +79,14 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
     // Timeouts throughout: a hung git here leaves every diff/review RPC above
     // this pending forever. Seed from HEAD so the snapshot is a diff against
     // it rather than a tree built from nothing.
-    await run('git', head ? ['read-tree', head] : ['read-tree', '--empty'], {
-      cwd: repoPath,
-      env,
-      windowsHide: true,
-      timeout: 60_000,
-    })
+    if (!head || !(await seedFromCheckoutIndex(repoPath, head, indexFile, env))) {
+      await run('git', head ? ['read-tree', head] : ['read-tree', '--empty'], {
+        cwd: repoPath,
+        env,
+        windowsHide: true,
+        timeout: 60_000,
+      })
+    }
     // Ignored paths can still be tracked by the real index after a force-add.
     // Seed just those entries so add -A captures their current working content too.
     const indexedIgnored = await git(repoPath, [
@@ -179,6 +182,60 @@ export async function takeSnapshot(repoPath: string): Promise<Snapshot> {
   } finally {
     await rm(indexDir, { recursive: true, force: true }).catch(() => undefined)
   }
+}
+
+/**
+ * Seed the temporary index from a copy of the checkout's own index, reset to
+ * HEAD. A plain `read-tree` records no stat data, so `add -A` read and hashed
+ * every tracked file before each turn. Entries that still match HEAD keep the
+ * stat data git last recorded for them, and only files whose stat changed are
+ * read again; the tree written from the index is the same.
+ *
+ * False sends the caller back to a plain `read-tree`: the checkout has no index,
+ * the copy or merge failed, or an entry is marked assume-unchanged or
+ * skip-worktree. `add -A` trusts those marks, so it would record HEAD's content
+ * in place of the working file, and a restore would then overwrite that file.
+ */
+async function seedFromCheckoutIndex(
+  repoPath: string,
+  head: string,
+  indexFile: string,
+  env: NodeJS.ProcessEnv,
+): Promise<boolean> {
+  try {
+    const location = await git(repoPath, ['rev-parse', '--git-path', 'index'])
+    if (!location) return false
+    const source = path.resolve(repoPath, location)
+    // Git re-reads an entry written in the same tick as its index. The copy keeps
+    // the source's time, read before copying and cut to milliseconds: an earlier
+    // index time only re-reads more entries.
+    const { atime, mtime } = await stat(source)
+    // Streamed through libuv's shared open, so a concurrent git on Windows can
+    // still replace the index. Not yet tried on Windows.
+    await pipeline(createReadStream(source), createWriteStream(indexFile))
+    await utimes(indexFile, atime, mtime)
+    // --reset replaces unmerged entries instead of refusing; -i leaves the
+    // working tree to `add -A`.
+    await run('git', ['read-tree', '--reset', '-i', head], {
+      cwd: repoPath,
+      env,
+      windowsHide: true,
+      timeout: 60_000,
+    })
+    const { stdout } = await run('git', ['ls-files', '-v', '-z'], {
+      cwd: repoPath,
+      env,
+      windowsHide: true,
+      timeout: 60_000,
+      maxBuffer: 256 * 1024 * 1024,
+    })
+    if (stdout.split('\0').every((entry) => entry === '' || entry.startsWith('H '))) return true
+  } catch {
+    // The caller's plain read-tree starts over from HEAD.
+  }
+  await rm(indexFile, { force: true }).catch(() => undefined)
+  await rm(`${indexFile}.lock`, { force: true }).catch(() => undefined)
+  return false
 }
 
 /**

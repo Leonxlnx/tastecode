@@ -21,8 +21,9 @@ export function validateDesignSourceQuality(
   assets?: AssetManifest,
   page?: PageBlueprint,
 ): void {
+  // Reported folders such as dist are informational; their files are scanned below.
   for (const file of reportedFiles)
-    containedWorkspaceFile(workspacePath, file, 'reported Build file')
+    containedWorkspaceFile(workspacePath, file, 'reported Build file', true)
   const previous = new Map<string, number>()
   for (const violation of baseline) previous.set(violation, (previous.get(violation) ?? 0) + 1)
   // Source patterns cannot distinguish a copied reference border from invented decoration.

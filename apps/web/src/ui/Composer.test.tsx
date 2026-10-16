@@ -1489,6 +1489,13 @@ describe('Composer permissions', () => {
     ).toBeTruthy()
   })
 
+  it('names the current mode in a tooltip, since a narrow composer shows only its icon', () => {
+    renderComposer(vi.fn(), { approval: 'auto-review', autoReviewSupported: true })
+    expect(screen.getByRole('button', { name: 'Permissions' }).getAttribute('title')).toBe(
+      'Permissions: Auto-review',
+    )
+  })
+
   it('stays usable while a session is running so the access level can change mid-chat', () => {
     renderComposer(vi.fn(), { running: true })
 
