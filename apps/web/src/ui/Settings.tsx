@@ -701,7 +701,8 @@ export function ProviderSettings(props: {
 }) {
   type AuthReadState =
     | { phase: 'loading' }
-    | { phase: 'ready'; account: Account }
+    // refreshError: a background re-check failed; the account shown is the last one read.
+    | { phase: 'ready'; account: Account; refreshError?: string }
     | { phase: 'error'; message: string }
   type AuthOperation = {
     id: number
@@ -795,13 +796,19 @@ export function ProviderSettings(props: {
           currentTransport.current !== request.transport
         )
           return
-        setAuthStates((current) => ({
-          ...current,
-          [provider]: {
-            phase: 'error',
-            message: cause instanceof Error ? cause.message : String(cause),
-          },
-        }))
+        const message = cause instanceof Error ? cause.message : String(cause)
+        // A slow CLI must not turn a known sign-in into "Account unavailable":
+        // a background re-check keeps the account and only marks the row.
+        setAuthStates((current) => {
+          const known = current[provider]
+          return {
+            ...current,
+            [provider]:
+              !forceLoading && known?.phase === 'ready'
+                ? { phase: 'ready', account: known.account, refreshError: message }
+                : { phase: 'error', message },
+          }
+        })
       }
     },
     [props.transport, props.onAccountChange],
@@ -1051,6 +1058,7 @@ export function ProviderSettings(props: {
     )
     const operation = authOperations[status.id]
     const authError = authErrors[status.id]
+    const refreshError = authState.refreshError
     const operationStatus =
       operation?.kind === 'sign-in'
         ? 'Signing in…'
@@ -1072,7 +1080,9 @@ export function ProviderSettings(props: {
               }
             : status.problem
               ? { message: status.problem }
-              : undefined
+              : refreshError
+                ? { message: `Could not refresh this account. ${refreshError}` }
+                : undefined
         }
         primary={
           account?.signedIn
