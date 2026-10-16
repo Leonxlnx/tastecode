@@ -1,7 +1,9 @@
 /** How long no delta may arrive before background work counts the stream as paused. */
 export const STREAM_QUIET_MS = 2_000
-/** Background work waits at most this long, so a long answer cannot starve it. */
+/** By default background work waits at most this long, so a long answer cannot starve it. */
 export const STREAM_QUIET_MAX_WAIT_MS = 10_000
+/** For work nobody waits on, such as a timed history refresh or a version re-read. */
+export const STREAM_QUIET_BACKGROUND_WAIT_MS = 120_000
 
 /**
  * Holds background work while a turn streams.
@@ -19,7 +21,6 @@ export class StreamQuiet {
 
   constructor(
     private readonly quietMs = STREAM_QUIET_MS,
-    private readonly maxWaitMs = STREAM_QUIET_MAX_WAIT_MS,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -28,10 +29,14 @@ export class StreamQuiet {
     this.#lastDeltaAt = this.now()
   }
 
-  /** Resolves at once when nothing streams, else after a pause or the longest wait. */
-  whenQuiet(): Promise<void> {
+  /**
+   * Resolves at once when nothing streams, else after a pause or maxWaitMs.
+   * Work someone may be looking at waits briefly; work nobody waits for can
+   * hold out for the whole answer.
+   */
+  whenQuiet(maxWaitMs = STREAM_QUIET_MAX_WAIT_MS): Promise<void> {
     if (this.now() - this.#lastDeltaAt >= this.quietMs) return Promise.resolve()
-    const deadline = this.now() + this.maxWaitMs
+    const deadline = this.now() + maxWaitMs
     return new Promise((resolve) => {
       const check = () => {
         const now = this.now()
