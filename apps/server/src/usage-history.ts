@@ -1,11 +1,11 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import os from 'node:os'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
-import { readCodexUsageHistory } from '@harness/adapter-codex'
-import { readGrokUsageHistory } from '@harness/adapter-grok'
-import { readOpenCodeUsageHistory } from '@harness/adapter-opencode'
+import { CLAUDE_USAGE_HISTORY } from '@harness/adapter-claude-code'
+import { CODEX_USAGE_HISTORY } from '@harness/adapter-codex'
+import { GROK_USAGE_HISTORY } from '@harness/adapter-grok'
+import { OPENCODE_USAGE_HISTORY } from '@harness/adapter-opencode'
+import type { UsageArchiveFile, UsageHistorySource } from '@harness/proc/usage-archive'
 import type {
   LocalUsageRecord,
   ProviderId,
@@ -19,15 +19,35 @@ import type {
 } from '@harness/contracts'
 import type { StoredUsageEvent } from './store.js'
 
-const CACHE_VERSION = 7
+const CACHE_VERSION = 8
+/**
+ * Version 7 holds the same parser output as version 8, one record per message
+ * instead of compacted. It is migrated in place so upgrading needs no rescan.
+ */
+const UNCOMPACTED_CACHE_VERSION = 7
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
-const LOCAL_USAGE_PROVIDERS = [
+/** Local provider archives in scan order. Each adapter owns its CLI home and file layout. */
+const LOCAL_USAGE_SOURCES: readonly UsageHistorySource<ProviderId, LocalUsageRecord>[] = [
+  CLAUDE_USAGE_HISTORY,
+  CODEX_USAGE_HISTORY,
+  GROK_USAGE_HISTORY,
+  OPENCODE_USAGE_HISTORY,
+]
+/**
+ * Every provider the usage page reports, in display order. Providers without
+ * a local archive are counted from Harness's own usage events alone.
+ */
+const REPORTED_PROVIDERS = [
   'claude-code',
   'codex',
   'grok',
+  'cursor',
   'opencode',
+  'antigravity',
+  'acp',
+  'api',
 ] as const satisfies readonly ProviderId[]
 const BACKGROUND_SCAN_FAILURE = 'Usage indexing failed in the background:'
 
@@ -49,14 +69,19 @@ export type UsageCache = {
   warnings: string[]
 }
 
-type UsageFile = Omit<CachedUsageFile, 'entries'> & {
-  read: (filePath: string) => Promise<LocalUsageRecord[]>
-}
+type UsageFile = UsageArchiveFile<LocalUsageRecord> & { provider: ProviderId }
 
 export type SourceState = {
   provider: ProviderId
-  label: string
+  /** The adapter's name for a local archive; event-only providers have none. */
+  label?: string
   available: boolean
+}
+
+/** Where one local source's archive lives, resolved once on the main thread. */
+export type UsageSourceRoot = {
+  provider: ProviderId
+  root: string
 }
 
 type ModelRate = {
@@ -79,10 +104,7 @@ export type UsageScanProgress = {
 
 export type UsageScanRequest = {
   cacheFile: string
-  codexSessionsRoot: string
-  claudeProjectsRoot: string
-  grokLogPath: string
-  openCodeDataRoot: string
+  sources: UsageSourceRoot[]
   generatedAt: number
 }
 
@@ -100,10 +122,8 @@ export type UsageScanRunner = (
 
 type UsageHistoryOptions = {
   cacheFile: string
-  codexSessionsRoot?: string
-  claudeProjectsRoot?: string
-  grokLogPath?: string
-  openCodeDataRoot?: string
+  /** Archive locations by provider in place of each adapter's default; tests use fixtures. */
+  sourceRoots?: Partial<Record<ProviderId, string>>
   harnessUsage?: () => StoredUsageEvent[]
   now?: () => Date
   scanRunner?: UsageScanRunner
@@ -133,10 +153,7 @@ const emptyTotals = (): UsageHistoryTotals => ({
  */
 export class UsageHistoryService {
   readonly #cacheFile: string
-  readonly #codexSessionsRoot: string
-  readonly #claudeProjectsRoot: string
-  readonly #grokLogPath: string
-  readonly #openCodeDataRoot: string
+  readonly #sourceRoots: UsageSourceRoot[]
   readonly #harnessUsage: () => StoredUsageEvent[]
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
@@ -159,26 +176,10 @@ export class UsageHistoryService {
 
   constructor(options: UsageHistoryOptions) {
     this.#cacheFile = options.cacheFile
-    this.#codexSessionsRoot =
-      options.codexSessionsRoot ??
-      path.join(process.env['CODEX_HOME'] ?? path.join(os.homedir(), '.codex'), 'sessions')
-    this.#claudeProjectsRoot =
-      options.claudeProjectsRoot ??
-      path.join(process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'), 'projects')
-    this.#grokLogPath =
-      options.grokLogPath ??
-      path.join(
-        process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok'),
-        'logs',
-        'unified.jsonl',
-      )
-    this.#openCodeDataRoot =
-      options.openCodeDataRoot ??
-      process.env['OPENCODE_DATA_DIR'] ??
-      path.join(
-        process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'),
-        'opencode',
-      )
+    this.#sourceRoots = LOCAL_USAGE_SOURCES.map((source) => ({
+      provider: source.provider,
+      root: options.sourceRoots?.[source.provider] ?? source.root(),
+    }))
     this.#harnessUsage = options.harnessUsage ?? (() => [])
     this.#now = options.now ?? (() => new Date())
     this.#scanRunner = options.scanRunner ?? runUsageScanWorker
@@ -265,10 +266,7 @@ export class UsageHistoryService {
     this.#scan = { status: 'scanning', filesProcessed: 0, filesTotal: 0 }
     const request: UsageScanRequest = {
       cacheFile: this.#cacheFile,
-      codexSessionsRoot: this.#codexSessionsRoot,
-      claudeProjectsRoot: this.#claudeProjectsRoot,
-      grokLogPath: this.#grokLogPath,
-      openCodeDataRoot: this.#openCodeDataRoot,
+      sources: this.#sourceRoots,
       generatedAt: this.#lastRefreshStartedAt,
     }
     const abort = new AbortController()
@@ -465,29 +463,7 @@ export async function runUsageHistoryScan(
   onProgress: (progress: UsageScanProgress) => void = () => undefined,
 ): Promise<UsageScanResult> {
   const previous = await readUsageCache(request.cacheFile)
-  const { files, sources } = await discoverUsageSources([
-    {
-      provider: 'claude-code',
-      label: 'Claude Code',
-      discover: () =>
-        discoverJsonlRoot(request.claudeProjectsRoot, 'claude-code', readClaudeUsageHistory),
-    },
-    {
-      provider: 'codex',
-      label: 'Codex',
-      discover: () => discoverJsonlRoot(request.codexSessionsRoot, 'codex', readCodexUsageHistory),
-    },
-    {
-      provider: 'grok',
-      label: 'Grok',
-      discover: () => discoverSingleFile(request.grokLogPath, 'grok', readGrokUsageHistory),
-    },
-    {
-      provider: 'opencode',
-      label: 'OpenCode',
-      discover: () => discoverOpenCodeDatabases(request.openCodeDataRoot, readOpenCodeUsageHistory),
-    },
-  ])
+  const { files, sources } = await discoverUsageSources(request.sources)
   const warnings: string[] = []
   const priorByPath = new Map(previous.files.map((file) => [file.path, file]))
   const nextFiles = new Map<string, CachedUsageFile>()
@@ -512,7 +488,7 @@ export async function runUsageHistoryScan(
   reportProgress()
   await mapWithConcurrency(changed, PARSE_CONCURRENCY, async (file) => {
     try {
-      const entries = await file.read(file.path)
+      const entries = compactUsageRecords(await file.read(file.path))
       nextFiles.set(file.path, {
         path: file.path,
         provider: file.provider,
@@ -555,12 +531,15 @@ export async function runUsageHistoryScan(
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
-    if (value.version === CACHE_VERSION && isCachedUsageFiles(value.files)) {
+    const uncompacted = value.version === UNCOMPACTED_CACHE_VERSION
+    if ((value.version === CACHE_VERSION || uncompacted) && isCachedUsageFiles(value.files)) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
       return {
         version: CACHE_VERSION,
         generatedAt: typeof value.generatedAt === 'number' ? value.generatedAt : 0,
-        files: value.files,
+        files: uncompacted
+          ? value.files.map((file) => ({ ...file, entries: compactUsageRecords(file.entries) }))
+          : value.files,
         sources: Array.isArray(value.sources)
           ? mergeSources(value.sources)
           : emptySources().map((source) => ({
@@ -578,6 +557,67 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
   return emptyUsageCache()
 }
 
+/**
+ * Merges the records of one file that no usage figure can tell apart: same day,
+ * model, session and long-context flag, and either all or none carrying a
+ * provider-reported cost. Pricing and every total are linear in the token
+ * counts, so a merged record adds up to exactly what its members did. Claude
+ * Code logs one record per message, which made the cache grow by megabytes a
+ * day; this keeps one record per session, model and day.
+ */
+export function compactUsageRecords(entries: readonly LocalUsageRecord[]): LocalUsageRecord[] {
+  const merged = new Map<string, LocalUsageRecord>()
+  for (const entry of entries) {
+    const key = [
+      entry.date,
+      entry.model,
+      entry.sessionId,
+      entry.longContext,
+      entry.tokens.providerReportedCostUsd > 0,
+    ].join('\u0000')
+    const prior = merged.get(key)
+    merged.set(
+      key,
+      prior ? { ...prior, tokens: addTokenCounts(prior.tokens, entry.tokens) } : entry,
+    )
+  }
+  return [...merged.values()]
+}
+
+/**
+ * Sums two records' counts without changing what the aggregation reads. A
+ * provider total present on only one side is completed from the other side's
+ * parts, which is the value the aggregation would have derived for it.
+ */
+function addTokenCounts(left: TokenCounts, right: TokenCounts): TokenCounts {
+  const tokens: TokenCounts = {
+    uncachedInputTokens: left.uncachedInputTokens + right.uncachedInputTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    cacheWrite5mInputTokens: left.cacheWrite5mInputTokens + right.cacheWrite5mInputTokens,
+    cacheWrite1hInputTokens: left.cacheWrite1hInputTokens + right.cacheWrite1hInputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    providerReportedCostUsd: left.providerReportedCostUsd + right.providerReportedCostUsd,
+  }
+  if (left.observedInputTokens !== undefined || right.observedInputTokens !== undefined) {
+    tokens.observedInputTokens = observedInputTokens(left) + observedInputTokens(right)
+  }
+  if (left.processedTokens !== undefined || right.processedTokens !== undefined) {
+    tokens.processedTokens = processedTokens(left) + processedTokens(right)
+  }
+  return tokens
+}
+
+function observedInputTokens(tokens: TokenCounts): number {
+  return (
+    tokens.observedInputTokens ??
+    tokens.uncachedInputTokens +
+      tokens.cachedInputTokens +
+      tokens.cacheWrite5mInputTokens +
+      tokens.cacheWrite1hInputTokens
+  )
+}
+
 function isCachedUsageFiles(value: unknown): value is CachedUsageFile[] {
   return Array.isArray(value) && value.every(isCachedUsageFile)
 }
@@ -587,7 +627,7 @@ function isCachedUsageFile(value: unknown): value is CachedUsageFile {
   return Boolean(
     file &&
     typeof file['path'] === 'string' &&
-    LOCAL_USAGE_PROVIDERS.some((provider) => provider === file['provider']) &&
+    LOCAL_USAGE_SOURCES.some((source) => source.provider === file['provider']) &&
     nonNegativeNumber(file['mtimeMs']) &&
     nonNegativeNumber(file['size']) &&
     Array.isArray(file['entries']) &&
@@ -702,16 +742,10 @@ type UsageWorkerMessage =
   | { type: 'error'; message: string }
 
 function emptySources(): SourceState[] {
-  return [
-    { provider: 'claude-code', label: 'Claude Code', available: false },
-    { provider: 'codex', label: 'Codex', available: false },
-    { provider: 'grok', label: 'Grok', available: false },
-    { provider: 'cursor', label: 'Cursor', available: false },
-    { provider: 'opencode', label: 'OpenCode', available: false },
-    { provider: 'antigravity', label: 'Antigravity', available: false },
-    { provider: 'acp', label: 'ACP', available: false },
-    { provider: 'api', label: 'API', available: false },
-  ]
+  return REPORTED_PROVIDERS.map((provider) => {
+    const local = LOCAL_USAGE_SOURCES.find((source) => source.provider === provider)
+    return { provider, ...(local ? { label: local.label } : {}), available: false }
+  })
 }
 
 function mergeSources(sources: readonly SourceState[]): SourceState[] {
@@ -727,22 +761,13 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-type UsageSourceDefinition = {
-  provider: ProviderId
-  label: string
-  discover: () => Promise<{ available: boolean; files: UsageFile[] }>
-}
-
 async function discoverUsageSources(
-  definitions: readonly UsageSourceDefinition[],
+  roots: readonly UsageSourceRoot[],
 ): Promise<{ files: UsageFile[]; sources: SourceState[] }> {
   const discovered = await Promise.all(
-    definitions.map(async ({ provider, label, discover }) => {
-      try {
-        return { provider, label, ...(await discover()) }
-      } catch {
-        return { provider, label, available: false, files: [] }
-      }
+    roots.flatMap(({ provider, root }) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+      return source ? [discoverSource(source, root)] : []
     }),
   )
   return {
@@ -757,106 +782,22 @@ async function discoverUsageSources(
   }
 }
 
-async function discoverJsonlRoot(
+async function discoverSource(
+  source: UsageHistorySource<ProviderId, LocalUsageRecord>,
   root: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const rootStat = await stat(root)
-  if (!rootStat.isDirectory()) return { available: false, files: [] }
-  return { available: true, files: await listJsonlFiles(root, provider, read) }
-}
-
-async function discoverSingleFile(
-  filePath: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const file = await usageFile(filePath, provider, read)
-  return { available: Boolean(file), files: file ? [file] : [] }
-}
-
-async function discoverOpenCodeDatabases(
-  root: string,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const rootStat = await stat(root)
-  if (!rootStat.isDirectory()) return { available: false, files: [] }
-  const entries = await readdir(root, { withFileTypes: true })
-  const files = await Promise.all(
-    entries
-      .filter(
-        (entry) =>
-          entry.isFile() && entry.name.startsWith('opencode') && entry.name.endsWith('.db'),
-      )
-      .map((entry) => {
-        const filePath = path.join(root, entry.name)
-        // SQLite can append only to the WAL for long stretches. Folding the
-        // sidecar into the fingerprint catches new messages without reparsing
-        // an unchanged database on every refresh.
-        return usageFile(filePath, 'opencode', read, [`${filePath}-wal`], true)
-      }),
-  )
-  return { available: true, files: files.filter((file) => file !== undefined) }
-}
-
-async function usageFile(
-  filePath: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-  companions: readonly string[] = [],
-  allowEmpty = false,
-): Promise<UsageFile | undefined> {
-  const fileStat = await stat(filePath)
-  if (!fileStat.isFile() || (!allowEmpty && fileStat.size === 0)) return undefined
-  let mtimeMs = fileStat.mtimeMs
-  let size = fileStat.size
-  for (const companion of companions) {
-    try {
-      const companionStat = await stat(companion)
-      mtimeMs = Math.max(mtimeMs, companionStat.mtimeMs)
-      size += companionStat.size
-    } catch {
-      // A database without a WAL is the common clean-shutdown state.
+): Promise<{ provider: ProviderId; label: string; available: boolean; files: UsageFile[] }> {
+  const { provider, label } = source
+  try {
+    const archive = await source.discover(root)
+    return {
+      provider,
+      label,
+      available: archive.available,
+      files: archive.files.map((file) => ({ ...file, provider })),
     }
+  } catch {
+    return { provider, label, available: false, files: [] }
   }
-  return { path: filePath, provider, mtimeMs, size, read }
-}
-
-async function listJsonlFiles(
-  root: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<UsageFile[]> {
-  const result: UsageFile[] = []
-  const pending = [root]
-  while (pending.length > 0) {
-    const directory = pending.pop()
-    if (!directory) continue
-    let entries
-    try {
-      entries = await readdir(directory, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = path.join(directory, entry.name)
-        if (entry.isDirectory()) {
-          pending.push(fullPath)
-          return
-        }
-        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) return
-        try {
-          const file = await usageFile(fullPath, provider, read)
-          if (file) result.push(file)
-        } catch {
-          // A session can disappear between readdir and stat during cleanup.
-        }
-      }),
-    )
-  }
-  return result
 }
 
 function harnessUsageRecords(
