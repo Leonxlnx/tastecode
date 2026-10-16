@@ -760,7 +760,7 @@ describe('Composer attachment preview', () => {
   ])('says the preview is unavailable once the attempt %s', async (_, finish) => {
     const settle = deferred()
     bridge.previewViewedImage.mockReturnValue(settle.promise)
-    bridge.pickFiles.mockResolvedValue(['/work/dot.png'])
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
     renderComposer(vi.fn())
     fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
 
@@ -782,12 +782,30 @@ describe('Composer attachment preview', () => {
       mediaType: 'image',
       previewUrl: 'tastecode-attachment://preview/dot',
     })
-    bridge.pickFiles.mockResolvedValue(['/work/dot.png'])
+    bridge.pickFiles.mockResolvedValue([{ path: '/work/dot.png', name: 'dot.png' }])
     renderComposer(vi.fn())
     fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
 
     const open = await screen.findByRole('button', { name: 'Open dot.png' })
     expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).toHaveBeenCalledWith('/work/dot.png')
+  })
+
+  it('keeps the preview the picker already supplied', async () => {
+    bridge.pickFiles.mockResolvedValue([
+      {
+        path: '/work/dot.png',
+        name: 'dot.png',
+        mediaType: 'image',
+        previewUrl: 'tastecode-attachment://preview/dot',
+      },
+    ])
+    renderComposer(vi.fn())
+    fireEvent.click(screen.getByRole('button', { name: 'Attach files' }))
+
+    const open = await screen.findByRole('button', { name: 'Open dot.png' })
+    expect((open as HTMLButtonElement).disabled).toBe(false)
+    expect(bridge.previewViewedImage).not.toHaveBeenCalled()
   })
 })
 
