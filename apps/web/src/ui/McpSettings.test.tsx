@@ -343,6 +343,160 @@ describe('MCP settings', () => {
     ])
   })
 
+  it('offers no hide controls when the provider declares inherited servers read-only', async () => {
+    const transport = client(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: [
+        {
+          id: 'design-taste',
+          scope: 'global',
+          enabled: true,
+          startup: { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="claude-code"
+        providerName="Claude Code"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const inherited = await screen.findByRole('region', { name: 'From Claude Code settings' })
+    expect(inherited.textContent).toContain('Change them in Claude Code.')
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Hide server by ID' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
+  })
+
+  it('says it is still checking while the provider collects its servers', async () => {
+    const inventory = (loading: boolean) => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: true,
+        startOAuth: true,
+        cancelOAuth: false,
+      },
+      servers: [
+        {
+          id: 'docs',
+          scope: 'global',
+          enabled: true,
+          startup: loading ? { state: 'starting' } : { state: 'ready' },
+          tools: [],
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+      ...(loading ? { loading: true } : {}),
+    })
+    let loading = true
+    let changed: ((event: { provider: string; projectPath: string }) => void) | undefined
+    const transport = {
+      ...client(async () => inventory(loading)),
+      on: vi.fn((channel: string, listener: typeof changed) => {
+        if (channel === 'mcp.changed') changed = listener
+        return () => {}
+      }),
+    } as unknown as Transport
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('Checking Codex MCP servers…')).toBeTruthy()
+    expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
+      'starting',
+    )
+    expect(screen.queryByText('No MCP servers have been added to this project.')).toBeNull()
+
+    loading = false
+    act(() => changed?.({ provider: 'codex', projectPath: '/work/project' }))
+    expect(await screen.findByText('Codex · MCP inventory available')).toBeTruthy()
+    expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
+  })
+
+  it('shows loading rows instead of an empty list while nothing is reported yet', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: true },
+      servers: [],
+      loading: true,
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    expect(await screen.findByText('Checking Codex MCP servers…')).toBeTruthy()
+    expect(screen.getByText('Loading MCP servers…')).toBeTruthy()
+    expect(screen.queryByText(/No MCP servers have been added/)).toBeNull()
+  })
+
+  it('renders a server tool list only after its details open', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: true, add: false },
+      servers: [
+        {
+          id: 'apps',
+          scope: 'global',
+          enabled: true,
+          startup: { state: 'ready' },
+          tools: Array.from({ length: 200 }, (_, index) => ({
+            name: `tool_${index}`,
+            inputSchema: { type: 'object' },
+          })),
+          resources: [],
+          resourceTemplates: [],
+        },
+      ],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="codex"
+        providerName="Codex"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+
+    const summary = await screen.findByText(/200 tools/)
+    expect(document.querySelectorAll('.mcp-row__details li')).toHaveLength(0)
+    const details = summary.closest('details')!
+    details.open = true
+    fireEvent(details, new Event('toggle'))
+    expect(await screen.findByText('tool_199')).toBeTruthy()
+    expect(document.querySelectorAll('.mcp-row__details li')).toHaveLength(200)
+  })
+
   it('offers no per-project switch for inherited servers without live inventory', async () => {
     const transport = client(async () => ({
       capabilities: {
