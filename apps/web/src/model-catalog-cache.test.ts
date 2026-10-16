@@ -144,4 +144,49 @@ describe('model catalog cache', () => {
     cached.models[0]!.model['reasoningEfforts'] = ['high', 1]
     expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
   })
+
+  it('keeps the lineage and curation an adapter declared', () => {
+    const declared = choicesFor(
+      { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
+      [
+        {
+          ...model,
+          id: 'deepseek/deepseek-v4.1-flash',
+          lab: 'DeepSeek',
+          family: 'deepseek-flash',
+          generation: '4.1',
+          released: '2026-09-30',
+          recommended: true,
+          deprecated: false,
+        },
+        { ...model, id: 'minimax/MiniMax-M2.5', isDefault: false, deprecated: true },
+      ],
+    )
+    expect(parseModelCatalogCache(serializeModelCatalogCache(declared))?.models).toEqual(declared)
+    // A snapshot written before the fields existed reads as before.
+    expect(parseModelCatalogCache(serializeModelCatalogCache([catalog[0]!]))?.models).toEqual([
+      catalog[0],
+    ])
+  })
+
+  it('drops only the declared fields the protocol would not accept', () => {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
+      models: Array<{ model: Record<string, unknown> }>
+    }
+    Object.assign(cached.models[0]!.model, {
+      lab: '',
+      family: 'x'.repeat(121),
+      generation: 6,
+      released: '2026-9-30',
+      recommended: 'yes',
+      deprecated: 1,
+    })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models).toEqual([catalog[0]])
+    Object.assign(cached.models[0]!.model, { family: 'gpt-sol', generation: '5.6' })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models[0]?.model).toEqual({
+      ...model,
+      family: 'gpt-sol',
+      generation: '5.6',
+    })
+  })
 })

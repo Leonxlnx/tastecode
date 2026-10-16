@@ -114,6 +114,19 @@ export function readModelLineage(displayName: string): ModelLineage | undefined 
   return generation && LINEAGE_LETTER.test(name) ? { family: name, generation } : undefined
 }
 
+const DECLARED_GENERATION = /^\d+(?:\.\d+)*$/
+
+/**
+ * The lineage an adapter declared, when it declared both parts. Declared
+ * families live apart from the ones read out of names, so a declared
+ * `gpt-terra` never meets a parsed `gpt # terra` of the same source.
+ */
+function declaredLineage(model: Model): ModelLineage | undefined {
+  const { family, generation } = model
+  if (!family || !generation || !DECLARED_GENERATION.test(generation)) return undefined
+  return { family: `declared:${family}`, generation: generation.split('.').map(Number) }
+}
+
 /**
  * Lineages by listed model. A refresh keeps the model objects of every source
  * it did not relist, so recomputing the defaults per settled source only
@@ -124,7 +137,7 @@ const lineageByModel = new WeakMap<Model, ModelLineage | null>()
 function listedLineage(model: Model): ModelLineage | undefined {
   let lineage = lineageByModel.get(model)
   if (lineage === undefined) {
-    lineage = readModelLineage(model.displayName) ?? null
+    lineage = declaredLineage(model) ?? readModelLineage(model.displayName) ?? null
     lineageByModel.set(model, lineage)
   }
   return lineage ?? undefined
@@ -147,16 +160,20 @@ type LineageMember = { key: string; generation: readonly number[] }
 /**
  * The visibility each choice starts with, from the catalog alone. Within its
  * own source, a choice starts hidden when it is a known legacy model, when
- * the source lists a newer generation of its family, or when the source
- * still has more than 20 rows after those two rules and the choice is
- * neither among the first 4 of them in the adapter's order nor the source's
- * default. Custom models always start visible. One pass over the catalog,
- * with nothing to migrate when a rule or a provider's lineup changes.
+ * the adapter marks it deprecated, or when the source lists a newer
+ * generation of its family (the family and generation the adapter declared,
+ * otherwise the ones its name reads as). A source whose adapter recommends
+ * any of its rows then shows only those and its default. Any other source
+ * that still has more than 20 rows shows only the first 4 of them in the
+ * adapter's order and its default. Custom models always start visible. One
+ * pass over the catalog, with nothing to migrate when a rule or a provider's
+ * lineup changes.
  */
 export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelVisibilityDefaults {
   const hidden = new Set<string>()
   const supersededBy = new Map<string, string>()
   const stock: { choice: ModelChoice; source: string }[] = []
+  const curatedSources = new Set<string>()
   const families = new Map<string, { newest: LineageMember; members: LineageMember[] }>()
   for (const choice of choices) {
     if (isCustomModelChoice(choice)) continue
@@ -166,7 +183,13 @@ export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelV
       agentId: choice.agent?.id,
     })
     stock.push({ choice, source })
+    if (choice.model.recommended === true) curatedSources.add(source)
     if (DEFAULT_HIDDEN_MODELS.has(visibilityId(choice.model))) hidden.add(choice.key)
+    // A retiring model starts hidden and never takes over from an older one.
+    if (choice.model.deprecated === true) {
+      hidden.add(choice.key)
+      continue
+    }
     const lineage = listedLineage(choice.model)
     if (!lineage) continue
     const member = { key: choice.key, generation: lineage.generation }
@@ -189,6 +212,10 @@ export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelV
   const remaining = new Map<string, ModelChoice[]>()
   for (const { choice, source } of stock) {
     if (hidden.has(choice.key)) continue
+    if (curatedSources.has(source)) {
+      if (choice.model.recommended !== true && !choice.model.isDefault) hidden.add(choice.key)
+      continue
+    }
     const rows = remaining.get(source)
     if (rows) rows.push(choice)
     else remaining.set(source, [choice])

@@ -286,6 +286,48 @@ function parseModel(value: unknown): Model | undefined {
     ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
     serviceTiers,
     ...(defaultServiceTier === undefined ? {} : { defaultServiceTier }),
+    ...parseModelMetadata(value),
+  }
+}
+
+const CACHED_GENERATION = /^\d+(?:\.\d+)*$/
+const CACHED_RELEASE_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * The optional lineage and curation fields an adapter declared, within the
+ * limits the protocol accepts. A value outside them is left out on its own:
+ * it only shapes default visibility, which falls back to reading the name,
+ * so it is no reason to throw away the whole snapshot.
+ */
+function parseModelMetadata(
+  value: Record<string, unknown>,
+): Pick<Model, 'lab' | 'family' | 'generation' | 'released' | 'recommended' | 'deprecated'> {
+  const text = (field: string, maxLength: number, pattern?: RegExp) => {
+    const entry = value[field]
+    return typeof entry === 'string' &&
+      entry.length > 0 &&
+      entry.length <= maxLength &&
+      (!pattern || pattern.test(entry))
+      ? entry
+      : undefined
+  }
+  const flag = (field: string) => {
+    const entry = value[field]
+    return typeof entry === 'boolean' ? entry : undefined
+  }
+  const lab = text('lab', 80)
+  const family = text('family', 120)
+  const generation = text('generation', 32, CACHED_GENERATION)
+  const released = text('released', 10, CACHED_RELEASE_DATE)
+  const recommended = flag('recommended')
+  const deprecated = flag('deprecated')
+  return {
+    ...(lab === undefined ? {} : { lab }),
+    ...(family === undefined ? {} : { family }),
+    ...(generation === undefined ? {} : { generation }),
+    ...(released === undefined ? {} : { released }),
+    ...(recommended === undefined ? {} : { recommended }),
+    ...(deprecated === undefined ? {} : { deprecated }),
   }
 }
 

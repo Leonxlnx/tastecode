@@ -545,6 +545,103 @@ describe('model catalog', () => {
       expect(defaultsShown(withOlder)).toEqual([...names(rows(19)), 'Older 5'])
     })
 
+    describe('what the adapter declares', () => {
+      const declared = (
+        provider: ModelChoice['provider'],
+        rows: readonly (Partial<Model> & { id: string })[],
+      ) =>
+        choicesFor(
+          { provider, sourceName: provider, mark: 'custom' },
+          rows.map((row) => ({ ...model, isDefault: false, displayName: row.id, ...row })),
+        )
+
+      it('uses a declared family and generation instead of reading the name', () => {
+        // Cursor-style names the parser cannot read as one family and version.
+        const cursor = declared('cursor', [
+          { id: 'claude-4.6-opus-thinking', family: 'claude-opus-thinking', generation: '4.6' },
+          { id: 'claude-opus-5-5-thinking', family: 'claude-opus-thinking', generation: '5.5' },
+          { id: 'claude-opus-5-5', family: 'claude-opus', generation: '5.5' },
+          { id: 'claude-opus-4-8', family: 'claude-opus', generation: '4.8' },
+        ])
+        const defaults = modelVisibilityDefaults(cursor)
+        expect(shown(cursor, defaults.hidden)).toEqual([
+          'claude-opus-5-5-thinking',
+          'claude-opus-5-5',
+        ])
+        expect(defaults.supersededBy.get('cursor:claude-4.6-opus-thinking')).toBe(
+          'cursor:claude-opus-5-5-thinking',
+        )
+
+        // Two names that read as one family stay apart when the adapter says so.
+        const split = declared('opencode', [
+          { id: 'a', displayName: 'MiniMax-M3', family: 'minimax-m', generation: '3' },
+          { id: 'b', displayName: 'MiniMax-M2.7', family: 'minimax-m-coding', generation: '2.7' },
+        ])
+        expect(defaultsShown(split)).toEqual(['MiniMax-M3', 'MiniMax-M2.7'])
+      })
+
+      it('reads the name when the adapter declares only one half of a lineage', () => {
+        const half = declared('opencode', [
+          { id: 'a', displayName: 'DeepSeek V4.1 Flash', family: 'deepseek-flash' },
+          { id: 'b', displayName: 'DeepSeek V4 Flash', generation: '4' },
+        ])
+        expect(defaultsShown(half)).toEqual(['DeepSeek V4.1 Flash'])
+      })
+
+      it('starts a deprecated model hidden without letting it replace an older one', () => {
+        const rows = declared('opencode', [
+          { id: 'gpt-7-sol', displayName: 'GPT-7-Sol', deprecated: true },
+          { id: 'gpt-6-sol', displayName: 'GPT-6-Sol' },
+          { id: 'gpt-5-sol', displayName: 'GPT-5-Sol' },
+        ])
+        const defaults = modelVisibilityDefaults(rows)
+        expect(shown(rows, defaults.hidden)).toEqual(['GPT-6-Sol'])
+        expect(defaults.supersededBy.get('opencode:gpt-6-sol')).toBeUndefined()
+        expect(defaults.supersededBy.get('opencode:gpt-5-sol')).toBe('opencode:gpt-6-sol')
+        // Showing it is still the user's call.
+        expect(
+          effectiveHiddenModels(
+            rows,
+            defaults,
+            { 'opencode:gpt-7-sol': { visible: true, at: 1 } },
+            {},
+          ).has('opencode:gpt-7-sol'),
+        ).toBe(false)
+      })
+
+      it("shows only a source's recommended rows and its default, whatever its size", () => {
+        const rows = (count: number) =>
+          Array.from({ length: count }, (_, index) => ({
+            id: `model-${index}`,
+            displayName: `Model ${String.fromCharCode(97 + index)}`,
+          }))
+        const small = declared('opencode', [
+          ...rows(3),
+          { id: 'pick', displayName: 'Pick', recommended: true },
+          { id: 'agent-default', displayName: 'Agent default', isDefault: true },
+        ])
+        expect(defaultsShown(small)).toEqual(['Pick', 'Agent default'])
+
+        // The recommended set replaces the first-four rule of a large source.
+        const large = declared('opencode', [
+          ...rows(30),
+          { id: 'flash', displayName: 'Flash', recommended: true },
+          { id: 'pro', displayName: 'Pro', recommended: true },
+        ])
+        expect(defaultsShown(large)).toEqual(['Flash', 'Pro'])
+
+        // Another source without recommendations keeps the generic rules.
+        const other = declared('cursor', rows(3))
+        expect(defaultsShown([...small, ...other])).toEqual([
+          'Pick',
+          'Agent default',
+          'Model a',
+          'Model b',
+          'Model c',
+        ])
+      })
+    })
+
     it('never hides a custom model by default, but honours hiding it', () => {
       const custom = customModelChoice({
         provider: 'codex',
