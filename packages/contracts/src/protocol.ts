@@ -317,6 +317,28 @@ export const McpCapabilitiesSchema = z.object({
 })
 export type McpCapabilities = z.infer<typeof McpCapabilitiesSchema>
 
+/**
+ * A slash command or skill the provider itself runs when a message starts with
+ * `/name`. Clients insert the text; the provider expands it.
+ */
+const ProviderCommandNameSchema = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[^/\s]\S*$/, 'expected a command name without a leading slash or spaces')
+export const ProviderCommandSchema = z.object({
+  /** Name as typed after the slash, such as "context" or "plugin:review". */
+  name: ProviderCommandNameSchema,
+  description: z.string(),
+  /** Short placeholder for the arguments, such as "<file>". */
+  argumentHint: z.string().min(1).max(200).optional(),
+  /** Other names the provider accepts for the same command. */
+  aliases: z.array(ProviderCommandNameSchema).max(20).optional(),
+  /** Absent means a plain command. */
+  kind: z.enum(['command', 'skill']).optional(),
+})
+export type ProviderCommand = z.infer<typeof ProviderCommandSchema>
+
 export const SkillScopeSchema = z.enum(['project', 'user', 'system', 'admin'])
 export type SkillScope = z.infer<typeof SkillScopeSchema>
 
@@ -931,6 +953,23 @@ export const methods = {
       servers: z.array(McpServerSchema),
     }),
   },
+  /**
+   * Slash commands and skills the provider runs itself. `threadId` lets the
+   * server answer from that chat's live session. Older servers answer
+   * `unknown method`, which clients treat as no commands.
+   */
+  'commands.list': {
+    params: z.object({
+      provider: ProviderIdSchema,
+      projectPath: z.string().min(1),
+      threadId: z.string().min(1).optional(),
+    }),
+    result: z.object({
+      commands: z.array(ProviderCommandSchema),
+      /** Discovery is still running; a `commands.changed` push follows. */
+      loading: z.boolean(),
+    }),
+  },
   'mcp.add': {
     params: z.object({
       provider: ProviderIdSchema,
@@ -1394,7 +1433,7 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       projectPath: z.string(),
-      targets: z.array(z.enum(['skills', 'mcp'])).max(2),
+      targets: z.array(z.enum(['skills', 'mcp', 'commands'])).max(3),
     }),
     result: z.object({ expiresInMs: z.number().int().positive() }),
   },
@@ -1791,6 +1830,10 @@ export const channels = {
     projectPath: z.string().min(1),
   }),
   'skills.changed': z.object({
+    provider: ProviderIdSchema,
+    projectPath: z.string().min(1),
+  }),
+  'commands.changed': z.object({
     provider: ProviderIdSchema,
     projectPath: z.string().min(1),
   }),

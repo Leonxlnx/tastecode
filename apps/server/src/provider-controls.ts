@@ -5,6 +5,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ParamsOf,
   ProviderId,
   ProviderLimit,
   ProviderLimitSource,
@@ -32,7 +33,8 @@ export type ProviderLoginResult = {
 type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-type WatchTarget = 'skills' | 'mcp'
+/** Targets without a lease here yet (`commands`) are accepted and ignored. */
+type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
 
 /** Only this settings surface is required of an injected control process. */
 export type CodexControlAdapter = Pick<

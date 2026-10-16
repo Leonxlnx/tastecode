@@ -70,7 +70,7 @@ describe('audit recovery contracts', () => {
       methods['providers.watch'].params.safeParse({
         provider: 'codex',
         projectPath: '/repo',
-        targets: ['mcp', 'skills', 'mcp'],
+        targets: ['mcp', 'skills', 'commands', 'mcp'],
       }).success,
     ).toBe(false)
   })
@@ -1715,5 +1715,71 @@ describe('model metadata contracts', () => {
     })
     expect(channels['models.changed'].safeParse({ provider: 'acp', agent: '' }).success).toBe(false)
     expect(channels['models.changed'].safeParse({ provider: 'nope' }).success).toBe(false)
+  })
+})
+
+describe('provider command contracts', () => {
+  const list = methods['commands.list']
+
+  it('lists commands for a project, optionally from one chat', () => {
+    const params = { provider: 'claude-code', projectPath: 'D:\\project' }
+    expect(list.params.parse(params)).toEqual(params)
+    expect(list.params.parse({ ...params, threadId: 'th1' })).toEqual({
+      ...params,
+      threadId: 'th1',
+    })
+    expect(list.params.safeParse({ ...params, threadId: '' }).success).toBe(false)
+    expect(list.params.safeParse({ ...params, projectPath: '' }).success).toBe(false)
+  })
+
+  it('round-trips commands and skills with hints and aliases', () => {
+    const result = {
+      commands: [
+        { name: 'context', description: 'Show context usage' },
+        {
+          name: 'design-taste:design-taste',
+          description: 'Build pages from references',
+          argumentHint: '<page>',
+          aliases: ['taste'],
+          kind: 'skill',
+        },
+        { name: 'review', description: '', kind: 'command' },
+      ],
+      loading: false,
+    }
+    expect(list.result.parse(result)).toEqual(result)
+    expect(list.result.parse({ commands: [], loading: true })).toEqual({
+      commands: [],
+      loading: true,
+    })
+    expect(list.result.safeParse({ commands: [] }).success).toBe(false)
+  })
+
+  it.each([
+    { name: '/context' },
+    { name: '' },
+    { name: 'two words' },
+    { name: 'context', aliases: ['/ctx'] },
+    { name: 'context', argumentHint: '' },
+    { name: 'context', kind: 'prompt' },
+  ])('rejects malformed commands: %j', (command) => {
+    expect(
+      list.result.safeParse({ commands: [{ description: '', ...command }], loading: false })
+        .success,
+    ).toBe(false)
+  })
+
+  it('announces changed commands and accepts a commands watch', () => {
+    expect(
+      channels['commands.changed'].parse({ provider: 'grok', projectPath: 'D:\\project' }),
+    ).toEqual({ provider: 'grok', projectPath: 'D:\\project' })
+    expect(channels['commands.changed'].safeParse({ provider: 'grok' }).success).toBe(false)
+    expect(
+      methods['providers.watch'].params.parse({
+        provider: 'claude-code',
+        projectPath: '/repo',
+        targets: ['skills', 'mcp', 'commands'],
+      }).targets,
+    ).toEqual(['skills', 'mcp', 'commands'])
   })
 })
