@@ -12,7 +12,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App, resolveSendAvailability } from './App.js'
+import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -1209,6 +1209,12 @@ describe('web client', () => {
     )
     expect(resolve({ problem: 'Codex needs an update.' }, failed)).toBe('unavailable')
     expect(resolve({ auth: 'unauthenticated' }, failed)).toBe('setup-required')
+    // A read still running waits only through the grace period.
+    expect(resolve({}, { provider: 'codex', state: 'loading' })).toBe('loading')
+    expect(resolve({}, { provider: 'codex', state: 'loading', slow: true })).toBe('ready')
+    expect(
+      resolve({ auth: 'unauthenticated' }, { provider: 'codex', state: 'loading', slow: true }),
+    ).toBe('setup-required')
   })
 
   it.each([false, true])(
@@ -12561,6 +12567,41 @@ describe('connection recovery regressions', () => {
     await act(async () => answerRetry({ signedIn: true }))
     await waitFor(() => expect(screen.queryByText(notice)).toBeNull())
     expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('opens Send while a slow account check is still reading, and the answer still decides', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    try {
+      serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+      const request = transport.request.getMockImplementation()!
+      let answer: ((account: { signedIn: boolean }) => void) | undefined
+      transport.request.mockImplementation((method, params) =>
+        method === 'auth.status'
+          ? new Promise((resolve) => {
+              answer = resolve
+            })
+          : request(method, params),
+      )
+      render(<App />)
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Send while reading' },
+      })
+      const send = () => screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+      await waitFor(() => expect(answer).toBeTypeOf('function'))
+      expect(send().disabled).toBe(true)
+
+      await act(async () => {
+        vi.advanceTimersByTime(ACCOUNT_CHECK_SEND_GRACE_MS)
+      })
+      expect(send().disabled).toBe(false)
+      expect(screen.queryByText(/Could not confirm this account/)).toBeNull()
+
+      // A signed-out answer that arrives later still asks for setup.
+      await act(async () => answer!({ signedIn: false }))
+      await waitFor(() => expect(send().disabled).toBe(true))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('ignores an old failed account reply after the reconnect check succeeds', async () => {

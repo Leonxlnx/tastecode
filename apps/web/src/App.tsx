@@ -355,7 +355,17 @@ type AccountCheck = {
   state: CatalogAvailability
   account?: Account
   error?: ComposerError
+  /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
+  slow?: true
 }
+
+/**
+ * How long a running account read keeps Send waiting. Some CLIs need far
+ * longer to answer on a busy machine (cursor-agent `status` took up to 13 s),
+ * and their reads may now run that long; past this point the composer treats
+ * the read like one that could not answer and lets the user send.
+ */
+export const ACCOUNT_CHECK_SEND_GRACE_MS = 5_000
 
 /** The counter makes a repeated request for the open section navigate again. */
 type SettingsSectionRequest = { section: SettingsSection; request: number }
@@ -449,11 +459,11 @@ export function resolveSendAvailability(input: {
   }
   if (status.auth === 'unauthenticated') return 'setup-required'
   if (status.auth === 'authenticated') return 'ready'
-  if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
-    return 'loading'
-  }
-  // A check that could not answer in time confirms nothing either way. Send
-  // stays available: a CLI that really is signed out says so in the turn.
+  if (input.accountCheck.provider !== provider) return 'loading'
+  // A check that could not answer in time, or still has not after the grace
+  // period, confirms nothing either way. Send stays available: a CLI that
+  // really is signed out says so in the turn.
+  if (input.accountCheck.state === 'loading') return input.accountCheck.slow ? 'ready' : 'loading'
   if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
@@ -2451,6 +2461,14 @@ export function App() {
         ? current
         : { provider, state: 'loading' },
     )
+    const grace = setTimeout(() => {
+      if (cancelled || revision !== accountRequestRevision.current) return
+      setAccountCheck((current) =>
+        current.provider === provider && current.state === 'loading'
+          ? { ...current, slow: true }
+          : current,
+      )
+    }, ACCOUNT_CHECK_SEND_GRACE_MS)
     void transport
       .request('auth.status', {
         provider,
@@ -2458,6 +2476,7 @@ export function App() {
           ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
           : {}),
       })
+      .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
@@ -2479,6 +2498,7 @@ export function App() {
       })
     return () => {
       cancelled = true
+      clearTimeout(grace)
     }
   }, [
     transport,
