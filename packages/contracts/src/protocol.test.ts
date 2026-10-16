@@ -20,6 +20,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryProviderSchema,
   UsageHistoryResultSchema,
   type ProviderLimit,
   type ProviderLimitSource,
@@ -2002,5 +2003,283 @@ describe('subagent contracts', () => {
       expect(CapabilitiesSchema.parse({ ...capabilities, subagents }).subagents).toBe(subagents)
     expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: 'live' }).success).toBe(false)
     expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: true }).success).toBe(false)
+  })
+})
+
+describe('provider source shape contracts', () => {
+  const status = {
+    id: 'codex',
+    displayName: 'Codex',
+    installed: true,
+    auth: 'authenticated',
+  }
+  const list = methods['providers.list'].result
+
+  it('keeps provider statuses without a declared shape valid', () => {
+    expect(list.parse({ providers: [status] }).providers[0]?.source).toBeUndefined()
+  })
+
+  it('declares what each kind of source must name', () => {
+    const shapes = [
+      { ...status, source: { agent: 'optional', connection: false, direct: true } },
+      { ...status, id: 'pi', source: { agent: 'required', connection: false, direct: true } },
+      { ...status, id: 'acp', source: { agent: 'required', connection: false, direct: false } },
+      { ...status, id: 'api', source: { agent: 'none', connection: true, direct: false } },
+    ]
+    expect(list.parse({ providers: shapes })).toEqual({ providers: shapes })
+  })
+
+  it.each([
+    { agent: 'sometimes', connection: false, direct: true },
+    { agent: 'optional', connection: 'no', direct: true },
+    { agent: 'optional', connection: false },
+    { connection: false, direct: true },
+    'direct',
+  ])('rejects a malformed shape: %j', (source) => {
+    expect(list.safeParse({ providers: [{ ...status, source }] }).success).toBe(false)
+  })
+})
+
+describe('provider account contracts', () => {
+  const work = {
+    id: 'work',
+    provider: 'codex',
+    label: 'Work',
+    home: 'C:\\Users\\me\\AppData\\Roaming\\TasteCode\\accounts\\codex\\work',
+    managed: true,
+    email: 'me@example.com',
+    plan: 'pro',
+    createdAt: 1_760_000_000_000,
+  }
+  const defaultAccount = { id: 'default', provider: 'codex', label: 'Personal', managed: false }
+
+  it('lists accounts with the default first and the active one per provider', () => {
+    const list = methods['accounts.list']
+    expect(list.params.parse({})).toEqual({})
+    expect(list.params.parse({ provider: 'claude-code' })).toEqual({ provider: 'claude-code' })
+    const result = { accounts: [defaultAccount, work], active: { codex: 'work' } }
+    expect(list.result.parse(result)).toEqual(result)
+    expect(list.result.parse({ accounts: [], active: {} })).toEqual({ accounts: [], active: {} })
+    expect(list.result.safeParse({ accounts: [], active: { nope: 'work' } }).success).toBe(false)
+    expect(list.result.safeParse({ accounts: [], active: { codex: 'Work' } }).success).toBe(false)
+  })
+
+  it('keeps the default account on the CLI folder and every other one on its own', () => {
+    const list = methods['accounts.list'].result
+    const parse = (account: unknown) => list.safeParse({ accounts: [account], active: {} }).success
+    expect(parse({ ...work, home: '/Users/me/.codex-second', managed: false })).toBe(true)
+    expect(parse({ ...work, home: '\\\\server\\share\\codex' })).toBe(true)
+    for (const bad of [
+      { ...defaultAccount, home: work.home },
+      { ...defaultAccount, managed: true },
+      { ...work, home: undefined },
+      { ...work, home: 'relative\\folder' },
+      { ...work, home: '~/.codex' },
+      { ...work, home: 'C:\\bad\0path' },
+      { ...work, id: 'Work' },
+      { ...work, id: '-work' },
+      { ...work, id: 'x'.repeat(65) },
+      { ...work, label: '' },
+      { ...work, label: '   ' },
+      { ...work, label: 'x'.repeat(81) },
+      { ...work, email: '' },
+      { ...work, managed: undefined },
+    ])
+      expect(parse(bad), JSON.stringify(bad)).toBe(false)
+  })
+
+  it('creates a managed home or uses an existing folder, never a path-free one', () => {
+    const create = methods['accounts.create']
+    const managed = { provider: 'claude-code', label: 'Work', home: { kind: 'managed' } }
+    expect(create.params.parse(managed)).toEqual(managed)
+    const existing = {
+      provider: 'codex',
+      label: ' Second ',
+      home: { kind: 'existing', path: 'E:\\Codex\\.codex-second' },
+    }
+    expect(create.params.parse(existing).label).toBe('Second')
+    for (const home of [
+      undefined,
+      { kind: 'existing' },
+      { kind: 'existing', path: 'codex' },
+      { kind: 'existing', path: '' },
+      { kind: 'copy' },
+    ])
+      expect(create.params.safeParse({ ...managed, home }).success).toBe(false)
+    expect(create.result.parse({ account: work })).toEqual({ account: work })
+  })
+
+  it('renames, removes and activates by provider and account id', () => {
+    expect(
+      methods['accounts.rename'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        label: 'Client',
+      }),
+    ).toEqual({ provider: 'codex', accountId: 'work', label: 'Client' })
+    const remove = methods['accounts.remove'].params
+    expect(remove.parse({ provider: 'codex', accountId: 'work' }).deleteHome).toBeUndefined()
+    expect(
+      remove.parse({ provider: 'codex', accountId: 'work', deleteHome: true }).deleteHome,
+    ).toBe(true)
+    expect(remove.safeParse({ provider: 'codex', accountId: '' }).success).toBe(false)
+    expect(
+      methods['accounts.setActive'].params.parse({ provider: 'codex', accountId: 'default' }),
+    ).toEqual({ provider: 'codex', accountId: 'default' })
+    expect(channels['accounts.changed'].parse({ provider: 'claude-code' })).toEqual({
+      provider: 'claude-code',
+    })
+    expect(channels['accounts.changed'].safeParse({}).success).toBe(false)
+  })
+
+  it('scopes sign-in, models and limits to an optional account', () => {
+    for (const method of [
+      'auth.status',
+      'auth.startLogin',
+      'auth.signOut',
+      'models.list',
+    ] as const) {
+      expect(methods[method].params.parse({ provider: 'codex' })).toEqual({ provider: 'codex' })
+      expect(methods[method].params.parse({ provider: 'codex', accountId: 'work' })).toEqual({
+        provider: 'codex',
+        accountId: 'work',
+      })
+      expect(
+        methods[method].params.safeParse({ provider: 'codex', accountId: 'Work' }).success,
+      ).toBe(false)
+    }
+    expect(
+      methods['auth.cancelLogin'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        loginId: 'l1',
+      }),
+    ).toEqual({ provider: 'codex', accountId: 'work', loginId: 'l1' })
+    expect(
+      methods['auth.useApiKey'].params.parse({ provider: 'codex', accountId: 'work', apiKey: 'k' })
+        .accountId,
+    ).toBe('work')
+    for (const channel of ['models.changed', 'usage.changed'] as const)
+      expect(channels[channel].parse({ provider: 'codex', accountId: 'work' })).toEqual({
+        provider: 'codex',
+        accountId: 'work',
+      })
+    expect(
+      channels['auth.event'].parse({
+        provider: 'claude-code',
+        accountId: 'work',
+        loginId: 'l1',
+        success: true,
+        error: null,
+      }).accountId,
+    ).toBe('work')
+    expect(methods['usage.summary'].params.parse({ provider: 'codex', accountId: 'work' })).toEqual(
+      { provider: 'codex', accountId: 'work' },
+    )
+    for (const source of [
+      { provider: 'codex', accountId: 'work', status: 'ready', limits: [] },
+      { provider: 'codex', accountId: 'work', status: 'unavailable', reason: 'noPlan' },
+    ])
+      expect(channels['usage.limits'].parse({ source })).toEqual({ source })
+    expect(
+      channels['usage.limits'].safeParse({
+        source: { provider: 'codex', accountId: '', status: 'ready', limits: [] },
+      }).success,
+    ).toBe(false)
+    expect(
+      methods['providers.launch'].params.parse({
+        provider: 'claude-code',
+        accountId: 'work',
+        columns: 80,
+        rows: 24,
+      }).accountId,
+    ).toBe('work')
+    expect(
+      methods['usage.consumeReset'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        idempotencyKey: '7f0b7f6e-55a5-4b8e-9d0e-3c1d2f4a5b6c',
+      }).accountId,
+    ).toBe('work')
+  })
+
+  it('pins a chat to its account and can continue an earlier chat', () => {
+    const start = methods['thread.start'].params
+    const params = {
+      provider: 'codex',
+      workspacePath: 'D:\\x',
+      accountId: 'work',
+      continueFrom: 'th1',
+    }
+    expect(start.parse(params)).toEqual(params)
+    expect(start.parse({ provider: 'codex', workspacePath: 'D:\\x' }).accountId).toBeUndefined()
+    expect(start.safeParse({ ...params, accountId: 'Work' }).success).toBe(false)
+    expect(start.safeParse({ ...params, continueFrom: '' }).success).toBe(false)
+    const thread = { id: 'th2', provider: 'codex', workspacePath: 'D:\\x', createdAt: 1 }
+    expect(DomainEventSchema.parse({ type: 'thread.started', thread })).toEqual({
+      type: 'thread.started',
+      thread,
+    })
+    expect(
+      DomainEventSchema.parse({ type: 'thread.started', thread: { ...thread, accountId: 'work' } }),
+    ).toMatchObject({ thread: { accountId: 'work' } })
+    const session = {
+      id: 'th2',
+      title: 'Task',
+      provider: 'codex',
+      accountId: 'work',
+      createdAt: 1,
+      running: false,
+    }
+    const project = { path: 'D:\\x', name: 'x', pinned: false, createdAt: 0, sessions: [session] }
+    expect(
+      methods['projects.list'].result.parse({ projects: [project] }).projects[0]?.sessions[0]
+        ?.accountId,
+    ).toBe('work')
+  })
+
+  it('splits usage history by account on request', () => {
+    const history = methods['usage.history'].params
+    expect(history.parse({ range: '30d' }).account).toBeUndefined()
+    expect(
+      history.parse({ range: '30d', account: { provider: 'claude-code', accountId: 'work' } }),
+    ).toEqual({ range: '30d', account: { provider: 'claude-code', accountId: 'work' } })
+    expect(history.safeParse({ range: '30d', account: { accountId: 'work' } }).success).toBe(false)
+    const totals = {
+      uncachedInputTokens: 1,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 1,
+      reasoningTokens: 0,
+      processedTokens: 2,
+      estimatedCostUsd: 0,
+      cacheSavingsUsd: 0,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 0,
+      unpricedTokens: 2,
+    }
+    const row = { provider: 'claude-code', sessionCount: 1, totals }
+    expect(UsageHistoryProviderSchema.parse(row)).toEqual(row)
+    expect(UsageHistoryProviderSchema.parse({ ...row, accountId: 'work' }).accountId).toBe('work')
+    expect(UsageHistoryProviderSchema.safeParse({ ...row, accountId: '' }).success).toBe(false)
+  })
+
+  it('declares which engines can run several accounts', () => {
+    const capabilities = {
+      steer: true,
+      fork: true,
+      interrupt: true,
+      reasoningItems: true,
+      approvals: true,
+      images: true,
+    }
+    expect(CapabilitiesSchema.parse(capabilities).multipleAccounts).toBeUndefined()
+    expect(
+      CapabilitiesSchema.parse({ ...capabilities, multipleAccounts: true }).multipleAccounts,
+    ).toBe(true)
+    expect(CapabilitiesSchema.safeParse({ ...capabilities, multipleAccounts: 'yes' }).success).toBe(
+      false,
+    )
   })
 })

@@ -144,6 +144,26 @@ describe('ephemeral Side chats', () => {
   })
 })
 
+describe('feedback ledger', () => {
+  it('keeps the send ledger across a restart in the shared settings table', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-feedback-ledger-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    expect(seeded.feedbackLedger()).toBeUndefined()
+    seeded.setFeedbackLedger('{"sent":[1]}')
+    seeded.setFeedbackLedger('{"sent":[1,2]}')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.feedbackLedger()).toBe('{"sent":[1,2]}')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('sidebar thread snapshots', () => {
   it('keeps earlier snapshots immutable across a batch and a mid-batch read', () => {
     store.addProject('/repo')

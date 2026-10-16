@@ -118,12 +118,29 @@ export const TurnSchema = z.object({
 })
 export type Turn = z.infer<typeof TurnSchema>
 
+/** The account that uses the provider CLI's own config folder. Every provider has one. */
+export const DEFAULT_ACCOUNT_ID = 'default'
+
+/**
+ * A provider account's identity, unique within its provider. Server-chosen;
+ * `default` is reserved for the CLI's own config folder.
+ */
+export const AccountIdSchema = z
+  .string()
+  .regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'expected a lowercase account id')
+export type AccountId = z.infer<typeof AccountIdSchema>
+
 export const ThreadSchema = z
   .object({
     id: z.string(),
     provider: ProviderIdSchema,
     /** Selects a server-owned model connection for the Harness API runtime. */
     connectionId: z.string().min(1).optional(),
+    /**
+     * The provider account this chat is pinned to; its sessions live in that
+     * account's folder. Absent means the default account.
+     */
+    accountId: AccountIdSchema.optional(),
     /** Absolute path to the workspace this thread operates on. */
     workspacePath: z.string(),
     title: z.string().optional(),
@@ -321,6 +338,11 @@ export const CapabilitiesSchema = z.object({
    * one runs. Absent: subagents appear only as plain tool calls.
    */
   subagents: z.enum(['summary', 'progress']).optional(),
+  /**
+   * The engine runs signed in as any of several accounts, each with its own
+   * config folder, so a user can add accounts beyond the default one.
+   */
+  multipleAccounts: z.boolean().optional(),
 })
 export type Capabilities = z.infer<typeof CapabilitiesSchema>
 
@@ -468,6 +490,70 @@ export const AccountSchema = z.object({
 })
 export type Account = z.infer<typeof AccountSchema>
 
+/** An absolute folder path on Windows or POSIX, as the user picked it. */
+const AbsoluteFolderSchema = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (value) => !value.includes('\0') && /^(?:[A-Za-z]:[\\/]|\\\\|\/)/.test(value),
+    'expected an absolute folder path',
+  )
+
+/**
+ * One sign-in a provider CLI can run as, kept apart by its own config folder.
+ * Chats stay pinned to the account they started on. Nothing secret lives
+ * here: the vendor CLI writes its own credentials into `home`, and TasteCode
+ * never reads them (rules/security.md).
+ */
+export const ProviderAccountSchema = z
+  .object({
+    id: AccountIdSchema,
+    provider: ProviderIdSchema,
+    label: z.string().trim().min(1).max(80),
+    /** The account's config folder. Absent for the default account, which uses the CLI's own. */
+    home: AbsoluteFolderSchema.optional(),
+    /**
+     * TasteCode created `home` under its data folder. False for the default
+     * account and for a folder the user brought, which TasteCode never deletes.
+     */
+    managed: z.boolean(),
+    /** Last known identity from this account's own sign-in check. */
+    email: z.string().min(1).optional(),
+    plan: z.string().min(1).optional(),
+    createdAt: z.number().int().nonnegative().optional(),
+  })
+  .superRefine((account, context) => {
+    const isDefault = account.id === DEFAULT_ACCOUNT_ID
+    if (isDefault === (account.home !== undefined)) {
+      context.addIssue({
+        code: 'custom',
+        path: ['home'],
+        message: 'every account except the default one has its own folder',
+      })
+    }
+    if (isDefault && account.managed) {
+      context.addIssue({
+        code: 'custom',
+        path: ['managed'],
+        message: 'the default account uses the CLI folder, which TasteCode does not manage',
+      })
+    }
+  })
+export type ProviderAccount = z.infer<typeof ProviderAccountSchema>
+
+/** Where a new account keeps its config: a folder TasteCode creates, or one the user has. */
+export const ProviderAccountHomeSchema = z.discriminatedUnion('kind', [
+  /** A new folder under the TasteCode data folder, seeded with the default account's non-secret settings. */
+  z.object({ kind: z.literal('managed') }),
+  /**
+   * A folder the user picked, such as one that already holds a second login.
+   * Used as it is: nothing is copied into it and TasteCode never deletes it.
+   */
+  z.object({ kind: z.literal('existing'), path: AbsoluteFolderSchema }),
+])
+export type ProviderAccountHome = z.infer<typeof ProviderAccountHomeSchema>
+
 /** Actionable setup information supplied by the provider adapter. */
 export const ProviderSetupSchema = z.object({
   installUrl: z.url(),
@@ -562,6 +648,28 @@ export const CustomHarnessVerificationSchema = z.object({
 })
 export type CustomHarnessVerification = z.infer<typeof CustomHarnessVerificationSchema>
 
+/**
+ * What a chat source of this provider must name, so clients read it instead
+ * of comparing provider ids.
+ */
+export const ProviderSourceShapeSchema = z.object({
+  /**
+   * Whether a source names an `agent`. `none`: never. `optional`: a custom
+   * harness may be chosen. `required`: every source names one, such as an ACP
+   * agent or a Pi harness.
+   */
+  agent: z.enum(['none', 'optional', 'required']),
+  /** Every source names a server-owned model connection (`connectionId`). */
+  connection: z.boolean(),
+  /**
+   * The provider itself answers `models.list` and `auth.status` without an
+   * agent or connection. When false, the agent or connection is what the
+   * user talks to, and it names the source.
+   */
+  direct: z.boolean(),
+})
+export type ProviderSourceShape = z.infer<typeof ProviderSourceShapeSchema>
+
 export const ProviderStatusSchema = z.object({
   id: ProviderIdSchema,
   displayName: z.string(),
@@ -577,6 +685,8 @@ export const ProviderStatusSchema = z.object({
   setup: ProviderSetupSchema.optional(),
   /** Why it is unusable, in language we can show the user directly. */
   problem: z.string().optional(),
+  /** Absent on older servers; clients fall back to their own table. */
+  source: ProviderSourceShapeSchema.optional(),
 })
 export type ProviderStatus = z.infer<typeof ProviderStatusSchema>
 
