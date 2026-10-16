@@ -549,6 +549,11 @@ export type UsageHistoryTotals = z.infer<typeof UsageHistoryTotalsSchema>
 
 export const UsageHistoryProviderSchema = z.object({
   provider: ProviderIdSchema,
+  /**
+   * Present when the server splits a provider's usage by account: one row
+   * per account that has usage. Absent means the provider's usage as a whole.
+   */
+  accountId: AccountIdSchema.optional(),
   sessionCount: z.number().int().nonnegative(),
   totals: UsageHistoryTotalsSchema,
 })
@@ -643,6 +648,8 @@ export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
   z
     .object({
       provider: ProviderIdSchema,
+      /** The account these limits belong to. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
       status: z.literal('ready'),
       /** A successful source can honestly report no plan limits. */
       limits: z.array(ProviderLimitSchema),
@@ -666,6 +673,8 @@ export const ProviderLimitSourceSchema = z.discriminatedUnion('status', [
   z
     .object({
       provider: ProviderIdSchema,
+      /** The account that was asked. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
       status: z.literal('unavailable'),
       /**
        * `unsupported`: this provider or version reports no limits. `noPlan`:
@@ -989,6 +998,8 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      /** Sign in as this account: the CLI runs with its config folder. Absent means default. */
+      accountId: AccountIdSchema.optional(),
       ...TerminalSizeSchema['shape'],
     }),
     result: z.object({ terminalId: TerminalIdSchema }),
@@ -1214,8 +1225,17 @@ export const methods = {
     params: z.object({ url: PullRequestImageUrlSchema }),
     result: PullRequestImageSchema,
   },
+  /**
+   * Every `auth.*` call may name one of the provider's accounts; absent means
+   * the default account. The server runs the vendor CLI with that account's
+   * config folder, so signing in or out of one account leaves the others alone.
+   */
   'auth.status': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: AccountSchema,
   },
   /**
@@ -1223,13 +1243,18 @@ export const methods = {
    * signs in on the vendor's own site; completion arrives on `auth.event`.
    */
   'auth.startLogin': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: z.object({ loginId: z.string().min(1), authUrl: HttpUrlSchema.optional() }),
   },
   'auth.cancelLogin': {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
       loginId: z.string().min(1),
     }),
     result: z.object({}),
@@ -1238,12 +1263,17 @@ export const methods = {
     params: z.object({
       provider: ProviderIdSchema,
       agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
       apiKey: z.string().min(1),
     }),
     result: AccountSchema,
   },
   'auth.signOut': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: z.object({}),
   },
   /**
@@ -1430,8 +1460,13 @@ export const methods = {
       content: z.string().optional(),
     }),
   },
+  /** `accountId` asks as that account, whose plan may offer other models. Absent means default. */
   'models.list': {
-    params: z.object({ provider: ProviderIdSchema, agent: z.string().min(1).optional() }),
+    params: z.object({
+      provider: ProviderIdSchema,
+      agent: z.string().min(1).optional(),
+      accountId: AccountIdSchema.optional(),
+    }),
     result: z.object({ models: z.array(ModelSchema) }),
   },
   /** Model policy for short product-owned writing tasks. */
@@ -1538,6 +1573,8 @@ export const methods = {
               agent: z.string().optional(),
               /** Server-owned API connection used when restoring this chat. */
               connectionId: z.string().min(1).optional(),
+              /** The provider account this chat is pinned to. Absent means default. */
+              accountId: z.string().min(1).optional(),
               createdAt: z.number(),
               /** True while the agent is actively working on a turn. */
               running: z.boolean(),
@@ -1752,8 +1789,14 @@ export const methods = {
   /** Persistent token totals, with money only when the provider reports it. */
   'usage.summary': {
     params: z.union([
+      /** A chat's own account is implied by the chat. */
       z.object({ threadId: z.string(), intent: UsageReadIntentSchema.optional() }),
-      z.object({ provider: ProviderIdSchema, intent: UsageReadIntentSchema.optional() }),
+      z.object({
+        provider: ProviderIdSchema,
+        /** Absent means the default account. */
+        accountId: AccountIdSchema.optional(),
+        intent: UsageReadIntentSchema.optional(),
+      }),
     ]),
     result: UsageSummaryResultSchema,
   },
@@ -1766,6 +1809,8 @@ export const methods = {
     params: z.object({
       range: UsageHistoryRangeSchema,
       refresh: z.boolean().optional(),
+      /** Only this provider account's usage. Absent means every account. */
+      account: z.object({ provider: ProviderIdSchema, accountId: AccountIdSchema }).optional(),
     }),
     result: UsageHistoryResultSchema,
   },
@@ -1782,6 +1827,8 @@ export const methods = {
   'usage.consumeReset': {
     params: z.object({
       provider: ProviderIdSchema,
+      /** The account whose reset is spent. Absent means the default account. */
+      accountId: AccountIdSchema.optional(),
       idempotencyKey: z.string().uuid(),
       creditId: z.string().min(1).optional(),
     }),
@@ -1817,6 +1864,17 @@ export const methods = {
         agent: z.string().optional(),
         /** Server-owned model connection selected when `provider` is `api`. */
         connectionId: z.string().min(1).optional(),
+        /**
+         * The provider account to pin this chat to, for providers that
+         * declare `multipleAccounts`. Absent means the provider's active account.
+         */
+        accountId: AccountIdSchema.optional(),
+        /**
+         * An earlier chat this one carries on, such as on another account
+         * after a usage limit. The server gives the new session that chat's
+         * conversation as context and leaves the earlier chat as it was.
+         */
+        continueFrom: z.string().min(1).optional(),
         workspacePath: z.string(),
         model: z.string().optional(),
         serviceTier: z.string().optional(),
@@ -2008,6 +2066,8 @@ export const channels = {
   'auth.event': z.object({
     provider: ProviderIdSchema,
     agent: z.string().min(1).optional(),
+    /** The account that signed in or out. Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
     loginId: z.string().nullable(),
     success: z.boolean(),
     error: z.string().nullable(),
@@ -2042,10 +2102,14 @@ export const channels = {
   'models.changed': z.object({
     provider: ProviderIdSchema,
     agent: z.string().min(1).optional(),
+    /** Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
   }),
   /** A provider reported that its subscription usage or limits changed. */
   'usage.changed': z.object({
     provider: ProviderIdSchema,
+    /** Absent means the default account. */
+    accountId: AccountIdSchema.optional(),
   }),
   /**
    * A provider's accounts, their labels or identities, or its active account

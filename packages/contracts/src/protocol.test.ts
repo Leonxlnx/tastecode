@@ -20,6 +20,7 @@ import {
   SkillCapabilitiesSchema,
   SkillSchema,
   ThreadLifecycleSchema,
+  UsageHistoryProviderSchema,
   UsageHistoryResultSchema,
   type ProviderLimit,
   type ProviderLimitSource,
@@ -2129,6 +2130,139 @@ describe('provider account contracts', () => {
       provider: 'claude-code',
     })
     expect(channels['accounts.changed'].safeParse({}).success).toBe(false)
+  })
+
+  it('scopes sign-in, models and limits to an optional account', () => {
+    for (const method of [
+      'auth.status',
+      'auth.startLogin',
+      'auth.signOut',
+      'models.list',
+    ] as const) {
+      expect(methods[method].params.parse({ provider: 'codex' })).toEqual({ provider: 'codex' })
+      expect(methods[method].params.parse({ provider: 'codex', accountId: 'work' })).toEqual({
+        provider: 'codex',
+        accountId: 'work',
+      })
+      expect(
+        methods[method].params.safeParse({ provider: 'codex', accountId: 'Work' }).success,
+      ).toBe(false)
+    }
+    expect(
+      methods['auth.cancelLogin'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        loginId: 'l1',
+      }),
+    ).toEqual({ provider: 'codex', accountId: 'work', loginId: 'l1' })
+    expect(
+      methods['auth.useApiKey'].params.parse({ provider: 'codex', accountId: 'work', apiKey: 'k' })
+        .accountId,
+    ).toBe('work')
+    for (const channel of ['models.changed', 'usage.changed'] as const)
+      expect(channels[channel].parse({ provider: 'codex', accountId: 'work' })).toEqual({
+        provider: 'codex',
+        accountId: 'work',
+      })
+    expect(
+      channels['auth.event'].parse({
+        provider: 'claude-code',
+        accountId: 'work',
+        loginId: 'l1',
+        success: true,
+        error: null,
+      }).accountId,
+    ).toBe('work')
+    expect(methods['usage.summary'].params.parse({ provider: 'codex', accountId: 'work' })).toEqual(
+      { provider: 'codex', accountId: 'work' },
+    )
+    for (const source of [
+      { provider: 'codex', accountId: 'work', status: 'ready', limits: [] },
+      { provider: 'codex', accountId: 'work', status: 'unavailable', reason: 'noPlan' },
+    ])
+      expect(channels['usage.limits'].parse({ source })).toEqual({ source })
+    expect(
+      channels['usage.limits'].safeParse({
+        source: { provider: 'codex', accountId: '', status: 'ready', limits: [] },
+      }).success,
+    ).toBe(false)
+    expect(
+      methods['providers.launch'].params.parse({
+        provider: 'claude-code',
+        accountId: 'work',
+        columns: 80,
+        rows: 24,
+      }).accountId,
+    ).toBe('work')
+    expect(
+      methods['usage.consumeReset'].params.parse({
+        provider: 'codex',
+        accountId: 'work',
+        idempotencyKey: '7f0b7f6e-55a5-4b8e-9d0e-3c1d2f4a5b6c',
+      }).accountId,
+    ).toBe('work')
+  })
+
+  it('pins a chat to its account and can continue an earlier chat', () => {
+    const start = methods['thread.start'].params
+    const params = {
+      provider: 'codex',
+      workspacePath: 'D:\\x',
+      accountId: 'work',
+      continueFrom: 'th1',
+    }
+    expect(start.parse(params)).toEqual(params)
+    expect(start.parse({ provider: 'codex', workspacePath: 'D:\\x' }).accountId).toBeUndefined()
+    expect(start.safeParse({ ...params, accountId: 'Work' }).success).toBe(false)
+    expect(start.safeParse({ ...params, continueFrom: '' }).success).toBe(false)
+    const thread = { id: 'th2', provider: 'codex', workspacePath: 'D:\\x', createdAt: 1 }
+    expect(DomainEventSchema.parse({ type: 'thread.started', thread })).toEqual({
+      type: 'thread.started',
+      thread,
+    })
+    expect(
+      DomainEventSchema.parse({ type: 'thread.started', thread: { ...thread, accountId: 'work' } }),
+    ).toMatchObject({ thread: { accountId: 'work' } })
+    const session = {
+      id: 'th2',
+      title: 'Task',
+      provider: 'codex',
+      accountId: 'work',
+      createdAt: 1,
+      running: false,
+    }
+    const project = { path: 'D:\\x', name: 'x', pinned: false, createdAt: 0, sessions: [session] }
+    expect(
+      methods['projects.list'].result.parse({ projects: [project] }).projects[0]?.sessions[0]
+        ?.accountId,
+    ).toBe('work')
+  })
+
+  it('splits usage history by account on request', () => {
+    const history = methods['usage.history'].params
+    expect(history.parse({ range: '30d' }).account).toBeUndefined()
+    expect(
+      history.parse({ range: '30d', account: { provider: 'claude-code', accountId: 'work' } }),
+    ).toEqual({ range: '30d', account: { provider: 'claude-code', accountId: 'work' } })
+    expect(history.safeParse({ range: '30d', account: { accountId: 'work' } }).success).toBe(false)
+    const totals = {
+      uncachedInputTokens: 1,
+      cachedInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokens: 1,
+      reasoningTokens: 0,
+      processedTokens: 2,
+      estimatedCostUsd: 0,
+      cacheSavingsUsd: 0,
+      providerReportedCostUsd: 0,
+      providerReportedTokens: 0,
+      pricedTokens: 0,
+      unpricedTokens: 2,
+    }
+    const row = { provider: 'claude-code', sessionCount: 1, totals }
+    expect(UsageHistoryProviderSchema.parse(row)).toEqual(row)
+    expect(UsageHistoryProviderSchema.parse({ ...row, accountId: 'work' }).accountId).toBe('work')
+    expect(UsageHistoryProviderSchema.safeParse({ ...row, accountId: '' }).success).toBe(false)
   })
 
   it('declares which engines can run several accounts', () => {
