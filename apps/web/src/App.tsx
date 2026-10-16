@@ -5933,7 +5933,7 @@ function displayName(project: { path: string; name?: string | undefined }): stri
 }
 
 /** The first thing a user types is the best title we get for free. */
-function titleFrom(text: string): string {
+export function titleFrom(text: string): string {
   const clean = text.trim().replace(/\s+/g, ' ')
   return clean.length > 40 ? `${clean.slice(0, 40)}…` : clean
 }
