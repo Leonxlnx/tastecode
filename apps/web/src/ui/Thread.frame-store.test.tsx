@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSyncExternalStore } from 'react'
 import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
@@ -35,7 +35,20 @@ vi.mock('@tanstack/react-virtual', () => ({
 import { Thread } from './Thread.js'
 import { ThreadSearch } from './ThreadSearch.js'
 
-afterEach(cleanup)
+/** happy-dom's emulated device. These read the live DOM right after each
+ * delta, so text lands as it arrives instead of being paced over frames. */
+const device = (
+  window as unknown as { happyDOM: { settings: { device: { prefersReducedMotion: string } } } }
+).happyDOM.settings.device
+
+beforeEach(() => {
+  device.prefersReducedMotion = 'reduce'
+})
+
+afterEach(() => {
+  cleanup()
+  device.prefersReducedMotion = 'no-preference'
+})
 
 describe('Thread live frame isolation', () => {
   it.each([false, true])(
