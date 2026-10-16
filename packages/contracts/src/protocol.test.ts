@@ -1783,3 +1783,37 @@ describe('provider command contracts', () => {
     ).toEqual(['skills', 'mcp', 'commands'])
   })
 })
+
+describe('MCP inventory state contracts', () => {
+  const capabilities = {
+    inventory: true,
+    add: true,
+    update: true,
+    remove: true,
+    reload: false,
+    startOAuth: false,
+    cancelOAuth: false,
+  }
+
+  it('keeps hiding inherited servers optional so legacy capabilities still parse', () => {
+    expect(McpCapabilitiesSchema.parse(capabilities).hideInherited).toBeUndefined()
+    expect(McpCapabilitiesSchema.parse({ ...capabilities, hideInherited: false })).toEqual({
+      ...capabilities,
+      hideInherited: false,
+    })
+    expect(McpCapabilitiesSchema.safeParse({ ...capabilities, hideInherited: 'no' }).success).toBe(
+      false,
+    )
+  })
+
+  it('marks an unsettled server list as loading', () => {
+    const result = methods['mcp.list'].result
+    expect(result.parse({ capabilities, servers: [] }).loading).toBeUndefined()
+    expect(result.parse({ capabilities, servers: [], loading: true })).toEqual({
+      capabilities,
+      servers: [],
+      loading: true,
+    })
+    expect(result.safeParse({ capabilities, servers: [], loading: 1 }).success).toBe(false)
+  })
+})

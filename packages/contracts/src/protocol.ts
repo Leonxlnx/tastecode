@@ -314,6 +314,11 @@ export const McpCapabilitiesSchema = z.object({
   reload: z.boolean(),
   startOAuth: z.boolean(),
   cancelOAuth: z.boolean(),
+  /**
+   * Whether a server inherited from the provider's own configuration can be
+   * hidden for this project. Absent means the legacy rule: `add && inventory`.
+   */
+  hideInherited: z.boolean().optional(),
 })
 export type McpCapabilities = z.infer<typeof McpCapabilitiesSchema>
 
@@ -951,6 +956,11 @@ export const methods = {
     result: z.object({
       capabilities: McpCapabilitiesSchema,
       servers: z.array(McpServerSchema),
+      /**
+       * The provider is still collecting its servers, so an empty or partial
+       * list is not final. An `mcp.changed` push follows when it settles.
+       */
+      loading: z.boolean().optional(),
     }),
   },
   /**
