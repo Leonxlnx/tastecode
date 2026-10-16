@@ -1520,6 +1520,7 @@ const Row = memo(function Row({
           streaming={live && item.status === 'started'}
           liveUpdate={liveTextUpdate}
           updateVersion={liveUpdateVersion}
+          literalHtml
         />
         {stoppedByUser ? <TurnStopped /> : null}
         {finalResponse && !notice && !live && item.status === 'completed' && text ? (
@@ -1953,6 +1954,7 @@ function ReasoningDisclosure({
                 streaming={live && item.status === 'started'}
                 liveUpdate={liveTextUpdate}
                 updateVersion={liveUpdateVersion}
+                literalHtml
               />
             </div>
           ) : null}
@@ -2249,7 +2251,7 @@ function ActivityStack({
                 if (item.type === 'message') {
                   return (
                     <div className="activity__message" key={item.id}>
-                      <Markdown text={item.text ?? ''} projectPath={projectPath} />
+                      <Markdown text={item.text ?? ''} projectPath={projectPath} literalHtml />
                     </div>
                   )
                 }
