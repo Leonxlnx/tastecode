@@ -99,6 +99,34 @@ describe('checkpoint index', () => {
     })
   })
 
+  it('matches a long prompt to the ellipsis label stored for it', () => {
+    const item = prompt('spaced', 10, `${'word '.repeat(12)}more`)
+    const label = 'word word word word word word word word word word word word…'
+    const index = createCheckpointIndex([{ id: 1, label, createdAt: 15 }])
+    expect(checkpointForItem(item, index, [item])).toEqual({ id: 1, label, createdAt: 15 })
+  })
+
+  it('matches a long prompt to an older 60-unit label that ends with a space', () => {
+    const label = 'word '.repeat(12)
+    const item = prompt('legacy-space', 10, `${label}more`)
+    const index = createCheckpointIndex([{ id: 1, label, createdAt: 15 }])
+    expect(checkpointForItem(item, index, [item])).toEqual({ id: 1, label, createdAt: 15 })
+  })
+
+  it('matches a prompt of exactly 60 code units to its plain label', () => {
+    const text = 'x'.repeat(60)
+    const item = prompt('exact', 10, text)
+    const index = createCheckpointIndex([{ id: 1, label: text, createdAt: 15 }])
+    expect(checkpointForItem(item, index, [item])).toEqual({ id: 1, label: text, createdAt: 15 })
+  })
+
+  it('matches a prompt cut inside an emoji to the ellipsis label', () => {
+    const item = prompt('wave', 10, `${'y'.repeat(59)}🌊 reply with ok`)
+    const label = `${'y'.repeat(59)}…`
+    const index = createCheckpointIndex([{ id: 1, label, createdAt: 15 }])
+    expect(checkpointForItem(item, index, [item])).toEqual({ id: 1, label, createdAt: 15 })
+  })
+
   it('ignores non-user items and indexes a transcript only once', () => {
     let reads = 0
     const first = prompt('first', 10)
