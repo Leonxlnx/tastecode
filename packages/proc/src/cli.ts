@@ -94,23 +94,31 @@ export function invalidateCommandCache(): void {
   commandCache.clear()
 }
 
-function resolveWindowsExecutable(
+type WindowsLookup = { key: string; candidates: () => Generator<string> }
+
+function windowsLookup(
   command: string,
-  environment: NodeJS.ProcessEnv = process.env,
-  cwd = process.cwd(),
-): string | undefined {
+  environment: NodeJS.ProcessEnv,
+  cwd: string,
+): WindowsLookup {
   const envValue = (name: string) =>
     Object.entries(environment).find(([key]) => key.toUpperCase() === name)?.[1]
   const searchPath = envValue('PATH') ?? ''
   const pathExt = envValue('PATHEXT') ?? '.COM;.EXE;.BAT;.CMD'
   const relative = /[\\/]/.test(command)
-  // cwd only matters to a command that names a directory.
-  const key = [command, searchPath, pathExt, relative ? cwd : ''].join('\0')
-  const cached = commandCache.get(key)
-  if (cached && cached.expiresAt > Date.now()) {
-    if (cached.path === undefined || isFile(cached.path)) return cached.path
+  return {
+    // cwd only matters to a command that names a directory.
+    key: [command, searchPath, pathExt, relative ? cwd : ''].join('\0'),
+    candidates: () => windowsCandidates(command, searchPath, pathExt, relative, cwd),
   }
-  const found = searchWindowsExecutable(command, searchPath, pathExt, relative, cwd)
+}
+
+function cachedLookup(key: string): { path: string | undefined } | undefined {
+  const cached = commandCache.get(key)
+  return cached && cached.expiresAt > Date.now() ? cached : undefined
+}
+
+function rememberLookup(key: string, found: string | undefined): string | undefined {
   // Re-inserting keeps the oldest lookup first for the size limit below.
   commandCache.delete(key)
   commandCache.set(key, {
@@ -124,13 +132,29 @@ function resolveWindowsExecutable(
   return found
 }
 
-function searchWindowsExecutable(
+function resolveWindowsExecutable(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  cwd = process.cwd(),
+): string | undefined {
+  const lookup = windowsLookup(command, environment, cwd)
+  const cached = cachedLookup(lookup.key)
+  if (cached && (cached.path === undefined || isFile(cached.path))) return cached.path
+  for (const candidate of lookup.candidates()) {
+    // Match Windows PATH/PATHEXT order without launching the candidate.
+    if (isFile(candidate)) return rememberLookup(lookup.key, candidate)
+  }
+  return rememberLookup(lookup.key, undefined)
+}
+
+/** Every path Windows would try for `command`, in PATH, then PATHEXT, order. */
+function* windowsCandidates(
   command: string,
   searchPath: string,
   pathExt: string,
   relative: boolean,
   cwd: string,
-): string | undefined {
+): Generator<string> {
   const extensions = path.win32.extname(command) ? [''] : pathExt.split(';')
   // A bare command is searched on PATH only, never in cwd: cwd is usually the
   // user's workspace, and a checked-in `git.cmd` must not shadow the real tool.
@@ -143,12 +167,9 @@ function searchWindowsExecutable(
         .filter(Boolean)
   for (const directory of directories) {
     for (const extension of extensions) {
-      const candidate = path.win32.resolve(cwd, directory, command + extension)
-      // Match Windows PATH/PATHEXT order without launching the candidate.
-      if (isFile(candidate)) return candidate
+      yield path.win32.resolve(cwd, directory, command + extension)
     }
   }
-  return undefined
 }
 
 function isFile(candidate: string): boolean {
