@@ -37,6 +37,7 @@ import type { RequestId } from './generated/RequestId.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   configuredMcpInventory,
+  type ConfiguredMcpServer,
   mapMcpServerStatus,
   mapMcpStartupStatus,
   mcpShellEnvironmentConfig,
@@ -617,7 +618,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   /** Resolves true once the status list landed, false when it failed or was replaced. */
   #mcpInventoryLoads = new Map<string, Promise<boolean>>()
   /** Configured server names, read once per status load. */
-  #mcpConfigured = new Map<string, Promise<string[]>>()
+  #mcpConfigured = new Map<string, Promise<ConfiguredMcpServer[]>>()
   #threadModels = new Map<string, string>()
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
@@ -994,7 +995,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   }
 
   /** A failed read leaves only the startup states Codex already reported. */
-  #configuredMcpServers(key: string, threadId?: string): Promise<string[]> {
+  #configuredMcpServers(key: string, threadId?: string): Promise<ConfiguredMcpServer[]> {
     let reading = this.#mcpConfigured.get(key)
     if (!reading) {
       const cwd =
@@ -1008,9 +1009,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         CONTROL_READ_TIMEOUT_MS,
       ).then(
         (response) =>
-          Object.entries(response.config.mcp_servers ?? {})
-            .filter(([, server]) => server.enabled !== false)
-            .map(([name]) => name),
+          Object.entries(response.config.mcp_servers ?? {}).map(([id, server]) => ({
+            id,
+            enabled: server.enabled !== false,
+          })),
         (cause: unknown) => {
           this.emit(
             'log',
