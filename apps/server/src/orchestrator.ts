@@ -39,6 +39,7 @@ import {
 } from './checkpoint.js'
 import { canonicalCheckoutRoot, CheckoutAccess } from './checkout-access.js'
 import { ProviderControls } from './provider-controls.js'
+import { ModelListCache } from './model-list-cache.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import {
   contextForLaunch,
@@ -327,6 +328,19 @@ type DesignFlow = {
   /** Fonts and radii each file declared at run start; absent on runs saved before the audit. */
   designConsistencyBaseline?: string[] | undefined
   buildSummary?: string
+}
+
+/**
+ * The source an install, update or sign-in terminal works on, from its target:
+ * `provider`, `provider:agent` or `update:provider`.
+ */
+export function providerTerminalSource(
+  target: string,
+): { provider: ProviderId; agent?: string | undefined } | undefined {
+  const [first, ...rest] = target.split(':')
+  const [provider, agent] = first === 'update' ? [rest.join(':'), ''] : [first, rest.join(':')]
+  if (!provider || !Object.hasOwn(PROVIDER_CAPABILITIES, provider)) return undefined
+  return agent ? { provider: provider as ProviderId, agent } : { provider: provider as ProviderId }
 }
 
 export function resolveWorkspacePath(workspacePath: string): string {
@@ -660,6 +674,7 @@ export class Orchestrator {
   #onMcpChanged: (provider: ProviderId, projectPath: string) => void
   #onSkillsChanged: (provider: ProviderId, projectPath: string) => void
   #onUsageChanged: (provider: ProviderId) => void
+  #onModelsChanged: (provider: ProviderId, agent: string | undefined) => void
   #onLifecycle: (threadId: string, lifecycle: ThreadLifecycle) => void
   #onLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void
   #capturePreview:
@@ -695,6 +710,11 @@ export class Orchestrator {
   #maxIdleThreadRuntimes: number
   #idleThreadRuntimeMs: number
   #controls: ProviderControls
+  #modelLists: ModelListCache
+  /** The account each provider's model lists were read for, to notice a switch made outside the app. */
+  #modelListAccounts = new Map<ProviderId, string>()
+  /** Install, update and sign-in terminals, by terminal id, and the source they change. */
+  #providerTerminals = new Map<string, { provider: ProviderId; agent?: string | undefined }>()
 
   constructor(
     store: Store,
@@ -715,6 +735,8 @@ export class Orchestrator {
       onMcpChanged?: (provider: ProviderId, projectPath: string) => void
       onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
       onUsageChanged?: (provider: ProviderId) => void
+      /** A source's model list changed after `models.list` answered. */
+      onModelsChanged?: (provider: ProviderId, agent: string | undefined) => void
       onLifecycle?: (threadId: string, lifecycle: ThreadLifecycle) => void
       onLifecycleScheduleChanged?: (hint?: LifecycleScheduleHint) => void
       capturePreview?: (
@@ -759,6 +781,7 @@ export class Orchestrator {
     this.#onMcpChanged = handlers.onMcpChanged ?? (() => {})
     this.#onSkillsChanged = handlers.onSkillsChanged ?? (() => {})
     this.#onUsageChanged = handlers.onUsageChanged ?? (() => {})
+    this.#onModelsChanged = handlers.onModelsChanged ?? (() => {})
     this.#onLifecycle = handlers.onLifecycle ?? (() => {})
     this.#onLifecycleScheduleChanged = handlers.onLifecycleScheduleChanged ?? (() => {})
     this.#capturePreview = handlers.capturePreview
@@ -768,9 +791,13 @@ export class Orchestrator {
     this.#customHarnesses = handlers.customHarnesses ?? new CustomHarnessStore()
     this.#readCredential = handlers.readCredential ?? readCredential
     this.#voice = new VoiceService(handlers.voiceTranscriber)
+    const onTerminalExit = handlers.onTerminalExit ?? (() => {})
     this.#terminals = new TerminalManager({
       onOutput: handlers.onTerminalOutput ?? (() => {}),
-      onExit: handlers.onTerminalExit ?? (() => {}),
+      onExit: (terminalId, exitCode) => {
+        this.#providerTerminalExited(terminalId)
+        onTerminalExit(terminalId, exitCode)
+      },
       onLog: (message) => this.#onLog(message),
     })
     this.#runtimeFor =
@@ -793,8 +820,19 @@ export class Orchestrator {
       onUsageChanged: this.#onUsageChanged,
       onMcpChanged: this.#onMcpChanged,
       onSkillsChanged: this.#onSkillsChanged,
-      onAuthChanged: () => this.#invalidateBackgroundSources(),
+      onAuthChanged: (provider) => {
+        this.#modelLists.invalidate(provider)
+        this.#invalidateBackgroundSources()
+      },
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+    })
+    this.#modelLists = new ModelListCache({
+      list: (provider, agent) => {
+        const control = this.#controls.forProvider(provider)
+        return control.listModels ? control.listModels(agent) : Promise.resolve([])
+      },
+      onChanged: (provider, agent) => this.#onModelsChanged(provider, agent),
+      onLog: (line) => this.#onLog(line),
     })
   }
 
@@ -808,9 +846,10 @@ export class Orchestrator {
     return this.#controls.forProvider(provider).watch(projectPath, targets)
   }
 
+  /** Every model list is shared: see `ModelListCache` for when it asks the provider again. */
   async listModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    const control = this.#controls.forProvider(provider)
-    return control.listModels ? control.listModels(agent) : []
+    if (!this.#controls.forProvider(provider).listModels) return []
+    return this.#modelLists.list(provider, agent)
   }
 
   listCustomHarnesses() {
@@ -845,6 +884,7 @@ export class Orchestrator {
 
   upsertCustomHarness(harness: Parameters<CustomHarnessStore['upsert']>[0]) {
     const saved = this.#customHarnesses.upsert(harness)
+    this.#modelLists.forgetAgent(saved.id)
     this.#invalidateBackgroundSources()
     return saved
   }
@@ -858,6 +898,7 @@ export class Orchestrator {
 
   removeCustomHarness(harnessId: string): void {
     this.#customHarnesses.remove(harnessId)
+    this.#modelLists.forgetAgent(harnessId)
     this.#invalidateBackgroundSources()
   }
 
@@ -1382,7 +1423,20 @@ export class Orchestrator {
   }
 
   async account(provider: ProviderId, agent?: string): Promise<Account> {
-    return this.#controls.forProvider(provider).account(agent)
+    const account = await this.#controls.forProvider(provider).account(agent)
+    if (agent === undefined) {
+      // A sign-in or switch in the provider's own CLI shows up only here, and
+      // another account may offer other models.
+      const identity = JSON.stringify([
+        account.signedIn,
+        account.email ?? null,
+        account.plan ?? null,
+      ])
+      const previous = this.#modelListAccounts.get(provider)
+      this.#modelListAccounts.set(provider, identity)
+      if (previous !== undefined && previous !== identity) this.#modelLists.invalidate(provider)
+    }
+    return account
   }
 
   async consumeRateLimitReset(
@@ -2694,7 +2748,10 @@ export class Orchestrator {
    * inside any particular project checkout.
    */
   installProvider(target: string, command: string, columns: number, rows: number): string {
-    return this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows)
+    return this.#trackProviderTerminal(
+      target,
+      this.#terminals.run(`install:${target}`, command, os.homedir(), columns, rows),
+    )
   }
 
   /**
@@ -2704,7 +2761,28 @@ export class Orchestrator {
    * global CLI has no business inside any particular project checkout.
    */
   launchProviderLogin(target: string, command: string, columns: number, rows: number): string {
-    return this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows)
+    return this.#trackProviderTerminal(
+      target,
+      this.#terminals.run(`login:${target}`, command, os.homedir(), columns, rows),
+    )
+  }
+
+  /**
+   * Installs, updates and sign-ins run as `provider`, `provider:agent` or
+   * `update:provider` terminals. Whatever they changed, the source may list
+   * other models once they exit.
+   */
+  #trackProviderTerminal(target: string, terminalId: string): string {
+    const source = providerTerminalSource(target)
+    if (source) this.#providerTerminals.set(terminalId, source)
+    return terminalId
+  }
+
+  #providerTerminalExited(terminalId: string): void {
+    const source = this.#providerTerminals.get(terminalId)
+    if (!source) return
+    this.#providerTerminals.delete(terminalId)
+    this.#modelLists.invalidate(source.provider, source.agent)
   }
 
   writeTerminal(terminalId: string, data: string): void {
@@ -3529,6 +3607,8 @@ export class Orchestrator {
     for (const controller of this.#designPreviewAborts.values()) controller.abort()
     this.#designPreviewAborts.clear()
     const controlStopped = this.#controls.disposeAll()
+    this.#modelLists.dispose()
+    this.#modelListAccounts.clear()
     const terminalsClosed = this.#terminals.closeAll()
     const previewsStopped = this.#designPreviewOwners().map((threadId) =>
       this.#stopDesignPreview(threadId),
