@@ -41,11 +41,11 @@ const statusRow = (name: string) => ({
   resourceTemplates: [],
 })
 
-const starting = (id: string) => ({
+const configuredRow = (id: string, state: 'starting' | 'stopped' = 'starting') => ({
   id,
   scope: 'global',
   enabled: true,
-  startup: { state: 'starting' },
+  startup: { state },
   tools: [],
   resources: [],
   resourceTemplates: [],
@@ -73,10 +73,11 @@ describe('Codex MCP inventory while the status list loads', () => {
 
     const first = await adapter.listMcpServers()
     expect(first).toEqual([
-      starting('hosted-docs'),
-      starting('local-tools'),
-      starting('repl'),
-      starting('signed-api'),
+      configuredRow('hosted-docs'),
+      configuredRow('local-tools'),
+      configuredRow('retired', 'stopped'),
+      configuredRow('repl'),
+      configuredRow('signed-api'),
     ])
     // Commands, URLs, environments and token variables stay in Codex.
     expect(JSON.stringify(first)).not.toMatch(/example\.test|FIXTURE_TOKEN|REPL_HOME|tools\.mjs/)
@@ -124,6 +125,7 @@ describe('Codex MCP inventory while the status list loads', () => {
     expect(servers.map(({ id, startup }) => [id, startup])).toEqual([
       ['hosted-docs', { state: 'starting' }],
       ['local-tools', { state: 'starting' }],
+      ['retired', { state: 'stopped' }],
       ['repl', { state: 'failed', message: 'program not found' }],
       ['signed-api', { state: 'starting' }],
       ['plugin-apps', { state: 'starting' }],
