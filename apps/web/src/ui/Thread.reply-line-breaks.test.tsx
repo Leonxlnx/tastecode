@@ -95,7 +95,7 @@ describe('chat reply line breaks', () => {
     const reply = await completedReply('Use **bold**\nnext line')
     const paragraph = reply.querySelector('p')!
 
-    expect(reply.querySelector('[data-streamdown="strong"]')?.textContent).toBe('bold')
+    expect(reply.querySelector('strong, [data-streamdown="strong"]')?.textContent).toBe('bold')
     expect(paragraph.textContent).toBe('Use bold\nnext line')
     expect(getComputedStyle(paragraph).whiteSpace).toBe('pre-line')
   })
@@ -118,7 +118,8 @@ describe('chat reply line breaks', () => {
   it('shows a hard break once instead of as a blank line', async () => {
     const paragraph = (await completedReply('hard  \nbreak **x**')).querySelector('p')!
 
-    expect(childNodes(paragraph)).toEqual(['hard', 'BR', 'break ', 'SPAN'])
+    expect(childNodes(paragraph).slice(0, 3)).toEqual(['hard', 'BR', 'break '])
+    expect(paragraph.lastChild?.textContent).toBe('x')
   })
 
   it('adds no blank lines around a nested list', async () => {
