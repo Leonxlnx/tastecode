@@ -30,6 +30,9 @@ import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import {
   ClaudeEventSchema,
+  contextTokens,
+  contextUsage,
+  modelContextWindow,
   toDomainEvents,
   toolUseItemFields,
   toUsage,
@@ -415,6 +418,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #stopReceipt: Promise<void> | undefined
   /** The SDK's `total_cost_usd` is a running total for the current query. */
   #queryCostUsd = 0
+  /** What the main chain's latest request held in context, or 0 before the first one. */
+  #contextTokens = 0
   #disposed = false
   readonly #pendingApprovals = new Map<string, PendingApproval>()
   readonly #pendingUserInputs = new Map<string, PendingUserInput>()
@@ -990,6 +995,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
       this.#reportedModel = event.message?.model
+      const used = contextTokens(event.message?.usage)
+      if (used > 0) this.#contextTokens = used
       const streamed = event.message?.id && this.#streamedMessageIds.has(event.message.id)
       const filtered: ClaudeEvent =
         streamed && event.message?.content
@@ -1036,6 +1043,14 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
             ...usage,
             ...(this.#reportedModel ? { model: this.#reportedModel } : {}),
           },
+        })
+      }
+      // Last, so the latest usage a client replays is the context reading.
+      const contextWindow = modelContextWindow(message.modelUsage, this.#reportedModel)
+      if (contextWindow && this.#contextTokens > 0) {
+        this.emit('event', {
+          type: 'usage.updated',
+          usage: contextUsage(this.#contextTokens, contextWindow, this.#reportedModel),
         })
       }
       if (message.is_error && 'errors' in message && message.errors.length > 0) {

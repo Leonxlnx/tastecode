@@ -1518,6 +1518,85 @@ describe('Claude Agent SDK session', () => {
     }
   })
 
+  it('reports what the main chain holds in context after each turn', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const events: DomainEvent[] = []
+    adapter.on('event', (event) => events.push(event))
+    const thread = await adapter.startThread('/repo', { model: 'haiku' })
+    await adapter.sendTurn(thread.id, 'Reply with the single word OK.')
+    const query = fake.queries[0]!
+    // Usage as Claude Code 2.1.296 reported it for that prompt on Haiku 5.5.
+    const assistant = (usage: object, parent: string | null = null) =>
+      ({
+        type: 'assistant',
+        parent_tool_use_id: parent,
+        uuid: crypto.randomUUID(),
+        session_id: 'session-1',
+        message: {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          model: 'claude-haiku-5-5',
+          type: 'message',
+          content: [{ type: 'text', text: 'OK' }],
+          usage,
+        },
+      }) as unknown as SDKMessage
+    query.emitMessage(
+      assistant({
+        input_tokens: 2,
+        cache_creation_input_tokens: 3078,
+        cache_read_input_tokens: 535,
+        output_tokens: 4,
+      }),
+    )
+    // A subagent's context is its own, not the chat's.
+    query.emitMessage(assistant({ input_tokens: 90_000, output_tokens: 10 }, 'task-1'))
+    query.emitMessage({
+      ...(resultMessage(false) as object),
+      modelUsage: {
+        'claude-haiku-5-5': {
+          inputTokens: 2,
+          outputTokens: 4,
+          cacheReadInputTokens: 535,
+          cacheCreationInputTokens: 3078,
+          webSearchRequests: 0,
+          costUSD: 0.00062315,
+          contextWindow: 1_000_000,
+          maxOutputTokens: 128_000,
+        },
+      },
+    } as SDKMessage)
+    await tick()
+
+    const usage = events.flatMap((event) => (event.type === 'usage.updated' ? [event.usage] : []))
+    expect(usage.at(-1)).toEqual({
+      model: 'claude-haiku-5-5',
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 3619,
+      contextWindow: 1_000_000,
+    })
+    expect(usage).toHaveLength(2)
+    const store = new Store(':memory:')
+    try {
+      store.addProject('/repo')
+      store.addThread({
+        id: thread.id,
+        projectPath: '/repo',
+        provider: 'claude-code',
+        title: 'Ctx',
+      })
+      for (const event of events) store.append(thread.id, event)
+      // The reading is not tokens processed: the session total is the turn's own.
+      expect(store.usageSummary(thread.id, 0).session.totalTokens).toBe(2)
+    } finally {
+      store.close()
+      adapter.dispose()
+    }
+  })
   it('drops the synthetic default, deduplicates context aliases, and keeps the catalog', async () => {
     const fake = harness([
       {
