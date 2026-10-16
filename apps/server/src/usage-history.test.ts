@@ -85,8 +85,7 @@ describe('local usage history', () => {
 
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () => [
         {
           threadId: 'codex-session',
@@ -163,8 +162,7 @@ describe('local usage history', () => {
     writeJsonLines(codexFile, records)
     const options = {
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       now: () => new Date('2026-08-08T12:00:00.000Z'),
     }
     const service = usageService(options)
@@ -213,8 +211,7 @@ describe('local usage history', () => {
     const history = await settledHistory(
       usageService({
         cacheFile: path.join(root, 'cache', 'usage.json'),
-        codexSessionsRoot: codexRoot,
-        claudeProjectsRoot: claudeRoot,
+        sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
         now: () => new Date('2026-08-08T12:00:00.000Z'),
       }),
       'all',
@@ -255,10 +252,12 @@ describe('local usage history', () => {
     let scans = 0
     const service = new UsageHistoryService({
       cacheFile,
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: codexRoot,
+        'claude-code': claudeRoot,
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async (request, onProgress) => {
         scans += 1
         if (scans === 2) await secondScan.promise
@@ -306,8 +305,7 @@ describe('local usage history', () => {
     ])
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       now: () => new Date('2026-08-08T12:00:00.000Z'),
     })
 
@@ -324,8 +322,7 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () => [
         {
           threadId: 'api-session',
@@ -428,8 +425,7 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () =>
         providers.map((provider) => ({
           threadId: `${provider}-session`,
@@ -468,8 +464,10 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: path.join(root, 'missing-codex'),
-      claudeProjectsRoot: path.join(root, 'missing-claude'),
+      sourceRoots: {
+        codex: path.join(root, 'missing-codex'),
+        'claude-code': path.join(root, 'missing-claude'),
+      },
       harnessUsage: () => [
         {
           threadId: 'antigravity-session',
@@ -517,10 +515,12 @@ describe('local usage history', () => {
     const gate = Promise.withResolvers<void>()
     const service = new UsageHistoryService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: codexRoot,
+        'claude-code': claudeRoot,
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async (request, onProgress) => {
         await gate.promise
         return runUsageHistoryScan(request, onProgress)
@@ -545,10 +545,12 @@ describe('local usage history', () => {
     let now = new Date('2026-08-08T12:00:00.000Z').getTime()
     const service = new UsageHistoryService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: path.join(root, 'missing-codex'),
-      claudeProjectsRoot: path.join(root, 'missing-claude'),
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: path.join(root, 'missing-codex'),
+        'claude-code': path.join(root, 'missing-claude'),
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async () => {
         scans += 1
         throw new Error('Synthetic worker failure')
@@ -705,9 +707,12 @@ function usageService(
 ): UsageHistoryService {
   const isolatedRoot = path.dirname(options.cacheFile)
   return new UsageHistoryService({
-    grokLogPath: path.join(isolatedRoot, 'missing-grok.jsonl'),
-    openCodeDataRoot: path.join(isolatedRoot, 'missing-opencode'),
     ...options,
+    sourceRoots: {
+      grok: path.join(isolatedRoot, 'missing-grok.jsonl'),
+      opencode: path.join(isolatedRoot, 'missing-opencode'),
+      ...options.sourceRoots,
+    },
     scanRunner: runUsageHistoryScan,
   })
 }
