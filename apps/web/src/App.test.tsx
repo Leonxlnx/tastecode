@@ -15,7 +15,7 @@ import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
-import { serializeModelCatalogCache } from './model-catalog-cache.js'
+import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
 import { choicesFor, MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
@@ -641,6 +641,15 @@ async function openProviderSettings() {
   fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
 }
 
+/** Test snapshots are small, so they always fit the cache. */
+function serializeModelCatalogCache(
+  ...args: Parameters<typeof serializeCatalogWithinLimits>
+): string {
+  const raw = serializeCatalogWithinLimits(...args)
+  if (raw === undefined) throw new Error('test catalog exceeds the cache limits')
+  return raw
+}
+
 function cachedCodexChoice(): ModelChoice {
   return {
     key: 'codex:gpt-6.1-sol',
@@ -1001,12 +1010,56 @@ describe('web client', () => {
     await waitFor(() =>
       expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
     )
+    // The settled source reaches the cache on the trailing write.
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).not.toBeNull(), {
+      timeout: 3_000,
+    })
     const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
     expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
       'codex',
     ])
     expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
     expect(composerProps().modelsLoaded).toBe(true)
+  })
+
+  it('writes the cache once for sources that settle together, then for the full catalog', async () => {
+    for (const id of ['claude-code', 'grok', 'cursor'] as const) {
+      serverProviders.push({ ...serverProviders[0]!, id, displayName: id })
+    }
+    let releaseCursor!: () => void
+    const cursorModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseCursor = () =>
+        resolve({ models: [{ ...cachedCodexChoice().model, id: 'cursor-model' }] })
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'models.list') return request(method, params)
+      const { provider } = methods[method].params.parse(params)
+      if (provider === 'cursor') return cursorModels
+      return Promise.resolve({
+        models: [{ ...cachedCodexChoice().model, id: `${provider}-model` }],
+      })
+    })
+    const setItem = vi.spyOn(localStorage, 'setItem')
+    const cacheWrites = () =>
+      setItem.mock.calls
+        .filter(([key]) => key === 'harness.modelCatalog.v1')
+        .map(([, value]) =>
+          (JSON.parse(value) as { validatedSources: { source: string }[] }).validatedSources
+            .map((entry) => entry.source)
+            .sort(),
+        )
+    try {
+      render(<App />)
+      await waitFor(() => expect(cacheWrites()).toEqual([['claude-code', 'codex', 'grok']]), {
+        timeout: 3_000,
+      })
+      await act(async () => releaseCursor())
+      await waitFor(() => expect(cacheWrites()).toHaveLength(2))
+      expect(cacheWrites()[1]).toEqual(['claude-code', 'codex', 'cursor', 'grok'])
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('does not renew an unresolved source cache when another provider completes', async () => {
@@ -1044,6 +1097,26 @@ describe('web client', () => {
       'codex',
     ])
     expect(cache.models.map((choice: { key: string }) => choice.key)).toContain(stale.key)
+  })
+
+  it('drops the model catalog cache once the catalog outgrows it', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const models = Array.from({ length: 2_001 }, (_, index) => ({
+      ...cachedCodexChoice().model,
+      id: `listed-${index}`,
+      displayName: `Listed ${index}`,
+      isDefault: index === 0,
+    }))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list' ? Promise.resolve({ models }) : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull())
+    expect(composerProps().modelsLoaded).toBe(true)
   })
 
   it('retains a legacy project list through an unacknowledged outage', async () => {

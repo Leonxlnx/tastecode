@@ -245,6 +245,7 @@ const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
 const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
+const MODEL_CATALOG_CACHE_WRITE_DELAY_MS = 1_000
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
@@ -1841,6 +1842,16 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    // Sources settle one by one, and a large catalog costs a full serialize
+    // per write, so their snapshots are coalesced into one trailing write
+    // that the final catalog write replaces.
+    let pendingCacheWrite: { timer: number; write: () => void } | undefined
+    const takePendingCacheWrite = () => {
+      const pending = pendingCacheWrite
+      if (pending) window.clearTimeout(pending.timer)
+      pendingCacheWrite = undefined
+      return pending?.write
+    }
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     // Latched before the rebuild below drops any choice whose connection is no
@@ -1928,15 +1939,14 @@ export function App() {
           unvalidatedModelKeys: new Set(unknownKeys),
         })
         setModelErrors({ ...discoveryErrors })
-        if (result.discovered) {
-          writeSetting(
-            MODEL_CATALOG_KEY,
-            serializeModelCatalogCache(publishedCatalog, {
-              validatedSources: validatedSources.keys(),
-              // A later completion must not refresh an earlier source's age.
-              validatedAt: Math.min(...validatedSources.values()),
-            }),
-          )
+        if (result.discovered && !pendingCacheWrite) {
+          // Reads the catalog and source ages as they are when it runs.
+          const write = () => writeModelCatalogCache(publishedCatalog, validatedSources)
+          const timer = window.setTimeout(() => {
+            pendingCacheWrite = undefined
+            write()
+          }, MODEL_CATALOG_CACHE_WRITE_DELAY_MS)
+          pendingCacheWrite = { timer, write }
         }
         return result
       }
@@ -2183,15 +2193,9 @@ export function App() {
       const discoveries = [...direct, ...acp, ...api, ...customSources]
       const catalog = discoveries.flatMap((entry) => entry.models)
       const catalogReady = discoveries.length > 0 && discoveries.every((entry) => entry.discovered)
-      if (validatedSources.size > 0) {
-        writeSetting(
-          MODEL_CATALOG_KEY,
-          serializeModelCatalogCache(catalog, {
-            validatedSources: validatedSources.keys(),
-            validatedAt: Math.min(...validatedSources.values()),
-          }),
-        )
-      }
+      // The full catalog supersedes whatever snapshot is still pending.
+      takePendingCacheWrite()
+      if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
       // A failed connections.list is otherwise invisible: the models it paid for
@@ -2365,6 +2369,8 @@ export function App() {
     })
     return () => {
       cancelled = true
+      // Sources this run validated stay cached for the next run to start from.
+      takePendingCacheWrite()?.()
     }
   }, [transport, catalogRequest])
 
@@ -6594,4 +6600,23 @@ function removeSetting(key: string): void {
   } catch {
     // Nothing to lose.
   }
+}
+
+/**
+ * Save the catalog snapshot with each validated source's age. A catalog the
+ * reader would reject drops the key instead: an outgrown snapshot is never
+ * read again, and keeping the last one that fit would paint models a source
+ * no longer lists.
+ */
+function writeModelCatalogCache(
+  models: ModelChoice[],
+  validatedSources: ReadonlyMap<string, number>,
+): void {
+  const raw = serializeModelCatalogCache(models, {
+    validatedSources: validatedSources.keys(),
+    // A later completion must not refresh an earlier source's age.
+    validatedAt: Math.min(...validatedSources.values()),
+  })
+  if (raw === undefined) removeSetting(MODEL_CATALOG_KEY)
+  else writeSetting(MODEL_CATALOG_KEY, raw)
 }
