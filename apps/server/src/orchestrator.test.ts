@@ -44,6 +44,8 @@ import {
   designSourceQualityBaseline,
   designWorkspaceFileBaseline,
   snapshotDesignFiles,
+  parseAssetManifest,
+  validateResolvedDesignAssets,
 } from '@harness/design-agent'
 import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
@@ -3278,6 +3280,84 @@ describe('provider-neutral design briefing', () => {
       await orchestrator.disposeAll()
       store.close()
       rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it.each([
+    [
+      'continues photo acquisition while each pass resolves assets',
+      ['beans', 'harbor', 'roaster'],
+      3,
+      true,
+    ],
+    ['stops photo acquisition when a pass opens another asset', ['beans', 'portrait'], 3, false],
+    ['stops photo acquisition at its bound', ['beans', 'harbor', 'roaster'], 6, false],
+  ] as const)('%s', async (_name, previous, stored, continues) => {
+    const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-acquisition-'))
+    writePreviewArtifacts(workspace)
+    const page = readPageBlueprint(workspace)
+    page.sections[0] = { ...page.sections[0]!, assetNeeds: ['beans', 'harbor'] }
+    writePageBlueprint(workspace, page)
+    const photos = (ids: readonly string[]) => ({
+      version: 1,
+      assets: ids.map((id) => ({
+        id,
+        kind: 'image',
+        role: 'photography',
+        status: 'needed',
+        purpose: 'Show the roastery',
+        requirements: ['A licensed photograph'],
+        sectionIds: ['hero'],
+        aspectRatio: '4:3',
+        composition: 'The roaster at work.',
+      })),
+    })
+    const unresolved = (ids: readonly string[]) => {
+      try {
+        validateResolvedDesignAssets(parseAssetManifest(photos(ids)))
+      } catch (error) {
+        return (error as Error).message
+      }
+      throw new Error('expected unresolved photos')
+    }
+    const earlier = Array.from({ length: stored - 1 }, (_, index) => `Earlier error ${index}`)
+    const store = new Store(':memory:')
+    store.addProject(workspace)
+    store.addThread({ id: 'photos', projectPath: workspace, provider: 'codex', title: 'Roastery' })
+    store.setDesignRun('photos', {
+      ...approvalSnapshot(workspace),
+      originalRequest: 'Build a roastery landing page.',
+      phase: 'assets',
+      askedQuestions: false,
+      explicitAnswers: [],
+      assetReplanned: true,
+      correcting: true,
+      correctionErrors: [...earlier, unresolved(previous)],
+    })
+    const { orchestrator, sessions, received } = harness(undefined, store)
+    try {
+      const queued = await orchestrator.submitTurn('photos', 'Afterward')
+      if (queued.queued) orchestrator.deleteQueuedTurn('photos', queued.queuedTurn.id)
+      sessions[0]?.emit(message(JSON.stringify(photos(['beans', 'harbor'])), 's1-turn'))
+      sessions[0]?.emit({ type: 'turn.completed', turnId: 's1-turn', status: 'completed' })
+      if (continues) {
+        await vi.waitFor(() => expect(sessions[0]?.sent).toHaveLength(2))
+        expect(sessions[0]?.sent.at(-1)).toContain('Complete the acquisition')
+        expect(store.designRun('photos')).toMatchObject({
+          phase: 'assets',
+          correctionErrors: [...earlier, unresolved(previous), unresolved(['beans', 'harbor'])],
+        })
+        expect(received.some(({ event }) => event.type === 'thread.error')).toBe(false)
+      } else {
+        await vi.waitFor(() => expect(store.designRun('photos')).toBeUndefined())
+        expect(
+          received.filter(({ event }) => event.type === 'thread.error').at(-1)?.event,
+        ).toMatchObject({ message: expect.stringContaining('beans, harbor') })
+      }
+    } finally {
+      await orchestrator.disposeAll()
+      store.close()
+      rmSync(workspace, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 })
     }
   })
 
