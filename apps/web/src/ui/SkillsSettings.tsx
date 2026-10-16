@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import {
   IconAlertTriangle as AlertTriangle,
@@ -26,6 +26,7 @@ export function SkillsSettings(props: {
   // Per id: one toggle settling must not unlock another switch still in flight.
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [reload, setReload] = useState(0)
+  const titleId = useId()
   const inventoryGeneration = useRef(0)
   const inventoryContext = useRef<Context | undefined>(undefined)
   const errorContext = useRef<Context | undefined>(undefined)
@@ -202,11 +203,11 @@ export function SkillsSettings(props: {
             : undefined
 
   return (
-    <section className="settings__panel skills-settings" aria-labelledby="settings-skills">
+    <section className="settings__panel skills-settings" aria-labelledby={titleId}>
       <header className="skills-settings__header">
         <div>
-          <h1 className="settings__title" id="settings-skills">
-            Agent Skills
+          <h1 className="settings__title" id={titleId}>
+            Skills
           </h1>
           <p role="status" aria-live="polite" aria-atomic="true">
             {providerStatus}

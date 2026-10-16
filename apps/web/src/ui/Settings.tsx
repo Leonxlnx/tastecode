@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -322,6 +323,13 @@ function SettingsComponent(props: {
     setSection(props.initialSection ?? 'workflows')
   }, [props.initialSection, props.sectionRequest])
 
+  // Every tab shares one scroller; a tab opens at its top, not at the offset
+  // the previous tab was left at.
+  const main = useRef<HTMLElement>(null)
+  useLayoutEffect(() => {
+    if (main.current) main.current.scrollTop = 0
+  }, [section])
+
   const panel = useRef<HTMLDivElement>(null)
   const onClose = useRef(props.onClose)
   onClose.current = props.onClose
@@ -420,7 +428,7 @@ function SettingsComponent(props: {
           <SettingsNavItem
             active={section === 'mcp'}
             icon={<Network size={15} aria-hidden />}
-            label="MCP"
+            label="MCP servers"
             onClick={() => setSection('mcp')}
           />
           <SettingsNavItem
@@ -458,7 +466,7 @@ function SettingsComponent(props: {
         </nav>
       </aside>
 
-      <main className="settings__main">
+      <main className="settings__main" ref={main}>
         <div
           className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
         >
@@ -1364,8 +1372,10 @@ function ModelSettings(props: {
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
-  const catalogModels = props.models.filter((choice) => !isCustomModelChoice(choice))
-  const sources = groupModelsBySource(catalogModels)
+  const sources = useMemo(
+    () => groupModelsBySource(props.models.filter((choice) => !isCustomModelChoice(choice))),
+    [props.models],
+  )
 
   return (
     <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
@@ -1525,11 +1535,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
     <section className="background-model-settings" aria-label="Background work">
       <header>
         <h2>Background work</h2>
-        <p>
-          Used for session titles, commit-message drafts, and other short writing. Automatic uses
-          Luna at low on a Codex subscription, Grok 4.6 at low when Grok is connected, or the newest
-          cost-oriented model at its lowest effort elsewhere.
-        </p>
+        <p>Used for session titles, commit-message drafts, and other short writing.</p>
       </header>
       <div className="settings__group">
         <SettingsRow
@@ -2056,7 +2062,11 @@ function DataSettings(props: {
   const [confirming, setConfirming] = useState(false)
   const [diagnosticsEnabled, setDiagnosticsEnabled] = useState<boolean>()
   const [diagnosticsError, setDiagnosticsError] = useState<string>()
-  const projectLabel = `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'} on this machine`
+  // The row names what the reset clears; the note names what it leaves alone.
+  const kept =
+    props.projectCount === 0
+      ? 'Projects, workspaces, files, chat history and credentials stay.'
+      : `${props.projectCount} ${props.projectCount === 1 ? 'project' : 'projects'}, workspaces, files, chat history and credentials stay.`
 
   useEffect(() => {
     let cancelled = false
@@ -2125,23 +2135,27 @@ function DataSettings(props: {
         </SettingsRow>
       ) : null}
       <SettingsRow
-        title={
-          props.projectsLoading ? (
-            <SettingsValueSkeleton label="Loading project count…" width={176} />
-          ) : (
-            projectLabel
-          )
+        title="Reset app preferences"
+        note={
+          <>
+            Clears appearance, layout and model choices.{' '}
+            {props.projectsLoading ? (
+              <SettingsValueSkeleton label="Loading project count…" width={176} />
+            ) : (
+              kept
+            )}
+          </>
         }
-        note="Reset only clears this renderer’s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials."
         className="settings__row--roomy"
       >
         <button
           className="settings__action is-danger"
           type="button"
+          aria-label="Reset app preferences"
           onClick={() => setConfirming(true)}
         >
           <RotateCcw size={13} aria-hidden />
-          <span>Reset app preferences</span>
+          <span>Reset…</span>
         </button>
       </SettingsRow>
       {confirming ? (
@@ -2430,9 +2444,11 @@ function AboutSettings(props: { transport: Transport }) {
 // No group subtitle between the title and the card: one heading carries a
 // panel, and the removed line was repeating it in smaller type.
 function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
+  // An id derived from the title breaks on spaces ("Data & privacy").
+  const titleId = useId()
   return (
-    <section className="settings__panel" aria-labelledby={`settings-${props.title.toLowerCase()}`}>
-      <h1 className="settings__title" id={`settings-${props.title.toLowerCase()}`}>
+    <section className="settings__panel" aria-labelledby={titleId}>
+      <h1 className="settings__title" id={titleId}>
         {props.title}
       </h1>
       <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>
