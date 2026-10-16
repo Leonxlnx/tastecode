@@ -298,7 +298,6 @@ export function startServer(
     )
   /** Set once background work starts; see startBackgroundWork. */
   let providerHistory: Promise<ProviderHistory> | undefined
-  let initialProviderHistory: Promise<ProviderHistory> | undefined
   const historySchedule = new HistoryRefreshSchedule(async () => {
     if (historyClosing || !providerHistory) return false
     // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
@@ -328,7 +327,6 @@ export function startServer(
       await history.refresh()
       return history
     })
-    initialProviderHistory = initial
     historySchedule.start()
     void initial
       .then(async (history) => {
