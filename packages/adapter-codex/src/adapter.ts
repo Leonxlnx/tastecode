@@ -20,6 +20,7 @@ import type {
 } from '@harness/contracts'
 import { UserInputRequestSchema } from '@harness/contracts'
 import { mapThreadItem } from './map-item.js'
+import { orderCodexModels } from './model-order.js'
 import {
   spawnCli,
   StdioJsonRpc,
@@ -909,17 +910,9 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         models.push(compatibilityModel)
       }
     }
-    // Codex's own catalog priority (codex-cli 0.154). Unlisted rows keep their
-    // model/list order after these, and the legacy fallback stays last.
-    const preferred = ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna']
-    return models.sort((left, right) => {
-      const leftRank = preferred.indexOf(left.id)
-      const rightRank = preferred.indexOf(right.id)
-      return (
-        (leftRank < 0 ? preferred.length : leftRank) -
-        (rightRank < 0 ? preferred.length : rightRank)
-      )
-    })
+    // Every listed model appears, so a release needs no change here. Untiered
+    // rows keep their model/list order, and the legacy fallback stays last.
+    return orderCodexModels(models)
   }
 
   async listMcpServers(threadId?: string): Promise<McpServer[]> {
