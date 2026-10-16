@@ -2004,3 +2004,37 @@ describe('subagent contracts', () => {
     expect(CapabilitiesSchema.safeParse({ ...capabilities, subagents: true }).success).toBe(false)
   })
 })
+
+describe('provider source shape contracts', () => {
+  const status = {
+    id: 'codex',
+    displayName: 'Codex',
+    installed: true,
+    auth: 'authenticated',
+  }
+  const list = methods['providers.list'].result
+
+  it('keeps provider statuses without a declared shape valid', () => {
+    expect(list.parse({ providers: [status] }).providers[0]?.source).toBeUndefined()
+  })
+
+  it('declares what each kind of source must name', () => {
+    const shapes = [
+      { ...status, source: { agent: 'optional', connection: false, direct: true } },
+      { ...status, id: 'pi', source: { agent: 'required', connection: false, direct: true } },
+      { ...status, id: 'acp', source: { agent: 'required', connection: false, direct: false } },
+      { ...status, id: 'api', source: { agent: 'none', connection: true, direct: false } },
+    ]
+    expect(list.parse({ providers: shapes })).toEqual({ providers: shapes })
+  })
+
+  it.each([
+    { agent: 'sometimes', connection: false, direct: true },
+    { agent: 'optional', connection: 'no', direct: true },
+    { agent: 'optional', connection: false },
+    { connection: false, direct: true },
+    'direct',
+  ])('rejects a malformed shape: %j', (source) => {
+    expect(list.safeParse({ providers: [{ ...status, source }] }).success).toBe(false)
+  })
+})

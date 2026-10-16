@@ -3,6 +3,7 @@ import type {
   MethodName,
   ProviderId,
   ProviderSetup,
+  ProviderSourceShape,
   ProviderStatus,
   ResultOf,
   ThreadInboxStatus,
@@ -119,6 +120,15 @@ const isSetup = objectValidator<ProviderSetup>({
   login: enumValidator<ProviderSetup['login']>({ app: true, provider: true }),
   loginOpensBrowser: optional(isBoolean),
 })
+const isSourceShape = objectValidator<ProviderSourceShape>({
+  agent: enumValidator<ProviderSourceShape['agent']>({
+    none: true,
+    optional: true,
+    required: true,
+  }),
+  connection: isBoolean,
+  direct: isBoolean,
+})
 const isProvider = objectValidator<ProviderStatus>({
   id: isProviderId,
   displayName: isString,
@@ -132,6 +142,7 @@ const isProvider = objectValidator<ProviderStatus>({
   capabilities: optional(isCapabilities),
   setup: optional(isSetup),
   problem: optional(isString),
+  source: optional(isSourceShape),
 })
 type Project = ResultOf<'projects.list'>['projects'][number]
 const isSession = objectValidator<Project['sessions'][number]>({
