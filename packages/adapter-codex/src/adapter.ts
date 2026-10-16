@@ -580,6 +580,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
   #rpc: CodexRpc | undefined
+  /** The newest process, kept after dispose so a stop that failed can be retried. */
+  #lastRpc: CodexRpc | undefined
   #started = false
   #restartNeeded = false
   #starting: Promise<void> | undefined
@@ -676,6 +678,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       },
     )
     this.#rpc = rpc
+    this.#lastRpc = rpc
 
     rpc.onStderr((text) => this.emit('log', text.trimEnd()))
     rpc.onNotification((method, params) => {
@@ -1256,7 +1259,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   dispose(): Promise<void> {
     this.#startupGeneration += 1
-    const stopped = this.#rpc ? Promise.resolve(this.#rpc.dispose()) : this.#processStop
+    // A second dispose after a failed stop asks the process to stop again
+    // instead of returning that failure forever.
+    const rpc = this.#rpc ?? this.#lastRpc
+    const stopped = rpc ? Promise.resolve(rpc.dispose()) : this.#processStop
     this.#rpc = undefined
     this.#started = false
     this.#restartNeeded = false
