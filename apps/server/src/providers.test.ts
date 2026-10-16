@@ -3,6 +3,7 @@ import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import {
   detectProviders,
   installCommandFor,
+  installTimeAuth,
   launchCommandFor,
   prewarmProviders,
   type SystemProbe,
@@ -170,6 +171,22 @@ describe('detectProviders', () => {
 
     expect(find(providers, 'codex').auth).toBe('authenticated')
     expect(find(providers, 'claude-code').auth).toBe('unknown')
+  })
+
+  it('reports unknown for a provider whose probe declares no sign-in check', async () => {
+    // Nothing is started for these: the account read answers them later.
+    const unchecked = [
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+      'acp',
+    ] as const
+    for (const provider of unchecked) {
+      await expect(installTimeAuth(provider)).resolves.toBe('unknown')
+    }
   })
 
   it('reports every provider we know about, installed or not', async () => {

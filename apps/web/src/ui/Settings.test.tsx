@@ -854,6 +854,63 @@ describe('provider authentication states', () => {
   })
 })
 
+describe('missing provider re-check', () => {
+  const missingGrok: ProviderStatus = {
+    id: 'grok',
+    displayName: 'Grok',
+    installed: false,
+    auth: 'unknown',
+    setup: { installUrl: 'https://x.ai/cli', login: 'provider' },
+  }
+
+  function renderMissing(scans: boolean[]) {
+    const scan = deferred<boolean>()
+    const answers = [...scans.map((installed) => Promise.resolve(installed)), scan.promise]
+    const onConnectionsChanged = vi.fn()
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.updates') return { updates: [] }
+      if (method !== 'providers.list') throw new Error(`unexpected ${method}`)
+      const installed = await answers.shift()!
+      return { providers: [{ ...missingGrok, installed }] }
+    })
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[missingGrok]}
+        acpAgents={[]}
+        modelConnections={[]}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={() => {}}
+      />,
+    )
+    return { onConnectionsChanged, transport, scan }
+  }
+
+  it('looks again on request and reloads the catalog only once it is found', async () => {
+    const { onConnectionsChanged, transport, scan } = renderMissing([false])
+    const row = providerRow('Grok')
+    expect(within(row).getByRole('link', { name: 'Open setup guide' })).toBeTruthy()
+    const check = action(row, 'Check again')
+    expect(check.className).toContain('is-secondary')
+
+    fireEvent.click(check)
+    expect(within(row).getByRole('status').textContent).toBe('Checking…')
+    expect(check.disabled).toBe(true)
+    await waitFor(() => expect(check.disabled).toBe(false))
+    expect(row.querySelector('.provider-row__status')?.textContent).toBe('Not installed')
+    expect(onConnectionsChanged).not.toHaveBeenCalled()
+
+    fireEvent.click(check)
+    await act(async () => scan.resolve(true))
+    expect(onConnectionsChanged).toHaveBeenCalledTimes(1)
+    expect(row.querySelector('.provider-row__status')?.textContent).toBe('Checking…')
+    const listings = transport.requests.filter((request) => request.method === 'providers.list')
+    expect(listings).toHaveLength(2)
+  })
+})
+
 describe('app haptic setting', () => {
   it('shows only on supported desktop Macs and persists the toggle', () => {
     const unsupported = renderAppearanceSettings()
