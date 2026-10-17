@@ -49,6 +49,9 @@ export function createGrokHistorySource(options: GrokHistoryOptions = {}): Provi
                 if (summary) summaries.set(directory, cached)
               }
               const summary = cached.summary
+              // Nobody wrote in it: a session opened only to read the project's
+              // commands and MCP servers is no chat to list.
+              if (summary.num_messages === 0) return undefined
               const info = record(summary.info)
               let decoded = ''
               try {

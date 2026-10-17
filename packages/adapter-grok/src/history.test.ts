@@ -183,6 +183,31 @@ describe('Grok native history', () => {
     })
   })
 
+  it('leaves out a session nobody wrote in, such as a command and MCP probe', async () => {
+    const { source, directory, root } = await fixture()
+    await save(directory, 'updates.jsonl', [
+      update('user_message_chunk', { content: { type: 'text', text: 'hello' } }),
+    ])
+    // grok 1.0.62 writes this for session/new without a prompt; its chat
+    // history holds only the system prompt and the skills reminder.
+    const probe = path.join(root, 'sessions', encodeURIComponent(root), 'probe-session')
+    await mkdir(probe, { recursive: true })
+    await writeFile(
+      path.join(probe, 'summary.json'),
+      JSON.stringify({ info: { id: 'probe-session', cwd: root }, num_messages: 0 }),
+    )
+    await save(probe, 'chat_history.jsonl', [{ type: 'system', content: 'You are Grok.' }])
+    expect((await source.list()).map(({ id }) => id)).toEqual(['saved-session'])
+    await writeFile(
+      path.join(probe, 'summary.json'),
+      JSON.stringify({ info: { id: 'probe-session', cwd: root }, num_messages: 12 }),
+    )
+    expect((await source.list()).map(({ id }) => id).sort()).toEqual([
+      'probe-session',
+      'saved-session',
+    ])
+  })
+
   it('reads a session summary again only after it changes', async () => {
     const { source, directory } = await fixture()
     await save(directory, 'updates.jsonl', [

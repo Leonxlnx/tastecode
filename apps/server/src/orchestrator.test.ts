@@ -14,6 +14,8 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -21,6 +23,7 @@ import type {
   DomainEvent,
   McpServer,
   McpServerConfig,
+  ProviderCommand,
   ProviderId,
   ThreadLifecycle,
 } from '@harness/contracts'
@@ -53,6 +56,7 @@ import { encodeHistoryCursor, readHistoryPage } from './history-page.js'
 import { compactHistoryReplay } from './history-replay.js'
 import { McpConfigStore } from './mcp-config.js'
 import { Orchestrator } from './orchestrator.js'
+import type { ProviderControlsOptions } from './provider-controls.js'
 import { StartupCleanupError } from './provider-session.js'
 import { DatabaseSync } from './sqlite.js'
 import { Store } from './store.js'
@@ -165,6 +169,9 @@ class FakeSession implements AgentSession {
   lateSendError: Error | undefined
   emitUsageChanged: () => void = () => {}
   emitMcpChanged: () => void = () => {}
+  commands: ProviderCommand[] = []
+  commandReads: Array<string | undefined> = []
+  emitCommandsChanged: () => void = () => {}
   emitDisconnected: () => void = () => {}
   emitProviderSessionId: (providerSessionId: string) => void = () => {}
   afterEventBarrier: Promise<void> | undefined
@@ -206,6 +213,10 @@ class FakeSession implements AgentSession {
   }
   async listMcpServers(): Promise<McpServer[]> {
     return this.mcpServers
+  }
+  mcpLoading = false
+  isMcpLoading(): boolean {
+    return this.mcpLoading
   }
   async reloadMcpServers(
     threadId: string,
@@ -250,6 +261,15 @@ class FakeSession implements AgentSession {
     this.emitMcpChanged = listener
   }
 
+  async listCommands(threadId?: string): Promise<ProviderCommand[]> {
+    this.commandReads.push(threadId)
+    return this.commands
+  }
+
+  onCommandsChanged(listener: () => void): void {
+    this.emitCommandsChanged = listener
+  }
+
   onDisconnected(listener: () => void): () => void {
     this.emitDisconnected = listener
     return () => {
@@ -266,6 +286,22 @@ class FakeSession implements AgentSession {
   }
 }
 
+/** Claude's project probe would start the real CLI; without a chat it finds nothing here. */
+const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['claude-code'] = {
+  projectInventory: {
+    mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+    discover: async () => ({ commands: [], servers: [] }),
+  },
+}
+/** The same for Grok's probe. */
+const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
+  projectInventory: {
+    mcpCapabilities: GROK_MCP_CAPABILITIES,
+    skillCapabilities: { inventory: true, configure: false, install: false },
+    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  },
+}
+
 type QueueNotificationError = { current?: Error }
 type CredentialFailure = { current?: Error }
 type LifecycleHook = {
@@ -277,6 +313,7 @@ function harness(
   store = new Store(':memory:'),
   maxIdleThreadRuntimes?: number,
   idleThreadRuntimeMs?: number,
+  providerServices?: ProviderControlsOptions['services'],
 ) {
   const sessions: FakeSession[] = []
   const received: Array<{
@@ -293,6 +330,7 @@ function harness(
   const queueStates: Array<{ threadId: string; itemIds: string[]; canSteer: boolean }> = []
   const usageChanges: ProviderId[] = []
   const mcpChanges: Array<{ provider: ProviderId; projectPath: string }> = []
+  const commandChanges: Array<{ provider: ProviderId; projectPath: string }> = []
   const queueNotificationError: QueueNotificationError = {}
   const lifecycleHook: LifecycleHook = {}
 
@@ -389,6 +427,7 @@ function harness(
     onLogin: () => {},
     onUsageChanged: (provider) => usageChanges.push(provider),
     onMcpChanged: (provider, projectPath) => mcpChanges.push({ provider, projectPath }),
+    onCommandsChanged: (provider, projectPath) => commandChanges.push({ provider, projectPath }),
     mcpConfig: new McpConfigStore(
       path.join(mkdtempSync(path.join(os.tmpdir(), 'harness-mcp-')), 'mcp.json'),
     ),
@@ -400,6 +439,11 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
+    providerServices: {
+      ...providerServices,
+      'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
+      grok: { ...quietGrokInventory, ...providerServices?.grok },
+    },
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
@@ -415,6 +459,7 @@ function harness(
     queueStates,
     usageChanges,
     mcpChanges,
+    commandChanges,
     queueNotificationError,
     lifecycleHook,
     orchestrator,
@@ -6998,7 +7043,9 @@ describe('MCP inventory', () => {
       expect(() =>
         orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
       ).toThrow('cannot hide an inherited MCP server')
-      expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect((await orchestrator.listMcpServers('claude-code', '/repo')).servers).toEqual(
+        saved.servers,
+      )
       expect(sessions).toEqual([])
     } finally {
       await orchestrator.disposeAll()
@@ -7025,21 +7072,121 @@ describe('MCP inventory', () => {
     }
   })
 
-  it('reports provider MCP capabilities without starting one', async () => {
-    const { orchestrator } = harness()
+  it("reads Claude's servers for a project without a chat from a cached probe", async () => {
+    const inherited: McpServer = {
+      id: 'plugin:acme-docs:acme-docs',
+      displayName: 'acme-docs',
+      description: 'Plugin acme-docs',
+      scope: 'global',
+      enabled: true,
+      auth: { status: 'not_required' },
+      startup: { state: 'ready' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    }
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({
+              commands: [{ name: 'context', description: 'Show context' }],
+              servers: [inherited],
+            })
+        }),
+    )
+    const { orchestrator, sessions, mcpChanges, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        'claude-code': {
+          projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover },
+        },
+      },
+    )
+    try {
+      orchestrator.addMcpServer('claude-code', '/repo', {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      })
+      await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+        capabilities: { inventory: true, add: true, hideInherited: false },
+        servers: [{ id: 'docs', scope: 'project' }],
+        loading: true,
+      })
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(mcpChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }])
+
+      const settled = await orchestrator.listMcpServers('claude-code', '/repo')
+      expect(settled.loading).toBeUndefined()
+      expect(settled.servers.map(({ id, scope }) => [id, scope])).toEqual([
+        ['plugin:acme-docs:acme-docs', 'global'],
+        ['docs', 'project'],
+      ])
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }],
+        loading: false,
+      })
+      // One probe served every read, and no chat was started for it.
+      expect(discover).toHaveBeenCalledOnce()
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it("reads Claude's servers from a live chat in the project", async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('claude-code', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'plugin:acme-docs:acme-docs',
+        displayName: 'acme-docs',
+        description: 'Plugin acme-docs',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'starting' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+    sessions[0]!.mcpLoading = true
 
     await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
       capabilities: {
-        inventory: false,
+        inventory: true,
         add: true,
         update: true,
         remove: true,
         reload: false,
         startOAuth: false,
         cancelOAuth: false,
+        hideInherited: false,
       },
-      servers: [],
+      servers: sessions[0]!.mcpServers,
+      loading: true,
     })
+    // Another project has no Claude chat, so a probe starts for it.
+    await expect(orchestrator.listMcpServers('claude-code', '/other')).resolves.toMatchObject({
+      capabilities: { inventory: true },
+      servers: [],
+      loading: true,
+    })
+    await orchestrator.disposeAll()
   })
 
   it('reads live startup state from the project session', async () => {
@@ -7061,6 +7208,11 @@ describe('MCP inventory', () => {
     await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
       capabilities: { inventory: true },
       servers: [{ id: 'docs', startup: { state: 'failed' } }],
+    })
+    expect((await orchestrator.listMcpServers('codex', '/repo')).loading).toBeUndefined()
+    sessions[0]!.mcpLoading = true
+    await expect(orchestrator.listMcpServers('codex', '/repo')).resolves.toMatchObject({
+      loading: true,
     })
   })
 
@@ -7194,8 +7346,16 @@ describe('MCP inventory', () => {
       transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
     })
 
+    // Grok's own servers come from its project probe; inherited ones cannot be hidden.
     await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
-      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        hideInherited: false,
+      },
       servers: [
         {
           id: 'test-tools',
@@ -7211,11 +7371,154 @@ describe('MCP inventory', () => {
       mcpServers: [{ id: 'test-tools', enabled: true }],
     })
   })
+
+  it('passes a service inventory and its loading state through with project overrides', async () => {
+    const listMcpServers = vi.fn(async () => ({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: [],
+      loading: true,
+    }))
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listMcpServers },
+    })
+    orchestrator.addMcpServer('claude-code', '/repo', {
+      id: 'docs',
+      enabled: true,
+      transport: { type: 'http', url: 'https://example.com/mcp' },
+    })
+
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+      capabilities: { inventory: true, hideInherited: false },
+      servers: [{ id: 'docs', scope: 'project' }],
+      loading: true,
+    })
+    expect(listMcpServers).toHaveBeenCalledWith('/repo', expect.anything())
+  })
+})
+
+describe('provider commands', () => {
+  const command = (name: string): ProviderCommand => ({ name, description: `${name} command` })
+
+  it('answers from the chat, then the project, then the service, then nothing', async () => {
+    const listCommands = vi.fn(
+      async (
+        _projectPath: string,
+        read: { readActive?: (() => Promise<ProviderCommand[]>) | undefined },
+      ) =>
+        read.readActive
+          ? { commands: await read.readActive(), loading: false }
+          : { commands: [command('probe')], loading: true },
+    )
+    const { orchestrator, sessions } = harness(undefined, undefined, undefined, undefined, {
+      'claude-code': { listCommands },
+    })
+    try {
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+      const first = await orchestrator.startThread('claude-code', '/repo')
+      const second = await orchestrator.startThread('claude-code', '/repo')
+      const elsewhere = await orchestrator.startThread('claude-code', '/other')
+      sessions[0]!.commands = [command('first')]
+      sessions[1]!.commands = [command('second')]
+      sessions[2]!.commands = [command('elsewhere')]
+
+      await expect(orchestrator.listCommands('claude-code', '/repo', second.id)).resolves.toEqual({
+        commands: [command('second')],
+        loading: false,
+      })
+      expect(sessions[1]!.commandReads).toEqual([second.id])
+      // Another project's chat or an unknown chat falls back to this project's runtime.
+      for (const threadId of [elsewhere.id, 'missing-thread', undefined]) {
+        await expect(orchestrator.listCommands('claude-code', '/repo', threadId)).resolves.toEqual({
+          commands: [command('first')],
+          loading: false,
+        })
+      }
+      expect(sessions[0]!.commandReads).toEqual([first.id, first.id, first.id])
+      expect(sessions[2]!.commandReads).toEqual([])
+      await expect(orchestrator.listCommands('claude-code', '/empty')).resolves.toEqual({
+        commands: [command('probe')],
+        loading: true,
+      })
+
+      // Without a service only a running chat can answer.
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: false,
+      })
+      await orchestrator.startThread('cursor', '/repo')
+      sessions[3]!.commands = [command('cursor')]
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+        commands: [command('cursor')],
+        loading: false,
+      })
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
+
+  it('relays command changes from live chats and from services', async () => {
+    let changed: (() => void) | undefined
+    const { orchestrator, sessions, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        grok: {
+          listCommands: async (_projectPath, read) => {
+            changed = read.changed
+            return { commands: [], loading: true }
+          },
+        },
+      },
+    )
+    try {
+      await orchestrator.startThread('claude-code', '/repo')
+      sessions[0]!.emitCommandsChanged()
+      await orchestrator.listCommands('grok', '/other')
+      changed!()
+      expect(commandChanges).toEqual([
+        { provider: 'claude-code', projectPath: '/repo' },
+        { provider: 'grok', projectPath: '/other' },
+      ])
+    } finally {
+      await orchestrator.disposeAll()
+    }
+  })
 })
 
 describe('skills inventory', () => {
-  it('lists local Agent Skills when the provider has no vendor inventory', async () => {
-    const { orchestrator } = harness()
+  it('lists .agents skills only for providers whose CLI loads them', async () => {
+    const vendorSkill = {
+      id: 'grok:user:review',
+      name: 'review',
+      description: 'Review the change',
+      source: { type: 'provider' as const },
+      scope: 'user' as const,
+      enabled: true,
+      dependencyErrors: [],
+    }
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      grok: {
+        listSkills: async () => ({
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [vendorSkill],
+          errors: [],
+        }),
+      },
+    })
     const project = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-project-'))
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-home-'))
     const skillDir = path.join(home, '.agents', 'skills', 'animate')
@@ -7224,30 +7527,33 @@ describe('skills inventory', () => {
       path.join(skillDir, 'SKILL.md'),
       '---\nname: animate\ndescription: Build an animation from scratch\n---\n',
     )
+    mkdirSync(path.join(project, '.agents', 'skills', 'local'), { recursive: true })
+    writeFileSync(
+      path.join(project, '.agents', 'skills', 'local', 'SKILL.md'),
+      '---\nname: local\ndescription: A project skill\n---\n',
+    )
     const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
 
     try {
+      // Claude Code loads ~/.claude/skills, never .agents; its skills come with its commands.
       await expect(orchestrator.listSkills('claude-code', project)).resolves.toEqual({
-        capabilities: { inventory: true, configure: false, install: false },
-        skills: [
-          {
-            id: path.join(skillDir, 'SKILL.md'),
-            name: 'animate',
-            description: 'Build an animation from scratch',
-            source: { type: 'folder', path: skillDir },
-            scope: 'user',
-            enabled: true,
-            dependencyErrors: [],
-          },
-        ],
+        capabilities: { inventory: false, configure: false, install: false },
+        skills: [],
         errors: [],
       })
-      await expect(orchestrator.listSkills('grok', project)).resolves.toMatchObject({
-        capabilities: { inventory: true },
-        skills: [expect.objectContaining({ name: 'animate', scope: 'user' })],
+      await expect(orchestrator.listSkills('opencode', project)).resolves.toMatchObject({
+        capabilities: { inventory: false },
+        skills: [],
+      })
+      // A provider's own skill inventory comes without the .agents folders.
+      await expect(orchestrator.listSkills('grok', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [vendorSkill],
+        errors: [],
       })
     } finally {
       homedir.mockRestore()
+      await orchestrator.disposeAll()
       rmSync(project, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }

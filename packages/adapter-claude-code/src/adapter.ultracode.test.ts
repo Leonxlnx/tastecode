@@ -58,6 +58,10 @@ class FakeQuery implements ClaudeQueryRuntime {
     return { added: [], removed: [], errors: {} }
   }
 
+  async supportedCommands() {
+    return []
+  }
+
   async initializationResult(): Promise<SDKControlInitializeResponse> {
     return {
       commands: [],
