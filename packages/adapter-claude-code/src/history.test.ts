@@ -3,6 +3,7 @@ import {
   appendFile,
   mkdir,
   mkdtemp,
+  open,
   readFile,
   rm,
   stat,
@@ -244,6 +245,89 @@ describe('Claude Code saved history', () => {
       const [session] = await f.source.list()
       expect(session).toMatchObject(generated.expected)
     }
+  })
+
+  it('continues a growing transcript and lists it as a fresh read would', async () => {
+    const random = seeded(1017)
+    for (let round = 0; round < 3; round++) {
+      const generated = transcript(random)
+      // Rows without a working directory or a prompt keep the head open across appends.
+      const early = round
+        ? []
+        : [
+            row('meta', 'user', 'Caveat', null, { isMeta: true }),
+            { ...row('a0', 'assistant', 'Before the prompt'), cwd: undefined },
+          ]
+      const f = await fixture(early)
+      const fresh = () => createClaudeHistorySource({ configDir: f.configDir }).list()
+      let written = ''
+      let flushed = 0
+      for (let step = 0; step < 8; step++) {
+        const rows = step === (round ? 0 : 2) ? [generated.first] : []
+        rows.push(...generated.more(3))
+        written += rows.map((item) => JSON.stringify(item) + '\n').join('')
+        // A writer can be caught between two writes of one row.
+        const cut =
+          random() < 0.4
+            ? flushed + Math.floor(random() * (written.length - flushed))
+            : written.length
+        await appendFile(f.file, written.slice(flushed, cut))
+        flushed = cut
+        const listed = await f.source.list()
+        expect(listed).toEqual(await fresh())
+        if (round && flushed === written.length) expect(listed[0]).toMatchObject(generated.expected)
+      }
+    }
+  })
+
+  it('reads only what was appended to a long transcript', async () => {
+    const f = await fixture([
+      row('u1', 'user', 'Long work'),
+      ...Array.from({ length: 30 }, (_, index) =>
+        row(`a${index}`, 'assistant', 'x'.repeat(100_000), 'u1'),
+      ),
+    ])
+    await f.source.list()
+    const probe = await open(f.file, 'r')
+    const read = vi.spyOn(Object.getPrototypeOf(probe), 'read')
+    await probe.close()
+    try {
+      await appendFile(
+        f.file,
+        JSON.stringify({ type: 'ai-title', sessionId: SESSION, aiTitle: 'Appended' }) +
+          '\n' +
+          JSON.stringify(row('a-last', 'assistant', 'Short', 'u1')) +
+          '\n',
+      )
+      read.mockClear()
+      const [session] = await f.source.list()
+      const requested = read.mock.calls.reduce((sum, call) => sum + Number(call[2] ?? 0), 0)
+      expect(session?.title).toBe('Appended')
+      expect(requested).toBeLessThan(100_000)
+      expect((await stat(f.file)).size).toBeGreaterThan(3_000_000)
+    } finally {
+      read.mockRestore()
+    }
+  })
+
+  it('reads a transcript from the start again when it shrank or its last rows changed', async () => {
+    const prompt = row('u1', 'user', `Rewrite ${'p'.repeat(5_000)}`)
+    const title = (text: string) => ({ type: 'ai-title', sessionId: SESSION, aiTitle: text })
+    const f = await fixture([prompt, title('Old'), row('a1', 'assistant', 'Old answer', 'u1')])
+    const fresh = () => createClaudeHistorySource({ configDir: f.configDir }).list()
+    expect((await f.source.list())[0]?.title).toBe('Old')
+    // Same first bytes, a title rewritten in place, and different bytes before the old end.
+    await writeFile(
+      f.file,
+      [prompt, title('New'), row('a1', 'assistant', 'New answer', 'u1'), row('a2', 'user', 'More')]
+        .map((item) => JSON.stringify(item) + '\n')
+        .join(''),
+    )
+    expect((await f.source.list())[0]?.title).toBe('New')
+    expect(await f.source.list()).toEqual(await fresh())
+    await writeFile(f.file, JSON.stringify(prompt) + '\n')
+    expect((await f.source.list())[0]?.title).toBe(`Rewrite ${'p'.repeat(5_000)}`.slice(0, 200))
+    expect(await f.source.list()).toEqual(await fresh())
   })
 
   it('reads rows longer than a chunk at the head, around a title and at the tail', async () => {

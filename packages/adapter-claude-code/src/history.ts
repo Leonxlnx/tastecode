@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { createReadStream, type Stats } from 'node:fs'
 import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -41,6 +42,9 @@ const TOKEN_OVERLAP = Math.max(...METADATA_TOKENS.map((token) => token.length)) 
 const LINE_CHUNK_BYTES = 64 * 1024
 const SCAN_CHUNK_BYTES = 1024 * 1024
 const STAT_BATCH = 32
+// A transcript that grew is read on from where it stopped only while these still match.
+const HEAD_BYTES = 4096
+const SEAM_BYTES = 256
 
 function timestamp(value: unknown): number | undefined {
   const at = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN
@@ -211,47 +215,99 @@ function parseLine(bytes: Buffer): SavedRecord | undefined {
 }
 
 /**
+ * A transcript's digest over its complete lines. Claude only appends to a transcript, so
+ * a longer copy continues from here instead of being read again from its first byte.
+ */
+type Progress = {
+  digest: Digest
+  /** The offset after the last line feed read. */
+  complete: number
+  /** Where the head ended; unset while every complete line still belongs to it. */
+  headEnd?: number
+  /** Fingerprints of the first bytes and of the bytes before `complete`. */
+  head: string
+  seam: string
+}
+
+async function fingerprint(handle: FileHandle, start: number, end: number): Promise<string> {
+  return createHash('sha256')
+    .update(await readAt(handle, start, end - start))
+    .digest('base64')
+}
+
+/** Whether the bytes `progress` was read from are still in place, by their fingerprints. */
+async function unchanged(handle: FileHandle, progress: Progress): Promise<boolean> {
+  const { complete } = progress
+  return (
+    (await fingerprint(handle, 0, Math.min(HEAD_BYTES, complete))) === progress.head &&
+    (await fingerprint(handle, Math.max(0, complete - SEAM_BYTES), complete)) === progress.seam
+  )
+}
+
+/**
  * Fold a transcript's listing metadata from the rows that can change it: every row
  * through the first message with a working directory and the first prompt, the last
  * visible message, and every row that can set a title or relocate the session. A final
- * line without its line feed may still be in the middle of a write; it counts as it is.
+ * line without its line feed may still be in the middle of a write; it counts as it is
+ * but is read again next time. A transcript that only grew since `previous` is read from
+ * where `previous` stopped; one that shrank or changed before that point, from the start.
  */
-async function transcriptDigest(file: string, size: number): Promise<Digest> {
-  const digest: Digest = { message: false }
+async function readTranscript(
+  file: string,
+  size: number,
+  previous: Progress | undefined,
+): Promise<{ digest: Digest; progress: Progress }> {
   const handle = await open(file, 'r')
   try {
-    const complete = await completeEnd(handle, 0, size)
-    let headEnd: number | undefined
-    for await (const line of linesForward(handle, 0, complete)) {
-      const row = parseLine(line.bytes)
-      if (row) observe(digest, row)
-      if (digest.cwd !== undefined && digest.prompt !== undefined) {
-        headEnd = line.end + 1
-        break
+    const resume =
+      previous && size >= previous.complete && (await unchanged(handle, previous))
+        ? previous
+        : undefined
+    const from = resume?.complete ?? 0
+    const digest: Digest = { ...(resume?.digest ?? { message: false }) }
+    const complete = await completeEnd(handle, from, size)
+    let headEnd = resume?.headEnd
+    if (headEnd === undefined) {
+      for await (const line of linesForward(handle, from, complete)) {
+        const row = parseLine(line.bytes)
+        if (row) observe(digest, row)
+        if (digest.cwd !== undefined && digest.prompt !== undefined) {
+          headEnd = line.end + 1
+          break
+        }
       }
     }
     if (headEnd !== undefined) {
+      const start = Math.max(headEnd, from)
       // Rows a digest ignores are remembered as parsed but not kept: the walk back can
       // pass megabytes of subagent rows after the last visible message.
       const later = new Map<number, SavedRecord | undefined>()
-      for await (const line of linesBackward(handle, headEnd, complete)) {
+      for await (const line of linesBackward(handle, start, complete)) {
         const row = parseLine(line.bytes)
         later.set(line.start, row && visible(row) ? row : undefined)
         if (visibleMessage(row)) break
       }
-      for (const [start, end] of await tokenLines(handle, headEnd, complete))
-        if (!later.has(start)) later.set(start, parseLine(await readAt(handle, start, end - start)))
+      for (const [lineStart, end] of await tokenLines(handle, start, complete))
+        if (!later.has(lineStart))
+          later.set(lineStart, parseLine(await readAt(handle, lineStart, end - lineStart)))
       for (const [, row] of [...later].sort(([left], [right]) => left - right))
         if (row) observe(digest, row)
+    }
+    const progress: Progress = {
+      digest: { ...digest },
+      complete,
+      ...(headEnd === undefined ? {} : { headEnd }),
+      head: await fingerprint(handle, 0, Math.min(HEAD_BYTES, complete)),
+      seam: await fingerprint(handle, Math.max(0, complete - SEAM_BYTES), complete),
     }
     if (complete < size) {
       const row = parseLine(await readAt(handle, complete, size - complete))
       if (row) observe(digest, row)
     }
+    return { digest, progress }
   } finally {
     await handle.close()
   }
-  return digest
 }
 
 function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
@@ -473,7 +529,10 @@ export function createClaudeHistorySource(
     options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
     'projects',
   )
-  const cache = new Map<string, { revision: string; session: ProviderHistorySession | undefined }>()
+  const cache = new Map<
+    string,
+    { revision: string; session: ProviderHistorySession | undefined; progress: Progress }
+  >()
   const validLocator = async (locator: string): Promise<boolean> => {
     const relative = path.relative(projects, locator)
     if (
@@ -538,10 +597,15 @@ export function createClaudeHistorySource(
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
               const id = path.basename(locator).slice(0, -6)
-              const digest = await transcriptDigest(locator, info.size)
+              const { digest, progress } = await readTranscript(
+                locator,
+                info.size,
+                cached?.progress,
+              )
               cached = {
                 revision,
                 session: metadata(digest, id, locator, revision, info.mtimeMs, byId.get(id) ?? {}),
+                progress,
               }
               cache.set(locator, cached)
             }
