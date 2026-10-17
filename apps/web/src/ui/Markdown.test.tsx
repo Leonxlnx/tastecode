@@ -568,4 +568,20 @@ describe('Markdown streaming reveal', () => {
     rerender(<Markdown text={`It starts${burst}`} />)
     expect(container.querySelector('[data-plain-markdown]')?.textContent).toBe(`It starts${burst}`)
   })
+
+  it('keeps a reply that finished without a reveal finished when motion comes back', () => {
+    const clock = createRevealClock(fake.env)
+    replaceRevealClock(clock)
+    const { container, rerender } = streamBurst()
+    // The window is hidden when the reply finishes.
+    fake.setMotion(false)
+    rerender(<Markdown text={`It starts${burst}`} />)
+    expect(container.querySelector('[data-plain-markdown]')).toBeTruthy()
+
+    const attach = vi.spyOn(clock, 'attach')
+    fake.setMotion(true)
+    rerender(<Markdown text={`It starts${burst}`} projectPath="E:\project" />)
+    expect(attach).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-plain-markdown]')?.textContent).toBe(`It starts${burst}`)
+  })
 })
