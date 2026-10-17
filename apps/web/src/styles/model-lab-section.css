@@ -1,0 +1,114 @@
+/* Big model sources in Settings: the search field, then one disclosure row
+   per lab on the shared leader rows; an open lab's models step in under its
+   name. */
+
+/* The shared model search, in the 28px Settings field. */
+.settings .model-labs__search {
+  gap: 6px;
+  height: 28px;
+  margin: 0 0 4px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-radius: var(--r-md);
+}
+
+.settings .model-labs__search:focus-within {
+  background: var(--bg);
+  border-color: var(--text-3);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.settings .model-labs__search input {
+  font-size: var(--t-sm);
+}
+
+.settings .model-labs__empty {
+  margin: 0;
+  padding-block: 10px;
+  color: var(--text-3);
+  font-size: var(--t-md);
+  line-height: 1.35;
+}
+
+/* The whole row opens the lab: the toggle's hit area stretches over it, and
+   only All and None sit above. Its 28px pair would make the row 48px, so the
+   padding steps down as on every row with a control. */
+.settings .model-lab__head {
+  position: relative;
+  padding-block: 6px;
+}
+
+.settings .model-lab__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.settings .model-lab__toggle::after {
+  content: '';
+  position: absolute;
+  inset: 0 -8px;
+  border-radius: var(--r-md);
+}
+
+.settings .model-lab__toggle:focus-visible {
+  outline: none;
+}
+
+.settings .model-lab__toggle:focus-visible::after {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-inset);
+}
+
+.settings .model-lab__chevron {
+  flex: none;
+  color: var(--text-3);
+  transition:
+    color var(--dur-fast) var(--ease-out),
+    rotate var(--dur-fast) var(--ease-out);
+}
+
+.settings .model-lab__head:is(:hover, :focus-within) .model-lab__chevron {
+  color: var(--text-2);
+}
+
+.settings .model-lab__toggle[aria-expanded='true'] .model-lab__chevron {
+  rotate: 90deg;
+}
+
+.settings .model-lab__count {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .model-lab__head .model-visibility__bulk-actions {
+  position: relative;
+  z-index: 1;
+}
+
+/* Model names line up with the lab's name, past the chevron. */
+.settings .model-lab__rows {
+  padding-left: 22px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .settings .model-lab__rows {
+    animation: model-lab-open var(--dur-fast) var(--ease-out);
+  }
+}
+
+@keyframes model-lab-open {
+  from {
+    opacity: 0;
+    translate: 0 -4px;
+  }
+}

@@ -158,6 +158,7 @@ import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { ModelBulkActions, ModelVisibilityRow } from './ModelVisibilityControls.js'
+import { LARGE_MODEL_SOURCE_ROWS, ModelLabSection } from './ModelLabSection.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import {
@@ -1802,17 +1803,20 @@ function ModelVisibilityGroup(props: {
   onModelVisibilityChange: (key: string, visible: boolean) => void
   onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
 }) {
+  const title = props.choices[0] ? (
+    <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+  ) : (
+    props.source
+  )
+  if (props.choices.length > LARGE_MODEL_SOURCE_ROWS) {
+    return <ModelLabSection title={title} {...props} />
+  }
+
   // A source is one section: its identity is the heading, All and None its
   // action, and every model a leader row whose value is the switch.
   return (
     <SettingsSection
-      title={
-        props.choices[0] ? (
-          <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
-        ) : (
-          props.source
-        )
-      }
+      title={title}
       action={
         <ModelBulkActions
           name={`${props.source} models`}

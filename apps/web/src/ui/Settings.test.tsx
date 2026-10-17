@@ -1443,6 +1443,40 @@ describe('model settings', () => {
     expect(screen.getByText('Grok Code Max')).toBeTruthy()
   })
 
+  it('groups a source by lab only once it lists more than 20 models', () => {
+    const cursorModels = (count: number): ModelChoice[] =>
+      Array.from({ length: count }, (_, index) => ({
+        key: `cursor:model-${index}`,
+        provider: 'cursor',
+        sourceName: 'Cursor',
+        mark: 'cursor',
+        model: {
+          id: `model-${index}`,
+          displayName: `Model ${index}`,
+          description: '',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+          lab: index % 2 === 0 ? 'Anthropic' : 'OpenAI',
+        },
+      }))
+    const { rerenderSettings } = renderSettings({
+      initialSection: 'models',
+      overrides: { models: cursorModels(20) },
+    })
+    expect(screen.queryByRole('searchbox')).toBeNull()
+    expect(screen.getAllByRole('switch', { name: /^Include Model/ })).toHaveLength(20)
+
+    rerenderSettings({ models: cursorModels(21) })
+    const cursor = screen.getByRole('region', { name: 'Cursor' })
+    expect(within(cursor).getByRole('searchbox', { name: 'Search Cursor models' })).toBeTruthy()
+    expect(within(cursor).queryAllByRole('switch')).toEqual([])
+    expect(
+      Array.from(cursor.querySelectorAll('.model-lab__toggle'), (toggle) => toggle.textContent),
+    ).toEqual(['Anthropic', 'OpenAI'])
+    expect(within(cursor).getByText('21 of 21 shown in the model picker.')).toBeTruthy()
+  })
+
   it('omits stored custom-model management from beta settings', () => {
     const custom = customModelChoice({
       provider: 'codex',
