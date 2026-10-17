@@ -621,6 +621,16 @@ p.seal-note {
   margin-block: -4px;
 }
 
+/* The last quiet action ends flush with the rows' right edge: a label by its
+   padding, an icon by the inset of its square. */
+.profile-section__actions > .set-button--quiet:last-child {
+  margin-inline-end: -10px;
+}
+
+.profile-section__actions > .set-button--quiet.set-button--icon:last-child {
+  margin-inline-end: -7px;
+}
+
 .profile-activity.is-refreshing .profile-activity__refresh svg {
   animation: spin 0.9s linear infinite;
 }
