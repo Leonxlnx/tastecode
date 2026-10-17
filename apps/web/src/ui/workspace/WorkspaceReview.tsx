@@ -192,31 +192,37 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     [props.projectPath, threadId, props.transport],
   )
 
+  /** The checkout's uncommitted changes. */
+  const readDiff = useCallback(async () => {
+    if (!props.projectPath) return
+    const mine = ++generation.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const result = await props.transport.request('workspace.diff', {
+        projectPath: props.projectPath,
+        ...(threadId ? { threadId } : {}),
+      })
+      if (generation.current === mine) {
+        // The version names the changes, so a draft survives a refresh that found the same ones.
+        if (result.version !== diffVersion.current) dropStaleDraft()
+        diffVersion.current = result.version
+        setDiff(result)
+      }
+    } catch (cause) {
+      if (generation.current === mine) setError(messageOf(cause))
+    } finally {
+      if (generation.current === mine) setLoading(false)
+    }
+  }, [dropStaleDraft, props.projectPath, threadId, props.transport])
+
   const refresh = useCallback(
     async (refreshPullRequest = false) => {
       if (!props.projectPath) return
       void readCheckout(refreshPullRequest)
-      const mine = ++generation.current
-      setLoading(true)
-      setError(undefined)
-      try {
-        const result = await props.transport.request('workspace.diff', {
-          projectPath: props.projectPath,
-          ...(threadId ? { threadId } : {}),
-        })
-        if (generation.current === mine) {
-          // The version names the changes, so a draft survives a refresh that found the same ones.
-          if (result.version !== diffVersion.current) dropStaleDraft()
-          diffVersion.current = result.version
-          setDiff(result)
-        }
-      } catch (cause) {
-        if (generation.current === mine) setError(messageOf(cause))
-      } finally {
-        if (generation.current === mine) setLoading(false)
-      }
+      await readDiff()
     },
-    [dropStaleDraft, readCheckout, props.projectPath, threadId, props.transport],
+    [readCheckout, readDiff, props.projectPath],
   )
 
   const generateCommitMessage = useCallback(async () => {
