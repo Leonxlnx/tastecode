@@ -4530,20 +4530,17 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    await waitFor(() => {
+    await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'codex',
         intent: 'background',
-      })
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        provider: 'claude-code',
-        intent: 'background',
-      })
-    })
-    expect(transport.request).not.toHaveBeenCalledWith(
-      'usage.summary',
-      expect.objectContaining({ provider: 'grok' }),
+      }),
     )
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+    // Only the active provider is read at launch; the others wait for the popup.
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+    ).toHaveLength(1)
 
     transport.request.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
@@ -4700,17 +4697,18 @@ describe('new chats', () => {
     render(<App />)
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        provider: 'claude-code',
+        provider: 'codex',
         intent: 'background',
       }),
     )
     transport.request.mockClear()
     fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
+    // The provider switch reads the newly active source.
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith(
-        'thread.history',
-        expect.objectContaining({ threadId: 'claude-thread' }),
-      ),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'claude-code',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 

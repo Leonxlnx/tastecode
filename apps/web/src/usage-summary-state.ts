@@ -108,7 +108,8 @@ export class UsageSummaryController {
     return () => this.#listeners.delete(listener)
   }
 
-  select(target: Target): void {
+  /** `ask: false` only holds the target, for values pushed without a request. */
+  select(target: Target, ask = true): void {
     if (this.#disposed || sameTarget(this.#target, target)) return
     const sameProvider = this.#target?.provider === target.provider
     this.#revision += 1
@@ -119,7 +120,7 @@ export class UsageSummaryController {
     this.#dirty = false
     this.#requestedIntent = undefined
     this.#clearTimer()
-    this.#start(this.#revision)
+    if (ask) this.#start(this.#revision)
   }
 
   /** Manual retry, reconnect, and ordinary polling all use the same guarded path. */

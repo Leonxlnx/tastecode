@@ -168,6 +168,80 @@ describe('UsageLimitsController', () => {
     expect(load).not.toHaveBeenCalled()
   })
 
+  it('asks on-demand sources only while a view shows them, and keeps their values', async () => {
+    const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
+      summary('provider' in params ? params.provider : 'codex'),
+    )
+    const providers = () => controller.snapshot().map((state) => state.provider)
+    const controller = new UsageLimitsController(load)
+    controller.select([{ provider: 'codex' }], ['claude-code', 'grok', 'codex'])
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+    expect(providers()).toEqual(['codex'])
+    controller.changed('claude-code')
+    controller.refresh()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledTimes(2))
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'codex', intent: 'background' },
+      { provider: 'codex', intent: 'background' },
+    ])
+    load.mockClear()
+
+    // StrictMode closes and reopens a view in the same task; that asks once.
+    controller.show()()
+    const release = controller.show()
+    // Listed as checking from the first paint.
+    expect(controller.snapshot().map((state) => [state.provider, state.status])).toEqual([
+      ['codex', 'ready'],
+      ['claude-code', 'loading'],
+      ['grok', 'loading'],
+    ])
+    await vi.waitFor(() =>
+      expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
+    )
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'claude-code', intent: 'visible' },
+      { provider: 'grok', intent: 'visible' },
+      { provider: 'codex', intent: 'visible' },
+    ])
+    release()
+    load.mockClear()
+
+    controller.changed('grok')
+    controller.refresh()
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+    expect(load).toHaveBeenCalledWith({ provider: 'codex', intent: 'background' })
+    expect(providers()).toEqual(['codex', 'claude-code', 'grok'])
+  })
+
+  it('keeps a pushed on-demand source and catches it up once it becomes active', async () => {
+    const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
+      summary('provider' in params ? params.provider : 'codex'),
+    )
+    const controller = new UsageLimitsController(load)
+    controller.select([{ provider: 'codex' }], ['claude-code'])
+    await vi.waitFor(() => expect(controller.snapshot()[0]?.status).toBe('ready'))
+    load.mockClear()
+    const pushed: ProviderLimitSource = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [{ id: 'five_hour', label: '5h', usedPercent: 30 }],
+    }
+
+    controller.applySource(pushed)
+    controller.applySource({ provider: 'grok', status: 'unavailable' })
+    expect(controller.snapshot().map((state) => [state.provider, state.status])).toEqual([
+      ['codex', 'ready'],
+      ['claude-code', 'ready'],
+    ])
+    expect(controller.snapshot()[1]?.summary?.limitSource).toEqual(pushed)
+    expect(load).not.toHaveBeenCalled()
+
+    controller.select([{ provider: 'claude-code' }], ['codex'])
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+    expect(load).toHaveBeenCalledWith({ provider: 'claude-code', intent: 'background' })
+    expect(controller.snapshot().map((state) => state.provider)).toEqual(['claude-code', 'codex'])
+  })
+
   it('coalesces change bursts for only the matching source', async () => {
     vi.useFakeTimers()
     const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>

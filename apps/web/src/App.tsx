@@ -2851,19 +2851,19 @@ export function App() {
 
   // Plan limits belong to the account, so a chat switch neither asks again nor
   // resets them; the thread token totals the request could carry are unused.
-  const usageProviders = useMemo(
-    () => [
-      provider,
-      ...providerStatuses
+  // Other installed providers are read when the account popup shows them,
+  // not at launch, where each would start its own vendor process.
+  const otherUsageProviders = useMemo(
+    () =>
+      providerStatuses
         .filter((status) => status.installed && status.id !== provider)
         .map((status) => status.id),
-    ],
     [provider, providerStatuses],
   )
 
   useLayoutEffect(() => {
-    usageController.select(usageProviders.map((sourceProvider) => ({ provider: sourceProvider })))
-  }, [usageController, usageProviders])
+    usageController.select([{ provider }], otherUsageProviders)
+  }, [usageController, provider, otherUsageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
