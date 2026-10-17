@@ -6,7 +6,6 @@ import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread } from '../thread-store.js'
 
 const markdownRender = vi.hoisted(() => vi.fn())
-const orbRender = vi.hoisted(() => vi.fn())
 const virtualizerOptions = vi.hoisted(() => vi.fn())
 
 vi.mock('@tanstack/react-virtual', () => ({
@@ -52,13 +51,6 @@ vi.mock('./Markdown.js', () => ({
       ...(updateVersion === undefined ? {} : { updateVersion }),
     })
     return <span>{text}</span>
-  },
-}))
-
-vi.mock('thinking-orbs', () => ({
-  ThinkingOrb: (props: { state: string; size: number }) => {
-    orbRender(props)
-    return <canvas aria-label={props.state} />
   },
 }))
 
@@ -122,7 +114,6 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
   markdownRender.mockReset()
-  orbRender.mockReset()
   virtualizerOptions.mockReset()
 })
 
@@ -218,18 +209,21 @@ describe('streamed thread renders', () => {
     })
   })
 
-  it('does not add a duplicate working animation beside a streamed answer', () => {
+  it('shows one working dot beside a streamed answer and keeps it while text arrives', () => {
     const items: Item[] = [
       message({ id: 'user-1', turnId: 'turn-2', role: 'user', text: 'Question' }),
       message({ id: 'answer-1', turnId: 'turn-2', status: 'started', text: 'Hel' }),
     ]
     const rendered = render(view(items))
-    const initialRenders = orbRender.mock.calls.length
+    const pulses = () => rendered.container.querySelectorAll('.activity__pulse')
+    expect(pulses()).toHaveLength(1)
+    const pulse = pulses()[0]
 
     rendered.rerender(view([...items.slice(0, -1), { ...items.at(-1)!, text: 'Hello' }]))
 
-    expect(initialRenders).toBe(0)
-    expect(orbRender).toHaveBeenCalledTimes(initialRenders)
+    // The same element: a remount would restart its breath mid-cycle.
+    expect(pulses()).toHaveLength(1)
+    expect(pulses()[0]).toBe(pulse)
   })
 
   it('keeps one live activity stack while commands change, then settles it at a boundary', () => {
