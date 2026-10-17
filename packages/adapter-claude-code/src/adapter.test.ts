@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import type {
@@ -11,9 +11,10 @@ import type {
   SDKMessage,
   SDKPartialAssistantMessage,
   SDKUserMessage,
+  SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk'
 import type { DomainEvent, Item } from '@harness/contracts'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ClaudeCodeAdapter,
   CLAUDE_CAPABILITIES,
@@ -84,13 +85,24 @@ class FakeQuery implements ClaudeQueryRuntime {
     return this.models
   }
 
+  /** Replaces the status list derived from `mcpServers`, as Claude reports inherited servers. */
+  mcpStatus: McpServerStatus[] | undefined
+  mcpStatusCalls = 0
+  commands: SlashCommand[] = []
+
   async mcpServerStatus(): Promise<McpServerStatus[]> {
+    this.mcpStatusCalls += 1
+    if (this.mcpStatus) return this.mcpStatus
     return Object.entries(this.mcpServers).map(([name, config]) => ({
       name,
       status: 'connected',
       config,
       tools: [],
     }))
+  }
+
+  async supportedCommands(): Promise<SlashCommand[]> {
+    return this.commands
   }
 
   async setMcpServers(servers: Record<string, McpServerConfig>) {
@@ -1915,6 +1927,169 @@ describe('Claude SDK user messages', () => {
     } finally {
       rmSync(directory, { recursive: true, force: true })
     }
+  })
+})
+
+/** Sanitized from a no-prompt capture of claude 2.1.296; see the fixture's note. */
+const inventory = JSON.parse(
+  readFileSync(new URL('./fixtures/inventory-claude-2.1.296.json', import.meta.url), 'utf8'),
+) as {
+  initializationResult: { commands: SlashCommand[] }
+  systemInit: { skills: string[]; terminal_slash_commands: string[] }
+  mcpServerStatus: { atInit: McpServerStatus[]; settled: McpServerStatus[] }
+}
+
+describe('live Claude inventory', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  async function liveSession() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const mcpChanged = vi.fn()
+    const commandsChanged = vi.fn()
+    adapter.on('mcpChanged', mcpChanged)
+    adapter.on('commandsChanged', commandsChanged)
+    const thread = await adapter.startThread('/repo')
+    const query = fake.queries[0]!
+    query.mcpStatus = inventory.mcpServerStatus.atInit
+    query.commands = inventory.initializationResult.commands
+    return { adapter, thread, query, mcpChanged, commandsChanged }
+  }
+
+  it('lists the MCP servers and announces once when they finish starting', async () => {
+    const { adapter, thread, query, mcpChanged } = await liveSession()
+    const servers = await adapter.listMcpServers(thread.id)
+    expect(servers.map((server) => [server.id, server.startup?.state])).toEqual([
+      ['plugin:acme-docs:acme-docs', 'starting'],
+      ['issue-tracker', 'stopped'],
+      ['project-notes', 'ready'],
+      ['claude.ai Claude Docs', 'starting'],
+      ['claude.ai Gmail', 'stopped'],
+    ])
+    expect(adapter.isMcpLoading()).toBe(true)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    query.mcpStatus = inventory.mcpServerStatus.settled
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    expect(adapter.isMcpLoading()).toBe(false)
+    const calls = query.mcpStatusCalls
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(query.mcpStatusCalls).toBe(calls)
+    expect((await adapter.listMcpServers(thread.id))[0]).toMatchObject({
+      displayName: 'acme-docs',
+      startup: { state: 'ready' },
+      tools: [{ name: 'search_docs' }, { name: 'write_page' }, { name: 'fetch_asset' }],
+    })
+    expect(adapter.isMcpLoading()).toBe(false)
+    await adapter.dispose()
+  })
+
+  it('stops waiting for a server that never starts after 30 seconds', async () => {
+    const { adapter, query, mcpChanged } = await liveSession()
+    await vi.advanceTimersByTimeAsync(29_000)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    const calls = query.mcpStatusCalls
+    expect(calls).toBeLessThanOrEqual(31)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(query.mcpStatusCalls).toBe(calls)
+    await adapter.dispose()
+  })
+
+  it('stops polling when the session closes', async () => {
+    const { adapter, query, mcpChanged } = await liveSession()
+    await adapter.dispose()
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(query.mcpStatusCalls).toBe(0)
+    expect(mcpChanged).not.toHaveBeenCalled()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('lists commands, learns skills from system/init and follows command changes', async () => {
+    const { adapter, thread, query, commandsChanged } = await liveSession()
+    const before = await adapter.listCommands(thread.id)
+    expect(before.map((command) => command.name)).toContain('code-review')
+    expect(before.map((command) => command.name)).not.toContain('model')
+    expect(before.map((command) => command.name)).not.toContain('doctor')
+    expect(before.some((command) => command.kind)).toBe(false)
+
+    await adapter.sendTurn(thread.id, '/context')
+    const init = { ...initMessage([]), ...inventory.systemInit } as SDKMessage
+    query.emitMessage(init)
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledOnce()
+    const after = new Map(
+      (await adapter.listCommands(thread.id)).map((command) => [command.name, command]),
+    )
+    expect(after.get('code-review')?.kind).toBe('skill')
+    expect(after.get('pdf')?.kind).toBe('skill')
+    expect(after.get('context')?.kind).toBeUndefined()
+
+    // Every run repeats system/init; an unchanged one is not news.
+    query.emitMessage({ ...init, uuid: crypto.randomUUID() } as SDKMessage)
+    for (let index = 0; index < 20; index += 1)
+      query.emitMessage(
+        streamEvent(`delta-${index}`, {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'x' },
+        }),
+      )
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledOnce()
+
+    query.commands = [
+      ...inventory.initializationResult.commands,
+      { name: 'ship-it', description: 'Release the current branch', argumentHint: '' },
+    ]
+    query.emitMessage({
+      type: 'system',
+      subtype: 'commands_changed',
+      commands: query.commands,
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+    } as SDKMessage)
+    await tick()
+    expect(commandsChanged).toHaveBeenCalledTimes(2)
+    expect((await adapter.listCommands(thread.id)).map((command) => command.name)).toContain(
+      'ship-it',
+    )
+    await adapter.dispose()
+  })
+
+  it('reads nothing per streamed delta', async () => {
+    const { adapter, thread, query, mcpChanged } = await liveSession()
+    query.mcpStatus = inventory.mcpServerStatus.settled
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(mcpChanged).toHaveBeenCalledOnce()
+    const calls = query.mcpStatusCalls
+    await adapter.sendTurn(thread.id, 'Work')
+    for (let index = 0; index < 50; index += 1)
+      query.emitMessage(
+        streamEvent(`delta-${index}`, {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'text_delta', text: 'x' },
+        }),
+      )
+    await tick()
+    expect(query.mcpStatusCalls).toBe(calls)
+    await adapter.dispose()
+  })
+
+  it('refuses another thread and reports a closed session', async () => {
+    const { adapter, thread } = await liveSession()
+    await expect(adapter.listMcpServers('claude-other')).rejects.toThrow('unknown Claude thread')
+    await expect(adapter.listCommands('claude-other')).rejects.toThrow('unknown Claude thread')
+    await adapter.dispose()
+    await expect(adapter.listMcpServers(thread.id)).rejects.toThrow()
+    await expect(adapter.listCommands()).rejects.toThrow('not running')
   })
 })
 
