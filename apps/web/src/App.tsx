@@ -20,6 +20,7 @@ import type {
   ProviderId,
   ProviderStatus,
   PullRequestListItem,
+  PullRequestTarget,
   QueuedTurn,
   ResultOf,
   SidebarSettings,
@@ -180,6 +181,7 @@ import type {
 } from './ui/workspace/WorkspaceSideChat.js'
 import type { BrowserNavigationRequest } from './ui/workspace/WorkspaceBrowser.js'
 import type { WorkspaceTool } from './ui/workspace/WorkspacePanel.js'
+import { useCheckoutPullRequest } from './ui/pull-requests/useCheckoutPullRequest.js'
 import {
   DEFAULT_BOTTOM_PANEL_HEIGHT,
   restoreWorkspacePanelWidth,
@@ -4702,11 +4704,27 @@ export function App() {
     [beginSession],
   )
   const selectSidebarSession = useCallback((id: string) => void selectSession(id), [selectSession])
+  // The pull request the header chip asked the surface to open with.
+  const [pullRequestFocus, setPullRequestFocus] = useState<PullRequestTarget>()
   const openPullRequests = useCallback(() => {
+    setPullRequestFocus(undefined)
     setSettingsOpen(false)
     setPaletteScope(null)
     setSurface('pull-requests')
   }, [])
+  const openCheckoutPullRequest = useCallback((target: PullRequestTarget) => {
+    setPullRequestFocus(target)
+    setSettingsOpen(false)
+    setPaletteScope(null)
+    setSurface('pull-requests')
+  }, [])
+  const checkoutPullRequest = useCheckoutPullRequest(
+    transport,
+    activePath,
+    activeId,
+    thread.running,
+    surface === 'chat',
+  )
   const openPullRequestChat = useCallback(
     (pullRequest: PullRequestListItem) => {
       if (!pullRequest.localProjectPath) return
@@ -5691,6 +5709,7 @@ export function App() {
               <Suspense fallback={<PullRequestsSkeleton />}>
                 <PullRequestsView
                   transport={transport}
+                  initialSelection={pullRequestFocus}
                   onOpenChat={openPullRequestChat}
                   onSetupTerminalOpen={openProviderLoginTerminal}
                   setupRefreshRevision={pullRequestSetupRefreshRevision}
@@ -5704,6 +5723,8 @@ export function App() {
                 projectPath={activePath}
                 checkpointCount={thread.running ? 0 : checkpoints.length}
                 worktreeBranch={active?.session.worktreeBranch}
+                pullRequest={checkoutPullRequest}
+                onOpenPullRequest={openCheckoutPullRequest}
                 keybindings={keybindings}
                 menuActions={keybindingActions}
                 onOpenRollback={openRollback}
@@ -5886,6 +5907,7 @@ export function App() {
                       onClose={closeTerminal}
                       onWidthChange={setTerminalHeight}
                       terminalToggleRequest={bottomTerminalToggleRequest}
+                      onOpenPullRequest={openCheckoutPullRequest}
                     />
                   </Suspense>
                 </div>
@@ -5923,6 +5945,7 @@ export function App() {
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 designPreviewRequest={workspaceDesignPreviewRequest}
+                onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
                   providerLoginTerminal?.visible
                     ? {

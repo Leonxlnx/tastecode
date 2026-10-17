@@ -23,6 +23,7 @@ import {
   IconPlus as Plus,
   type TablerIcon,
 } from '@tabler/icons-react'
+import type { PullRequestTarget } from '@harness/contracts'
 import { performAppHaptic, prepareAppHaptics } from '../../haptics.js'
 import { cancelInstall, installState, subscribeInstalls } from '../../provider-install.js'
 import type { Transport } from '../../transport.js'
@@ -147,6 +148,8 @@ function WorkspacePanelComponent(props: {
   onProviderLoginClose?: ((id: number) => void) | undefined
   externalToolRequest?: { request: number; kind: WorkspaceTool } | undefined
   designPreviewRequest?: BrowserNavigationRequest | undefined
+  /** Opens the Pull requests surface on the pull request the Review tab shows. */
+  onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
 }) {
   const bottom = props.placement === 'bottom'
   const [tabs, setTabs] = useState<WorkspaceTab[]>([])
@@ -564,6 +567,7 @@ function WorkspacePanelComponent(props: {
                   sideChatParentStatus={props.sideChatParentStatus}
                   sideChatStartOptions={props.sideChatStartOptions}
                   sideChatPromptRequest={props.sideChatPromptRequest}
+                  onOpenPullRequest={props.onOpenPullRequest}
                   browserNavigation={tab.id === DESIGN_PREVIEW_TAB_ID ? designPreview : undefined}
                   onBrowserPage={updateBrowserPage}
                   onCloseTab={closeTabByShortcut}
@@ -612,6 +616,7 @@ function WorkspaceToolSurface(props: {
   sideChatParentStatus: SideChatParentStatus
   sideChatStartOptions: SideChatStartOptions
   sideChatPromptRequest?: SideChatPromptRequest | undefined
+  onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
   browserNavigation?: BrowserNavigationRequest | undefined
   onBrowserPage: (tabId: string, page: BrowserPageInfo) => void
   /** Ctrl+W in a Browser tab. Stable, so a memoized Browser surface keeps its props. */
@@ -638,6 +643,10 @@ function WorkspaceToolSurface(props: {
         threadId={props.threadId}
         branch={props.branch}
         theme={props.theme}
+        turnRunning={
+          props.sideChatParentStatus !== 'idle' && props.sideChatParentStatus !== 'failed'
+        }
+        onOpenPullRequest={props.onOpenPullRequest}
       />
     )
   }
