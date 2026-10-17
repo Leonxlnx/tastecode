@@ -8,6 +8,7 @@ import {
   type ProviderLoginResult,
   type ProviderServices,
 } from './provider-controls.js'
+import { usageSummaryWithLimits } from './usage-summary.js'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -27,10 +28,14 @@ class FakeCodex extends EventEmitter {
   listMcpServers = vi.fn(async () => [])
   listSkills = vi.fn(async () => ({ skills: [], errors: [] }))
   setSkillEnabled = vi.fn(async () => true)
-  rateLimitSource = vi.fn(async (): Promise<{ status: 'ready'; limits: ProviderLimit[] }> => ({
-    status: 'ready',
-    limits: [],
-  }))
+  rateLimitSource = vi.fn(
+    async (_options?: {
+      background?: boolean
+    }): Promise<{ status: 'ready'; limits: ProviderLimit[]; detailsOmitted?: true }> => ({
+      status: 'ready',
+      limits: [],
+    }),
+  )
   consumeRateLimitReset = vi.fn(
     async (): Promise<'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed'> => 'reset',
   )
@@ -55,6 +60,7 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     onLog: vi.fn(),
     onLogin: vi.fn(),
     onUsageChanged: vi.fn(),
+    onLimitsChanged: vi.fn(),
     onMcpChanged: vi.fn(),
     onSkillsChanged: vi.fn(),
     onAuthChanged: vi.fn(),
@@ -67,6 +73,10 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     controlIdleMs: 10,
     watchTtlMs: 100,
     loginTtlMs: 200,
+    // Tests of the declared read intervals pass `limitReadIntervalMs: undefined`,
+    // tests of the default cache `limitCacheMs: undefined`.
+    limitReadIntervalMs: 0,
+    limitCacheMs: 60_000,
     ...options,
   })
   registries.push(registry)
@@ -211,6 +221,8 @@ describe('declared provider controls', () => {
       provider: 'claude-code',
       status: 'ready',
       limits: [],
+      checkedAt: 0,
+      origin: 'read',
     })
     expect(createCodex).not.toHaveBeenCalled()
   })
@@ -508,6 +520,8 @@ describe('fresh usage controls', () => {
       provider: 'codex',
       status: 'ready',
       limits: [],
+      checkedAt: 0,
+      origin: 'read',
     })
     expect(adapters).toHaveLength(2)
     expect(adapters[0]!.dispose).not.toHaveBeenCalled()
@@ -543,6 +557,8 @@ describe('fresh usage controls', () => {
     await expect(codex.usageLimitSource()).rejects.toThrow('fixture-stop-failed')
     expect(createCodex).toHaveBeenCalledOnce()
     failed.dispose.mockResolvedValue()
+    // The failed limit read waits out its retry time before the next attempt.
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
     await codex.usageLimitSource()
     expect(replacement.start).toHaveBeenCalledOnce()
     expect(replacement.dispose).toHaveBeenCalledOnce()
@@ -575,7 +591,7 @@ describe('cached usage limits', () => {
     expect(createCodex).toHaveBeenCalledTimes(2)
   })
 
-  it('rereads after a change signal and does not cache a read that predates it', async () => {
+  it('keeps a read in flight through a change signal, then rereads once', async () => {
     const limits = deferred<{ status: 'ready'; limits: ProviderLimit[] }>()
     const first = new FakeCodex()
     first.rateLimitSource.mockReturnValueOnce(limits.promise)
@@ -589,31 +605,17 @@ describe('cached usage limits', () => {
     const stale = codex.usageLimitSource()
     await flush()
     registry.usageChanged('codex')
+    // A caller after the change joins the read instead of starting a second process.
+    const joined = codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledOnce()
     limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
     await expect(stale).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await expect(joined).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
     await expect(codex.usageLimitSource()).resolves.toMatchObject({
       limits: [{ usedPercent: 40 }],
     })
     await codex.usageLimitSource()
     expect(createCodex).toHaveBeenCalledTimes(2)
-  })
-
-  it('does not cache a failed read', async () => {
-    const usageLimitSource = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
-      .mockResolvedValue({ status: 'ready', limits: [] })
-    const { registry } = setup({
-      services: { grok: { usageLimitSource, signOut: async () => {} } },
-    })
-    await expect(registry.forProvider('grok').usageLimitSource()).rejects.toThrow(
-      'fixture-limits-failed',
-    )
-    await expect(registry.forProvider('grok').usageLimitSource()).resolves.toMatchObject({
-      status: 'ready',
-    })
-    await registry.forProvider('grok').usageLimitSource()
-    expect(usageLimitSource).toHaveBeenCalledTimes(2)
   })
 
   it('rereads after sign-out', async () => {
@@ -703,7 +705,8 @@ describe('cached usage limits', () => {
     const grok = registry.forProvider('grok')
     const first = grok.usageLimitSource()
     await flush()
-    registry.usageChanged('grok')
+    // Only a forced change starts a read beside the one in flight.
+    registry.usageChanged('grok', true)
     await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
     stale.resolve({ status: 'unavailable' })
     await first
@@ -780,6 +783,816 @@ describe('cached usage limits', () => {
     await registry.disposeAll()
     await vi.advanceTimersByTimeAsync(1_000)
     expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('limit read backoff and intervals', () => {
+  type ReadyLimits = { status: 'ready'; limits: ProviderLimit[] }
+  const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+  const failing = (error: () => Error = () => new Error('fixture-limits-failed')) =>
+    vi.fn(async (): Promise<ReadyLimits> => {
+      throw error()
+    })
+
+  it('stops reading after the declared number of timeouts until the account changes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadTimeoutLimit).toBe(2)
+    const usageLimitSource = failing(timeout)
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource, signOut } } })
+    const claude = registry.forProvider('claude-code')
+    const attempt = () => expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await attempt()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    registry.usageChanged('claude-code', true)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await claude.signOut()
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('counts only timeouts toward the limit, and a success starts the count again', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValueOnce({ status: 'ready', limits: [] })
+      .mockRejectedValueOnce(timeout())
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(claude.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    registry.usageChanged('claude-code')
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({
+      stale: true,
+      refreshError: 'fixture-timed-out',
+    })
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    const recovered = await claude.usageLimitSource()
+    expect(recovered).toMatchObject({ status: 'ready' })
+    expect(recovered).not.toHaveProperty('stale')
+    expect(usageLimitSource).toHaveBeenCalledTimes(5)
+  })
+
+  it('keeps retrying timeouts with backoff where no timeout limit is declared', async () => {
+    expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadTimeoutLimit')
+    const usageLimitSource = failing(timeout)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    for (const minutes of [5, 10, 20]) {
+      await vi.advanceTimersByTimeAsync(minutes * 60_000)
+      await expect(grok.usageLimitSource()).rejects.toThrow('fixture-timed-out')
+    }
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('answers a failed read with its error until a retry time that doubles to 30 minutes', async () => {
+    const usageLimitSource = failing()
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const attempt = () => expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await attempt()
+    await attempt()
+    // Spending usage during a turn does not repair a failing source.
+    registry.usageChanged('grok')
+    registry.usageChanged('grok', true)
+    await attempt()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    for (const [index, minutes] of [5, 10, 20, 30, 30].entries()) {
+      await vi.advanceTimersByTimeAsync(minutes * 60_000 - 1)
+      await attempt()
+      expect(usageLimitSource).toHaveBeenCalledTimes(index + 1)
+      await vi.advanceTimersByTimeAsync(1)
+      await attempt()
+      expect(usageLimitSource).toHaveBeenCalledTimes(index + 2)
+    }
+  })
+
+  it('forgets earlier failures after a successful read', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValueOnce({ status: 'ready', limits: [] })
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValue({ status: 'ready', limits: [] })
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    await vi.advanceTimersByTimeAsync(10 * 60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ status: 'ready' })
+    registry.usageChanged('grok')
+    // The next wait starts at 5 minutes again, not 20.
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      stale: true,
+      retryAt: 15 * 60_000 + 5 * 60_000,
+    })
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    await expect(grok.usageLimitSource()).resolves.not.toHaveProperty('stale')
+    expect(usageLimitSource).toHaveBeenCalledTimes(5)
+  })
+
+  it('retries at once when an account read reports another account or after sign-out', async () => {
+    const usageLimitSource = failing()
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
+    const { registry } = setup({
+      services: { grok: { account, usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('reads Claude limits at most every 15 minutes, through usage changes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadIntervalMs).toBe(15 * 60_000)
+    const usageLimitSource = vi.fn(async (): Promise<ReadyLimits> => ({
+      status: 'ready',
+      limits: [],
+    }))
+    const { registry } = setup({
+      limitReadIntervalMs: undefined,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 1)
+    registry.usageChanged('claude-code')
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+
+  it('spaces Codex reads by 5 minutes, and a redeemed reset reaches the next read', async () => {
+    expect(PROVIDER_CAPABILITIES.codex.limitReadIntervalMs).toBe(5 * 60_000)
+    expect(PROVIDER_CAPABILITIES.grok.limitReadIntervalMs).toBe(5 * 60_000)
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
+    await codex.usageLimitSource()
+    // Live windows and usage changes during turns are no reason for another process.
+    for (let minute = 1; minute < 5; minute += 1) {
+      await vi.advanceTimersByTimeAsync(60_000)
+      registry.usageChanged('codex')
+      await codex.usageLimitSource()
+    }
+    expect(createCodex).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    // The reset runs in its own process; the read after it does not wait.
+    await codex.consumeRateLimitReset!('fixture-idempotency-key')
+    await codex.usageLimitSource()
+    expect(createCodex).toHaveBeenCalledTimes(4)
+  })
+
+  it('stamps a read with the time its values arrived and marks them as read', async () => {
+    const limits = deferred<ReadyLimits>()
+    const usageLimitSource = vi.fn().mockReturnValueOnce(limits.promise)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const reading = registry.forProvider('grok').usageLimitSource()
+    await vi.advanceTimersByTimeAsync(4_000)
+    limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
+    await expect(reading).resolves.toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 10 }],
+      checkedAt: 4_000,
+      origin: 'read',
+    })
+  })
+
+  it('stores a read that a usage change interrupted until the interval has passed', async () => {
+    const limits = deferred<ReadyLimits>()
+    const usageLimitSource = vi
+      .fn()
+      .mockReturnValueOnce(limits.promise)
+      .mockResolvedValue({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 40 }] })
+    const { registry } = setup({
+      limitReadIntervalMs: 30_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    const reading = grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(5_000)
+    registry.usageChanged('grok')
+    limits.resolve({ status: 'ready', limits: [{ label: 'Weekly', usedPercent: 10 }] })
+    await reading
+    await vi.advanceTimersByTimeAsync(24_999)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      limits: [{ usedPercent: 10 }],
+    })
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      limits: [{ usedPercent: 40 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('read intent', () => {
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }],
+  })
+  const notReadYet = {
+    provider: 'claude-code',
+    status: 'unavailable',
+    reason: 'failed',
+    error: 'Plan limits are read when you open them.',
+  }
+
+  it('reads Claude limits only while they are shown, at most every 15 minutes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadsWhenShown).toBe(true)
+    const usageLimitSource = vi.fn(async () => weekly(10))
+    const { registry } = setup({
+      limitReadIntervalMs: undefined,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    // A passive figure starts no read; nothing known is not "no plan limits".
+    await expect(claude.usageLimitSource('background')).resolves.toEqual(notReadYet)
+    expect(claude.heldLimitSource()).toBeUndefined()
+    expect(usageLimitSource).not.toHaveBeenCalled()
+    await expect(claude.usageLimitSource('visible')).resolves.toMatchObject({ origin: 'read' })
+    await vi.advanceTimersByTimeAsync(16 * 60_000)
+    // Older than the interval, but nobody is looking.
+    await expect(claude.usageLimitSource('background')).resolves.toMatchObject({
+      limits: [{ usedPercent: 10 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await claude.usageLimitSource('visible')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    // Without an intent a request counts as shown, as for older clients.
+    await vi.advanceTimersByTimeAsync(15 * 60_000)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('shows live Claude windows to a passive figure without a read', async () => {
+    const session = { id: 'five_hour', label: 'Session', usedPercent: 76, windowMinutes: 300 }
+    const usageLimitSource = vi.fn(async () => ({
+      status: 'ready' as const,
+      limits: [{ ...session, usedPercent: 80 }, ...weekly(10).limits],
+    }))
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    registry.applyLimitRows('claude-code', [session])
+    await expect(claude.usageLimitSource('background')).resolves.toMatchObject({
+      origin: 'live',
+      limits: [session],
+    })
+    expect(usageLimitSource).not.toHaveBeenCalled()
+    // Once shown, a full read answers with every window, including the weekly ones.
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(claude.usageLimitSource('visible')).resolves.toMatchObject({
+      origin: 'read',
+      limits: [
+        { id: 'five_hour', usedPercent: 80 },
+        { id: 'seven_day', usedPercent: 10 },
+      ],
+    })
+  })
+
+  it('gives a passive figure the reason of a failed Claude read without reading again', async () => {
+    const usageLimitSource = vi.fn(async (): Promise<ReturnType<typeof weekly>> => {
+      throw Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+    })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    await expect(claude.usageLimitSource('background')).resolves.toEqual({
+      ...notReadYet,
+      error: 'fixture-timed-out',
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('reads at once for a retry, inside the backoff and after the timeout limit', async () => {
+    const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(timeout())
+      .mockResolvedValue(weekly(30))
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    // Inside the 5-minute backoff only a retry reads.
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await expect(claude.usageLimitSource('retry')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    // Two timeouts stop automatic reads for this account; a retry still tries once more.
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await expect(claude.usageLimitSource('retry')).rejects.toThrow('fixture-timed-out')
+    await expect(claude.usageLimitSource('retry')).resolves.toMatchObject({
+      limits: [{ usedPercent: 30 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('reads Codex without reset details for a passive figure, in full once they are shown', async () => {
+    const resets = { id: 'resets', label: 'Rate limit resets', usedPercent: 0, valueLabel: '2' }
+    const adapter = new FakeCodex()
+    adapter.rateLimitSource.mockImplementation(async (options?: { background?: boolean }) =>
+      options?.background
+        ? { status: 'ready', limits: [resets], detailsOmitted: true }
+        : { status: 'ready', limits: [{ ...resets, resetCredits: [{ expiresAt: null }] }] },
+    )
+    const createCodex = vi.fn(() => adapter)
+    const { codex } = setup({ createCodex })
+    const passive = await codex.usageLimitSource('background')
+    expect(passive).toMatchObject({ limits: [resets] })
+    expect(passive).not.toHaveProperty('detailsOmitted')
+    await codex.usageLimitSource('background')
+    expect(adapter.rateLimitSource.mock.calls).toEqual([[{ background: true }]])
+    // A shown view lists the expiries the background read left out.
+    await expect(codex.usageLimitSource('visible')).resolves.toMatchObject({
+      limits: [{ resetCredits: [{ expiresAt: null }] }],
+    })
+    await codex.usageLimitSource('visible')
+    expect(adapter.rateLimitSource.mock.calls).toEqual([
+      [{ background: true }],
+      [{ background: false }],
+    ])
+    expect(createCodex).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a passive Codex figure on live windows without a read until they stop', async () => {
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
+    await codex.usageLimitSource('visible')
+    expect(createCodex).toHaveBeenCalledOnce()
+    // A 20-minute session: Codex reports its window beside every model request,
+    // and the sidebar figure re-pulls after each spaced usage change.
+    for (let second = 30; second <= 20 * 60; second += 30) {
+      await vi.advanceTimersByTimeAsync(30_000)
+      registry.applyLimitRows('codex', [
+        { id: 'codex:primary', label: 'Weekly', usedPercent: second / 60 },
+      ])
+      await codex.usageLimitSource('background')
+    }
+    expect(createCodex).toHaveBeenCalledOnce()
+    expect(codex.heldLimitSource()).toMatchObject({
+      origin: 'live',
+      limits: [{ id: 'codex:primary', usedPercent: 20 }],
+    })
+    // A shown view still gets a full read once the last one is 5 minutes old.
+    await codex.usageLimitSource('visible')
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    // Once the windows stop, a passive figure reads at most every 5 minutes again.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+    await codex.usageLimitSource('background')
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await codex.usageLimitSource('background')
+    expect(createCodex).toHaveBeenCalledTimes(3)
+  })
+
+  it('reads for a passive figure after a redeemed reset, even while live windows arrive', async () => {
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
+    await codex.usageLimitSource('visible')
+    registry.applyLimitRows('codex', [{ id: 'codex:primary', label: 'Weekly', usedPercent: 90 }])
+    await codex.consumeRateLimitReset!('fixture-idempotency-key')
+    await codex.usageLimitSource('background')
+    // The first read, the reset's own process, and the read after it.
+    expect(createCodex).toHaveBeenCalledTimes(3)
+  })
+
+  it('still reads other providers for a passive figure', async () => {
+    expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadsWhenShown')
+    const usageLimitSource = vi.fn(async () => weekly(20))
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    await expect(
+      registry.forProvider('grok').usageLimitSource('background'),
+    ).resolves.toMatchObject({ status: 'ready', origin: 'read' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+})
+
+describe('last-known limits', () => {
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ label: 'Weekly', usedPercent }],
+  })
+  const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+
+  it('answers a failed refresh with the last known values until a read succeeds', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockRejectedValueOnce(new Error('fixture-limits-failed'))
+      .mockResolvedValue(weekly(40))
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    const lastKnown = await grok.usageLimitSource()
+    expect(lastKnown).toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 10 }],
+      checkedAt: 0,
+      origin: 'read',
+      stale: true,
+      refreshError: 'fixture-limits-failed',
+      retryAt: 60_000 + 5 * 60_000,
+    })
+    // The backoff answers with the same values and starts no read.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+    await expect(grok.usageLimitSource()).resolves.toBe(lastKnown)
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await expect(grok.usageLimitSource()).resolves.toEqual({
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ label: 'Weekly', usedPercent: 40 }],
+      checkedAt: 6 * 60_000,
+      origin: 'read',
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('keeps the last known values without a retry time once timeouts run out', async () => {
+    const usageLimitSource = vi.fn().mockResolvedValueOnce(weekly(10)).mockRejectedValue(timeout())
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(claude.usageLimitSource()).resolves.toMatchObject({ retryAt: 6 * 60_000 })
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    const lastKnown = await claude.usageLimitSource()
+    expect(lastKnown).toMatchObject({
+      limits: [{ usedPercent: 10 }],
+      stale: true,
+      refreshError: 'fixture-timed-out',
+    })
+    expect(lastKnown).not.toHaveProperty('retryAt')
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    await expect(claude.usageLimitSource()).resolves.toBe(lastKnown)
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('falls back to a stable message when a failure has none', async () => {
+    const usageLimitSource = vi.fn().mockResolvedValueOnce(weekly(10)).mockRejectedValue('')
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      refreshError: 'Plan limits could not be refreshed.',
+    })
+  })
+
+  it('never answers for another account with the previous account values', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockRejectedValue(new Error('fixture-limits-failed'))
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
+      .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
+    const { registry } = setup({
+      services: { grok: { account, usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    await grok.usageLimitSource()
+    // Switched in the provider's own CLI.
+    await grok.account()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+    usageLimitSource.mockResolvedValueOnce(weekly(20))
+    await grok.signOut()
+    await grok.usageLimitSource()
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+  })
+
+  it('keeps answering with an error when nothing was known before the failure', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'unavailable' })
+      .mockRejectedValue(new Error('fixture-limits-failed'))
+    const { registry } = setup({
+      unavailableLimitCacheMs: 1_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(grok.usageLimitSource()).rejects.toThrow('fixture-limits-failed')
+  })
+})
+
+describe('live limit windows', () => {
+  const session = { id: 'five_hour', label: '5-hour', usedPercent: 10, resetsAt: 9_000_000 }
+  const week = { id: 'seven_day', label: 'Weekly', usedPercent: 20, windowMinutes: 10_080 }
+  const credits = { label: 'Credits', usedPercent: 0, valueLabel: '5 left' }
+  const read = (limits: ProviderLimit[] = [session, week, credits]) =>
+    vi.fn(async () => ({ status: 'ready' as const, limits }))
+
+  it('merges reported windows by id, keeps the others and publishes the snapshot', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(2_000)
+    registry.applyLimitRows('grok', [
+      { id: 'five_hour', label: '5-hour', usedPercent: 15 },
+      { label: 'Without id', usedPercent: 99 },
+    ])
+    const expected = {
+      provider: 'grok',
+      status: 'ready',
+      // The live row has no reset time, so the read's stays.
+      limits: [{ ...session, usedPercent: 15 }, week, credits],
+      checkedAt: 2_000,
+      origin: 'live',
+    }
+    // The read published its own snapshot first.
+    expect(hooks.onLimitsChanged).toHaveBeenCalledTimes(2)
+    expect(hooks.onLimitsChanged).toHaveBeenLastCalledWith('grok', expected)
+    // A live merge is no reason for a new read.
+    await expect(grok.usageLimitSource()).resolves.toEqual(expected)
+  })
+
+  it('keeps the same snapshot and publishes nothing when every window matches', async () => {
+    const usageLimitSource = read()
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const held = await grok.usageLimitSource()
+    hooks.onLimitsChanged.mockClear()
+    registry.applyLimitRows('grok', [
+      { id: 'five_hour', label: '5-hour', usedPercent: 10 },
+      { id: 'seven_day', label: 'Weekly', usedPercent: 20 },
+    ])
+    registry.applyLimitRows('grok', [])
+    expect(hooks.onLimitsChanged).not.toHaveBeenCalled()
+    await expect(grok.usageLimitSource()).resolves.toBe(held)
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('collapses a burst into one leading and one trailing snapshot', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    await registry.forProvider('grok').usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    hooks.onLimitsChanged.mockClear()
+    for (let tick = 1; tick <= 20; tick += 1) {
+      registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: tick }])
+      await vi.advanceTimersByTimeAsync(10)
+    }
+    expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(hooks.onLimitsChanged).toHaveBeenCalledTimes(2)
+    expect(hooks.onLimitsChanged.mock.lastCall?.[1]).toMatchObject({
+      limits: [{ id: 'five_hour', usedPercent: 20 }, week, credits],
+    })
+  })
+
+  it('tells re-pulling clients about a live change at a spaced rate, without a new read', async () => {
+    const usageLimitSource = read()
+    const { registry, hooks } = setup({
+      limitChangeIntervalMs: 30_000,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('grok')
+    // Equal windows are no change; a burst of changes waits for one trailing signal.
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    for (const usedPercent of [12, 13, 14]) {
+      registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent }])
+    }
+    expect(hooks.onUsageChanged).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(hooks.onUsageChanged).toHaveBeenCalledTimes(2)
+    // The re-pull is answered from the merged snapshot.
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      origin: 'live',
+      limits: [{ id: 'five_hour', usedPercent: 14 }, week, credits],
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('makes last known values current again', async () => {
+    const usageLimitSource = read()
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    usageLimitSource.mockRejectedValueOnce(new Error('fixture-limits-failed'))
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ stale: true })
+    registry.applyLimitRows('grok', [{ id: 'seven_day', label: 'Weekly', usedPercent: 30 }])
+    const current = await grok.usageLimitSource()
+    expect(current).toMatchObject({ origin: 'live', checkedAt: 60_000 })
+    for (const key of ['stale', 'refreshError', 'retryAt']) expect(current).not.toHaveProperty(key)
+  })
+
+  it('starts a snapshot from live windows and leaves an account without plan limits alone', async () => {
+    const { registry, hooks } = setup({
+      services: { 'claude-code': { usageLimitSource: async () => ({ status: 'unavailable' }) } },
+    })
+    registry.applyLimitRows('grok', [session])
+    expect(hooks.onLimitsChanged).toHaveBeenCalledExactlyOnceWith('grok', {
+      provider: 'grok',
+      status: 'ready',
+      limits: [session],
+      checkedAt: 0,
+      origin: 'live',
+    })
+    const claude = registry.forProvider('claude-code')
+    await claude.usageLimitSource()
+    hooks.onLimitsChanged.mockClear()
+    registry.applyLimitRows('claude-code', [session])
+    await expect(claude.usageLimitSource()).resolves.toEqual({
+      provider: 'claude-code',
+      status: 'unavailable',
+    })
+    expect(hooks.onLimitsChanged).not.toHaveBeenCalled()
+  })
+
+  it('does not let a read that started earlier revert a newer live window', async () => {
+    const answer = deferred<{ status: 'ready'; limits: ProviderLimit[] }>()
+    const usageLimitSource = vi.fn().mockReturnValueOnce(answer.promise)
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const reading = grok.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 30 }])
+    answer.resolve({ status: 'ready', limits: [session, week] })
+    await expect(reading).resolves.toMatchObject({
+      origin: 'read',
+      limits: [{ ...session, usedPercent: 30 }, week],
+    })
+    // A later read is newer than that window.
+    usageLimitSource.mockResolvedValue({ status: 'ready', limits: [session, week] })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({ limits: [session, week] })
+  })
+
+  it('forgets live windows when the account changes', async () => {
+    const usageLimitSource = read([session, week])
+    const { registry } = setup({
+      services: { grok: { usageLimitSource, signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.usageLimitSource()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 30 }])
+    await grok.signOut()
+    await expect(grok.usageLimitSource()).resolves.toMatchObject({
+      origin: 'read',
+      limits: [session, week],
+    })
+  })
+
+  it('publishes each read and tells older clients only when the shown limits change', async () => {
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'ready', limits: [week] })
+      .mockResolvedValueOnce({ status: 'ready', limits: [week] })
+      .mockResolvedValueOnce({ status: 'ready', limits: [{ ...week, usedPercent: 40 }] })
+      .mockRejectedValue(new Error('fixture-limits-failed'))
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const pushed = () => hooks.onLimitsChanged.mock.calls.length
+    // The first read answers its own caller.
+    await grok.usageLimitSource()
+    expect([pushed(), hooks.onUsageChanged.mock.calls.length]).toEqual([1, 0])
+    // A newer check of the same values changes nothing a client shows.
+    await vi.advanceTimersByTimeAsync(60_000)
+    await grok.usageLimitSource()
+    expect([pushed(), hooks.onUsageChanged.mock.calls.length]).toEqual([2, 0])
+    expect(hooks.onLimitsChanged.mock.lastCall?.[1]).toMatchObject({ checkedAt: 60_000 })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await grok.usageLimitSource()
+    expect([pushed(), hooks.onUsageChanged.mock.calls.length]).toEqual([3, 1])
+    // Values that became last known are shown differently.
+    await vi.advanceTimersByTimeAsync(60_000)
+    await grok.usageLimitSource()
+    expect([pushed(), hooks.onUsageChanged.mock.calls.length]).toEqual([4, 2])
+    expect(hooks.onLimitsChanged.mock.lastCall?.[1]).toMatchObject({ stale: true })
+    // The backoff answers without anything new to send.
+    await grok.usageLimitSource()
+    expect([pushed(), hooks.onUsageChanged.mock.calls.length]).toEqual([4, 2])
+    expect(hooks.onUsageChanged).toHaveBeenCalledWith('grok')
+  })
+
+  it('drops a pending trailing snapshot on reset', async () => {
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource: read() } } })
+    await registry.forProvider('grok').usageLimitSource()
+    await vi.advanceTimersByTimeAsync(1_000)
+    hooks.onLimitsChanged.mockClear()
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 11 }])
+    registry.applyLimitRows('grok', [{ id: 'five_hour', label: '5-hour', usedPercent: 12 }])
+    await registry.disposeAll()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(hooks.onLimitsChanged).toHaveBeenCalledOnce()
+  })
+})
+
+describe('held limits first', () => {
+  const totals = {
+    session: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+    today: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+  }
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }],
+  })
+
+  it('holds nothing before the first read and nothing for a new account', async () => {
+    const { registry } = setup({
+      services: {
+        grok: { usageLimitSource: async () => weekly(10), signOut: async () => {} },
+      },
+    })
+    const grok = registry.forProvider('grok')
+    expect(grok.heldLimitSource()).toBeUndefined()
+    const read = await grok.usageLimitSource()
+    expect(grok.heldLimitSource()).toBe(read)
+    await grok.signOut()
+    expect(grok.heldLimitSource()).toBeUndefined()
+  })
+
+  it('answers an expired value at once, refreshes it once and signals only a change', async () => {
+    const second = deferred<ReturnType<typeof weekly>>()
+    const usageLimitSource = vi
+      .fn()
+      .mockResolvedValueOnce(weekly(10))
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue(weekly(40))
+    const { registry, hooks } = setup({ services: { grok: { usageLimitSource } } })
+    const grok = registry.forProvider('grok')
+    const summary = () =>
+      usageSummaryWithLimits(
+        totals,
+        'grok',
+        () => grok.usageLimitSource(),
+        () => grok.heldLimitSource(),
+      )
+    // Only the first read is awaited.
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await flush()
+    // Both callers share the one background read.
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    expect(hooks.onUsageChanged).not.toHaveBeenCalled()
+    second.resolve(weekly(10))
+    await flush()
+    // Equal numbers change nothing a client shows.
+    expect(hooks.onUsageChanged).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 10 }] })
+    await flush()
+    expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('grok')
+    await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 40 }] })
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
   })
 })
 
