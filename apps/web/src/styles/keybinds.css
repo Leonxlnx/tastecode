@@ -80,9 +80,11 @@
   }
 }
 
-/* The recorder is the whole row: its hit area stretches over the line. */
+/* The recorder is the whole row: its hit area stretches over the line. It
+   takes the last column, whether the row has its leader or, in a narrow pane,
+   has dropped it to two. */
 .keybind-recorder {
-  grid-column: 3;
+  grid-column: -2 / -1;
   justify-self: end;
   padding: 0;
   background: none;

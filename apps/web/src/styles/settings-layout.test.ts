@@ -116,6 +116,9 @@ describe('settings viewport CSS', () => {
     expect(keybindsCss).toMatch(
       /\.keybind-row\[data-landed\] \.set-leader \{[^}]*keybind-wire-draw/s,
     )
+    // The shortcut keeps the last column when a narrow row drops its leader
+    // column, so an open row's detail still spans the whole row.
+    expect(keybindsCss).toMatch(/\.keybind-recorder \{[^}]*grid-column: -2 \/ -1;/s)
     // The search is the settings field with room for its glyph.
     expect(keybindsCss).toMatch(
       /\.settings \.keybind-settings__search \.set-input \{[^}]*padding-left: 28px;/s,
