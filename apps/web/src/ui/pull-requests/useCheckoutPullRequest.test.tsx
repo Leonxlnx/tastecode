@@ -3,7 +3,7 @@ import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { CheckoutPullRequest, CheckoutPullRequestResult } from '@harness/contracts'
 import { TestTransport } from '../../test-transport.js'
-import { useCheckoutPullRequest } from './useCheckoutPullRequest.js'
+import { publishCheckoutPullRequest, useCheckoutPullRequest } from './useCheckoutPullRequest.js'
 
 afterEach(cleanup)
 
@@ -192,5 +192,22 @@ describe('the chat checkout pull request', () => {
     await waitFor(() => expect(asked()).toHaveLength(1))
     act(() => transport.emitState('open'))
     await waitFor(() => expect(asked()).toHaveLength(2))
+  })
+
+  it('shows what the Review tab published over an answer still on its way', async () => {
+    let reply!: (value: CheckoutPullRequestResult) => void
+    const { hook } = setup(
+      () => new Promise<CheckoutPullRequestResult>((resolve) => (reply = resolve)),
+      { sessionId: 'pending:new' },
+    )
+    await waitFor(() => expect(reply).toBeDefined())
+
+    act(() => publishCheckoutPullRequest('/work/project', undefined, found({ number: 1801 })))
+    expect(hook.result.current?.number).toBe(1801)
+    act(() => publishCheckoutPullRequest('/elsewhere', undefined, found({ number: 5 })))
+    expect(hook.result.current?.number).toBe(1801)
+
+    await act(async () => reply(found({ number: 1778 })))
+    expect(hook.result.current?.number).toBe(1801)
   })
 })

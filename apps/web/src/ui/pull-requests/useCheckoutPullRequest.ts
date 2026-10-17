@@ -5,6 +5,27 @@ import type { Transport } from '../../transport.js'
 /** Recently seen checkouts, so switching back to a chat shows its chip at once. */
 const KNOWN_LIMIT = 32
 
+type Listener = (key: string, result: CheckoutPullRequestResult) => void
+const listeners = new Set<Listener>()
+
+/**
+ * Share a fresh lookup with every header chip, so a pull request the Review
+ * tab just opened, or a push that restarted its checks, shows at once.
+ */
+export function publishCheckoutPullRequest(
+  projectPath: string,
+  sessionId: string | undefined,
+  result: CheckoutPullRequestResult,
+): void {
+  const key = checkoutKey(projectPath, checkoutThreadId(sessionId))
+  for (const listener of listeners) listener(key, result)
+}
+
+/** A chat that has not started yet works in the project folder. */
+function checkoutThreadId(sessionId: string | undefined): string | undefined {
+  return sessionId?.startsWith('pending:') ? undefined : sessionId
+}
+
 /**
  * The pull request whose head is the chat's checkout branch, for the header.
  *
@@ -22,13 +43,24 @@ export function useCheckoutPullRequest(
   running: boolean,
   enabled: boolean,
 ): CheckoutPullRequest | undefined {
-  // A chat that has not started yet works in the project folder.
-  const threadId = sessionId?.startsWith('pending:') ? undefined : sessionId
+  const threadId = checkoutThreadId(sessionId)
   const key = projectPath === undefined ? undefined : checkoutKey(projectPath, threadId)
   const [known, setKnown] = useState<ReadonlyMap<string, CheckoutPullRequestResult>>(
     () => new Map(),
   )
   const sequence = useRef(new Map<string, number>())
+
+  useEffect(() => {
+    const listener: Listener = (publishedKey, result) => {
+      // A request already on its way read GitHub before this answer did.
+      sequence.current.set(publishedKey, (sequence.current.get(publishedKey) ?? 0) + 1)
+      setKnown((current) => remember(current, publishedKey, result))
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+    }
+  }, [])
 
   const load = useCallback(() => {
     if (projectPath === undefined) return
