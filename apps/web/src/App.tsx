@@ -5769,6 +5769,7 @@ export function App() {
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}
+        autoDismissPaused={Boolean(undoRestore)}
         onDismiss={() => {
           setNotice(undefined)
           setUndoRestore(undefined)
