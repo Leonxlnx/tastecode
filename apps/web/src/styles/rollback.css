@@ -4,6 +4,18 @@
   initial-value: 0;
 }
 
+@property --rollback-fade-top {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --rollback-fade-bottom {
+  syntax: '<length>';
+  inherits: false;
+  initial-value: 0px;
+}
+
 /* A mask also clips its own element's box-shadow, so the paper and the notch
    mask live on .rollback__sheet and the panel keeps the shadow. */
 .rollback {
@@ -66,6 +78,37 @@
   min-height: 0;
   max-height: calc(7.5 * (var(--rollback-row) + var(--rollback-gap)));
   overflow-y: auto;
+  /* The first layer keeps the cut at full ink while it sits in a fade. */
+  mask:
+    linear-gradient(#000 0 0) 0
+      calc(
+        var(--rollback-cut) * (var(--rollback-row) + var(--rollback-gap)) - var(--rollback-scroll)
+      ) /
+      100% var(--rollback-gap) no-repeat,
+    linear-gradient(
+      transparent,
+      #000 var(--rollback-fade-top) calc(100% - var(--rollback-fade-bottom)),
+      transparent
+    );
+  animation:
+    rollback-fade-top linear both,
+    rollback-fade-bottom linear both;
+  animation-timeline: scroll(self);
+  animation-range:
+    0 var(--rollback-gap),
+    calc(100% - var(--rollback-gap)) 100%;
+}
+
+@keyframes rollback-fade-top {
+  to {
+    --rollback-fade-top: var(--rollback-gap);
+  }
+}
+
+@keyframes rollback-fade-bottom {
+  from {
+    --rollback-fade-bottom: var(--rollback-gap);
+  }
 }
 
 .rollback__chat {
