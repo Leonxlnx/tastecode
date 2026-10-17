@@ -16,6 +16,7 @@ import {
   IconRefresh as RefreshCw,
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { useUsageHistory } from '../usage-history-state.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
@@ -400,51 +401,7 @@ export function ProfileSettings(props: {
 }
 
 function ProfileHistory(props: { transport: Transport }) {
-  const [data, setData] = useState<ResultOf<'usage.history'>>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [requestVersion, setRequestVersion] = useState(0)
-  const forceRefresh = useRef(false)
-
-  useEffect(() => {
-    let active = true
-    let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const schedulePoll = () => {
-      pollTimer = setTimeout(() => {
-        if (active) setRequestVersion((version) => version + 1)
-      }, 500)
-    }
-    const refresh = forceRefresh.current
-    forceRefresh.current = false
-    setLoading(true)
-    setError(undefined)
-    void props.transport
-      .request('usage.history', { range: 'all', ...(refresh ? { refresh: true } : {}) })
-      .then((result) => {
-        if (!active) return
-        setData(result)
-        if (result.scan.status === 'scanning') {
-          schedulePoll()
-        }
-      })
-      .catch((requestError: unknown) => {
-        if (!active) return
-        setError(requestError instanceof Error ? requestError.message : String(requestError))
-        if (data?.scan.status === 'scanning') schedulePoll()
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      clearTimeout(pollTimer)
-    }
-  }, [props.transport, requestVersion])
-
-  const refresh = useCallback(() => {
-    forceRefresh.current = true
-    setRequestVersion((version) => version + 1)
-  }, [])
+  const { data, loading, error, refresh } = useUsageHistory(props.transport, 'all')
 
   if (!data) {
     return (
