@@ -194,7 +194,8 @@ describe('streamed Markdown renders', () => {
       )
     }
     const root = rendered.container.querySelector('[data-streaming-markdown]')!
-    expect(root.querySelectorAll('thead th')).toHaveLength(3)
+    // The header waits for its first row: the two set the columns together.
+    expect(root.querySelector('table')).toBeNull()
 
     replace.mockClear()
     let firstRow: Element | undefined
@@ -205,6 +206,7 @@ describe('streamed Markdown renders', () => {
       expect(root.querySelectorAll('tbody tr')).toHaveLength(row)
       expect(root.textContent).not.toContain('|')
       stream(' |\n')
+      expect(root.querySelectorAll('thead th')).toHaveLength(3)
       const rows = root.querySelectorAll('tbody tr')
       expect(rows).toHaveLength(row + 1)
       firstRow ??= rows[0]

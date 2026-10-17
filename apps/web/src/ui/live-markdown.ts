@@ -211,6 +211,13 @@ export class LiveMarkdownParser {
   private tableLine = ''
   /** A complete first table line, waiting for the delimiter row that confirms it. */
   private tableHeader: string | undefined
+  /**
+   * A confirmed header, waiting for its first row. Laid out alone, the
+   * columns fit the header's words, and the first row then reshaped every
+   * one of them; together they start where the table goes on.
+   */
+  private tableHead:
+    { characters: number; cells: string[]; align: Array<LiveMarkdownAlign | undefined> } | undefined
   private tableAlign: Array<LiveMarkdownAlign | undefined> = []
   private tableBodyOpen = false
   /** Set while a held line is replayed as prose, so it cannot start a table again. */
@@ -304,6 +311,7 @@ export class LiveMarkdownParser {
         Number(this.pendingStar) +
         this.tableLine.length +
         (this.tableHeader?.length ?? 0) +
+        (this.tableHead?.characters ?? 0) +
         heldLinkCharacters(this.link) +
         (this.task?.length ?? 0),
       bufferedSourceChunks: this.sourceChunks.length,
@@ -327,6 +335,7 @@ export class LiveMarkdownParser {
     this.completed = false
     this.tableLine = ''
     this.tableHeader = undefined
+    this.tableHead = undefined
     this.tableAlign = []
     this.tableBodyOpen = false
     this.tablesSuppressed = false
@@ -486,6 +495,11 @@ export class LiveMarkdownParser {
     if (this.prefix === '') {
       // A table ends at the first line that is not one of its rows.
       if (this.block === 'table' && character !== '|') this.closeBlock()
+      // A header whose next line is no row is a table of its own.
+      if (this.tableHead && character !== '|') {
+        this.openTable()
+        this.closeBlock()
+      }
       if (this.tableHeader !== undefined) {
         if (character !== '\n' && isTableDelimiterCharacter(character)) {
           this.mode = 'table-line'
@@ -590,7 +604,8 @@ export class LiveMarkdownParser {
    * A line that starts with a pipe stays hidden until it ends. The first such
    * line becomes a table header only once the delimiter row below it is
    * complete; until then neither line is shown, so a table never appears as
-   * raw pipes. Each later row renders whole when its line ends.
+   * raw pipes. The header waits for its first row (see tableHead); each later
+   * row renders whole when its line ends.
    */
   private consumeTableLine(character: string): void {
     if (character !== '\n') {
@@ -614,6 +629,11 @@ export class LiveMarkdownParser {
       this.emitTableRow(tableCells(line))
       return
     }
+    if (this.tableHead) {
+      this.openTable()
+      this.emitTableRow(tableCells(line))
+      return
+    }
     if (this.tableHeader === undefined) {
       this.tableHeader = line
       return
@@ -625,14 +645,25 @@ export class LiveMarkdownParser {
       this.consumeText(`${line}\n`)
       return
     }
+    this.tableHead = {
+      characters: this.tableHeader.length + line.length + 2,
+      cells: header,
+      align: alignment,
+    }
     this.tableHeader = undefined
     this.closeBlock()
+  }
+
+  private openTable(): void {
+    const head = this.tableHead
+    if (!head) return
+    this.tableHead = undefined
     this.operations.push({ type: 'node.open', node: 'table' })
     this.block = 'table'
-    this.tableAlign = alignment
+    this.tableAlign = head.align
     this.tableBodyOpen = false
     this.operations.push({ type: 'node.open', node: 'table-head' })
-    this.emitTableCells('table-header-cell', header)
+    this.emitTableCells('table-header-cell', head.cells)
     this.closeNode('table-head')
   }
 
@@ -643,6 +674,7 @@ export class LiveMarkdownParser {
     const held = this.tableLine
     this.tableLine = ''
     this.mode = 'flow'
+    if (this.tableHead) this.openTable()
     if (this.block === 'table') this.closeBlock()
     this.rejectTableHeader()
     this.replayAsProse(held)
