@@ -437,69 +437,6 @@
   font-size: var(--t-xs);
 }
 
-.workspace-review__hunk-header,
-.workspace-review__unchanged {
-  display: flex;
-  min-height: 30px;
-  align-items: center;
-  padding: 0 12px 0 92px;
-  background: var(--surface-2);
-  border-bottom: 1px solid var(--line);
-  color: var(--text-3);
-  font-family: var(--font-mono);
-  font-size: var(--t-xs);
-}
-
-.workspace-review__unchanged {
-  gap: 7px;
-  padding-left: 34px;
-  background: var(--surface);
-}
-
-.workspace-review__line {
-  display: grid;
-  grid-template-columns: 46px 46px minmax(0, 1fr);
-  min-height: 23px;
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 23px;
-}
-
-.workspace-review__line.is-addition {
-  background: color-mix(in srgb, var(--success) 15%, transparent);
-}
-
-.workspace-review__line.is-deletion {
-  background: color-mix(in srgb, var(--error) 16%, transparent);
-}
-
-.workspace-review__gutter {
-  padding-right: 10px;
-  background: color-mix(in srgb, var(--surface) 72%, transparent);
-  border-right: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
-  color: var(--text-3);
-  text-align: right;
-  user-select: none;
-}
-
-.workspace-review__line code {
-  min-width: 0;
-  overflow: hidden;
-  padding: 0 14px 0 9px;
-  color: inherit;
-  font: inherit;
-  white-space: pre;
-}
-
-.workspace-review__line code i {
-  display: inline-block;
-  width: 18px;
-  color: var(--text-3);
-  font-style: normal;
-  user-select: none;
-}
-
 .workspace-review__tree {
   display: flex;
   min-width: 0;
