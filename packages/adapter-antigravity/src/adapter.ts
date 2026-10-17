@@ -15,6 +15,7 @@ import {
   getAntigravityIndex,
   rememberAntigravityIndex,
   resolveAntigravityModel,
+  type AntigravityListedModel,
 } from './models.js'
 
 /**
@@ -378,8 +379,9 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 
   /**
    * `agy models` prints one model slug per line with efforts baked into the
-   * slugs; the listing is collapsed into base models so effort lives on the
-   * slider (see models.ts). Verified against agy 1.1.10.
+   * slugs, since 1.1.11 each with agy's own name; the listing is collapsed
+   * into base models so effort lives on the slider (see models.ts). Verified
+   * against agy 1.1.10, 1.3.4 and 1.4.0.
    *
    * The CLI blocks forever on a piped stdin that never closes — captured: an
    * open-stdin `agy models` never exits, a closed one answers in under two
@@ -416,25 +418,24 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
 }
 
 export function parseAntigravityModels(output: string): Model[] {
-  const slugs = [
-    ...new Set(
-      output
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        // agy 1.1.10 printed one slug per line. Starting in 1.1.11 it prints a
-        // table (`slug<TAB>Display Name`), so only the first column belongs on
-        // the wire. A status sentence uses ordinary single spaces; a table
-        // column uses a tab or padding, while a legacy id has no remainder.
-        .map((line) => {
-          const slug = line.split(/\s+/, 1)[0] ?? ''
-          const remainder = line.slice(slug.length)
-          return remainder && !/^(?:\t| {2,})/.test(remainder) ? '' : slug
-        })
-        .filter((slug) => /^[\w./:-]+$/i.test(slug) && !/^(?:id|model|model-id)$/i.test(slug)),
-    ),
-  ]
-  const { models, index } = collapseAntigravityModels(slugs)
+  const listing: AntigravityListedModel[] = []
+  const seen = new Set<string>()
+  for (const raw of output.split('\n')) {
+    const line = raw.trim()
+    // agy 1.1.10 printed one slug per line. Starting in 1.1.11 it prints a
+    // table (`slug<TAB>Display Name`): the slug goes on the wire and the name
+    // is agy's own for it. A status sentence uses ordinary single spaces; a
+    // table column uses a tab or padding, while a legacy id has no remainder.
+    const slug = line.split(/\s+/, 1)[0] ?? ''
+    const remainder = line.slice(slug.length)
+    if (remainder && !/^(?:\t| {2,})/.test(remainder)) continue
+    if (!/^[\w./:-]+$/i.test(slug) || /^(?:id|model|model-id)$/i.test(slug)) continue
+    if (seen.has(slug)) continue
+    seen.add(slug)
+    const displayName = remainder.trim()
+    listing.push(displayName ? { slug, displayName } : { slug })
+  }
+  const { models, index } = collapseAntigravityModels(listing)
   rememberAntigravityIndex(index)
   return models
 }
