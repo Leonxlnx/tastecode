@@ -12,7 +12,7 @@ import { HAPTICS_KEY, writeAppHaptics } from '../haptics.js'
 import { TERMINAL_PLACEMENT_KEY, writeTerminalPlacement } from '../terminal-placement.js'
 import type { Transport } from '../transport.js'
 import { TestTransport, type TestRequestResolver } from '../test-transport.js'
-import { ProviderSettings, Settings } from './Settings.js'
+import { ProviderSettings, Settings, type SettingsSection } from './Settings.js'
 import { createDefaultKeybindings, type KeybindingId, type Shortcut } from '../shortcuts.js'
 import * as bridge from '../bridge.js'
 
@@ -39,7 +39,7 @@ vi.mock('./InstallTerminal.js', () => ({
 
 function renderSettings(
   options: {
-    initialSection?: 'workflows' | 'appearance' | 'models' | 'keybinds' | 'data' | 'debug' | 'about'
+    initialSection?: SettingsSection
     showDebug?: boolean
     onClose?: () => void
     onReset?: () => void
@@ -152,6 +152,18 @@ describe('settings viewport layout', () => {
     ).toBe('page')
   })
 
+  it('opens every tab at its top, not at the last tab scroll offset', () => {
+    const { container } = renderSettings({ initialSection: 'keybinds' })
+    const main = container.querySelector<HTMLElement>('.settings__main')!
+    main.scrollTop = 500
+    expect(main.scrollTop).toBe(500)
+
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    fireEvent.click(within(categories).getByRole('button', { name: 'Appearance' }))
+
+    expect(screen.getByRole('heading', { name: 'Appearance', level: 1 })).toBeTruthy()
+    expect(main.scrollTop).toBe(0)
+  })
   it('names the foundational preference categories truthfully', () => {
     renderSettings()
 
@@ -237,6 +249,56 @@ describe('settings viewport layout', () => {
   })
 })
 
+describe('settings panel names', () => {
+  it.each([
+    ['workflows', 'General'],
+    ['appearance', 'Appearance'],
+    ['keybinds', 'Keybinds'],
+    ['models', 'Models'],
+    ['skills', 'Skills'],
+    ['data', 'Data & privacy'],
+    ['debug', 'Debug'],
+    ['about', 'About'],
+    ['mcp', 'MCP servers'],
+  ] as const)('labels the %s panel by its heading', (section, title) => {
+    renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const heading = screen.getByRole('heading', { level: 1, name: title })
+    expect(screen.getByRole('region', { name: title }).contains(heading)).toBe(true)
+    // The category that opened the panel carries the same name.
+    const categories = screen.getByRole('navigation', { name: 'Settings categories' })
+    const current = within(categories).getByRole('button', { current: 'page' })
+    expect(current.textContent).toBe(section === 'workflows' ? 'General' : title)
+  })
+})
+describe('settings v1 pages', () => {
+  it.each([
+    ['data', ['Reset app preferences']],
+    ['about', ['TasteCode', 'Updates', 'Source']],
+    [
+      'debug',
+      ['Onboarding', 'Usage history index', 'Simulate app update', 'Simulate provider updates'],
+    ],
+  ] as const)('lays %s out as open rows without a card', (section, names) => {
+    const { container } = renderSettings({
+      initialSection: section,
+      showDebug: true,
+      transport: new TestTransport(() => new Promise(() => {})),
+    })
+
+    const content = container.querySelector('.settings__content')!
+    expect(content.querySelector('.settings__group, .settings__row')).toBeNull()
+    expect(
+      [...content.querySelectorAll(':scope > section > .set-row .set-row__name')].map(
+        (name) => name.textContent,
+      ),
+    ).toEqual(names)
+  })
+})
 describe('about status grammar', () => {
   it.each([
     [
@@ -275,7 +337,10 @@ describe('about status grammar', () => {
     })
 
     expect((await screen.findByText('Browser · pre-release')).className).toBe('settings-meta')
-    fireEvent.click(screen.getByRole('button', { name: 'Check for updates' }))
+    const checkButton = screen.getByRole('button', { name: 'Check for updates' })
+    // Checking is a refresh; the rotate arrow is kept for resets.
+    expect(checkButton.querySelector('svg')?.getAttribute('class')).toContain('tabler-icon-refresh')
+    fireEvent.click(checkButton)
     expect(screen.getByRole('status', { name: 'Checking' }).className).toContain('is-checking')
 
     await act(async () => update.resolve(result))
@@ -408,11 +473,11 @@ describe('settings reset confirmation', () => {
 
     expect(
       screen.getByText(
-        'Reset only clears this renderer\u2019s preferences. It does not delete projects, workspaces, files, chat history, or provider credentials.',
+        'Clears appearance, layout and model choices. Projects, workspaces, files, chat history and credentials stay.',
       ),
     ).toBeTruthy()
     const reset = screen.getByRole('button', { name: 'Reset app preferences' })
-    expect(reset.classList.contains('is-danger')).toBe(true)
+    expect(reset.classList.contains('set-button--danger')).toBe(true)
 
     reset.focus()
     fireEvent.click(reset)
@@ -470,6 +535,11 @@ describe('settings loading values', () => {
     expect(loading.querySelectorAll('.model-visibility')).toHaveLength(2)
     expect(loading.querySelectorAll('.model-visibility__model')).toHaveLength(7)
     expect(loading.querySelectorAll('.settings__switch-skeleton')).toHaveLength(7)
+    // The placeholder has the one settings switch size.
+    const switchStyle =
+      loading.querySelector('.settings__switch-skeleton .skeleton')?.getAttribute('style') ?? ''
+    expect(switchStyle).toContain('width: 30px')
+    expect(switchStyle).toContain('height: 18px')
     expect(container.querySelector('.model-settings__empty')).toBeNull()
     expect(within(loading as HTMLElement).queryByRole('switch')).toBeNull()
 
@@ -510,7 +580,9 @@ describe('settings loading values', () => {
     const background = screen.getByRole('region', { name: 'Background work' })
     const loading = within(background).getByText('Loading background model…')
     expect(loading.closest('[role="status"]')?.getAttribute('aria-busy')).toBe('true')
-    expect(loading.closest('[role="status"]')?.querySelector('.skeleton--block')).toBeTruthy()
+    // The value placeholder is a line where the inline select will stand.
+    expect(loading.closest('[role="status"]')?.querySelector('.skeleton')).toBeTruthy()
+    expect(background.querySelector('.set-row__name')?.textContent).toBe('Model')
     expect(within(background).getByText('Loading background model details…').className).toBe(
       'visually-hidden',
     )
@@ -537,6 +609,15 @@ describe('settings loading values', () => {
       'Automatic (recommended)',
     )
     expect(within(background).getByText('Currently luna through Codex.')).toBeTruthy()
+    // An open section on the shared rows, its value the inline select.
+    expect(background.querySelector('.set-section__note')?.textContent).toBe(
+      'Used for session titles, commit-message drafts, and other short writing.',
+    )
+    expect(
+      within(background)
+        .getByRole('combobox', { name: 'Background model' })
+        .closest('.app-select.set-select--inline'),
+    ).toBeTruthy()
   })
 
   it('ends the background skeleton on failure without inventing a selection', async () => {
@@ -549,6 +630,7 @@ describe('settings loading values', () => {
     const background = screen.getByRole('region', { name: 'Background work' })
     expect(within(background).queryByText('Loading background model…')).toBeNull()
     expect(within(background).getByRole('alert').textContent).toBe('Background settings offline')
+    expect(within(background).getByRole('alert').classList.contains('set-notice')).toBe(true)
     expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
   })
 
@@ -600,8 +682,9 @@ describe('settings loading values', () => {
       const loading = screen.getByText('Loading local diagnostics…').closest('[role="status"]')!
       expect(loading.getAttribute('aria-busy')).toBe('true')
       expect(loading.classList.contains('settings__switch-skeleton')).toBe(true)
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 36px')
-      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 22px')
+      // Sized like the 30x18 switch the open row settles into.
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('width: 30px')
+      expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 18px')
       expect(screen.queryByRole('switch', { name: 'Local diagnostics' })).toBeNull()
       expect(screen.queryByRole('button', { name: 'Open folder' })).toBeNull()
 
@@ -629,11 +712,15 @@ describe('settings loading values', () => {
     const loading = screen.getByText('Loading project count…')
     expect(loading.className).toBe('visually-hidden')
     expect(loading.closest('[aria-busy="true"]')?.querySelector('.skeleton')).toBeTruthy()
-    expect(screen.queryByText('0 projects on this machine')).toBeNull()
+    expect(screen.queryByText(/projects, workspaces/i)).toBeNull()
     expect(screen.getByRole('button', { name: 'Reset app preferences' })).toBeTruthy()
     rerenderSettings({ projectsLoading: false, projectCount: 3 })
     expect(screen.queryByText('Loading project count…')).toBeNull()
-    expect(screen.getByText('3 projects on this machine')).toBeTruthy()
+    expect(
+      screen.getByText(
+        'Clears appearance, layout and model choices. 3 projects, workspaces, files, chat history and credentials stay.',
+      ),
+    ).toBeTruthy()
     await act(async () => {})
   })
 
@@ -701,7 +788,7 @@ function renderProviders(
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.settings__row')!
+const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.provider-row')!
 const action = (row: HTMLElement, name: string) =>
   within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
@@ -757,7 +844,7 @@ describe('provider authentication states', () => {
       expect(codex.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
     )
     // The roster keeps its own order, whatever order the server reported.
-    expect(Array.from(document.querySelectorAll('.settings__row'))).toEqual([claude, codex, grok])
+    expect(Array.from(document.querySelectorAll('.provider-row'))).toEqual([claude, codex, grok])
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
     expect(columns(claude)).toEqual(columns(grok))
@@ -768,13 +855,10 @@ describe('provider authentication states', () => {
     for (const row of [codex, claude, grok]) {
       expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     }
-    expect(within(claude).getByRole('button', { name: 'Sign in' }).className).toContain(
-      'is-primary',
-    )
+    expect(within(claude).getByRole('button', { name: 'Sign in' }).className).toBe('set-button')
     const signOut = within(codex).getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-primary')
-    expect(signOut.className).toContain('is-danger')
-    expect(signOut.className).not.toContain('is-quiet')
+    expect(signOut.className).toBe('set-button set-button--danger')
+    expect(signOut.closest('.provider-row__primary')).toBeTruthy()
     fireEvent.focus(within(claude).getByRole('button', { name: 'Problem details' }))
     expect(screen.getByRole('tooltip').textContent).toBe('Claude Code should be updated')
     expect(within(grok).getByText('Not installed')).toBeTruthy()
@@ -1382,6 +1466,10 @@ describe('provider settings', () => {
       />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Connect another plan or API' }))
+    // Every field in the form is the one settings text field.
+    for (const label of ['Name', 'Base URL', 'Default model', 'API key']) {
+      expect(screen.getByLabelText(label).className).toBe('set-input')
+    }
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Research API' } })
     fireEvent.change(screen.getByLabelText('Default model'), {
       target: { value: 'research-model' },
@@ -1577,9 +1665,14 @@ describe('provider settings', () => {
     )
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign out' })).toHaveLength(3))
+    // Kimi's sign-out is the same danger button, in the same column, as every other provider's.
+    for (const signOut of screen.getAllByRole('button', { name: 'Sign out' })) {
+      expect(signOut.className).toBe('set-button set-button--danger')
+      expect(signOut.closest('.provider-row__primary')).toBeTruthy()
+    }
     expect(screen.getAllByText('Codex')).toHaveLength(1)
 
-    const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
+    const codexRow = screen.getByText('Codex').closest<HTMLElement>('.provider-row')
     if (!codexRow) throw new Error('Codex provider row missing')
     const email = within(codexRow).getByText('private@example.com', {
       selector: '.settings__email-value',
@@ -1616,8 +1709,8 @@ describe('provider settings', () => {
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Connect another plan or API' })).toBeTruthy()
 
-    const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
-    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.provider-row')
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.provider-row')
     expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
       'claude@example.com · pro',
     )
@@ -1846,7 +1939,7 @@ describe('provider settings', () => {
     )
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign in' })).toHaveLength(2))
-    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.provider-row')
     if (!grokRow) throw new Error('Grok row missing')
     fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
     await waitFor(() =>
@@ -1888,7 +1981,7 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
-    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
+    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.provider-row')
     if (!kimiRow) throw new Error('Kimi row missing')
     expect(within(kimiRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).toHaveBeenCalledTimes(1)
