@@ -8,6 +8,7 @@ import type {
   Capabilities,
   DomainEvent,
   Model,
+  ProviderCommand,
   ProviderId,
   Thread,
 } from '@harness/contracts'
@@ -21,6 +22,7 @@ import {
 } from '@harness/proc'
 import { discoverAgentModels, findAgentSpec, type AcpAgentSpec } from './agents.js'
 import { optionFor, type PermissionOption } from './approvals.js'
+import { mapAcpCommands } from './commands.js'
 import { Streamer } from './events.js'
 import type { AcpMcpServer } from './mcp.js'
 import { acpSessionUsage, acpTurnUsage } from './usage.js'
@@ -54,6 +56,8 @@ export type AcpAdapterEvents = {
   event: [DomainEvent]
   log: [string]
   disconnected: []
+  /** The agent advertised a different command list; read it with `listCommands()`. */
+  commandsChanged: []
 }
 
 export type AcpStartOptions = {
@@ -173,6 +177,9 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
   #pendingApprovals = new Map<string, (result: JsonRpcValue) => void>()
   /** The options the agent offered, kept until the user answers. */
   #optionsById = new Map<string, PermissionOption[]>()
+  /** The agent's last advertised commands; it sends them right after session/new. */
+  #commands: ProviderCommand[] = []
+  #commandsKey = '[]'
 
   constructor(agentId: string, launch?: AcpLaunchOptions) {
     super()
@@ -388,6 +395,16 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     return discoverAgentModels(this.#spec.id)
   }
 
+  /** Commands and skills the agent runs itself when a message starts with `/name`. */
+  async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
+    return [...this.#commands]
+  }
+
+  onCommandsChanged(listener: () => void): () => void {
+    this.on('commandsChanged', listener)
+    return () => this.off('commandsChanged', listener)
+  }
+
   #clearTurn(toolStatus: 'completed' | 'failed' = 'failed'): void {
     this.#finishStreamer(toolStatus)
     this.#activeTurn = undefined
@@ -421,6 +438,8 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
     this.#model = undefined
     this.#loadSession = false
     this.#pendingApprovals.clear()
+    this.#commands = []
+    this.#commandsKey = '[]'
     this.#processStop = stopped
     return stopped
   }
@@ -575,18 +594,35 @@ export class AcpAdapter extends EventEmitter<AcpAdapterEvents> {
       return
     }
 
-    if (!this.#streamer) return
-
+    // Agents advertise commands right after session/new, before any turn and
+    // before that request even answers, so this runs without a streamer. The
+    // older draft name is still accepted.
     if (
-      update.sessionUpdate === 'available_commands' ||
-      update.sessionUpdate === 'current_mode_update'
+      update.sessionUpdate === 'available_commands_update' ||
+      update.sessionUpdate === 'available_commands'
     ) {
+      const sessionId = notification.data.sessionId
+      if (sessionId && this.#sessionId && sessionId !== this.#sessionId) return
+      this.#setCommands(mapAcpCommands(update.availableCommands ?? []))
       return
     }
+
+    if (!this.#streamer) return
+
+    if (update.sessionUpdate === 'current_mode_update') return
 
     for (const event of this.#streamer.translate(update)) {
       this.emit('event', event)
     }
+  }
+
+  /** Grok repeats an identical list within milliseconds; only a change is announced. */
+  #setCommands(commands: ProviderCommand[]): void {
+    const key = JSON.stringify(commands)
+    if (key === this.#commandsKey) return
+    this.#commands = commands
+    this.#commandsKey = key
+    this.emit('commandsChanged')
   }
 
   #onRequest(
