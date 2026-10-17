@@ -63,7 +63,7 @@ describe('reveal clock', () => {
     expect(visibleText(root, fake.ranges())).toBe(source)
   })
 
-  it('trails a steady provider by 70-180 ms', () => {
+  it('trails a steady provider by about 100 ms and never past 200 ms', () => {
     const fake = fakeEnvironment()
     const { root, text } = liveRoot()
     const cursor = createRevealClock(fake.env).attach(root)
