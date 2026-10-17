@@ -450,16 +450,16 @@ describe('MCP settings', () => {
 
     expect(await screen.findByText('Checking Codex MCP servers…')).toBeTruthy()
     expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
-      'starting',
+      'Starting…',
     )
     // The project's own list is final, so the page keeps its shape when the provider answers.
     expect(screen.getByText('No MCP servers have been added to this project.')).toBeTruthy()
 
     loading = false
     act(() => changed?.({ provider: 'codex', projectPath: '/work/project' }))
-    expect(await screen.findByText('Codex · MCP inventory available')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByText('Checking Codex MCP servers…')).toBeNull())
     expect(screen.getByRole('region', { name: 'From Codex settings' }).textContent).toContain(
-      'ready',
+      'Ready',
     )
   })
 
@@ -479,8 +479,8 @@ describe('MCP settings', () => {
       />,
     )
 
-    expect(await screen.findByText('Checking Codex MCP servers…')).toBeTruthy()
-    expect(screen.getByText('Loading MCP servers…')).toBeTruthy()
+    expect(await screen.findByText('Loading MCP servers…')).toBeTruthy()
+    expect(screen.queryByText('Checking Codex MCP servers…')).toBeNull()
     expect(screen.queryByText(/No MCP servers have been added/)).toBeNull()
   })
 
