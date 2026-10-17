@@ -2,9 +2,14 @@ import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, spawnOwned, readNdjson } from '@harness/proc'
-import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import { antigravityCommand } from './command.js'
+import {
+  ANTIGRAVITY_SIGN_IN_REQUIRED,
+  antigravitySignIn,
+  readAgyModels,
+  sharedAgyModels,
+} from './sign-in.js'
 import {
   collapseAntigravityModels,
   getAntigravityIndex,
@@ -380,16 +385,14 @@ export class AntigravityAdapter extends EventEmitter<AntigravityAdapterEvents> {
    * open-stdin `agy models` never exits, a closed one answers in under two
    * seconds — so stdin closes immediately and the discovery must not go
    * through helpers that keep it open.
+   *
+   * The built-in CLI shares this read with the sign-in check (sign-in.ts); a
+   * custom harness launches its own binary and never borrows that answer.
    */
   async listModels(): Promise<Model[]> {
-    const child = this.#spawn(antigravityCommand(), ['models'], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      windowsHide: true,
-    })
-    const captured = captureCli(child, 15_000)
-    child.stdin.on('error', () => undefined)
-    child.stdin.end()
-    const result = await captured
+    const result =
+      this.#spawn === spawnOwned ? await sharedAgyModels() : await readAgyModels(this.#spawn)
+    if (antigravitySignIn(result) === false) throw new Error(ANTIGRAVITY_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Antigravity model discovery failed')
     return parseAntigravityModels(result.stdout)
   }
