@@ -614,3 +614,101 @@
   font: inherit;
   text-decoration: underline;
 }
+
+/* ---------- streaming reveal (reveal-clock.ts) ---------- */
+
+/* A streaming reply's finished renderer, rendered ahead while the live one
+   still shows it (Markdown.tsx). Completion only has to show it. */
+.md.md-ahead {
+  display: none;
+}
+
+/* The finished renderer puts each code line in its own block, so its lines
+   take their height from the code font alone. Live code is one run of text
+   in an inline <code> whose lines also hold the <pre>'s strut in another
+   font: about a pixel taller each, 35 px over a 35-line block, lost at
+   completion. A block <code> lays its lines out the same way. */
+.md[data-streaming-markdown] pre > code {
+  display: block;
+}
+
+/* Streamed text is laid out as it arrives; the part not shown yet is painted
+   in transparent ink, so its line breaks are already final when it appears. */
+::highlight(md-veil) {
+  color: transparent;
+  text-decoration-color: transparent;
+}
+
+/* A code chip whose text is still veiled would show as an empty box; it
+   fades in once the reveal reaches its first character, slowly at first,
+   so its text leads. */
+.md[data-streaming-markdown] :not(pre) > code {
+  transition: background-color var(--dur-fast) var(--ease-in-out);
+}
+
+.md [data-reveal-pending] {
+  background-color: transparent;
+}
+
+/* A file reference's icon waits for its name the same way. */
+.md[data-streaming-markdown] .md-file-ref__icon {
+  transition: opacity var(--dur-fast) var(--ease-in-out);
+}
+
+.md .md-file-ref[data-reveal-pending] > .md-file-ref__icon {
+  opacity: 0;
+}
+
+/* A list item's bullet, or a task's checkbox, waits for its first word. */
+.md li[data-reveal-pending]::marker {
+  color: transparent;
+}
+
+.md li[data-reveal-pending] > input[type='checkbox'] {
+  opacity: 0;
+}
+
+/* The soft leading edge: the characters shown last fade in through three
+   steps. A highlight's currentColor is not the colour of the text it covers,
+   so every element that sets its own text colour names it here as well. */
+.reply {
+  --reveal-ink: var(--response-text);
+}
+
+.reply--notice,
+.reasoning-summary,
+.md [data-streamdown='code-block-header'] {
+  --reveal-ink: var(--text-3);
+}
+
+.md a {
+  --reveal-ink: var(--response-text);
+  --reveal-decoration: var(--text-3);
+}
+
+.md blockquote {
+  --reveal-ink: var(--text-2);
+}
+
+.md .md-file-ref {
+  --reveal-ink: var(--file-reference);
+}
+
+.md pre {
+  --reveal-ink: var(--sdm-fg, var(--text));
+}
+
+::highlight(md-fresh-1) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 30%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 30%, transparent);
+}
+
+::highlight(md-fresh-2) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 55%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 55%, transparent);
+}
+
+::highlight(md-fresh-3) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 80%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 80%, transparent);
+}
