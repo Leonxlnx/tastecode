@@ -690,7 +690,8 @@ button.thread__older:hover {
 .activity__pulse {
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  /* A pill radius on a square clamps to half its side: the same circle. */
+  border-radius: var(--r-pill);
   background: var(--text-2);
   animation: working-pulse 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   will-change: transform, opacity;
