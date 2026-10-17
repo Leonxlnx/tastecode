@@ -26,12 +26,11 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(/\.settings__main \{[^}]*scrollbar-gutter: stable;/s)
   })
 
-  it('insets every card row, header and note by the same 14px', () => {
-    expect(settingsCss).toMatch(/\.settings__row \{[^}]*padding: 10px 14px;/s)
-    expect(settingsCss).toMatch(
-      /\.settings \.settings__row:has\(> \.settings__row-control > :is\(\.switch, \.settings__switch-skeleton\)\) \{[^}]*padding: 12px 14px;/s,
-    )
-    expect(settingsCss).toMatch(/\.settings__group-note \{[^}]*padding: 10px 14px;/s)
+  it('has no card rows or groups left, only the v1 rows', () => {
+    expect(settingsCss).not.toMatch(/settings__(row|group)/)
+    for (const [file, source] of uiSources()) {
+      expect(/settings__(row|group)\b/.test(source), file).toBe(false)
+    }
   })
 
   it('lays every v1 row out as name, leader and value on one 40px rhythm', () => {
@@ -135,12 +134,6 @@ describe('settings viewport CSS', () => {
     )
     expect(systemCss.indexOf('.set-row:is(:hover, :focus-within) {')).toBeLessThan(
       systemCss.indexOf(".set-row[data-tone='active']"),
-    )
-  })
-
-  it('bounds state and action controls to the narrow row width', () => {
-    expect(settingsCss).toMatch(
-      /\.settings__row-control:has\(> \.state-label\) \{[^}]*max-width: 100%;/s,
     )
   })
 

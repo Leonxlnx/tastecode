@@ -1658,28 +1658,6 @@
   line-height: 1.2;
 }
 
-.settings__group-title {
-  margin: 0 0 12px;
-  color: var(--text-2);
-  font-size: var(--t-md);
-  font-weight: 520;
-}
-
-.settings__group {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.settings__group--plain {
-  overflow: visible;
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
 /* The previews keep their four-up size and start at the column edge, like
    every row under them. The gap under the section heading leaves room for the
    chosen preview's ring. */
@@ -1866,39 +1844,6 @@
   color: var(--text);
 }
 
-.settings__row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 48px;
-  padding: 10px 14px;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-
-.settings__row:hover {
-  background: var(--surface);
-}
-
-.settings__row + .settings__row {
-  border-top: 1px solid var(--line);
-}
-
-.settings__row--roomy {
-  min-height: 64px;
-  gap: 16px;
-  padding-block: 10px;
-}
-
-.settings__row--roomy .settings__row-copy {
-  flex: 1;
-}
-
-.settings__row--roomy .settings__row-control {
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
 /* The sign-in flow as a card: code chip, browser hint, one live line. The
    terminal stays available behind "Details" but never leads. */
 .signin-card {
@@ -1955,47 +1900,6 @@
   padding: 8px 12px;
   background: var(--bg);
   border-top: 1px solid var(--line);
-}
-
-/* Keep the row divider that the adjacent-sibling rule above would lose. */
-.install-terminal + .settings__row {
-  border-top: 1px solid var(--line);
-}
-
-.settings__row-copy {
-  min-width: 0;
-}
-
-.settings__row-title {
-  /* Keep paragraph margins from expanding compact rows. */
-  margin: 0;
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 500;
-  line-height: 1.35;
-}
-
-.settings__row-note,
-.settings__group-note {
-  color: var(--text-2);
-  font-size: var(--t-xs);
-  line-height: 1.5;
-}
-
-.settings__row-note {
-  margin: 4px 0 0;
-  max-width: 52ch;
-  overflow-wrap: anywhere;
-}
-
-.settings__group-note {
-  margin: 0;
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-}
-
-.settings__group-note--top {
-  border-top: 0;
 }
 
 /* The provider roster is open type, not a card. Each provider is an entity
@@ -2580,45 +2484,6 @@
   }
 }
 
-.settings__row-control {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.settings__row-control:has(> .state-label) {
-  max-width: 100%;
-}
-
-.settings .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton)) {
-  min-height: 52px;
-  align-items: center;
-  flex-direction: row;
-  gap: 20px;
-  /* Same inset as every other row in a card, so titles line up down the card. */
-  padding: 12px 14px;
-}
-
-.settings .settings__row-control:has(> :is(.switch, .settings__switch-skeleton)) {
-  width: auto;
-  align-self: center;
-}
-
-.settings
-  .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton))
-  .settings__row-copy {
-  flex: 1;
-}
-
-.settings
-  .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton))
-  .settings__row-note {
-  margin-top: 4px;
-  line-height: 1.5;
-}
-
 :root[data-theme='light'] .settings {
   --control-hover: var(--surface-2);
 }
@@ -2775,10 +2640,6 @@
   .settings__title {
     margin-bottom: 32px;
   }
-
-  .settings__row {
-    align-items: flex-start;
-  }
 }
 
 @media (max-width: 520px) {
@@ -2797,15 +2658,6 @@
 
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .settings__row {
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .settings__row-control {
-    align-self: flex-end;
   }
 }
 
