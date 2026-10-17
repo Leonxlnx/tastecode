@@ -2226,36 +2226,38 @@
   border-top: 0;
 }
 
-.provider-updates-check {
+/* Provider updates: one quiet line under the roster, at the note size. Both
+   ends are quiet settings buttons whose labels sit on the column edges. */
+.settings .provider-updates-check {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px 12px;
-  min-height: 36px;
-  /* The ghost controls keep their hover padding; pull it back to the edge. */
-  margin: 14px -4px 0;
+  margin: 24px 0 0;
   color: var(--text-3);
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
 }
 
-.provider-updates-check > span,
-.provider-updates-check > button {
+.settings .provider-updates-check > span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   min-height: 28px;
-  padding: 4px;
-  color: var(--text-3);
-  font-size: var(--t-xs);
 }
 
-.provider-updates-check .provider-updates-check__review {
+.settings .provider-updates-check > .set-button--quiet:first-child {
+  margin-left: -10px;
+}
+
+.settings .provider-updates-check > .set-button--quiet:last-child {
+  margin-right: -10px;
+}
+
+/* Something to look at reads a step brighter than the routine check (the
+   doubled class outranks the quiet look's ink). */
+.settings .provider-updates-check > .set-button.provider-updates-check__review {
   color: var(--text-2);
-}
-
-.provider-updates-check > button:hover:not(:disabled) {
-  color: var(--text);
 }
 
 /* Too narrow for a wire (the shared leader steps aside at the same width):

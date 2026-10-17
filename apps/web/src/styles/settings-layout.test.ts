@@ -303,4 +303,11 @@ describe('settings viewport CSS', () => {
     expect(tuningCss).toMatch(/\.provider-tune__row \{[^}]*padding-left: 26px;/s)
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__row-title/)
   })
+
+  it('draws the provider updates line from quiet buttons at the note size', () => {
+    expect(settingsCss).toMatch(
+      /\.settings \.provider-updates-check \{[^}]*margin: 24px 0 0;[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(settingsCss).not.toMatch(/\.provider-updates-check[^{]*\{[^}]*var\(--t-xs\)/s)
+  })
 })
