@@ -8,6 +8,7 @@ import { useUsageHistory } from '../usage-history-state.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
+import { UsageActivity } from './usage/UsageActivity.js'
 import { UsageLimits, type PlanLimitsSource } from './usage/UsageLimits.js'
 import { formatDateRange, formatInteger } from './usage/usage-format.js'
 
@@ -36,6 +37,7 @@ export function UsageSettings(props: {
   const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
   const scanning = data?.scan.status === 'scanning'
   const busy = loading || scanning
+  const period = RANGE_OPTIONS.find((option) => option.value === range)?.period ?? ''
 
   return (
     <SettingsPage
@@ -100,6 +102,7 @@ export function UsageSettings(props: {
 
       {data ? (
         <>
+          <UsageActivity data={data} periodLabel={period} />
           <UsageFooter data={data} />
         </>
       ) : loading ? (
