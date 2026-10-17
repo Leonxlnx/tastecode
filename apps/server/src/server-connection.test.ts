@@ -125,6 +125,15 @@ vi.mock('@harness/adapter-grok', () => ({
     return {}
   },
 }))
+// One declared method that no route handles, the state a contract is in when
+// it lands before its server handler.
+vi.mock('@harness/contracts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@harness/contracts')>()
+  return {
+    ...actual,
+    methods: { ...actual.methods, 'test.unrouted': actual.methods['system.info'] },
+  }
+})
 vi.mock('ws', async (importOriginal) => {
   const actual = await importOriginal<typeof import('ws')>()
   return {
@@ -420,6 +429,37 @@ describe('workspace search requests', () => {
     const { port } = await listen()
     expect(await search(port, { projectPath, ...params })).toMatchObject({
       error: { message: 'invalid params for workspace.searchFiles' },
+    })
+  })
+})
+
+describe('methods without a route', () => {
+  async function ask(port: number, method: string) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'ask', method, params: {} }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('answers a declared but unrouted method as unknown instead of an empty result', async () => {
+    const { port } = await listen()
+    expect(await ask(port, 'test.unrouted')).toEqual({
+      id: 'ask',
+      error: { code: 'bad_request', message: 'unknown method: test.unrouted' },
+    })
+  })
+
+  it('still answers an undeclared method the same way', async () => {
+    const { port } = await listen()
+    expect(await ask(port, 'no.such.method')).toEqual({
+      id: 'ask',
+      error: { code: 'bad_request', message: 'unknown method: no.such.method' },
     })
   })
 })
