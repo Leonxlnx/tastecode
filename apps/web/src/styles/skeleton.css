@@ -193,10 +193,11 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  width: 100%;
-  max-width: calc(var(--chat-w) + 48px);
+  width: min(
+    calc(var(--chat-w) - 2 * var(--chat-text-inset)),
+    calc(100cqi - 2 * (var(--chat-gutter) + var(--chat-text-inset)))
+  );
   margin: 0 auto;
-  padding: 0 18px;
 }
 
 .thread-skeleton__turn {

@@ -195,6 +195,11 @@
 
   --rail-w: 248px;
   --chat-w: 808px;
+  /* The transcript lines up with the prompt text, not the prompt bar's border.
+     The gutter runs from the chat pane's edge to the bar; the text inset from
+     the bar's edge to its text (the 1px border plus the textarea's 16px). */
+  --chat-gutter: 24px;
+  --chat-text-inset: 17px;
 
   /* Windows reports the real caption-button strip through the Window Controls
      Overlay. Reading it means our bar can never disagree with the buttons - the
