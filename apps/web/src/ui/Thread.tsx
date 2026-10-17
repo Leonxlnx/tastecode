@@ -3224,7 +3224,8 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
-function TurnDuration(
+// Memoized: the working rail renders it on every transcript render.
+const TurnDuration = memo(function TurnDuration(
   props: { startedAt: number } | { elapsedMs: number; stopped?: boolean | undefined },
 ) {
   const working = 'startedAt' in props
@@ -3249,7 +3250,7 @@ function TurnDuration(
       </div>
     </div>
   )
-}
+})
 
 /** The quiet end of a turn the user stopped, under whatever it reached. */
 function TurnStopped() {
