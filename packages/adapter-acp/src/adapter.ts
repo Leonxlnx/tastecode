@@ -103,8 +103,6 @@ export interface AcpRpc {
   dispose(): void | Promise<void>
 }
 
-export { prepareAcpMcpServers, type AcpMcpServer } from './mcp.js'
-
 type AcpLaunchSpec = {
   id: string
   name: string
