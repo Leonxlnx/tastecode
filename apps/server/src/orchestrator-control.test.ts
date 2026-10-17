@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Store } from './store.js'
 
@@ -39,6 +42,22 @@ vi.mock('@harness/adapter-codex', async (importOriginal) => {
       }
       listModels(): [] {
         return []
+      }
+      async listSkills() {
+        return {
+          skills: [
+            {
+              id: 'codex:plugin:review',
+              name: 'review',
+              description: 'Review the change',
+              source: { type: 'provider' as const },
+              scope: 'system' as const,
+              enabled: true,
+              dependencyErrors: [],
+            },
+          ],
+          errors: [],
+        }
       }
       startLogin() {
         return { loginId: 'login-1', authUrl: 'https://example.test/login' }
@@ -164,5 +183,37 @@ describe('control adapter startup', () => {
     control.login?.({ loginId: 'login-1', success: true, error: null })
     await vi.waitFor(() => expect(control.disposed).toBe(1))
     await orchestrator.disposeAll()
+  })
+
+  it('adds .agents skills to the Codex inventory, since Codex loads them', async () => {
+    const project = mkdtempSync(path.join(os.tmpdir(), 'harness-codex-skills-project-'))
+    const home = mkdtempSync(path.join(os.tmpdir(), 'harness-codex-skills-home-'))
+    const skillDir = path.join(home, '.agents', 'skills', 'animate')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      path.join(skillDir, 'SKILL.md'),
+      '---\nname: animate\ndescription: Animate\n---\n',
+    )
+    const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
+    const orchestrator = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+    })
+    try {
+      const listing = orchestrator.listSkills('codex', project)
+      await vi.waitFor(() => expect(control.releases).toHaveLength(1))
+      control.releases[0]?.()
+      const inventory = await listing
+      expect(inventory.skills.map((skill) => [skill.name, skill.scope])).toEqual([
+        ['review', 'system'],
+        ['animate', 'user'],
+      ])
+    } finally {
+      homedir.mockRestore()
+      await orchestrator.disposeAll()
+      rmSync(project, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

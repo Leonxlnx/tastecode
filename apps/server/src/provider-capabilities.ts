@@ -5,7 +5,14 @@ export type ProviderControlCapabilities = Readonly<{
   resume: boolean
   managedMcp: boolean
   inheritedMcp: boolean
+  /** The provider can list the MCP servers its own settings load (server-internal). */
+  mcpInventory: boolean
   nativeSkills: boolean
+  /**
+   * The provider's CLI loads Agent Skills from `.agents/skills` in the project
+   * and the home folder. Only a capture of the CLI reading them turns this on.
+   */
+  agentsSkillsDir: boolean
   nativeModels: boolean
   notifications: boolean
   skillsInstall: boolean
@@ -21,7 +28,9 @@ const unsupported: ProviderControlCapabilities = {
   resume: false,
   managedMcp: false,
   inheritedMcp: false,
+  mcpInventory: false,
   nativeSkills: false,
+  agentsSkillsDir: false,
   nativeModels: false,
   notifications: false,
   skillsInstall: false,
@@ -41,6 +50,7 @@ export const PROVIDER_CAPABILITIES = {
     ...unsupported,
     resume: true,
     managedMcp: true,
+    mcpInventory: true,
     nativeModels: true,
     account: true,
     login: true,
@@ -51,7 +61,9 @@ export const PROVIDER_CAPABILITIES = {
     resume: true,
     managedMcp: true,
     inheritedMcp: true,
+    mcpInventory: true,
     nativeSkills: true,
+    agentsSkillsDir: true,
     nativeModels: true,
     notifications: true,
     skillsInstall: true,
