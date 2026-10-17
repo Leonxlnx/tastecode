@@ -172,6 +172,8 @@ type LimitEntry = {
   live?: Map<string, { limit: ProviderLimit; at: number }> | undefined
   publishedAt: number
   publishTimer?: ReturnType<typeof setTimeout> | undefined
+  /** The held read was a background one that left out details a shown view lists. */
+  detailsOmitted?: boolean | undefined
 }
 type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
 type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
@@ -595,9 +597,10 @@ export class ProviderControls {
       usageLimitSource: (intent) =>
         this.#cachedLimits(
           provider,
-          () =>
+          (background, omittedDetails) =>
             this.#withFresh(async (adapter) => {
-              const source = await adapter.rateLimitSource()
+              const source = await adapter.rateLimitSource({ background })
+              if (source.status === 'ready' && source.detailsOmitted) omittedDetails()
               return source.status === 'ready'
                 ? { provider, status: 'ready', limits: source.limits }
                 : { provider, status: 'unavailable' }
@@ -680,6 +683,7 @@ export class ProviderControls {
       entry.value = undefined
       entry.live = undefined
       entry.failure = undefined
+      entry.detailsOmitted = undefined
       entry.readAt = Number.NEGATIVE_INFINITY
     }
     // Spending usage cannot give an account the plan limits it lacks, so only
@@ -714,14 +718,19 @@ export class ProviderControls {
    */
   #cachedLimits(
     provider: ProviderId,
-    read: () => Promise<ProviderLimitSource>,
+    /** `background` reads may leave out details, which they report through `omittedDetails`. */
+    read: (background: boolean, omittedDetails: () => void) => Promise<ProviderLimitSource>,
     intent: UsageReadIntent = 'visible',
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
     const startedAt = Date.now()
-    if (entry.value && startedAt < entry.freshUntil) return Promise.resolve(entry.value)
+    // A shown view needs the details a background read left out.
+    const missingDetails = entry.detailsOmitted === true && intent !== 'background'
+    if (entry.value && startedAt < entry.freshUntil && !missingDetails) {
+      return Promise.resolve(entry.value)
+    }
     const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
     if (intent === 'background' && capabilities.limitReadsWhenShown) {
       // Nothing known is not "no plan limits": the source has simply not been read yet.
@@ -748,7 +757,10 @@ export class ProviderControls {
       this.#limits.get(provider) === entry &&
       entry.accountVersion === accountVersion &&
       sequence > entry.stored
-    const reading = read()
+    let detailsOmitted = false
+    const reading = read(intent === 'background', () => {
+      detailsOmitted = true
+    })
       .then(
         (answer) => {
           const now = Date.now()
@@ -767,6 +779,7 @@ export class ProviderControls {
           entry.value = value
           entry.readAt = startedAt
           entry.failure = undefined
+          entry.detailsOmitted = detailsOmitted
           entry.freshUntil =
             entry.forcedVersion !== forcedVersion
               ? 0

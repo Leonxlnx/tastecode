@@ -22,6 +22,7 @@ import { UserInputRequestSchema } from '@harness/contracts'
 import { mapThreadItem } from './map-item.js'
 import { orderCodexModels } from './model-order.js'
 import {
+  JsonRpcError,
   spawnCli,
   StdioJsonRpc,
   type JsonRpcRequestOptions,
@@ -114,6 +115,8 @@ export { CODEX_CAPABILITIES } from './capabilities.js'
  */
 
 const CLIENT_NAME = 'tastecode'
+/** JSON-RPC "invalid params". */
+const INVALID_PARAMS = -32602
 const CONTROL_READ_TIMEOUT_MS = 10_000
 const INITIALIZE_TIMEOUT_MS = 30_000
 const THREAD_START_TIMEOUT_MS = 30_000
@@ -817,8 +820,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
   }
 
-  /** Subscription availability and headroom, decided inside the adapter. */
-  async rateLimitSource(): Promise<CodexLimitSource> {
+  /**
+   * Subscription availability and headroom, decided inside the adapter. A
+   * `background` read skips the reset-credit detail lookup (codex 0.163
+   * `GetAccountRateLimitsParams.excludeResetCreditDetails`); the available
+   * count still arrives, and the answer says when details were left out.
+   */
+  async rateLimitSource(options: { background?: boolean } = {}): Promise<CodexLimitSource> {
     const { account } = await this.#callParsed(
       'account/read',
       {},
@@ -829,17 +837,34 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       throw cause
     })
     if (account?.type !== 'chatgpt') return { status: 'unavailable' }
-    const response = await this.#callParsed(
-      'account/rateLimits/read',
-      {},
-      CodexRateLimitResponseSchema,
-      CONTROL_READ_TIMEOUT_MS,
-    ).catch((cause) => {
-      if (cause instanceof ZodError) throw new Error('Codex rate-limit response was invalid.')
-      throw cause
-    })
+    const read = (params: { excludeResetCreditDetails?: true }) =>
+      this.#callParsed(
+        'account/rateLimits/read',
+        params,
+        CodexRateLimitResponseSchema,
+        CONTROL_READ_TIMEOUT_MS,
+      )
+    const background = options.background === true
+    const response = await (background ? read({ excludeResetCreditDetails: true }) : read({}))
+      .catch((cause) => {
+        // A Codex older than 0.163 may refuse the parameter; it then reads in full.
+        if (background && cause instanceof JsonRpcError && cause.code === INVALID_PARAMS) {
+          return read({})
+        }
+        throw cause
+      })
+      .catch((cause) => {
+        if (cause instanceof ZodError) throw new Error('Codex rate-limit response was invalid.')
+        throw cause
+      })
     this.#limitMemory.remember(this.#codexHome, response)
-    return { status: 'ready', limits: mapCodexRateLimits(response) }
+    const resets = response.rateLimitResetCredits
+    const detailsOmitted = background && !resets?.credits && Number(resets?.availableCount) > 0
+    return {
+      status: 'ready',
+      limits: mapCodexRateLimits(response),
+      ...(detailsOmitted ? { detailsOmitted: true } : {}),
+    }
   }
 
   /** Compatibility view while the orchestrator migrates to the richer source state. */

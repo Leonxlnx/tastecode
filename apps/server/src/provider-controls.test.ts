@@ -28,10 +28,14 @@ class FakeCodex extends EventEmitter {
   listMcpServers = vi.fn(async () => [])
   listSkills = vi.fn(async () => ({ skills: [], errors: [] }))
   setSkillEnabled = vi.fn(async () => true)
-  rateLimitSource = vi.fn(async (): Promise<{ status: 'ready'; limits: ProviderLimit[] }> => ({
-    status: 'ready',
-    limits: [],
-  }))
+  rateLimitSource = vi.fn(
+    async (_options?: {
+      background?: boolean
+    }): Promise<{ status: 'ready'; limits: ProviderLimit[]; detailsOmitted?: true }> => ({
+      status: 'ready',
+      limits: [],
+    }),
+  )
   consumeRateLimitReset = vi.fn(
     async (): Promise<'reset' | 'nothingToReset' | 'noCredit' | 'alreadyRedeemed'> => 'reset',
   )
@@ -1111,6 +1115,33 @@ describe('read intent', () => {
       limits: [{ usedPercent: 30 }],
     })
     expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
+  it('reads Codex without reset details for a passive figure, in full once they are shown', async () => {
+    const resets = { id: 'resets', label: 'Rate limit resets', usedPercent: 0, valueLabel: '2' }
+    const adapter = new FakeCodex()
+    adapter.rateLimitSource.mockImplementation(async (options?: { background?: boolean }) =>
+      options?.background
+        ? { status: 'ready', limits: [resets], detailsOmitted: true }
+        : { status: 'ready', limits: [{ ...resets, resetCredits: [{ expiresAt: null }] }] },
+    )
+    const createCodex = vi.fn(() => adapter)
+    const { codex } = setup({ createCodex })
+    const passive = await codex.usageLimitSource('background')
+    expect(passive).toMatchObject({ limits: [resets] })
+    expect(passive).not.toHaveProperty('detailsOmitted')
+    await codex.usageLimitSource('background')
+    expect(adapter.rateLimitSource.mock.calls).toEqual([[{ background: true }]])
+    // A shown view lists the expiries the background read left out.
+    await expect(codex.usageLimitSource('visible')).resolves.toMatchObject({
+      limits: [{ resetCredits: [{ expiresAt: null }] }],
+    })
+    await codex.usageLimitSource('visible')
+    expect(adapter.rateLimitSource.mock.calls).toEqual([
+      [{ background: true }],
+      [{ background: false }],
+    ])
+    expect(createCodex).toHaveBeenCalledTimes(2)
   })
 
   it('still reads other providers for a passive figure', async () => {

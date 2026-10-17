@@ -18,7 +18,13 @@ export type ProviderLimit = {
 }
 
 export type CodexLimitSource =
-  { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
+  | {
+      status: 'ready'
+      limits: ProviderLimit[]
+      /** A background read left out reset-credit details that exist. */
+      detailsOmitted?: true
+    }
+  | { status: 'unavailable' }
 
 /** Same USD-per-credit rate OpenAI's own surfaces use. */
 const CREDIT_USD_RATE = 0.04

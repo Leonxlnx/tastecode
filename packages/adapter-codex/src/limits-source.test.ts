@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import type { JsonRpcValue } from '@harness/proc'
+import { JsonRpcError, type JsonRpcValue } from '@harness/proc'
 import { describe, expect, it, vi } from 'vitest'
 import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
@@ -305,6 +305,50 @@ describe('Codex rate-limit source', () => {
       { method: 'account/read', timeoutMs: 10_000 },
       { method: 'account/rateLimits/read', timeoutMs: 10_000 },
     ])
+    adapter.dispose()
+  })
+
+  it('skips reset-credit details for a background read and says when some exist', async () => {
+    const { adapter, rpc, state } = sourceAdapter({
+      account: { type: 'chatgpt', email: null, planType: 'pro' },
+      rateLimitsResponse: { ...emptyRateLimits, rateLimitResetCredits: { availableCount: 0 } },
+    })
+    await adapter.start()
+    await expect(adapter.rateLimitSource({ background: true })).resolves.toEqual({
+      status: 'ready',
+      limits: [],
+    })
+    state.rateLimitsResponse = {
+      ...emptyRateLimits,
+      rateLimitResetCredits: { availableCount: 2, credits: null },
+    }
+    await expect(adapter.rateLimitSource({ background: true })).resolves.toMatchObject({
+      detailsOmitted: true,
+    })
+    await expect(adapter.rateLimitSource()).resolves.not.toHaveProperty('detailsOmitted')
+    expect(
+      rpc.calls.filter(({ method }) => method === 'account/rateLimits/read').map((c) => c.params),
+    ).toEqual([{ excludeResetCreditDetails: true }, { excludeResetCreditDetails: true }, {}])
+    adapter.dispose()
+  })
+
+  it('reads in full when a Codex before 0.163 refuses the background parameter', async () => {
+    const rpc = new FakeCodexRpc((method, params) => {
+      if (method === 'account/read')
+        return { account: { type: 'chatgpt', email: null, planType: 'pro' } }
+      if (method !== 'account/rateLimits/read') return {}
+      if (params && typeof params === 'object' && 'excludeResetCreditDetails' in params) {
+        throw new JsonRpcError(-32602, 'Invalid params')
+      }
+      return emptyRateLimits
+    })
+    proc.rpc = rpc
+    const adapter = new CodexAdapter({ limitMemory: new CodexLimitMemory() })
+    await adapter.start()
+    await expect(adapter.rateLimitSource({ background: true })).resolves.toEqual({
+      status: 'ready',
+      limits: [],
+    })
     adapter.dispose()
   })
 
