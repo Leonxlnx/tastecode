@@ -542,7 +542,12 @@ export class LiveMarkdownParser {
     const item = listable ? LIST_MARKER.exec(marker) : null
     // A numbered line interrupts a paragraph only when it starts a list at 1.
     if (item && (item[1] || this.block !== 'paragraph' || item[2] === '1')) {
-      this.openListItem(indent, item[1] ?? item[3]!, item[1] ? undefined : Number(item[2]))
+      this.openListItem(
+        indent,
+        marker.length - 1,
+        item[1] ?? item[3]!,
+        item[1] ? undefined : Number(item[2]),
+      )
       this.finishPrefix()
       this.task = ''
       return
@@ -837,12 +842,18 @@ export class LiveMarkdownParser {
   }
 
   /**
-   * A list item whose marker is `indent` spaces in: an item of an open list
-   * at that depth, the first item of a list nested in the open item it is
-   * indented into, or the first item of a new list. `start` is an ordered
-   * item's number. A different bullet or delimiter starts a new list.
+   * A list item whose marker (`width` characters before its space) is
+   * `indent` spaces in: an item of an open list at that depth, the first
+   * item of a list nested in the open item it is indented into, or the first
+   * item of a new list. `start` is an ordered item's number. A different
+   * bullet or delimiter starts a new list.
    */
-  private openListItem(indent: number, marker: string, start: number | undefined): void {
+  private openListItem(
+    indent: number,
+    width: number,
+    marker: string,
+    start: number | undefined,
+  ): void {
     if (this.block) this.closeBlock(true)
     while (this.lists.length > 0 && indent < this.lists.at(-1)!.indent) {
       this.closeLists(this.lists.length - 1)
@@ -863,11 +874,13 @@ export class LiveMarkdownParser {
         node: ordered ? 'ordered-list' : 'list',
         ...(ordered && start !== 1 ? { start } : {}),
       })
-      const width = ordered ? String(start).length + 1 : 1
       list = { marker, ordered, indent, content: indent + width + 1, itemOpen: false }
       this.lists.push(list)
     }
     this.operations.push({ type: 'node.open', node: 'list-item' })
+    // Nesting is measured from the open item's own marker.
+    list.indent = indent
+    list.content = indent + width + 1
     list.itemOpen = true
     this.block = 'list-item'
   }

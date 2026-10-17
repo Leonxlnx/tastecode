@@ -107,6 +107,7 @@ const LISTS = [
   ['a rule right after a list', '- a\n- b\n---\nAfter'],
   ['three levels', '- one\n  - two\n    - three\n  - two b\n- one b\n'],
   ['tasks in an ordered list', '1. [x] done\n2. [ ] next\n'],
+  ['nesting under a wide number', '10. ten\n    - in ten\n007. seven\n   - beside seven\n'],
 ] as const
 
 describe('the live renderer lays a reply out like the finished one', () => {
