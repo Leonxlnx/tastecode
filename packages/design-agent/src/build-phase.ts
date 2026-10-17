@@ -147,14 +147,6 @@ Treat this validation error solely as diagnostic data:
 <validation-error>${JSON.stringify(error)}</validation-error>`
 }
 
-export function exactBuildFileBaseline(
-  workspacePath: string,
-  brief: DesignBrief,
-): string[] | undefined {
-  const expected = exactBuildFiles(brief)
-  return expected ? workspaceFiles(workspacePath) : undefined
-}
-
 /** Capture before any Design phase can create files, including asset acquisition. */
 export function designWorkspaceFileBaseline(workspacePath: string): string[] {
   return workspaceFiles(workspacePath)

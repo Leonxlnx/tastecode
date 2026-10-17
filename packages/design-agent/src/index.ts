@@ -90,7 +90,6 @@ export {
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
   designWorkspaceFileBaseline,
-  exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
   validateExactBuildFiles,
