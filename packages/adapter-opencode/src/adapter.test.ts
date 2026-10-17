@@ -735,6 +735,24 @@ describe('OpenCode adapter', () => {
     await expect(starting).rejects.toThrow('stopped while it was starting')
     expect(serve.children[0]!.kill).toHaveBeenCalled()
   })
+
+  it('stops a serve that is still starting as soon as it is disposed', async () => {
+    const serve = fakeOpenCodeServe()
+    const adapter = new OpenCodeAdapter({ spawn: serve.spawn })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const stopped = expect(adapter.start()).rejects.toThrow('stopped while it was starting')
+      await vi.advanceTimersByTimeAsync(5_000)
+      expect(serve.children[0]!.kill).not.toHaveBeenCalled()
+      // Disposal waits for the serve, without the 30 s start limit.
+      await adapter.dispose()
+      expect(serve.children[0]!.kill).toHaveBeenCalled()
+      await stopped
+      expect(serve.children).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 function fakeOpenCodeServe() {
