@@ -151,6 +151,13 @@ describe('settings viewport CSS', () => {
     )
     expect(settingsSource).not.toContain('function SettingsPanel')
     expect(settingsCss).toMatch(/\.settings \.model-settings__sources \{[^}]*margin-top: 36px;/s)
+    // The source heading keeps the heading's line height, so no descender is clipped.
+    expect(settingsCss).toMatch(
+      /\.settings \.set-section__title \.source-identity \{[^}]*line-height: inherit;/s,
+    )
+    expect(settingsCss).toMatch(
+      /\.settings \.model-settings \.set-section__head \{[^}]*align-items: center;/s,
+    )
     // A model left out of the picker is a muted row whose name steps down.
     expect(settingsCss).toMatch(
       /\.settings \.model-visibility__model\[data-tone='muted'\]:not\(:hover, :focus-within\) \.set-row__name \{[^}]*color: var\(--text-3\);/s,

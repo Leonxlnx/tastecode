@@ -2383,6 +2383,18 @@
   min-width: 42px;
 }
 
+/* A source's identity takes the heading's own line height: at its usual
+   line-height of 1 the clipped label cut off descenders ("Antigravity"). */
+.settings .set-section__title .source-identity {
+  line-height: inherit;
+}
+
+/* The identity's baseline is its mark's bottom edge, which would drop the
+   All/None labels below the name; centring sets both on one line. */
+.settings .model-settings .set-section__head {
+  align-items: center;
+}
+
 /* A model left out of the picker reads a step quieter than one in it. */
 .settings .model-visibility__model[data-tone='muted']:not(:hover, :focus-within) .set-row__name {
   color: var(--text-3);
