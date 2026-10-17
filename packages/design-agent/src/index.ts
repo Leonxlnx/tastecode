@@ -85,22 +85,11 @@ export {
   type DesignFileSnapshot,
 } from './file-snapshot.js'
 export {
-  DESIGN_PHASES,
-  createDesignRunState,
-  nextDesignPhase,
-  parseDesignRunState,
-  type DesignPhase,
-  type DesignRunPhase,
-  type DesignRunState,
-  type DesignRunStatus,
-} from './run.js'
-export {
   designBuildCorrectionPrompt,
   designBuildPrompt,
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
   designWorkspaceFileBaseline,
-  exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
   validateExactBuildFiles,

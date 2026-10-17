@@ -828,12 +828,6 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     return { status: 'ready', limits: mapCodexRateLimits(response) }
   }
 
-  /** Compatibility view while the orchestrator migrates to the richer source state. */
-  async rateLimits(): Promise<ProviderLimit[]> {
-    const source = await this.rateLimitSource()
-    return source.status === 'ready' ? source.limits : []
-  }
-
   /**
    * Spend one earned reset. The caller owns the idempotency key so a retry of
    * the same attempt cannot redeem a second credit.

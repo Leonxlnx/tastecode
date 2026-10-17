@@ -202,10 +202,6 @@ function grokBilling(): Promise<GrokBilling> {
   return billingRead
 }
 
-export async function grokLimits(): Promise<ProviderLimit[]> {
-  return mapGrokBilling(await grokBilling())
-}
-
 /** Provider-local availability keeps shared code free of Grok auth checks. */
 export async function grokLimitSource(
   signIn: () => Promise<GrokSignIn> = grokSignIn,
