@@ -59,6 +59,24 @@ describe('MCP settings', () => {
     expect(screen.getByText('Changes apply when you start or resume a session.')).toBeTruthy()
   })
 
+  it('keeps the session note off an empty project list', async () => {
+    const transport = client(async () => ({
+      capabilities: { inventory: false, add: true, reload: false },
+      servers: [],
+    }))
+    render(
+      <McpSettings
+        transport={transport}
+        provider="claude-code"
+        providerName="Claude Code"
+        projectPath="/work/project"
+        projectName="Project"
+      />,
+    )
+    expect(await screen.findByText('No MCP servers have been added to this project.')).toBeTruthy()
+    expect(screen.queryByText('Changes apply when you start or resume a session.')).toBeNull()
+  })
+
   it('hides an inherited server by ID without inventing transport or changing global settings', async () => {
     const requests: unknown[] = []
     const transport = client(async (method, params) => {
