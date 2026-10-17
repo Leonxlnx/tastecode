@@ -9,6 +9,7 @@ import type {
   AssistantPhase,
   Capabilities,
   DomainEvent,
+  Item,
   Model,
   ProviderContextSettings,
   Thread,
@@ -489,32 +490,30 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
       output?: string,
       diff?: GrokDiff,
     ) => {
-      this.emit('event', {
-        type: 'item.completed',
-        item: {
-          id: entry.itemId,
-          turnId,
-          type: entry.itemType,
-          status,
-          ...(entry.itemType === 'command'
-            ? {
-                command: entry.command ?? entry.label,
-                ...(output ? { text: output } : {}),
-              }
-            : {}),
-          ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
-          ...(entry.itemType === 'file_change' && (diff || output)
-            ? {
-                text: diff?.text ?? output,
-                ...(diff ? { linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved } : {}),
-              }
-            : {}),
-          ...(entry.itemType === 'tool_call'
-            ? { text: [entry.label, entry.argumentLine, output].filter(Boolean).join('\n') }
-            : {}),
-          createdAt: Date.now(),
-        },
-      })
+      const item: Item = {
+        id: entry.itemId,
+        turnId,
+        type: entry.itemType,
+        status,
+        ...(entry.itemType === 'command'
+          ? {
+              command: entry.command ?? entry.label,
+              ...(output ? { text: output } : {}),
+            }
+          : {}),
+        ...(entry.itemType === 'file_change' && entry.path ? { path: entry.path } : {}),
+        ...(entry.itemType === 'file_change' && (diff || output)
+          ? {
+              text: diff?.text ?? output,
+              ...(diff ? { linesAdded: diff.linesAdded, linesRemoved: diff.linesRemoved } : {}),
+            }
+          : {}),
+        ...(entry.itemType === 'tool_call'
+          ? { text: [entry.label, entry.argumentLine, output].filter(Boolean).join('\n') }
+          : {}),
+        createdAt: Date.now(),
+      }
+      this.emit('event', { type: 'item.completed', item })
     }
     const finishItems = (status: 'completed' | 'failed', messagePhase?: AssistantPhase) => {
       reasoning.complete(turnId, 'reasoning', this, status)
@@ -593,29 +592,27 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : {}),
           } satisfies OpenTool
           tools.set(frame.toolCallId, entry)
-          this.emit('event', {
-            type: 'item.started',
-            item: {
-              id: itemId,
-              turnId,
-              type: itemType,
-              status: 'started',
-              ...(itemType === 'command'
-                ? {
-                    command: frame.rawInput?.command ?? entry.label,
-                  }
-                : {}),
-              ...(itemType === 'file_change' && entry.path
-                ? {
-                    path: entry.path,
-                  }
-                : {}),
-              ...(itemType === 'tool_call'
-                ? { text: [entry.label, argumentLine].filter(Boolean).join('\n') }
-                : {}),
-              createdAt: Date.now(),
-            },
-          })
+          const item: Item = {
+            id: itemId,
+            turnId,
+            type: itemType,
+            status: 'started',
+            ...(itemType === 'command'
+              ? {
+                  command: frame.rawInput?.command ?? entry.label,
+                }
+              : {}),
+            ...(itemType === 'file_change' && entry.path
+              ? {
+                  path: entry.path,
+                }
+              : {}),
+            ...(itemType === 'tool_call'
+              ? { text: [entry.label, argumentLine].filter(Boolean).join('\n') }
+              : {}),
+            createdAt: Date.now(),
+          }
+          this.emit('event', { type: 'item.started', item })
           return
         }
         if (frame.type === 'tool_call_update' && frame.toolCallId && frame.status) {
