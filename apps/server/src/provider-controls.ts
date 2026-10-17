@@ -41,7 +41,8 @@ type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
 /**
  * The Codex control process serves no commands, so a `commands` watch holds no
- * lease; services report command changes through `InventoryRead.changed`.
+ * process lease. It does watch a project inventory's configuration folders,
+ * and services report command changes through `InventoryRead.changed`.
  */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
 
@@ -215,6 +216,8 @@ const defaultServices = {
       mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
       discover: async (projectPath, options) =>
         (await loadClaude()).discoverClaudeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadClaude()).claudeInventoryWatchPaths(projectPath),
     },
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
@@ -669,6 +672,7 @@ export class ProviderControls {
     if (!services.projectInventory) return undefined
     const inventory = new ProjectInventoryCache({
       service: services.projectInventory,
+      watchTtlMs: this.#skills.ttlMs,
       onChanged: (projectPath, parts) => {
         if (this.#closed) return
         if (parts.includes('mcp')) this.#options.onMcpChanged?.(provider, projectPath)
@@ -894,6 +898,9 @@ export class ProviderControls {
 
   #watch(provider: ProviderId, projectPath: string, targets: WatchTarget[]) {
     this.#assertOpen()
+    if (targets.includes('mcp') || targets.includes('commands')) {
+      this.#projectInventories.get(provider)?.watch(projectPath)
+    }
     if (PROVIDER_CAPABILITIES[provider].notifications) {
       if (targets.includes('skills')) this.#skills.add(projectPath)
       if (targets.includes('mcp')) this.#mcp.add(projectPath)

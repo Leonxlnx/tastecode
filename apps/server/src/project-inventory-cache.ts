@@ -1,4 +1,5 @@
 import type { McpCapabilities, McpServer, ProviderCommand, ResultOf } from '@harness/contracts'
+import { InventoryWatcher, type FolderWatch, type InventoryWatchTarget } from './inventory-watch.js'
 
 /** What a provider loads for one project when no chat is open there. */
 export type ProjectInventory = { commands: ProviderCommand[]; servers: McpServer[] }
@@ -19,6 +20,8 @@ export type ProjectInventoryService = {
   /** What the MCP inventory supports when the probe answers. */
   mcpCapabilities: McpCapabilities
   discover: ProjectInventoryProbe
+  /** Folders whose changes can change a project's answer, watched while someone looks. */
+  watchPaths?: (projectPath: string) => InventoryWatchTarget[] | Promise<InventoryWatchTarget[]>
 }
 
 /** The provider's own servers, before TasteCode's project overrides. */
@@ -54,6 +57,10 @@ export type ProjectInventoryCacheOptions = {
   /** How long a project whose probe failed answers "unavailable" before the next try. */
   retryMs?: number
   maxProjects?: number
+  /** How long one look at an inventory keeps its folders watched. */
+  watchTtlMs?: number
+  watchDebounceMs?: number
+  watch?: FolderWatch
 }
 
 /**
@@ -70,6 +77,7 @@ export class ProjectInventoryCache {
   readonly #timeoutMs: number
   readonly #retryMs: number
   readonly #maxProjects: number
+  readonly #watcher: InventoryWatcher | undefined
   #running: { projectPath: string; timer: ReturnType<typeof setTimeout> } | undefined
 
   constructor(options: ProjectInventoryCacheOptions) {
@@ -78,6 +86,36 @@ export class ProjectInventoryCache {
     this.#timeoutMs = options.timeoutMs ?? 45_000
     this.#retryMs = options.retryMs ?? 60_000
     this.#maxProjects = options.maxProjects ?? 32
+    const watchPaths = options.service.watchPaths
+    this.#watcher = watchPaths
+      ? new InventoryWatcher({
+          targets: watchPaths,
+          ttlMs: options.watchTtlMs ?? 60_000,
+          ...(options.watchDebounceMs !== undefined ? { debounceMs: options.watchDebounceMs } : {}),
+          ...(options.watch ? { watch: options.watch } : {}),
+          // Readers re-read on the change; an open chat answers, else a probe refreshes.
+          onChange: (projectPath) => {
+            if (this.invalidate(projectPath))
+              this.#options.onChanged(projectPath, ['commands', 'mcp'])
+          },
+        })
+      : undefined
+  }
+
+  /** Watches the project's configuration while a lease lasts; renewing extends it. */
+  watch(projectPath: string): void {
+    this.#watcher?.lease(projectPath)
+  }
+
+  /** The configuration changed: answers stay until a read refreshes them. */
+  invalidate(projectPath: string): boolean {
+    const entry = this.#entries.get(projectPath)
+    if (!entry) return false
+    if (entry.state === 'probing') entry.dirty = true
+    if (entry.commands) entry.commands = { ...entry.commands, at: Number.NEGATIVE_INFINITY }
+    if (entry.servers) entry.servers = { ...entry.servers, at: Number.NEGATIVE_INFINITY }
+    entry.failedAt = undefined
+    return true
   }
 
   /** A live chat answers first; without one, the cache or a probe does. */
@@ -126,6 +164,7 @@ export class ProjectInventoryCache {
   }
 
   forget(projectPath: string): void {
+    this.#watcher?.forget(projectPath)
     const entry = this.#entries.get(projectPath)
     if (!entry) return
     entry.abort?.abort()
@@ -134,6 +173,7 @@ export class ProjectInventoryCache {
   }
 
   clear(): void {
+    this.#watcher?.clear()
     if (this.#running) clearTimeout(this.#running.timer)
     this.#running = undefined
     for (const entry of this.#entries.values()) entry.abort?.abort()
@@ -272,7 +312,11 @@ export class ProjectInventoryCache {
     if (inventory) {
       entry.failedAt = undefined
       // A change during the probe may not be in its answer; the next read refreshes.
-      for (const part of this.#apply(entry, inventory, entry.dirty ? 0 : Date.now()))
+      for (const part of this.#apply(
+        entry,
+        inventory,
+        entry.dirty ? Number.NEGATIVE_INFINITY : Date.now(),
+      ))
         changed.add(part)
     } else if (!entry.commands && !entry.servers) entry.failedAt = Date.now()
     entry.dirty = false

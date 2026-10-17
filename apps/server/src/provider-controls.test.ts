@@ -240,6 +240,35 @@ describe('declared provider controls', () => {
     expect(createCodex).not.toHaveBeenCalled()
   })
 
+  it("watches a project's configuration while its commands or MCP servers are watched", async () => {
+    const watchPaths = vi.fn(() => [])
+    const { registry, createCodex } = setup({
+      services: {
+        'claude-code': {
+          projectInventory: {
+            mcpCapabilities: {
+              inventory: true,
+              add: true,
+              update: true,
+              remove: true,
+              reload: false,
+              startOAuth: false,
+              cancelOAuth: false,
+            },
+            discover: async () => ({ commands: [], servers: [] }),
+            watchPaths,
+          },
+        },
+      },
+    })
+    const claude = registry.forProvider('claude-code')
+    expect(claude.watch('/skills-only', ['skills'])).toEqual({ expiresInMs: 100 })
+    expect(claude.watch('/project', ['commands'])).toEqual({ expiresInMs: 100 })
+    claude.watch('/project', ['mcp'])
+    await flush()
+    expect(watchPaths.mock.calls).toEqual([['/project']])
+    expect(createCodex).not.toHaveBeenCalled()
+  })
   it('stops a running project probe when the controls reset', async () => {
     const signals: AbortSignal[] = []
     const discover = vi.fn(

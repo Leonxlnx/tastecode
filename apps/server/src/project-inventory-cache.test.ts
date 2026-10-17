@@ -255,6 +255,73 @@ describe('project inventory cache', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('re-reads a project after its configuration changes while someone looks', async () => {
+    const listeners: Array<(event: string, filename: string | null) => void> = []
+    const watchPaths = vi.fn(() => [{ directory: '/repo', names: ['.mcp.json'] }])
+    const { cache, probes, changes } = setup({
+      service: {
+        mcpCapabilities: capabilities,
+        watchPaths,
+        discover: (projectPath, { signal, onUpdate }) =>
+          new Promise((resolve, reject) => {
+            probes.push({ projectPath, signal, update: onUpdate, resolve, reject })
+          }),
+      },
+      watchTtlMs: 60_000,
+      watch: (_directory, listener) => {
+        listeners.push(listener)
+        return { close: () => {}, on: () => ({}) as never }
+      },
+    })
+    await cache.listMcpServers('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    probes[0]!.resolve(full)
+    await vi.advanceTimersByTimeAsync(0)
+    changes.length = 0
+
+    cache.watch('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(watchPaths).toHaveBeenCalledWith('/repo')
+    listeners[0]!('change', 'README.md')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(changes).toEqual([])
+    listeners[0]!('change', '.mcp.json')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(changes).toEqual([['/repo', ['commands', 'mcp']]])
+
+    // The answer on screen stays while the refresh runs.
+    await expect(cache.listMcpServers('/repo')).resolves.toEqual({
+      capabilities,
+      servers: full.servers,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probes).toHaveLength(2)
+    probes[1]!.resolve({ ...full, servers: [server('docs'), server('notes')] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(changes).toEqual([
+      ['/repo', ['commands', 'mcp']],
+      ['/repo', ['mcp']],
+    ])
+    cache.clear()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('refreshes again when the configuration changed during a probe', async () => {
+    const { cache, probes, changes } = setup()
+    expect(cache.invalidate('/unknown')).toBe(false)
+    await cache.listCommands('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(cache.invalidate('/repo')).toBe(true)
+    probes[0]!.resolve(full)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(changes).toEqual([['/repo', ['commands', 'mcp']]])
+    await expect(cache.listCommands('/repo')).resolves.toEqual({
+      commands: full.commands,
+      loading: false,
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probes).toHaveLength(2)
+  })
   it('stops probes and stays quiet once cleared or forgotten', async () => {
     const { cache, probes, changes } = setup()
     await cache.listCommands('/a')
