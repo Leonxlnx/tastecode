@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import {
   detectProviders,
@@ -269,10 +270,11 @@ describe('install command resolution', () => {
     await expect(installCommandFor('codex')).resolves.toBe(codex.setup?.installCommand)
   })
 
-  it('resolves install commands from the server-side tables only', async () => {
-    await expect(installCommandFor('claude-code')).resolves.toBe(
-      'npm install -g @anthropic-ai/claude-code',
-    )
+  it('installs Claude Code with the native installer, not npm', async () => {
+    const claude = find(await detectProviders(system()), 'claude-code')
+    expect(claude.setup?.installCommand).toBe(claudeInstallCommand())
+    await expect(installCommandFor('claude-code')).resolves.toBe(claudeInstallCommand())
+    expect(claudeInstallCommand()).not.toMatch(/npm/)
   })
 
   it('resolves nightly CLI and ACP installs from trusted tables', async () => {

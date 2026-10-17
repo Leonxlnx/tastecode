@@ -7,7 +7,7 @@ import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
-import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
+import { CLAUDE_UPDATES, claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { GROK_UPDATES } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
@@ -66,7 +66,7 @@ const PROBES: Probe[] = [
     capabilities: CLAUDE_CAPABILITIES,
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
-      installCommand: 'npm install -g @anthropic-ai/claude-code',
+      installCommand: claudeInstallCommand(),
       login: 'provider',
       loginOpensBrowser: true,
     },
