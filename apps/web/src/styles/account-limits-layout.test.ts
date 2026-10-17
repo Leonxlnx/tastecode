@@ -53,5 +53,10 @@ describe('account limits layout', () => {
       'background: color-mix(in srgb, var(--text) 52%, transparent)',
     )
     expect(rule('.account-menu__limit-bar > span[data-low]')).toContain('background: var(--error)')
+    // The even-pace mark is a neutral hairline, never a second bar or an alert.
+    const pace = rule('.account-menu__limit-bar > .account-menu__limit-pace')
+    expect(pace).toContain('width: 1px')
+    expect(pace).toContain('pointer-events: none')
+    expect(pace).not.toContain('--error')
   })
 })

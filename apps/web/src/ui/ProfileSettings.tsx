@@ -9,13 +9,14 @@ import {
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
+import type { Account, UsageHistoryDay } from '@harness/contracts'
 import {
   IconDice5 as Dice,
   IconAlertCircle as CircleAlert,
   IconRefresh as RefreshCw,
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
+import { cacheHitRate, useUsageHistory } from '../usage-history-state.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
@@ -400,51 +401,7 @@ export function ProfileSettings(props: {
 }
 
 function ProfileHistory(props: { transport: Transport }) {
-  const [data, setData] = useState<ResultOf<'usage.history'>>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [requestVersion, setRequestVersion] = useState(0)
-  const forceRefresh = useRef(false)
-
-  useEffect(() => {
-    let active = true
-    let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const schedulePoll = () => {
-      pollTimer = setTimeout(() => {
-        if (active) setRequestVersion((version) => version + 1)
-      }, 500)
-    }
-    const refresh = forceRefresh.current
-    forceRefresh.current = false
-    setLoading(true)
-    setError(undefined)
-    void props.transport
-      .request('usage.history', { range: 'all', ...(refresh ? { refresh: true } : {}) })
-      .then((result) => {
-        if (!active) return
-        setData(result)
-        if (result.scan.status === 'scanning') {
-          schedulePoll()
-        }
-      })
-      .catch((requestError: unknown) => {
-        if (!active) return
-        setError(requestError instanceof Error ? requestError.message : String(requestError))
-        if (data?.scan.status === 'scanning') schedulePoll()
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-      clearTimeout(pollTimer)
-    }
-  }, [props.transport, requestVersion])
-
-  const refresh = useCallback(() => {
-    forceRefresh.current = true
-    setRequestVersion((version) => version + 1)
-  }, [])
+  const { data, loading, error, refresh } = useUsageHistory(props.transport, 'all')
 
   if (!data) {
     return (
@@ -474,7 +431,7 @@ function ProfileHistory(props: { transport: Transport }) {
   const topModels = data.models
     .toSorted((left, right) => right.totals.processedTokens - left.totals.processedTokens)
     .slice(0, 5)
-  const cacheRate = cacheHitRate(data)
+  const cacheRate = cacheHitRate(data.totals)
   const perActiveDay =
     data.activeDays > 0 ? data.totals.processedTokens / data.activeDays : undefined
 
@@ -802,11 +759,6 @@ function streakSummary(daily: UsageHistoryDay[]) {
     index -= 1
   }
   return { current, longest }
-}
-
-function cacheHitRate(data: ResultOf<'usage.history'>): number | undefined {
-  const observed = data.totals.cachedInputTokens + data.totals.uncachedInputTokens
-  return observed > 0 ? data.totals.cachedInputTokens / observed : undefined
 }
 
 function activityLevel(tokens: number, maximum: number): number {

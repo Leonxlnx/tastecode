@@ -66,3 +66,54 @@ describe('usage summary limit source', () => {
     )
   })
 })
+
+describe('usage summary with held limits', () => {
+  const held = {
+    provider: 'claude-code' as const,
+    status: 'ready' as const,
+    limits: [{ id: 'five_hour', label: '5-hour', usedPercent: 30 }],
+    checkedAt: 1_000,
+    origin: 'read' as const,
+  }
+
+  it('answers with the held source at once and refreshes it in the background', async () => {
+    // A vendor read that never answers must not hold the chat's totals.
+    const load = vi.fn(() => new Promise<never>(() => {}))
+
+    await expect(usageSummaryWithLimits(totals, 'claude-code', load, () => held)).resolves.toEqual({
+      ...totals,
+      limitSource: held,
+      limits: held.limits,
+    })
+    expect(load).toHaveBeenCalledExactlyOnceWith('claude-code')
+  })
+
+  it('waits for the first read while nothing is held', async () => {
+    const load = vi.fn(async () => held)
+
+    await expect(
+      usageSummaryWithLimits(totals, 'claude-code', load, () => undefined),
+    ).resolves.toMatchObject({ limitSource: held })
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it('keeps answering when the background refresh fails', async () => {
+    const load = vi.fn().mockRejectedValue(new Error('provider request failed'))
+
+    await expect(
+      usageSummaryWithLimits(totals, 'claude-code', load, () => held),
+    ).resolves.toMatchObject({ limitSource: held })
+    await vi.waitFor(() => expect(load).toHaveBeenCalledOnce())
+  })
+
+  it('rejects a held source for a different provider', async () => {
+    await expect(
+      usageSummaryWithLimits(
+        totals,
+        'codex',
+        async () => held,
+        () => held,
+      ),
+    ).rejects.toThrow('Provider limit source did not match the request.')
+  })
+})

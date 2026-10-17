@@ -2005,3 +2005,52 @@ function messageTexts(events: DomainEvent[]) {
       : [],
   )
 }
+
+describe('Claude plan-limit events', () => {
+  // Captured from claude 2.1.296 during a turn on 2026-10-16 (ids replaced).
+  const rateLimitEvent = (rateLimitInfo: Record<string, unknown>) =>
+    ({
+      type: 'rate_limit_event',
+      rate_limit_info: rateLimitInfo,
+      uuid: crypto.randomUUID(),
+      session_id: 'session-1',
+    }) as unknown as SDKMessage
+
+  it('reports the windows of a rate_limit_event and asks for no new read', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({ createQuery: fake.createQuery })
+    const updated = vi.fn()
+    const logs: string[] = []
+    adapter.on('limitsUpdated', updated)
+    adapter.on('log', (line) => logs.push(line))
+    const thread = await adapter.startThread('/repo')
+    await adapter.sendTurn(thread.id, 'Work')
+
+    fake.queries[0]!.emitMessage(
+      rateLimitEvent({
+        status: 'allowed',
+        resetsAt: 1_792_119_600,
+        rateLimitType: 'five_hour',
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled',
+        isUsingOverage: false,
+        unifiedWindows: { five_hour: { utilization: 0.76, resetsAt: 1_792_119_600 } },
+      }),
+    )
+    // An event without a window this mapping knows changes nothing.
+    fake.queries[0]!.emitMessage(rateLimitEvent({ status: 'allowed', rateLimitType: 'overage' }))
+    await tick()
+
+    expect(updated).toHaveBeenCalledExactlyOnceWith([
+      {
+        id: 'five_hour',
+        label: 'Session',
+        usedPercent: 76,
+        resetsAt: 1_792_119_600_000,
+        windowMinutes: 300,
+      },
+    ])
+    expect(logs.filter((line) => line.startsWith('rate limit'))).toEqual([])
+    await adapter.dispose()
+  })
+})

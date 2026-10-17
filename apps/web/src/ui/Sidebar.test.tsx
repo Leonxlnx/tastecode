@@ -210,7 +210,7 @@ describe('Sidebar chat actions', () => {
     expect(document.activeElement).toBe(limits)
   })
 
-  it('labels the card meter with its provider and drops it while a provider has failed', () => {
+  it('labels the card meter with its provider and marks a source whose limits are unknown', () => {
     const totals = {
       inputTokens: 0,
       cachedInputTokens: 0,
@@ -238,15 +238,54 @@ describe('Sidebar chat actions', () => {
     expect(meter()?.title).toBe('Grok · Weekly · 60% left')
     expect(meter()?.querySelector('.account__usage-value')?.textContent).toBe('60% left')
     expect(meter()?.querySelector('svg.account__usage-mark')).not.toBeNull()
+    expect(meter()?.querySelector('.account__usage-unknown')).toBeNull()
 
-    // A provider that failed with nothing on record might be the tighter one,
-    // so a full bar for the others would be a false all-clear.
+    // A provider that failed with nothing on record, or was not read yet,
+    // might be the tighter one: the known figure stays and says so.
     view.unmount()
+    const second = renderProjectCatalog([], undefined, [
+      ready('codex', 60),
+      { provider: 'claude-code', status: 'error', message: 'Claude usage request failed.' },
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: totals,
+          today: totals,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable', reason: 'failed' },
+        },
+      },
+    ])
+    expect(meter()?.title).toBe('Codex · Weekly · 40% left · Claude Code and Grok limits unknown')
+    expect(meter()?.querySelector('.account__usage-unknown')).not.toBeNull()
+
+    // A first read still running is not unknown yet, and a source without
+    // plan limits is known to have none.
+    second.unmount()
     renderProjectCatalog([], undefined, [
-      ready('codex', 0),
+      ready('codex', 60),
+      { provider: 'claude-code', status: 'loading' },
+      {
+        provider: 'grok',
+        status: 'ready',
+        summary: {
+          session: totals,
+          today: totals,
+          limits: [],
+          limitSource: { provider: 'grok', status: 'unavailable', reason: 'noPlan' },
+        },
+      },
+    ])
+    expect(meter()?.title).toBe('Codex · Weekly · 40% left')
+    expect(meter()?.querySelector('.account__usage-unknown')).toBeNull()
+  })
+
+  it('shows no figure while every source with limits is unknown', () => {
+    renderProjectCatalog([], undefined, [
       { provider: 'claude-code', status: 'error', message: 'Claude usage request failed.' },
     ])
-    expect(meter()).toBeNull()
+    expect(document.querySelector('.account__usage')).toBeNull()
     expect(document.querySelector('.account__name')?.textContent).toBe('Local profile')
   })
 
