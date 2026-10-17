@@ -941,6 +941,42 @@ describe('local usage history', () => {
     expect(saved.files.map((file) => file.size)).toEqual([statSync(codexFile).size])
   })
 
+  it('adds a grown transcript to its indexed records without counting a message twice', async () => {
+    const root = temporaryDirectory()
+    const claudeRoot = path.join(root, 'claude')
+    mkdirSync(claudeRoot, { recursive: true })
+    const transcript = path.join(claudeRoot, 'session.jsonl')
+    const message = (id: string, output: number) =>
+      claudeAssistantRecord({
+        id,
+        model: 'claude-sonnet-4-5',
+        sessionId: 'claude-session',
+        input: 100,
+        cached: 1_000,
+        output,
+      })
+    writeJsonLines(transcript, [message('first', 10), message('second', 5)])
+    const options = {
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { 'claude-code': claudeRoot, codex: path.join(root, 'missing-codex') },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    }
+    const service = usageService(options)
+    await settledHistory(service, 'all')
+
+    // The second message's next content block repeats its usage, now with more output.
+    appendFileSync(transcript, `${JSON.stringify(message('second', 25))}\n`)
+    appendFileSync(transcript, `${JSON.stringify(message('third', 1))}\n`)
+    const grown = await settledHistory(service, 'all', true)
+    expect(grown.totals).toMatchObject({ outputTokens: 36, processedTokens: 3_336 })
+    const indexed = (await readUsageCache(options.cacheFile)).files
+    expect(indexed[0]?.entries).toHaveLength(1)
+
+    rmSync(options.cacheFile)
+    const rebuilt = await settledHistory(usageService(options), 'all')
+    expect(rounded(grown.totals)).toEqual(rounded(rebuilt.totals))
+  })
+
   it('reads a grown rollout on from where the last scan stopped, also after a restart', async () => {
     const fixture = grownRolloutFixture()
     const options = {
