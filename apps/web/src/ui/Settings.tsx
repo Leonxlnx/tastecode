@@ -473,9 +473,7 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main" ref={main}>
-        <div
-          className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
-        >
+        <div className="settings__content">
           {section === 'profile' ? (
             <ProfileSettings
               transport={props.transport}
