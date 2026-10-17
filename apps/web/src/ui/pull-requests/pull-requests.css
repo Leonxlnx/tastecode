@@ -1360,10 +1360,6 @@
   text-overflow: ellipsis;
 }
 
-.pr-fact-arrow {
-  color: var(--text-3);
-}
-
 .pr-status-text {
   display: inline-flex;
   align-items: center;
@@ -1658,10 +1654,7 @@
 .pr-comment-editor textarea,
 .pr-thread-reply textarea,
 .pr-inline-editor textarea,
-.pr-inline-thread-reply textarea,
-.pr-dialog textarea,
-.pr-dialog input,
-.pr-dialog select {
+.pr-inline-thread-reply textarea {
   width: 100%;
   min-width: 0;
   background: var(--chrome-recessed);
@@ -1678,10 +1671,7 @@
 .pr-comment-editor textarea:focus,
 .pr-thread-reply textarea:focus,
 .pr-inline-editor textarea:focus,
-.pr-inline-thread-reply textarea:focus,
-.pr-dialog textarea:focus,
-.pr-dialog input:focus,
-.pr-dialog select:focus {
+.pr-inline-thread-reply textarea:focus {
   border-color: color-mix(in srgb, var(--text-3) 70%, var(--chrome-border));
 }
 
@@ -2388,11 +2378,6 @@
   border-top: 1px solid var(--line);
 }
 
-.pr-inline-thread-comment > strong {
-  color: var(--text-2);
-  font-size: var(--t-xs);
-}
-
 .pr-inline-thread-comment > header > strong {
   color: var(--text-2);
   font-size: var(--t-xs);
@@ -2570,56 +2555,11 @@
   padding: 16px 17px;
 }
 
-.pr-dialog-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 13px;
-}
-
-.pr-dialog-field {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-
-.pr-dialog-field.is-wide {
-  grid-column: 1 / -1;
-}
-
-.pr-dialog input,
-.pr-dialog select {
-  height: 34px;
-  padding: 0 9px;
-}
-
-.pr-dialog select {
-  padding-right: 30px;
-  background-image: var(--select-chevron);
-  background-position: right 8px center;
-  background-repeat: no-repeat;
-  background-size: 14px;
-  appearance: none;
-}
-
-.pr-dialog textarea {
-  min-height: 150px;
-  padding: 9px;
-  resize: vertical;
-}
-
-.pr-dialog-note,
-.pr-dialog-description,
 .pr-confirm-copy {
   margin: 0;
   color: var(--text-3);
   font-size: var(--t-sm);
   line-height: 1.45;
-}
-
-.pr-dialog-note {
-  margin-top: 12px;
 }
 
 .pr-dialog-actions {

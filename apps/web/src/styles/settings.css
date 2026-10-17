@@ -802,8 +802,7 @@
   line-height: 1.35;
 }
 
-.settings__row-note,
-.settings__group-note {
+.settings__row-note {
   color: var(--text-2);
   font-size: var(--t-xs);
   line-height: 1.5;
@@ -815,31 +814,16 @@
   overflow-wrap: anywhere;
 }
 
-.settings__group-note {
-  margin: 0;
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-}
-
-.settings__group-note--top {
-  border-top: 0;
-}
-
 .settings__group-title--inside {
   margin: 12px 14px 4px;
 }
 
-.provider-settings__status,
 .provider-settings__actions {
   display: flex;
   align-items: center;
   gap: 10px;
   color: var(--text-3);
   font-size: var(--t-sm);
-}
-
-.provider-settings__status .is-ready {
-  color: var(--text-2);
 }
 
 /* The provider roster is open type, not a card. Each provider is one line
@@ -1456,10 +1440,6 @@
   white-space: nowrap;
 }
 
-.model-visibility__search {
-  width: 100%;
-}
-
 .model-visibility__models {
   border-top: 1px solid var(--line);
 }
@@ -1471,14 +1451,6 @@
 
 .model-visibility__model.is-hidden .settings__row-title {
   color: var(--text-2);
-}
-
-.model-visibility__empty {
-  margin: 0;
-  padding: 16px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  text-align: center;
 }
 
 /* Errors never grow a second line: a red dot next to the row's control
@@ -2258,11 +2230,6 @@
   .model-visibility__source {
     grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 8px;
-  }
-
-  .model-visibility__search {
-    grid-column: 1 / -1;
-    grid-row: 2;
   }
 
   .settings__row {
