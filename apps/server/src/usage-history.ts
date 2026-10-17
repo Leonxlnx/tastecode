@@ -1,11 +1,11 @@
-import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
-import os from 'node:os'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { Worker } from 'node:worker_threads'
-import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
-import { readCodexUsageHistory } from '@harness/adapter-codex'
-import { readGrokUsageHistory } from '@harness/adapter-grok'
-import { readOpenCodeUsageHistory } from '@harness/adapter-opencode'
+import { CLAUDE_USAGE_HISTORY } from '@harness/adapter-claude-code'
+import { CODEX_USAGE_HISTORY } from '@harness/adapter-codex'
+import { GROK_USAGE_HISTORY } from '@harness/adapter-grok'
+import { OPENCODE_USAGE_HISTORY } from '@harness/adapter-opencode'
+import type { UsageArchiveFile, UsageHistorySource } from '@harness/proc/usage-archive'
 import type {
   LocalUsageRecord,
   ProviderId,
@@ -19,15 +19,41 @@ import type {
 } from '@harness/contracts'
 import type { StoredUsageEvent } from './store.js'
 
-const CACHE_VERSION = 7
+const CACHE_VERSION = 8
+/**
+ * Version 7 holds the same parser output as version 8, one record per message
+ * instead of compacted. It is migrated in place so upgrading needs no rescan.
+ */
+const UNCOMPACTED_CACHE_VERSION = 7
+/**
+ * A saved index up to this size parses on the event loop in about 100 ms. A
+ * larger one, such as a per-message version 7 index of 50 MB, parses in the
+ * worker so the server keeps answering and streaming meanwhile.
+ */
+const MAIN_THREAD_CACHE_BYTES = 4 * 1024 * 1024
 const PARSE_CONCURRENCY = 8
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
-const LOCAL_USAGE_PROVIDERS = [
+/** Local provider archives in scan order. Each adapter owns its CLI home and file layout. */
+const LOCAL_USAGE_SOURCES: readonly UsageHistorySource<ProviderId, LocalUsageRecord>[] = [
+  CLAUDE_USAGE_HISTORY,
+  CODEX_USAGE_HISTORY,
+  GROK_USAGE_HISTORY,
+  OPENCODE_USAGE_HISTORY,
+]
+/**
+ * Every provider the usage page reports, in display order. Providers without
+ * a local archive are counted from Harness's own usage events alone.
+ */
+const REPORTED_PROVIDERS = [
   'claude-code',
   'codex',
   'grok',
+  'cursor',
   'opencode',
+  'antigravity',
+  'acp',
+  'api',
 ] as const satisfies readonly ProviderId[]
 const BACKGROUND_SCAN_FAILURE = 'Usage indexing failed in the background:'
 
@@ -49,14 +75,19 @@ export type UsageCache = {
   warnings: string[]
 }
 
-type UsageFile = Omit<CachedUsageFile, 'entries'> & {
-  read: (filePath: string) => Promise<LocalUsageRecord[]>
-}
+type UsageFile = UsageArchiveFile<LocalUsageRecord> & { provider: ProviderId }
 
 export type SourceState = {
   provider: ProviderId
-  label: string
+  /** The adapter's name for a local archive; event-only providers have none. */
+  label?: string
   available: boolean
+}
+
+/** Where one local source's archive lives, resolved once on the main thread. */
+export type UsageSourceRoot = {
+  provider: ProviderId
+  root: string
 }
 
 type ModelRate = {
@@ -77,17 +108,19 @@ export type UsageScanProgress = {
   filesTotal: number
 }
 
+/** Which version of a file the index holds; a file that still matches is not parsed again. */
+export type UsageFileFingerprint = Pick<CachedUsageFile, 'path' | 'provider' | 'mtimeMs' | 'size'>
+
 export type UsageScanRequest = {
-  cacheFile: string
-  codexSessionsRoot: string
-  claudeProjectsRoot: string
-  grokLogPath: string
-  openCodeDataRoot: string
-  generatedAt: number
+  sources: UsageSourceRoot[]
+  indexed: UsageFileFingerprint[]
 }
 
 export type UsageScanResult = {
-  cache: UsageCache
+  /** Every archive file that exists now, in discovery order. */
+  paths: string[]
+  /** The files parsed in this scan. Any other path keeps the entries already indexed for it. */
+  files: CachedUsageFile[]
   sources: SourceState[]
   warnings: string[]
 }
@@ -98,18 +131,38 @@ export type UsageScanRunner = (
   signal: AbortSignal,
 ) => Promise<UsageScanResult>
 
+/** A saved index as read back. `current` is false when the file must be saved again as is. */
+export type LoadedUsageCache = { cache: UsageCache; current: boolean }
+
+export type UsageCacheLoader = (filePath: string, signal: AbortSignal) => Promise<LoadedUsageCache>
+
 type UsageHistoryOptions = {
   cacheFile: string
-  codexSessionsRoot?: string
-  claudeProjectsRoot?: string
-  grokLogPath?: string
-  openCodeDataRoot?: string
+  /** Archive locations by provider in place of each adapter's default; tests use fixtures. */
+  sourceRoots?: Partial<Record<ProviderId, string>>
   harnessUsage?: () => StoredUsageEvent[]
   now?: () => Date
   scanRunner?: UsageScanRunner
+  /** Reads a saved index too large to parse on the event loop; production uses the worker. */
+  largeCacheLoader?: UsageCacheLoader
 }
 
 type AttributedUsageRecord = LocalUsageRecord & { provider: ProviderId }
+
+/** Everything in a usage.history result that is derived from the indexed records. */
+type UsageHistoryFigures = Omit<UsageHistoryResult, 'generatedAt' | 'scan' | 'warnings'>
+
+/**
+ * One range's figures and the inputs they came from. Each input is replaced,
+ * never mutated, so comparing references tells whether the figures still hold.
+ */
+type AggregateMemo = {
+  cache: UsageCache | undefined
+  harness: readonly StoredUsageEvent[]
+  sources: readonly SourceState[]
+  endDate: string
+  figures: UsageHistoryFigures
+}
 
 const emptyTotals = (): UsageHistoryTotals => ({
   uncachedInputTokens: 0,
@@ -133,14 +186,18 @@ const emptyTotals = (): UsageHistoryTotals => ({
  */
 export class UsageHistoryService {
   readonly #cacheFile: string
-  readonly #codexSessionsRoot: string
-  readonly #claudeProjectsRoot: string
-  readonly #grokLogPath: string
-  readonly #openCodeDataRoot: string
+  readonly #sourceRoots: UsageSourceRoot[]
   readonly #harnessUsage: () => StoredUsageEvent[]
   readonly #now: () => Date
   readonly #scanRunner: UsageScanRunner
+  readonly #largeCacheLoader: UsageCacheLoader
+  /** Aborted on dispose, which stops a saved index still being read in the worker. */
+  readonly #lifetime = new AbortController()
   #cache: UsageCache | undefined
+  /** Whether the cache file holds `#cache`; a scan that changes nothing then skips the write. */
+  #cacheSaved = false
+  /** When the last completed scan started, or the saved index's time before the first one. */
+  #generatedAt = 0
   #cacheLoading: Promise<UsageCache> | undefined
   #refreshing: Promise<void> | undefined
   #resetting: Promise<void> | undefined
@@ -149,6 +206,8 @@ export class UsageHistoryService {
   #lastRefreshStartedAt: number | undefined
   #harnessUsageLoadedAt = 0
   #harnessUsageCache: StoredUsageEvent[] | undefined
+  /** Pages poll usage.history every 500 ms while a scan runs; most polls change nothing. */
+  readonly #aggregates = new Map<UsageHistoryRange, AggregateMemo>()
   #sources: SourceState[] = emptySources()
   #scanWarnings: string[] = []
   #scan: UsageHistoryResult['scan'] = {
@@ -159,29 +218,14 @@ export class UsageHistoryService {
 
   constructor(options: UsageHistoryOptions) {
     this.#cacheFile = options.cacheFile
-    this.#codexSessionsRoot =
-      options.codexSessionsRoot ??
-      path.join(process.env['CODEX_HOME'] ?? path.join(os.homedir(), '.codex'), 'sessions')
-    this.#claudeProjectsRoot =
-      options.claudeProjectsRoot ??
-      path.join(process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude'), 'projects')
-    this.#grokLogPath =
-      options.grokLogPath ??
-      path.join(
-        process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok'),
-        'logs',
-        'unified.jsonl',
-      )
-    this.#openCodeDataRoot =
-      options.openCodeDataRoot ??
-      process.env['OPENCODE_DATA_DIR'] ??
-      path.join(
-        process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'),
-        'opencode',
-      )
+    this.#sourceRoots = LOCAL_USAGE_SOURCES.map((source) => ({
+      provider: source.provider,
+      root: options.sourceRoots?.[source.provider] ?? source.root(),
+    }))
     this.#harnessUsage = options.harnessUsage ?? (() => [])
     this.#now = options.now ?? (() => new Date())
     this.#scanRunner = options.scanRunner ?? runUsageScanWorker
+    this.#largeCacheLoader = options.largeCacheLoader ?? loadUsageCacheInWorker
   }
 
   /** Starts indexing without putting it on the server startup or request path. */
@@ -224,6 +268,7 @@ export class UsageHistoryService {
 
   dispose(): void {
     this.#disposed = true
+    this.#lifetime.abort()
     this.#scanAbort?.abort()
     this.#scanAbort = undefined
   }
@@ -236,6 +281,8 @@ export class UsageHistoryService {
 
     const cache = emptyUsageCache()
     this.#cache = cache
+    this.#cacheSaved = false
+    this.#generatedAt = 0
     this.#cacheLoading = Promise.resolve(cache)
     this.#sources = cache.sources
     this.#scanWarnings = []
@@ -243,14 +290,21 @@ export class UsageHistoryService {
     this.#lastRefreshStartedAt = undefined
     this.#harnessUsageCache = undefined
     this.#harnessUsageLoadedAt = 0
+    this.#aggregates.clear()
     this.#startRefresh()
   }
 
   async #loadCache(): Promise<UsageCache> {
     if (this.#cache) return this.#cache
     if (!this.#cacheLoading) {
-      this.#cacheLoading = readUsageCache(this.#cacheFile).then((cache) => {
+      this.#cacheLoading = loadSavedUsageCache(
+        this.#cacheFile,
+        this.#largeCacheLoader,
+        this.#lifetime.signal,
+      ).then(({ cache, current }) => {
         this.#cache = cache
+        this.#cacheSaved = current
+        this.#generatedAt = cache.generatedAt
         this.#sources = cache.sources
         this.#scanWarnings = cache.warnings
         return cache
@@ -261,15 +315,20 @@ export class UsageHistoryService {
 
   #startRefresh(): void {
     if (this.#refreshing || this.#disposed) return
-    this.#lastRefreshStartedAt = this.#now().getTime()
+    const generatedAt = this.#now().getTime()
+    this.#lastRefreshStartedAt = generatedAt
     this.#scan = { status: 'scanning', filesProcessed: 0, filesTotal: 0 }
+    const base = this.#cache ?? emptyUsageCache()
+    // The worker gets fingerprints only; the entries stay here instead of being
+    // re-read from disk by the worker and cloned back after every scan.
     const request: UsageScanRequest = {
-      cacheFile: this.#cacheFile,
-      codexSessionsRoot: this.#codexSessionsRoot,
-      claudeProjectsRoot: this.#claudeProjectsRoot,
-      grokLogPath: this.#grokLogPath,
-      openCodeDataRoot: this.#openCodeDataRoot,
-      generatedAt: this.#lastRefreshStartedAt,
+      sources: this.#sourceRoots,
+      indexed: base.files.map((file) => ({
+        path: file.path,
+        provider: file.provider,
+        mtimeMs: file.mtimeMs,
+        size: file.size,
+      })),
     }
     const abort = new AbortController()
     this.#scanAbort = abort
@@ -284,9 +343,7 @@ export class UsageHistoryService {
         ),
       )
       .then((result) => {
-        this.#cache = result.cache
-        this.#sources = result.sources
-        this.#scanWarnings = result.warnings
+        if (!abort.signal.aborted) return this.#applyScan(base, result, generatedAt)
       })
       .catch((error: unknown) => {
         if (this.#disposed) return
@@ -302,24 +359,91 @@ export class UsageHistoryService {
       })
   }
 
+  /**
+   * Folds a scan into the index. A scan that finds nothing new keeps the same
+   * index object, so computed figures stay valid, and does not rewrite the file.
+   */
+  async #applyScan(base: UsageCache, result: UsageScanResult, generatedAt: number): Promise<void> {
+    if (this.#cache !== base) return
+    const cache = mergeScan(base, result, generatedAt)
+    if (cache !== base) {
+      this.#cache = cache
+      this.#sources = cache.sources
+      this.#cacheSaved = false
+    }
+    this.#generatedAt = generatedAt
+    this.#scanWarnings = cache.warnings
+    if (this.#cacheSaved) return
+    try {
+      await writeCache(this.#cacheFile, { ...cache, generatedAt })
+      this.#cacheSaved = true
+    } catch {
+      this.#scanWarnings = [
+        ...cache.warnings,
+        'Usage was loaded, but its local scan cache could not be saved.',
+      ]
+    }
+  }
+
   #aggregate(range: UsageHistoryRange): UsageHistoryResult {
     const now = this.#now()
     const endDate = localDateKey(now)
-    const localEntries: AttributedUsageRecord[] = (this.#cache?.files ?? []).flatMap((file) =>
-      file.entries.map((entry) => ({ ...entry, provider: file.provider })),
-    )
-    const richProviders = new Set(localEntries.map((entry) => entry.provider))
-    const harnessEntries = harnessUsageRecords(
-      this.#cachedHarnessUsage(now.getTime()),
-      richProviders,
-    )
-    const allEntries = [...localEntries, ...harnessEntries]
-    const earliestDate = allEntries.reduce<string | undefined>(
-      (earliest, entry) => (!earliest || entry.date < earliest ? entry.date : earliest),
-      undefined,
-    )
-    const startDate = rangeStartDate(range, endDate, earliestDate)
-    const entries = allEntries.filter((entry) => entry.date >= startDate && entry.date <= endDate)
+    const harness = this.#cachedHarnessUsage(now.getTime())
+    let memo = this.#aggregates.get(range)
+    if (
+      !memo ||
+      memo.cache !== this.#cache ||
+      memo.harness !== harness ||
+      memo.sources !== this.#sources ||
+      memo.endDate !== endDate
+    ) {
+      memo = {
+        cache: this.#cache,
+        harness,
+        sources: this.#sources,
+        endDate,
+        figures: this.#figures(range, endDate, harness),
+      }
+      this.#aggregates.set(range, memo)
+    }
+
+    const { figures } = memo
+    const warnings = [...this.#scanWarnings]
+    if (figures.totals.unpricedTokens > 0) {
+      warnings.push('Some token records use models without a known public API price.')
+    }
+    return {
+      range: figures.range,
+      startDate: figures.startDate,
+      endDate: figures.endDate,
+      generatedAt: this.#generatedAt,
+      sessionCount: figures.sessionCount,
+      activeDays: figures.activeDays,
+      totals: figures.totals,
+      providers: figures.providers,
+      models: figures.models,
+      daily: figures.daily,
+      sources: figures.sources,
+      scan: { ...this.#scan },
+      warnings,
+    }
+  }
+
+  #figures(
+    range: UsageHistoryRange,
+    endDate: string,
+    harness: readonly StoredUsageEvent[],
+  ): UsageHistoryFigures {
+    const files = this.#cache?.files ?? []
+    const richProviders = new Set<ProviderId>()
+    for (const file of files) if (file.entries.length > 0) richProviders.add(file.provider)
+    const harnessEntries = harnessUsageRecords(harness, richProviders)
+    // 'all' starts at the earliest record, so it only needs the end bound.
+    const fixedStartDate = range === 'all' ? undefined : rangeStartDate(range, endDate, undefined)
+    let earliestDate: string | undefined
+    const providerSessions = new Map<ProviderId, Set<string>>()
+    /** Rates by model and date; the price table is string matching, so each pair is looked up once. */
+    const rates = new Map<string, ModelRate | null>()
 
     const totals = emptyTotals()
     const sessions = new Set<string>()
@@ -333,22 +457,39 @@ export class UsageHistoryService {
       MutableBucket & { providers: Map<ProviderId, { tokens: number; estimatedCostUsd: number }> }
     >()
 
-    for (const entry of entries) {
-      const sessionKey = `${entry.provider}:${entry.sessionId}`
-      const priced = priceEntry(entry.model, entry.date, entry.tokens, entry.longContext)
+    const addRecord = (providerId: ProviderId, entry: LocalUsageRecord) => {
+      if (!earliestDate || entry.date < earliestDate) earliestDate = entry.date
+      let knownSessions = providerSessions.get(providerId)
+      if (!knownSessions) {
+        knownSessions = new Set()
+        providerSessions.set(providerId, knownSessions)
+      }
+      knownSessions.add(entry.sessionId)
+      if (entry.date > endDate || (fixedStartDate !== undefined && entry.date < fixedStartDate)) {
+        return
+      }
+
+      const sessionKey = `${providerId}:${entry.sessionId}`
+      const rateKey = `${entry.model}\u0000${entry.date}`
+      let rate = rates.get(rateKey)
+      if (rate === undefined) {
+        rate = modelRate(entry.model, entry.date) ?? null
+        rates.set(rateKey, rate)
+      }
+      const priced = priceEntry(rate, entry.tokens, entry.longContext)
       addEntry(totals, entry.tokens, priced)
       sessions.add(sessionKey)
 
-      const provider = getBucket(providerBuckets, entry.provider)
+      const provider = getBucket(providerBuckets, providerId)
       addEntry(provider.totals, entry.tokens, priced)
       provider.sessions.add(sessionKey)
 
-      const modelKey = `${entry.provider}:${entry.model}`
+      const modelKey = `${providerId}:${entry.model}`
       let model = modelBuckets.get(modelKey)
       if (!model) {
         model = {
           ...newBucket(),
-          provider: entry.provider,
+          provider: providerId,
           model: entry.model,
           pricing: priced.pricing,
         }
@@ -365,7 +506,7 @@ export class UsageHistoryService {
       }
       addEntry(day.totals, entry.tokens, priced)
       day.sessions.add(sessionKey)
-      const providerDay = day.providers.get(entry.provider) ?? {
+      const providerDay = day.providers.get(providerId) ?? {
         tokens: 0,
         estimatedCostUsd: 0,
       }
@@ -374,8 +515,13 @@ export class UsageHistoryService {
         entry.tokens.providerReportedCostUsd > 0
           ? entry.tokens.providerReportedCostUsd
           : priced.estimatedCostUsd
-      day.providers.set(entry.provider, providerDay)
+      day.providers.set(providerId, providerDay)
     }
+    for (const file of files) {
+      for (const entry of file.entries) addRecord(file.provider, entry)
+    }
+    for (const entry of harnessEntries) addRecord(entry.provider, entry)
+    const startDate = fixedStartDate ?? rangeStartDate(range, endDate, earliestDate)
 
     const providers: UsageHistoryProvider[] = [...providerBuckets.entries()]
       .map(([provider, bucket]) => ({
@@ -415,29 +561,22 @@ export class UsageHistoryService {
 
     const sourceProviders = new Set<ProviderId>([
       ...this.#sources.map((source) => source.provider),
-      ...allEntries.map((entry) => entry.provider),
+      ...providerSessions.keys(),
     ])
     const sources = [...sourceProviders].map((provider) => {
       const localSource = this.#sources.find((source) => source.provider === provider)
-      const sessionCount = new Set(
-        allEntries.filter((entry) => entry.provider === provider).map((entry) => entry.sessionId),
-      ).size
+      const sessionCount = providerSessions.get(provider)?.size ?? 0
       return {
         provider,
         available: (localSource?.available ?? false) || sessionCount > 0,
         sessionCount,
       }
     })
-    const warnings = [...this.#scanWarnings]
-    if (totals.unpricedTokens > 0) {
-      warnings.push('Some token records use models without a known public API price.')
-    }
 
     return {
       range,
       startDate,
       endDate,
-      generatedAt: this.#cache?.generatedAt ?? 0,
       sessionCount: sessions.size,
       activeDays: daily.filter((day) => day.totals.processedTokens > 0).length,
       totals,
@@ -445,8 +584,6 @@ export class UsageHistoryService {
       models,
       daily,
       sources,
-      scan: { ...this.#scan },
-      warnings,
     }
   }
 
@@ -459,61 +596,35 @@ export class UsageHistoryService {
   }
 }
 
-/** Performs the expensive archive walk. Production calls this inside a Worker. */
+/**
+ * Performs the expensive archive walk. Production calls this inside a Worker.
+ * It parses only files that differ from the indexed fingerprints and returns
+ * just those, so neither side copies the whole index.
+ */
 export async function runUsageHistoryScan(
   request: UsageScanRequest,
   onProgress: (progress: UsageScanProgress) => void = () => undefined,
 ): Promise<UsageScanResult> {
-  const previous = await readUsageCache(request.cacheFile)
-  const { files, sources } = await discoverUsageSources([
-    {
-      provider: 'claude-code',
-      label: 'Claude Code',
-      discover: () =>
-        discoverJsonlRoot(request.claudeProjectsRoot, 'claude-code', readClaudeUsageHistory),
-    },
-    {
-      provider: 'codex',
-      label: 'Codex',
-      discover: () => discoverJsonlRoot(request.codexSessionsRoot, 'codex', readCodexUsageHistory),
-    },
-    {
-      provider: 'grok',
-      label: 'Grok',
-      discover: () => discoverSingleFile(request.grokLogPath, 'grok', readGrokUsageHistory),
-    },
-    {
-      provider: 'opencode',
-      label: 'OpenCode',
-      discover: () => discoverOpenCodeDatabases(request.openCodeDataRoot, readOpenCodeUsageHistory),
-    },
-  ])
-  const warnings: string[] = []
-  const priorByPath = new Map(previous.files.map((file) => [file.path, file]))
-  const nextFiles = new Map<string, CachedUsageFile>()
-  const changed: UsageFile[] = []
-
-  for (const file of files) {
-    const prior = priorByPath.get(file.path)
-    if (
+  const { files, sources } = await discoverUsageSources(request.sources)
+  const indexed = new Map(request.indexed.map((file) => [file.path, file]))
+  const changed = files.filter((file) => {
+    const prior = indexed.get(file.path)
+    return !(
       prior?.provider === file.provider &&
       prior.mtimeMs === file.mtimeMs &&
       prior.size === file.size
-    ) {
-      nextFiles.set(file.path, prior)
-    } else {
-      changed.push(file)
-    }
-  }
+    )
+  })
 
+  const parsed: CachedUsageFile[] = []
   let failedFiles = 0
   let filesProcessed = files.length - changed.length
   const reportProgress = () => onProgress({ filesProcessed, filesTotal: files.length })
   reportProgress()
   await mapWithConcurrency(changed, PARSE_CONCURRENCY, async (file) => {
     try {
-      const entries = await file.read(file.path)
-      nextFiles.set(file.path, {
+      const entries = compactUsageRecords(await file.read(file.path))
+      parsed.push({
         path: file.path,
         provider: file.provider,
         mtimeMs: file.mtimeMs,
@@ -521,46 +632,92 @@ export async function runUsageHistoryScan(
         entries,
       })
     } catch {
+      // The indexed entries, if any, stay until the file can be read again.
       failedFiles += 1
-      const prior = priorByPath.get(file.path)
-      if (prior) nextFiles.set(file.path, prior)
     } finally {
       filesProcessed += 1
       if (filesProcessed === files.length || filesProcessed % 25 === 0) reportProgress()
     }
   })
 
-  if (failedFiles > 0) {
-    warnings.push(
-      `${failedFiles.toLocaleString()} history ${failedFiles === 1 ? 'file could' : 'files could'} not be read.`,
-    )
-  }
+  const warnings =
+    failedFiles > 0
+      ? [
+          `${failedFiles.toLocaleString()} history ${failedFiles === 1 ? 'file could' : 'files could'} not be read.`,
+        ]
+      : []
+  return { paths: files.map((file) => file.path), files: parsed, sources, warnings }
+}
 
-  const cache: UsageCache = {
+/**
+ * Builds the next index from a scan, in discovery order. Returns `base` itself
+ * when the scan changed no file, source or warning.
+ */
+function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: number): UsageCache {
+  const indexed = new Map(base.files.map((file) => [file.path, file]))
+  const parsed = new Map(result.files.map((file) => [file.path, file]))
+  const files: CachedUsageFile[] = []
+  for (const filePath of new Set(result.paths)) {
+    const file = parsed.get(filePath) ?? indexed.get(filePath)
+    if (file) files.push(file)
+  }
+  const unchanged =
+    files.length === base.files.length &&
+    files.every((file, index) => file === base.files[index]) &&
+    JSON.stringify(result.sources) === JSON.stringify(base.sources) &&
+    JSON.stringify(result.warnings) === JSON.stringify(base.warnings)
+  if (unchanged) return base
+  return {
     version: CACHE_VERSION,
-    generatedAt: request.generatedAt,
-    files: [...nextFiles.values()],
-    sources,
-    warnings,
+    generatedAt,
+    files,
+    sources: result.sources,
+    warnings: result.warnings,
   }
-  try {
-    await writeCache(request.cacheFile, cache)
-  } catch {
-    warnings.push('Usage was loaded, but its local scan cache could not be saved.')
-    cache.warnings = warnings
-  }
-  return { cache, sources, warnings }
 }
 
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
+  return (await loadUsageCache(filePath)).cache
+}
+
+/**
+ * Reads the saved index on the event loop when it is small, otherwise with the
+ * large-index loader. If that loader fails, the index is still read here: a
+ * slow read beats discarding it and reparsing every archive.
+ */
+async function loadSavedUsageCache(
+  filePath: string,
+  loadLarge: UsageCacheLoader,
+  signal: AbortSignal,
+): Promise<LoadedUsageCache> {
+  const size = await stat(filePath).then(
+    (stats) => stats.size,
+    () => 0,
+  )
+  if (size <= MAIN_THREAD_CACHE_BYTES) return loadUsageCache(filePath)
+  try {
+    return await loadLarge(filePath, signal)
+  } catch {
+    // Stopped by dispose: nothing reads the index any more, and an empty index
+    // marked as saved can never overwrite the file.
+    if (signal.aborted) return { cache: emptyUsageCache(), current: true }
+    return loadUsageCache(filePath)
+  }
+}
+
+/** Reads the saved index on the calling thread; a missing or damaged file reads as empty. */
+export async function loadUsageCache(filePath: string): Promise<LoadedUsageCache> {
   try {
     const value = JSON.parse(await readFile(filePath, 'utf8')) as Partial<UsageCache>
-    if (value.version === CACHE_VERSION && isCachedUsageFiles(value.files)) {
+    const uncompacted = value.version === UNCOMPACTED_CACHE_VERSION
+    if ((value.version === CACHE_VERSION || uncompacted) && isCachedUsageFiles(value.files)) {
       const cachedProviders = new Set(value.files.map((file) => file.provider))
-      return {
+      const cache: UsageCache = {
         version: CACHE_VERSION,
         generatedAt: typeof value.generatedAt === 'number' ? value.generatedAt : 0,
-        files: value.files,
+        files: uncompacted
+          ? value.files.map((file) => ({ ...file, entries: compactUsageRecords(file.entries) }))
+          : value.files,
         sources: Array.isArray(value.sources)
           ? mergeSources(value.sources)
           : emptySources().map((source) => ({
@@ -571,11 +728,73 @@ export async function readUsageCache(filePath: string): Promise<UsageCache> {
           ? value.warnings.filter((warning): warning is string => typeof warning === 'string')
           : [],
       }
+      return { cache, current: !uncompacted }
     }
   } catch {
     // A missing or interrupted cache write is equivalent to a cold start.
   }
-  return emptyUsageCache()
+  return { cache: emptyUsageCache(), current: false }
+}
+
+/**
+ * Merges the records of one file that no usage figure can tell apart: same day,
+ * model, session and long-context flag, and either all or none carrying a
+ * provider-reported cost. Pricing and every total are linear in the token
+ * counts, so a merged record adds up to exactly what its members did. Claude
+ * Code logs one record per message, which made the cache grow by megabytes a
+ * day; this keeps one record per session, model and day.
+ */
+export function compactUsageRecords(entries: readonly LocalUsageRecord[]): LocalUsageRecord[] {
+  const merged = new Map<string, LocalUsageRecord>()
+  for (const entry of entries) {
+    const key = [
+      entry.date,
+      entry.model,
+      entry.sessionId,
+      entry.longContext,
+      entry.tokens.providerReportedCostUsd > 0,
+    ].join('\u0000')
+    const prior = merged.get(key)
+    merged.set(
+      key,
+      prior ? { ...prior, tokens: addTokenCounts(prior.tokens, entry.tokens) } : entry,
+    )
+  }
+  return [...merged.values()]
+}
+
+/**
+ * Sums two records' counts without changing what the aggregation reads. A
+ * provider total present on only one side is completed from the other side's
+ * parts, which is the value the aggregation would have derived for it.
+ */
+function addTokenCounts(left: TokenCounts, right: TokenCounts): TokenCounts {
+  const tokens: TokenCounts = {
+    uncachedInputTokens: left.uncachedInputTokens + right.uncachedInputTokens,
+    cachedInputTokens: left.cachedInputTokens + right.cachedInputTokens,
+    cacheWrite5mInputTokens: left.cacheWrite5mInputTokens + right.cacheWrite5mInputTokens,
+    cacheWrite1hInputTokens: left.cacheWrite1hInputTokens + right.cacheWrite1hInputTokens,
+    outputTokens: left.outputTokens + right.outputTokens,
+    reasoningTokens: left.reasoningTokens + right.reasoningTokens,
+    providerReportedCostUsd: left.providerReportedCostUsd + right.providerReportedCostUsd,
+  }
+  if (left.observedInputTokens !== undefined || right.observedInputTokens !== undefined) {
+    tokens.observedInputTokens = observedInputTokens(left) + observedInputTokens(right)
+  }
+  if (left.processedTokens !== undefined || right.processedTokens !== undefined) {
+    tokens.processedTokens = processedTokens(left) + processedTokens(right)
+  }
+  return tokens
+}
+
+function observedInputTokens(tokens: TokenCounts): number {
+  return (
+    tokens.observedInputTokens ??
+    tokens.uncachedInputTokens +
+      tokens.cachedInputTokens +
+      tokens.cacheWrite5mInputTokens +
+      tokens.cacheWrite1hInputTokens
+  )
 }
 
 function isCachedUsageFiles(value: unknown): value is CachedUsageFile[] {
@@ -587,7 +806,7 @@ function isCachedUsageFile(value: unknown): value is CachedUsageFile {
   return Boolean(
     file &&
     typeof file['path'] === 'string' &&
-    LOCAL_USAGE_PROVIDERS.some((provider) => provider === file['provider']) &&
+    LOCAL_USAGE_SOURCES.some((source) => source.provider === file['provider']) &&
     nonNegativeNumber(file['mtimeMs']) &&
     nonNegativeNumber(file['size']) &&
     Array.isArray(file['entries']) &&
@@ -643,17 +862,39 @@ function emptyUsageCache(): UsageCache {
   }
 }
 
+/** One job for the usage worker: index changed archive files, or read a saved index. */
+export type UsageWorkerJob =
+  { kind: 'scan'; request: UsageScanRequest } | { kind: 'load'; cacheFile: string }
+
+export type UsageWorkerMessage =
+  | { type: 'progress'; progress: UsageScanProgress }
+  | { type: 'complete'; result: UsageScanResult | LoadedUsageCache }
+  | { type: 'error'; message: string }
+
 function runUsageScanWorker(
   request: UsageScanRequest,
   onProgress: (progress: UsageScanProgress) => void,
   signal: AbortSignal,
 ): Promise<UsageScanResult> {
+  return runUsageWorker({ kind: 'scan', request }, signal, onProgress)
+}
+
+/** Parses, validates and compacts the saved index off the event loop; only the result is cloned back. */
+function loadUsageCacheInWorker(cacheFile: string, signal: AbortSignal): Promise<LoadedUsageCache> {
+  return runUsageWorker({ kind: 'load', cacheFile }, signal)
+}
+
+function runUsageWorker<Result>(
+  job: UsageWorkerJob,
+  signal: AbortSignal,
+  onProgress: (progress: UsageScanProgress) => void = () => undefined,
+): Promise<Result> {
   return new Promise((resolve, reject) => {
     const sourceExtension = import.meta.url.endsWith('.ts') ? 'ts' : 'js'
     const worker = new Worker(
       new URL(`./usage-history-worker.${sourceExtension}`, import.meta.url),
       {
-        workerData: request,
+        workerData: job,
         name: 'harness-usage-index',
         execArgv: process.execArgv.filter((argument) => !argument.startsWith('--input-type')),
       },
@@ -679,7 +920,7 @@ function runUsageScanWorker(
         return
       }
       settle()
-      if (message.type === 'complete') resolve(message.result)
+      if (message.type === 'complete') resolve(message.result as Result)
       else reject(new Error(message.message))
     })
     worker.on('error', (error) => {
@@ -696,22 +937,11 @@ function runUsageScanWorker(
   })
 }
 
-type UsageWorkerMessage =
-  | { type: 'progress'; progress: UsageScanProgress }
-  | { type: 'complete'; result: UsageScanResult }
-  | { type: 'error'; message: string }
-
 function emptySources(): SourceState[] {
-  return [
-    { provider: 'claude-code', label: 'Claude Code', available: false },
-    { provider: 'codex', label: 'Codex', available: false },
-    { provider: 'grok', label: 'Grok', available: false },
-    { provider: 'cursor', label: 'Cursor', available: false },
-    { provider: 'opencode', label: 'OpenCode', available: false },
-    { provider: 'antigravity', label: 'Antigravity', available: false },
-    { provider: 'acp', label: 'ACP', available: false },
-    { provider: 'api', label: 'API', available: false },
-  ]
+  return REPORTED_PROVIDERS.map((provider) => {
+    const local = LOCAL_USAGE_SOURCES.find((source) => source.provider === provider)
+    return { provider, ...(local ? { label: local.label } : {}), available: false }
+  })
 }
 
 function mergeSources(sources: readonly SourceState[]): SourceState[] {
@@ -727,22 +957,13 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-type UsageSourceDefinition = {
-  provider: ProviderId
-  label: string
-  discover: () => Promise<{ available: boolean; files: UsageFile[] }>
-}
-
 async function discoverUsageSources(
-  definitions: readonly UsageSourceDefinition[],
+  roots: readonly UsageSourceRoot[],
 ): Promise<{ files: UsageFile[]; sources: SourceState[] }> {
   const discovered = await Promise.all(
-    definitions.map(async ({ provider, label, discover }) => {
-      try {
-        return { provider, label, ...(await discover()) }
-      } catch {
-        return { provider, label, available: false, files: [] }
-      }
+    roots.flatMap(({ provider, root }) => {
+      const source = LOCAL_USAGE_SOURCES.find((candidate) => candidate.provider === provider)
+      return source ? [discoverSource(source, root)] : []
     }),
   )
   return {
@@ -757,106 +978,22 @@ async function discoverUsageSources(
   }
 }
 
-async function discoverJsonlRoot(
+async function discoverSource(
+  source: UsageHistorySource<ProviderId, LocalUsageRecord>,
   root: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const rootStat = await stat(root)
-  if (!rootStat.isDirectory()) return { available: false, files: [] }
-  return { available: true, files: await listJsonlFiles(root, provider, read) }
-}
-
-async function discoverSingleFile(
-  filePath: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const file = await usageFile(filePath, provider, read)
-  return { available: Boolean(file), files: file ? [file] : [] }
-}
-
-async function discoverOpenCodeDatabases(
-  root: string,
-  read: UsageFile['read'],
-): Promise<{ available: boolean; files: UsageFile[] }> {
-  const rootStat = await stat(root)
-  if (!rootStat.isDirectory()) return { available: false, files: [] }
-  const entries = await readdir(root, { withFileTypes: true })
-  const files = await Promise.all(
-    entries
-      .filter(
-        (entry) =>
-          entry.isFile() && entry.name.startsWith('opencode') && entry.name.endsWith('.db'),
-      )
-      .map((entry) => {
-        const filePath = path.join(root, entry.name)
-        // SQLite can append only to the WAL for long stretches. Folding the
-        // sidecar into the fingerprint catches new messages without reparsing
-        // an unchanged database on every refresh.
-        return usageFile(filePath, 'opencode', read, [`${filePath}-wal`], true)
-      }),
-  )
-  return { available: true, files: files.filter((file) => file !== undefined) }
-}
-
-async function usageFile(
-  filePath: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-  companions: readonly string[] = [],
-  allowEmpty = false,
-): Promise<UsageFile | undefined> {
-  const fileStat = await stat(filePath)
-  if (!fileStat.isFile() || (!allowEmpty && fileStat.size === 0)) return undefined
-  let mtimeMs = fileStat.mtimeMs
-  let size = fileStat.size
-  for (const companion of companions) {
-    try {
-      const companionStat = await stat(companion)
-      mtimeMs = Math.max(mtimeMs, companionStat.mtimeMs)
-      size += companionStat.size
-    } catch {
-      // A database without a WAL is the common clean-shutdown state.
+): Promise<{ provider: ProviderId; label: string; available: boolean; files: UsageFile[] }> {
+  const { provider, label } = source
+  try {
+    const archive = await source.discover(root)
+    return {
+      provider,
+      label,
+      available: archive.available,
+      files: archive.files.map((file) => ({ ...file, provider })),
     }
+  } catch {
+    return { provider, label, available: false, files: [] }
   }
-  return { path: filePath, provider, mtimeMs, size, read }
-}
-
-async function listJsonlFiles(
-  root: string,
-  provider: ProviderId,
-  read: UsageFile['read'],
-): Promise<UsageFile[]> {
-  const result: UsageFile[] = []
-  const pending = [root]
-  while (pending.length > 0) {
-    const directory = pending.pop()
-    if (!directory) continue
-    let entries
-    try {
-      entries = await readdir(directory, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    await Promise.all(
-      entries.map(async (entry) => {
-        const fullPath = path.join(directory, entry.name)
-        if (entry.isDirectory()) {
-          pending.push(fullPath)
-          return
-        }
-        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) return
-        try {
-          const file = await usageFile(fullPath, provider, read)
-          if (file) result.push(file)
-        } catch {
-          // A session can disappear between readdir and stat during cleanup.
-        }
-      }),
-    )
-  }
-  return result
 }
 
 function harnessUsageRecords(
@@ -934,8 +1071,7 @@ function subtractTokenCounts(current: TokenCounts, prior: TokenCounts | undefine
   }
 }
 
-function priceEntry(model: string, date: string, tokens: TokenCounts, longContext: boolean) {
-  const rate = modelRate(model, date)
+function priceEntry(rate: ModelRate | null, tokens: TokenCounts, longContext: boolean) {
   if (!rate) return { pricing: 'unpriced' as const, estimatedCostUsd: 0, cacheSavingsUsd: 0 }
   const inputMultiplier = longContext ? (rate.longContextMultipliers?.input ?? 1) : 1
   const outputMultiplier = longContext ? (rate.longContextMultipliers?.output ?? 1) : 1

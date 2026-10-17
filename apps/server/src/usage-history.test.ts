@@ -1,9 +1,17 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
 import type { ProviderId, UsageHistoryRange } from '@harness/contracts'
 import { afterEach, describe, expect, it } from 'vitest'
-import { readUsageCache, runUsageHistoryScan, UsageHistoryService } from './usage-history.js'
+import {
+  type CachedUsageFile,
+  loadUsageCache,
+  readUsageCache,
+  runUsageHistoryScan,
+  type UsageCacheLoader,
+  UsageHistoryService,
+} from './usage-history.js'
 
 const temporaryDirectories: string[] = []
 
@@ -85,8 +93,7 @@ describe('local usage history', () => {
 
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () => [
         {
           threadId: 'codex-session',
@@ -163,8 +170,7 @@ describe('local usage history', () => {
     writeJsonLines(codexFile, records)
     const options = {
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       now: () => new Date('2026-08-08T12:00:00.000Z'),
     }
     const service = usageService(options)
@@ -213,8 +219,7 @@ describe('local usage history', () => {
     const history = await settledHistory(
       usageService({
         cacheFile: path.join(root, 'cache', 'usage.json'),
-        codexSessionsRoot: codexRoot,
-        claudeProjectsRoot: claudeRoot,
+        sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
         now: () => new Date('2026-08-08T12:00:00.000Z'),
       }),
       'all',
@@ -255,10 +260,12 @@ describe('local usage history', () => {
     let scans = 0
     const service = new UsageHistoryService({
       cacheFile,
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: codexRoot,
+        'claude-code': claudeRoot,
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async (request, onProgress) => {
         scans += 1
         if (scans === 2) await secondScan.promise
@@ -306,8 +313,7 @@ describe('local usage history', () => {
     ])
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       now: () => new Date('2026-08-08T12:00:00.000Z'),
     })
 
@@ -324,8 +330,7 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () => [
         {
           threadId: 'api-session',
@@ -428,8 +433,7 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
+      sourceRoots: { codex: codexRoot, 'claude-code': claudeRoot },
       harnessUsage: () =>
         providers.map((provider) => ({
           threadId: `${provider}-session`,
@@ -468,8 +472,10 @@ describe('local usage history', () => {
     const at = new Date('2026-08-08T10:00:00.000Z').getTime()
     const service = usageService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: path.join(root, 'missing-codex'),
-      claudeProjectsRoot: path.join(root, 'missing-claude'),
+      sourceRoots: {
+        codex: path.join(root, 'missing-codex'),
+        'claude-code': path.join(root, 'missing-claude'),
+      },
       harnessUsage: () => [
         {
           threadId: 'antigravity-session',
@@ -517,10 +523,12 @@ describe('local usage history', () => {
     const gate = Promise.withResolvers<void>()
     const service = new UsageHistoryService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: codexRoot,
-      claudeProjectsRoot: claudeRoot,
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: codexRoot,
+        'claude-code': claudeRoot,
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async (request, onProgress) => {
         await gate.promise
         return runUsageHistoryScan(request, onProgress)
@@ -545,10 +553,12 @@ describe('local usage history', () => {
     let now = new Date('2026-08-08T12:00:00.000Z').getTime()
     const service = new UsageHistoryService({
       cacheFile: path.join(root, 'cache', 'usage.json'),
-      codexSessionsRoot: path.join(root, 'missing-codex'),
-      claudeProjectsRoot: path.join(root, 'missing-claude'),
-      grokLogPath: path.join(root, 'missing-grok.jsonl'),
-      openCodeDataRoot: path.join(root, 'missing-opencode'),
+      sourceRoots: {
+        codex: path.join(root, 'missing-codex'),
+        'claude-code': path.join(root, 'missing-claude'),
+        grok: path.join(root, 'missing-grok.jsonl'),
+        opencode: path.join(root, 'missing-opencode'),
+      },
       scanRunner: async () => {
         scans += 1
         throw new Error('Synthetic worker failure')
@@ -599,7 +609,7 @@ describe('local usage history', () => {
       )
 
       const cache = await readUsageCache(cacheFile)
-      expect(cache.version).toBe(7)
+      expect(cache.version).toBe(8)
       expect(cache.generatedAt).toBe(0)
       expect(cache.files).toEqual([])
     },
@@ -646,7 +656,7 @@ describe('local usage history', () => {
     )
 
     expect(await readUsageCache(cacheFile)).toMatchObject({
-      version: 7,
+      version: 8,
       generatedAt: 0,
       files: [],
     })
@@ -693,21 +703,433 @@ describe('local usage history', () => {
     )
 
     expect(await readUsageCache(cacheFile)).toMatchObject({
-      version: 7,
+      version: 8,
       generatedAt: 0,
       files: [],
     })
   })
+
+  it('compacts per-message records without changing any reported figure', async () => {
+    const root = temporaryDirectory()
+    const files = uncompactedFixtureFiles(root)
+    const rawFile = path.join(root, 'raw.json')
+    const legacyFile = path.join(root, 'legacy.json')
+    writeFileSync(rawFile, JSON.stringify(cacheFixture(8, files)))
+    writeFileSync(legacyFile, JSON.stringify(cacheFixture(7, files)))
+
+    const migrated = await readUsageCache(legacyFile)
+    expect(migrated.version).toBe(8)
+    expect(migrated.generatedAt).toBe(123)
+    expect(migrated.files.map((file) => file.entries.length)).toEqual([4, 1, 3])
+
+    for (const range of ['all', '7d'] as const) {
+      const raw = await cachedHistory(rawFile, range)
+      const compacted = await cachedHistory(legacyFile, range)
+      expect(rounded(compacted)).toEqual(rounded(raw))
+    }
+    const raw = await cachedHistory(rawFile, 'all')
+    expect(raw.sessionCount).toBe(5)
+    expect(
+      Object.fromEntries(
+        raw.models.map((model) => [`${model.provider}:${model.model}`, model.sessionCount]),
+      ),
+    ).toEqual({
+      'claude-code:claude-sonnet-4-5': 2,
+      'codex:gpt-5.6-sol': 1,
+      'opencode:gpt-5.6-sol': 1,
+      'opencode:private-model': 1,
+    })
+    expect(raw.daily.map((day) => day.sessionCount)).toEqual([1, 0, 0, 0, 0, 0, 0, 5])
+    expect(raw.totals.providerReportedTokens).toBe(60)
+  })
+
+  it('reuses computed figures until the index or the Harness events change', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    mkdirSync(codexRoot, { recursive: true })
+    writeJsonLines(path.join(codexRoot, 'session.jsonl'), [
+      { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+      {
+        timestamp: '2026-08-08T09:00:01.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-luna' },
+      },
+      codexTokenRecord('2026-08-08T09:01:00.000Z', { input_tokens: 1_000, output_tokens: 100 }),
+    ])
+    let harnessReads = 0
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile: path.join(root, 'cache', 'usage.json'),
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      harnessUsage: () => {
+        harnessReads += 1
+        return []
+      },
+      now: () => new Date(now),
+    })
+
+    const first = await settledHistory(service, '30d')
+    expect(first.totals.processedTokens).toBe(1_100)
+    const repeated = await service.history('30d')
+    expect(repeated.totals).toBe(first.totals)
+    expect(repeated.daily).toBe(first.daily)
+    expect(repeated.scan).not.toBe(first.scan)
+    expect(harnessReads).toBe(1)
+
+    now += 5_000
+    const reloaded = await service.history('30d')
+    expect(harnessReads).toBe(2)
+    expect(reloaded.totals).not.toBe(first.totals)
+    expect(reloaded.totals).toEqual(first.totals)
+  })
+
+  it('counts every archived session in sources, not only the selected range', async () => {
+    const root = temporaryDirectory()
+    const cacheFile = path.join(root, 'usage.json')
+    const entry = (sessionId: string, date: string) => ({
+      date,
+      model: 'claude-sonnet-4-5',
+      sessionId,
+      longContext: false,
+      tokens: {
+        uncachedInputTokens: 100,
+        cachedInputTokens: 0,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 10,
+        reasoningTokens: 0,
+        providerReportedCostUsd: 0,
+      },
+    })
+    writeFileSync(
+      cacheFile,
+      JSON.stringify(
+        cacheFixture(8, [
+          {
+            path: path.join(root, 'claude.jsonl'),
+            provider: 'claude-code',
+            mtimeMs: 1,
+            size: 1,
+            entries: [entry('older', '2026-07-01'), entry('recent', '2026-08-08')],
+          },
+        ]),
+      ),
+    )
+
+    const history = await cachedHistory(cacheFile, '7d')
+    expect(history.sessionCount).toBe(1)
+    expect(history.sources.find((source) => source.provider === 'claude-code')).toEqual({
+      provider: 'claude-code',
+      available: true,
+      sessionCount: 2,
+    })
+    expect(history.sources.find((source) => source.provider === 'codex')?.sessionCount).toBe(0)
+  })
+
+  it('migrates a per-message v7 cache in place without reparsing any file', async () => {
+    const root = temporaryDirectory()
+    const claudeRoot = path.join(root, 'claude')
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    mkdirSync(claudeRoot, { recursive: true })
+    writeJsonLines(
+      path.join(claudeRoot, 'session.jsonl'),
+      ['first', 'second', 'third'].map((id) =>
+        claudeAssistantRecord({
+          id,
+          model: 'claude-sonnet-4-5',
+          sessionId: 'claude-session',
+          input: 100,
+          cached: 40,
+          output: 10,
+        }),
+      ),
+    )
+    const progress: { filesProcessed: number; filesTotal: number }[] = []
+    const service = () =>
+      new UsageHistoryService({
+        cacheFile,
+        sourceRoots: {
+          'claude-code': claudeRoot,
+          codex: path.join(root, 'missing-codex'),
+          grok: path.join(root, 'missing-grok.jsonl'),
+          opencode: path.join(root, 'missing-opencode'),
+        },
+        scanRunner: (request, onProgress) =>
+          runUsageHistoryScan(request, (update) => {
+            progress.push(update)
+            onProgress(update)
+          }),
+        now: () => new Date('2026-08-08T12:00:00.000Z'),
+      })
+    const scanned = await settledHistory(service(), 'all')
+    const compacted = (await readUsageCache(cacheFile)).files
+    expect(compacted[0]?.entries).toHaveLength(1)
+
+    const perMessage = await readClaudeUsageHistory(path.join(claudeRoot, 'session.jsonl'))
+    expect(perMessage).toHaveLength(3)
+    const saved = JSON.parse(readFileSync(cacheFile, 'utf8')) as { files: CachedUsageFile[] }
+    writeFileSync(
+      cacheFile,
+      JSON.stringify({
+        ...saved,
+        version: 7,
+        files: saved.files.map((file) => ({ ...file, entries: perMessage })),
+      }),
+    )
+
+    progress.length = 0
+    const migrated = await settledHistory(service(), 'all')
+    expect(progress[0]).toEqual({ filesProcessed: 1, filesTotal: 1 })
+    expect(migrated.totals).toEqual(scanned.totals)
+    expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toMatchObject({ version: 8 })
+    expect((await readUsageCache(cacheFile)).files).toEqual(compacted)
+  })
+
+  it('saves the index only when a scan changes it', async () => {
+    const root = temporaryDirectory()
+    const codexRoot = path.join(root, 'codex')
+    const cacheFile = path.join(root, 'cache', 'usage.json')
+    const codexFile = path.join(codexRoot, 'session.jsonl')
+    mkdirSync(codexRoot, { recursive: true })
+    const records: unknown[] = [
+      { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+      {
+        timestamp: '2026-08-08T09:00:01.000Z',
+        type: 'turn_context',
+        payload: { model: 'gpt-5.6-luna' },
+      },
+      codexTokenRecord('2026-08-08T09:01:00.000Z', { input_tokens: 1_000, output_tokens: 100 }),
+    ]
+    writeJsonLines(codexFile, records)
+    const noEvents: never[] = []
+    let now = new Date('2026-08-08T12:00:00.000Z').getTime()
+    const service = usageService({
+      cacheFile,
+      sourceRoots: { codex: codexRoot, 'claude-code': path.join(root, 'missing-claude') },
+      harnessUsage: () => noEvents,
+      now: () => new Date(now),
+    })
+
+    const first = await settledHistory(service, 'all')
+    expect(first.generatedAt).toBe(now)
+    expect(JSON.parse(readFileSync(cacheFile, 'utf8'))).toMatchObject({ version: 8 })
+
+    writeFileSync(cacheFile, 'left alone')
+    now += 60_000
+    const unchanged = await settledHistory(service, 'all')
+    expect(readFileSync(cacheFile, 'utf8')).toBe('left alone')
+    expect(unchanged.totals).toBe(first.totals)
+    expect(unchanged.generatedAt).toBe(now)
+
+    records.push(
+      codexTokenRecord('2026-08-08T09:02:00.000Z', { input_tokens: 1_250, output_tokens: 125 }),
+    )
+    writeJsonLines(codexFile, records)
+    const grown = await settledHistory(service, 'all', true)
+    expect(grown.totals.processedTokens).toBe(1_375)
+    const saved = await readUsageCache(cacheFile)
+    expect(saved.generatedAt).toBe(now)
+    expect(saved.files.map((file) => file.size)).toEqual([statSync(codexFile).size])
+  })
+
+  it('reads a large saved index with the large-index loader and falls back when it fails', async () => {
+    const root = temporaryDirectory()
+    const smallFile = path.join(root, 'small.json')
+    const largeFile = path.join(root, 'large.json')
+    writeFileSync(smallFile, JSON.stringify(cacheFixture(7, uncompactedFixtureFiles(root))))
+    const perMessage = Array.from({ length: 20_000 }, () => ({
+      date: '2026-08-08',
+      model: 'claude-sonnet-4-5',
+      sessionId: 'claude',
+      longContext: false,
+      tokens: {
+        uncachedInputTokens: 1,
+        cachedInputTokens: 0,
+        cacheWrite5mInputTokens: 0,
+        cacheWrite1hInputTokens: 0,
+        outputTokens: 1,
+        reasoningTokens: 0,
+        providerReportedCostUsd: 0,
+      },
+    }))
+    const largeIndex = JSON.stringify(
+      cacheFixture(7, [
+        {
+          path: path.join(root, 'claude.jsonl'),
+          provider: 'claude-code',
+          mtimeMs: 1,
+          size: 1,
+          entries: perMessage,
+        },
+      ]),
+    )
+    writeFileSync(largeFile, largeIndex)
+    expect(statSync(largeFile).size).toBeGreaterThan(4 * 1024 * 1024)
+    const loaded: string[] = []
+    const loader: UsageCacheLoader = async (filePath) => {
+      loaded.push(filePath)
+      return loadUsageCache(filePath)
+    }
+
+    expect((await cachedHistory(smallFile, 'all', loader)).sessionCount).toBe(5)
+    expect(loaded).toEqual([])
+
+    const large = await cachedHistory(largeFile, 'all', loader)
+    expect(loaded).toEqual([largeFile])
+    expect(large.totals.processedTokens).toBe(40_000)
+    // The migrated index is saved compacted, so the next start reads it on the event loop.
+    expect(statSync(largeFile).size).toBeLessThan(4 * 1024 * 1024)
+    expect((await readUsageCache(largeFile)).files[0]?.entries).toHaveLength(1)
+
+    writeFileSync(largeFile, largeIndex)
+    let failedLoads = 0
+    const fellBack = await cachedHistory(largeFile, 'all', async () => {
+      failedLoads += 1
+      throw new Error('worker failed')
+    })
+    expect(failedLoads).toBe(1)
+    expect(fellBack.totals).toEqual(large.totals)
+
+    writeFileSync(largeFile, largeIndex)
+    const stopped = new UsageHistoryService({
+      cacheFile: largeFile,
+      largeCacheLoader: (_filePath, signal) =>
+        new Promise((_resolve, reject) => {
+          const stop = () => reject(new Error('stopped'))
+          if (signal.aborted) stop()
+          else signal.addEventListener('abort', stop)
+        }),
+      scanRunner: () => Promise.reject(new Error('no scan after dispose')),
+    })
+    const pending = stopped.history('all')
+    stopped.dispose()
+    expect((await pending).totals.processedTokens).toBe(0)
+    expect(readFileSync(largeFile, 'utf8')).toBe(largeIndex)
+  })
 })
+
+function uncompactedFixtureFiles(root: string) {
+  const tokens = (values: Partial<CachedUsageFile['entries'][number]['tokens']>) => ({
+    uncachedInputTokens: 0,
+    cachedInputTokens: 0,
+    cacheWrite5mInputTokens: 0,
+    cacheWrite1hInputTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+    providerReportedCostUsd: 0,
+    ...values,
+  })
+  const record = (
+    sessionId: string,
+    model: string,
+    date: string,
+    values: Partial<CachedUsageFile['entries'][number]['tokens']>,
+    longContext = false,
+  ) => ({ date, model, sessionId, longContext, tokens: tokens(values) })
+  return [
+    {
+      path: path.join(root, 'claude.jsonl'),
+      provider: 'claude-code',
+      mtimeMs: 1,
+      size: 1,
+      entries: [
+        record('claude', 'claude-sonnet-4-5', '2026-08-08', { uncachedInputTokens: 100 }),
+        record('claude', 'claude-sonnet-4-5', '2026-08-08', {
+          uncachedInputTokens: 50,
+          cachedInputTokens: 400,
+          cacheWrite5mInputTokens: 20,
+          cacheWrite1hInputTokens: 10,
+          outputTokens: 30,
+        }),
+        record('claude', 'claude-sonnet-4-5', '2026-08-08', { uncachedInputTokens: 300_000 }, true),
+        record('claude', 'claude-sonnet-4-5', '2026-08-01', { outputTokens: 7 }),
+        record('claude-2', 'claude-sonnet-4-5', '2026-08-08', { uncachedInputTokens: 11 }),
+      ],
+    },
+    {
+      path: path.join(root, 'codex.jsonl'),
+      provider: 'codex',
+      mtimeMs: 1,
+      size: 1,
+      entries: [
+        record('codex', 'gpt-5.6-sol', '2026-08-08', {
+          observedInputTokens: 900,
+          uncachedInputTokens: 600,
+          cachedInputTokens: 500,
+          outputTokens: 40,
+          reasoningTokens: 12,
+          processedTokens: 950,
+        }),
+        record('codex', 'gpt-5.6-sol', '2026-08-08', {
+          uncachedInputTokens: 70,
+          cachedInputTokens: 30,
+          outputTokens: 5,
+        }),
+      ],
+    },
+    {
+      path: path.join(root, 'opencode.db'),
+      provider: 'opencode',
+      mtimeMs: 1,
+      size: 1,
+      entries: [
+        record('opencode', 'gpt-5.6-sol', '2026-08-08', {
+          uncachedInputTokens: 40,
+          outputTokens: 20,
+          providerReportedCostUsd: 0.5,
+        }),
+        record('opencode', 'gpt-5.6-sol', '2026-08-08', { uncachedInputTokens: 1_000 }),
+        record('other-opencode', 'private-model', '2026-08-08', { outputTokens: 9 }),
+      ],
+    },
+  ] satisfies CachedUsageFile[]
+}
+
+function cacheFixture(version: number, files: CachedUsageFile[]) {
+  return { version, generatedAt: 123, files, sources: [], warnings: [] }
+}
+
+async function cachedHistory(
+  cacheFile: string,
+  range: UsageHistoryRange,
+  largeCacheLoader?: UsageCacheLoader,
+) {
+  const cache = await readUsageCache(cacheFile)
+  const service = new UsageHistoryService({
+    cacheFile,
+    scanRunner: async (request) => ({
+      paths: request.indexed.map((file) => file.path),
+      files: [],
+      sources: cache.sources,
+      warnings: cache.warnings,
+    }),
+    now: () => new Date('2026-08-08T12:00:00.000Z'),
+    ...(largeCacheLoader ? { largeCacheLoader } : {}),
+  })
+  await service.history(range)
+  await service.waitForRefresh()
+  return service.history(range)
+}
+
+function rounded(value: unknown): unknown {
+  return JSON.parse(
+    JSON.stringify(value, (_key, item: unknown) =>
+      typeof item === 'number' ? Number(item.toPrecision(12)) : item,
+    ),
+  )
+}
 
 function usageService(
   options: Omit<ConstructorParameters<typeof UsageHistoryService>[0], 'scanRunner'>,
 ): UsageHistoryService {
   const isolatedRoot = path.dirname(options.cacheFile)
   return new UsageHistoryService({
-    grokLogPath: path.join(isolatedRoot, 'missing-grok.jsonl'),
-    openCodeDataRoot: path.join(isolatedRoot, 'missing-opencode'),
     ...options,
+    sourceRoots: {
+      grok: path.join(isolatedRoot, 'missing-grok.jsonl'),
+      opencode: path.join(isolatedRoot, 'missing-opencode'),
+      ...options.sourceRoots,
+    },
     scanRunner: runUsageHistoryScan,
   })
 }

@@ -1,2 +1,2 @@
 export * from './adapter.js'
-export { readOpenCodeUsageHistory } from './usage-history.js'
+export { OPENCODE_USAGE_HISTORY, readOpenCodeUsageHistory } from './usage-history.js'
