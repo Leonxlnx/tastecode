@@ -534,6 +534,12 @@
 
 /* ---------- streaming reveal (reveal-clock.ts) ---------- */
 
+/* A streaming reply's finished renderer, rendered ahead while the live one
+   still shows it (Markdown.tsx). Completion only has to show it. */
+.md.md-ahead {
+  display: none;
+}
+
 /* Streamed text is laid out as it arrives; the part not shown yet is painted
    in transparent ink, so its line breaks are already final when it appears. */
 ::highlight(md-veil) {

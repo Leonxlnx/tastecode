@@ -1,6 +1,7 @@
 import {
   createContext,
   memo,
+  useCallback,
   useContext,
   useMemo,
   useState,
@@ -21,7 +22,7 @@ import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
 import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
-import { createBlockSplitter } from './markdown-blocks.js'
+import { closedBlockCount, createBlockSplitter } from './markdown-blocks.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -198,13 +199,31 @@ const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 export const CompletedMarkdown = memo(function CompletedMarkdown({
   text,
   projectPath,
+  hidden = false,
+  growing = false,
 }: {
   text: string
   projectPath?: string | undefined
+  /** Rendered ahead, out of view: the live renderer still shows this reply. */
+  hidden?: boolean
+  /** The text is still streaming: only its closed blocks render. */
+  growing?: boolean
 }) {
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
   // Per renderer: a text that grows is split again only from its open tail.
   const [splitBlocks] = useState(createBlockSplitter)
+  const closed = useMemo(() => {
+    if (!growing) return undefined
+    const blocks = splitBlocks(renderedText)
+    const settled = blocks.slice(0, closedBlockCount(blocks))
+    return { source: settled.join(''), blocks: settled }
+  }, [growing, renderedText, splitBlocks])
+  const source = closed ? closed.source : renderedText
+  // Streamdown asks for the blocks of exactly the source it is given.
+  const parseBlocks = useCallback(
+    (markdown: string) => (closed?.source === markdown ? closed.blocks : splitBlocks(markdown)),
+    [closed, splitBlocks],
+  )
   const imageSource = useContext(MarkdownImageContext)
   const rehypePlugins = useMemo(() => {
     const plugins = Object.values(defaultRehypePlugins)
@@ -219,21 +238,21 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
     <ProjectPathContext.Provider value={projectPath}>
       <Streamdown
         BlockComponent={MarkdownBlock}
-        className="md"
+        className={hidden ? 'md md-ahead' : 'md'}
         // Streaming mode keeps per-block rendering. Without `animated`,
         // Streamdown applies a changed text's blocks in a transition, so new
         // blocks render in slices instead of one task.
         mode="streaming"
         isAnimating={false}
         parseIncompleteMarkdown={false}
-        parseMarkdownIntoBlocksFn={splitBlocks}
+        parseMarkdownIntoBlocksFn={parseBlocks}
         plugins={STREAMDOWN_PLUGINS}
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}
         components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
         rehypePlugins={rehypePlugins}
       >
-        {renderedText}
+        {source}
       </Streamdown>
     </ProjectPathContext.Provider>
   )

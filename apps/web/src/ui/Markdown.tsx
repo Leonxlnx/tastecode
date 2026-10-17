@@ -420,6 +420,41 @@ function replaceLiveMarkdown(
  */
 const INITIAL_REVEAL_MAX_CHARACTERS = 200
 
+/**
+ * How often a streaming rich reply's finished renderer catches up with it.
+ * Each catch-up renders only the blocks that closed since, in a transition.
+ */
+const AHEAD_INTERVAL_MS = 300
+
+/**
+ * The text a streaming reply's finished renderer renders ahead: the reply as
+ * it stood at the last catch-up, once it needs the rich renderer. Undefined
+ * until then. Per delta this costs one effect that finds its timer running.
+ */
+function useTextAhead(text: string, streaming: boolean): string | undefined {
+  const [ahead, setAhead] = useState<string | undefined>(undefined)
+  const latest = useRef(text)
+  const timer = useRef<number | undefined>(undefined)
+  const rich = useRef(false)
+  useEffect(() => {
+    latest.current = text
+    if (!streaming) {
+      window.clearTimeout(timer.current)
+      timer.current = undefined
+      return
+    }
+    if (timer.current !== undefined) return
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined
+      const next = latest.current
+      rich.current ||= needsRichMarkdown(next)
+      if (rich.current) startTransition(() => setAhead(next))
+    }, AHEAD_INTERVAL_MS)
+  }, [streaming, text])
+  useEffect(() => () => window.clearTimeout(timer.current), [])
+  return ahead
+}
+
 const StreamingMarkdown = memo(function StreamingMarkdown({
   text,
   liveUpdate,
@@ -557,21 +592,36 @@ export const Markdown = memo(function Markdown({
   // over a frame, and the live DOM stays until it is ready. History mounts
   // finished at once (a deferred value starts at its first value).
   const settled = useDeferredValue(!live) && !live
-  const rich = settled && needsRichMarkdown(text)
+  // Until then, a rich reply's finished renderer renders it ahead, out of
+  // view: the closed blocks while it streams, all of it while the reveal
+  // drains. Taking over then only has to show it.
+  const ahead = useTextAhead(text, streaming)
+  const rich = settled ? needsRichMarkdown(text) : ahead !== undefined
   const RichMarkdown = useCompletedMarkdown(rich)
-  if (RichMarkdown) return <RichMarkdown text={text} projectPath={projectPath} />
-  // A rich reply that completes before its renderer has loaded keeps the live
-  // DOM at the same position in the tree, so it never collapses meanwhile.
-  if (!settled || rich) {
-    return (
-      <StreamingMarkdown
-        text={text}
-        liveUpdate={streaming ? liveUpdate : undefined}
-        updateVersion={streaming ? updateVersion : undefined}
-        busy={streaming}
-        drained={drained}
-      />
-    )
-  }
-  return <PlainCompletedMarkdown text={text} />
+  return (
+    <>
+      {/* A rich reply that completes before its renderer has loaded keeps
+          the live DOM, so it never collapses meanwhile. */}
+      {!settled || (rich && !RichMarkdown) ? (
+        <StreamingMarkdown
+          key="live"
+          text={text}
+          liveUpdate={streaming ? liveUpdate : undefined}
+          updateVersion={streaming ? updateVersion : undefined}
+          busy={streaming}
+          drained={drained}
+        />
+      ) : null}
+      {RichMarkdown && rich ? (
+        <RichMarkdown
+          key="rich"
+          text={streaming ? (ahead ?? text) : text}
+          projectPath={projectPath}
+          hidden={!settled}
+          growing={streaming}
+        />
+      ) : null}
+      {settled && !rich ? <PlainCompletedMarkdown key="plain" text={text} /> : null}
+    </>
+  )
 })
