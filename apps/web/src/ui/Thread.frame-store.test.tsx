@@ -87,6 +87,7 @@ describe('Thread live frame isolation', () => {
         )
         const rail = view.container.querySelector('.activity--working')
         expect(rail?.textContent).toBe('Working for 59s')
+        expect(rail?.querySelector('.activity__pulse')).toBeTruthy()
         const rendersBeforeTick = virtualizerRender.mock.calls.length
         act(() => vi.advanceTimersByTime(1_000))
         expect(rail?.textContent).toBe('Working for 1m')
@@ -137,6 +138,7 @@ describe('Thread live frame isolation', () => {
           }),
         )
         expect(view.container.querySelector('.activity--working')).toBeNull()
+        expect(view.container.querySelector('.activity__pulse')).toBeNull()
         expect(view.getAllByText('Worked for 1m 2s')).toHaveLength(1)
         expect(view.getByText('The result')).toBeTruthy()
         if (withTools) {

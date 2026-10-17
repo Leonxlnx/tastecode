@@ -672,12 +672,29 @@ button.thread__older:hover {
   font-variant-numeric: tabular-nums;
 }
 
-.activity__working-orb {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
+/* The working dot, the same for every turn: one slow breath, on the
+   compositor only (transform and opacity), so a streaming reply beside it
+   never waits on it. */
+.activity__pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-2);
+  animation: working-pulse 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@keyframes working-pulse {
+  0%,
+  100% {
+    opacity: 0.38;
+    transform: scale(0.62);
+  }
+
+  50% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
 }
 
 .activity__working-label-swap {
@@ -770,6 +787,11 @@ button.thread__older:hover {
 
   .activity__working-status-previous {
     display: none;
+  }
+
+  .activity__pulse {
+    animation: none;
+    opacity: 0.6;
   }
 
   .activity--live .activity__label {

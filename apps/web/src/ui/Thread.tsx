@@ -19,7 +19,6 @@ import {
 } from 'react'
 import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
-import { ThinkingOrb } from 'thinking-orbs'
 import {
   IconArrowBarToDown as ArrowDownToLine,
   IconBook2 as BookOpen,
@@ -3325,7 +3324,9 @@ const TurnDuration = memo(function TurnDuration(
   return (
     <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
       <div className="activity__summary">
-        {stopped ? (
+        {working ? (
+          <WorkingPulse />
+        ) : stopped ? (
           <span className="activity__glyph" aria-hidden>
             <Stop strokeWidth={1.8} />
           </span>
@@ -3343,6 +3344,19 @@ const TurnDuration = memo(function TurnDuration(
     </div>
   )
 })
+
+/**
+ * The one sign that a turn is still working, the same for every turn: a dot
+ * that breathes on the compositor (transform and opacity only), so it costs
+ * the main thread nothing per frame while a reply streams beside it.
+ */
+function WorkingPulse() {
+  return (
+    <span className="activity__glyph" aria-hidden>
+      <span className="activity__pulse" />
+    </span>
+  )
+}
 
 /** The quiet end of a turn the user stopped, under whatever it reached. */
 function TurnStopped() {
@@ -3385,13 +3399,7 @@ const WorkingRail = memo(function WorkingRail({
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
-        <span className="activity__working-orb">
-          <ThinkingOrb
-            state={label === 'Searching' ? 'searching' : 'working'}
-            size={20}
-            aria-hidden
-          />
-        </span>
+        <WorkingPulse />
         <WorkingLabel label={label} startedAt={startedAt} />
       </div>
     </div>
