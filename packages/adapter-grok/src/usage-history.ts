@@ -1,9 +1,8 @@
-import { createReadStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import readline from 'node:readline'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
 import { discoverFileArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+import { readUsageLog, type UsageLogParser } from '@harness/proc/usage-log'
 
 /** The Grok CLI appends every turn's token counts to `<GROK_HOME>/logs/unified.jsonl`. */
 export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
@@ -16,80 +15,86 @@ export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord
 
 /** Reads the Grok CLI's append-only local token log in one streaming pass. */
 export async function readGrokUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
-  const entries = new Map<string, LocalUsageRecord>()
-  const modelByProcess = new Map<number, string>()
-  const sessionByProcess = new Map<number, string>()
-  const lines = readline.createInterface({
-    input: createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 }),
-    crlfDelay: Infinity,
-  })
+  return (await readUsageLog(filePath, GROK_LOG_PARSER)).entries
+}
 
-  for await (const line of lines) {
-    if (
-      !line.includes('inference_done') &&
-      !line.includes('model') &&
-      !line.includes('agent initialized')
-    ) {
-      continue
-    }
-    const record = parseRecord(line)
-    const message = stringValue(record?.['msg'])
-    const context = asRecord(record?.['ctx']) ?? {}
-    const processId = integerValue(record?.['pid'])
-    if (!record || !message || processId === undefined) continue
+/** The token rows so far, and which model and session each CLI process is on. */
+type GrokLogState = {
+  entries: Map<string, LocalUsageRecord>
+  modelByProcess: Map<number, string>
+  sessionByProcess: Map<number, string>
+}
 
-    if (message === 'agent initialized') {
-      modelByProcess.delete(processId)
-      const startedAt = dateValue(record['ts'])?.getTime()
-      sessionByProcess.set(
-        processId,
-        startedAt === undefined
-          ? `grok-process-${processId}`
-          : `grok-process-${processId}-${startedAt}`,
-      )
-      continue
-    }
+const GROK_LOG_PARSER: UsageLogParser<LocalUsageRecord, GrokLogState> = {
+  create: () => ({ entries: new Map(), modelByProcess: new Map(), sessionByProcess: new Map() }),
+  restore: () => undefined,
+  line: parseGrokLine,
+  finish: (state) => ({ entries: [...state.entries.values()] }),
+}
 
-    const model = modelFromEvent(message, context)
-    if (model) {
-      modelByProcess.set(processId, model)
-      continue
-    }
-    if (message !== 'shell.turn.inference_done') continue
+function parseGrokLine(state: GrokLogState, line: string): void {
+  if (
+    !line.includes('inference_done') &&
+    !line.includes('model') &&
+    !line.includes('agent initialized')
+  ) {
+    return
+  }
+  const record = parseRecord(line)
+  const message = stringValue(record?.['msg'])
+  const context = asRecord(record?.['ctx']) ?? {}
+  const processId = integerValue(record?.['pid'])
+  if (!record || !message || processId === undefined) return
 
-    const timestamp = dateValue(record['ts'])
-    const promptTokens = finiteNumber(context['prompt_tokens'])
-    if (!timestamp || promptTokens === undefined) continue
-    const cachedInputTokens = Math.min(
-      Math.max(integerValue(context['cached_prompt_tokens']) ?? 0, 0),
-      promptTokens,
+  if (message === 'agent initialized') {
+    state.modelByProcess.delete(processId)
+    const startedAt = dateValue(record['ts'])?.getTime()
+    state.sessionByProcess.set(
+      processId,
+      startedAt === undefined
+        ? `grok-process-${processId}`
+        : `grok-process-${processId}-${startedAt}`,
     )
-    const completionTokens = Math.max(integerValue(context['completion_tokens']) ?? 0, 0)
-    const reasoningTokens = Math.max(integerValue(context['reasoning_tokens']) ?? 0, 0)
-    const outputTokens = completionTokens + reasoningTokens
-    if (promptTokens + outputTokens <= 0) continue
-
-    mergeUsageRecord(entries, {
-      date: localDateKey(timestamp),
-      model: modelByProcess.get(processId) ?? 'Unknown model',
-      // The log has no session id. A CLI process initialization is the
-      // narrowest stable session boundary it does expose; the pid fallback
-      // keeps older log versions useful when that event is absent.
-      sessionId: sessionByProcess.get(processId) ?? `grok-process-${processId}`,
-      longContext: promptTokens > 200_000,
-      tokens: {
-        uncachedInputTokens: Math.max(promptTokens - cachedInputTokens, 0),
-        cachedInputTokens,
-        cacheWrite5mInputTokens: 0,
-        cacheWrite1hInputTokens: 0,
-        outputTokens,
-        reasoningTokens,
-        providerReportedCostUsd: 0,
-      },
-    })
+    return
   }
 
-  return [...entries.values()]
+  const model = modelFromEvent(message, context)
+  if (model) {
+    state.modelByProcess.set(processId, model)
+    return
+  }
+  if (message !== 'shell.turn.inference_done') return
+
+  const timestamp = dateValue(record['ts'])
+  const promptTokens = finiteNumber(context['prompt_tokens'])
+  if (!timestamp || promptTokens === undefined) return
+  const cachedInputTokens = Math.min(
+    Math.max(integerValue(context['cached_prompt_tokens']) ?? 0, 0),
+    promptTokens,
+  )
+  const completionTokens = Math.max(integerValue(context['completion_tokens']) ?? 0, 0)
+  const reasoningTokens = Math.max(integerValue(context['reasoning_tokens']) ?? 0, 0)
+  const outputTokens = completionTokens + reasoningTokens
+  if (promptTokens + outputTokens <= 0) return
+
+  mergeUsageRecord(state.entries, {
+    date: localDateKey(timestamp),
+    model: state.modelByProcess.get(processId) ?? 'Unknown model',
+    // The log has no session id. A CLI process initialization is the
+    // narrowest stable session boundary it does expose; the pid fallback
+    // keeps older log versions useful when that event is absent.
+    sessionId: state.sessionByProcess.get(processId) ?? `grok-process-${processId}`,
+    longContext: promptTokens > 200_000,
+    tokens: {
+      uncachedInputTokens: Math.max(promptTokens - cachedInputTokens, 0),
+      cachedInputTokens,
+      cacheWrite5mInputTokens: 0,
+      cacheWrite1hInputTokens: 0,
+      outputTokens,
+      reasoningTokens,
+      providerReportedCostUsd: 0,
+    },
+  })
 }
 
 function modelFromEvent(message: string, context: Record<string, unknown>): string | undefined {
