@@ -199,6 +199,7 @@ function LimitRow(props: {
   const credits = props.limit.resetCredits
   const hasSelectableCredits = credits?.some((credit) => credit.id !== undefined)
   const value = props.limit.valueLabel ?? `${remaining(props.limit)}% left`
+  const pace = evenPace(props.limit, props.now)
 
   return (
     <div className="account-menu__limit">
@@ -214,11 +215,19 @@ function LimitRow(props: {
           aria-valuenow={remaining(props.limit)}
           aria-valuemin={0}
           aria-valuemax={100}
+          title={
+            pace === undefined
+              ? undefined
+              : `At an even pace, ${Math.round(pace)}% would be left now.`
+          }
         >
           <span
             data-low={remaining(props.limit) <= 15 ? '' : undefined}
             style={{ width: `${remaining(props.limit)}%` }}
           />
+          {pace === undefined ? null : (
+            <span className="account-menu__limit-pace" style={{ left: `${pace}%` }} />
+          )}
         </div>
       ) : null}
       {props.limit.resetsAt !== undefined ? (
@@ -408,6 +417,17 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
 
 function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
+}
+
+/**
+ * Where the bar would end if the window were spent evenly: the share of the
+ * window still ahead, in percent. Absent without a window length and reset
+ * time, or when the mark would sit on the bar's rounded ends.
+ */
+function evenPace(limit: Limit, now: number): number | undefined {
+  if (limit.windowMinutes === undefined || limit.resetsAt === undefined) return undefined
+  const ahead = ((limit.resetsAt - now) / (limit.windowMinutes * 60_000)) * 100
+  return ahead >= 2 && ahead <= 98 ? ahead : undefined
 }
 
 /** A reset within the week reads as weekday and time; further out, as a date. */

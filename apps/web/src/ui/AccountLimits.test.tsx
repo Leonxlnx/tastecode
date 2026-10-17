@@ -639,6 +639,44 @@ describe('account limits', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('marks even pace on bars that know their window and reset time', () => {
+    const now = Date.UTC(2026, 8, 13, 12)
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    render(
+      limits({
+        status: 'ready',
+        provider: 'claude-code',
+        summary: summary([
+          // Half of a five-hour window is ahead: even pace leaves half.
+          { label: 'Session', usedPercent: 70, windowMinutes: 300, resetsAt: now + 150 * 60_000 },
+          {
+            label: 'Weekly',
+            usedPercent: 10,
+            windowMinutes: 10_080,
+            resetsAt: now + 7_000 * 60_000,
+          },
+          // A window that just began would put the mark on the rounded end.
+          { label: 'Fresh', usedPercent: 0, windowMinutes: 300, resetsAt: now + 299 * 60_000 },
+          { label: 'Unknown window', usedPercent: 40, resetsAt: now + 60_000 },
+        ]),
+      }),
+    )
+
+    const pace = (label: string) => {
+      const bar = screen.getByRole('progressbar', { name: `Claude Code ${label} left` })
+      const mark = bar.querySelector<HTMLElement>('.account-menu__limit-pace')
+      return { title: bar.title, left: mark?.style.left }
+    }
+    expect(pace('Session')).toEqual({
+      title: 'At an even pace, 50% would be left now.',
+      left: '50%',
+    })
+    expect(pace('Weekly').left).toBe(`${(7_000 / 10_080) * 100}%`)
+    expect(pace('Weekly').title).toBe('At an even pace, 69% would be left now.')
+    expect(pace('Fresh')).toEqual({ title: '', left: undefined })
+    expect(pace('Unknown window')).toEqual({ title: '', left: undefined })
+  })
+
   it('handles expired and invalid dates without inventing an expiry', () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 8, 13))
     render(
