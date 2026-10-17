@@ -27,7 +27,7 @@ const SIDE_CHAT_COMMAND = {
 
 const FEEDBACK_COMMAND = {
   name: 'feedback',
-  description: 'Report a bug or share an idea with the TasteCode team',
+  description: 'Send feedback to the TasteCode team',
   argumentHint: '[details]',
   icon: IconMessage,
 } satisfies AppCommand

@@ -1580,7 +1580,7 @@ describe('Composer provider commands', () => {
         .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent),
     ).toEqual(['/side', '/feedback', '/code-review', '/context', '/compact'])
     expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
-      'Report a bug or share an idea with the TasteCode team',
+      'Send feedback to the TasteCode team',
     )
   })
 
