@@ -132,7 +132,7 @@ describe('detectProviders', () => {
     )
     expect(find(providers, 'grok').setup?.installUrl).toBe('https://x.ai/cli')
     expect(find(providers, 'cursor').setup?.installUrl).toBe(
-      'https://docs.cursor.com/en/cli/installation',
+      'https://cursor.com/docs/cli/installation',
     )
     expect(find(providers, 'opencode').setup?.installUrl).toBe('https://opencode.ai/en/docs')
   })

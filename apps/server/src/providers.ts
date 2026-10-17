@@ -111,7 +111,7 @@ const PROBES: Probe[] = [
     // every month, and a gate blocked each working one. A changed wire still
     // fails the turn, through the stream's ProtocolFrameError.
     setup: {
-      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      installUrl: 'https://cursor.com/docs/cli/installation',
       installCommand: cursorInstallCommand(),
       login: 'app',
     },
