@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
@@ -7,6 +7,14 @@ const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url)
 const generalCss = readFileSync(new URL('./general-settings.css', import.meta.url), 'utf8')
 const keybindsCss = readFileSync(new URL('./keybinds.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
+
+/** Every component source under ui/, tests excluded, as [path, text]. */
+function uiSources(): Array<[string, string]> {
+  const root = new URL('../ui/', import.meta.url)
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
+    .map((file) => [file, readFileSync(new URL(file.replaceAll('\\', '/'), root), 'utf8')])
+}
 
 describe('settings viewport CSS', () => {
   it('keeps both panes scrollable inside short windows', () => {
@@ -211,36 +219,39 @@ describe('settings viewport CSS', () => {
 
   it('draws every settings button from one 28px set', () => {
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button, \.settings__action\) \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+      /\.settings \.set-button \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
     )
     expect(systemCss).toMatch(
       /\.settings \.set-button--primary \{[^}]*background: var\(--text\);[^}]*color: var\(--bg\);/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button--danger, \.settings__action\.is-danger\):hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
+      /\.settings \.set-button--danger:hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button--quiet, \.settings__action\.is-secondary\) \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
+      /\.settings \.set-button--quiet \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
     )
     expect(systemCss).toMatch(/\.settings \.set-button--icon \{[^}]*width: 28px;[^}]*padding: 0;/s)
-    // The old per-feature button looks are gone.
-    expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
-    expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
+    // The old per-feature button looks and their alias are gone.
+    const alias = /(?<![\w-])settings__action\b/
+    expect(settingsCss).not.toMatch(alias)
+    expect(systemCss).not.toMatch(alias)
+    for (const [file, source] of uiSources()) expect(alias.test(source), file).toBe(false)
   })
 
   it('draws every form field from one 28px text field', () => {
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\) \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
+      /\.settings \.set-input \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(textarea\.set-input, \.mcp-editor textarea\) \{[^}]*min-height: 72px;/s,
+      /\.settings textarea\.set-input \{[^}]*min-height: 72px;/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\):focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
+      /\.settings \.set-input:focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
     )
     // The API form's second, 34px copy of the field rules is gone with the first.
     expect(settingsCss).not.toMatch(/\.provider-form input/)
     expect(settingsCss).not.toMatch(/\.mcp-editor input/)
+    expect(systemCss).not.toMatch(/\.mcp-editor (input|textarea)/)
     expect(settingsCss).not.toMatch(/\.avatar-lab__field input/)
   })
 
