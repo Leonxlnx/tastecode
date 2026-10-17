@@ -21,8 +21,13 @@
 const LAG_MIN_MS = 100
 /** And by at most about this much: Leon's cap on how late text may appear. */
 const LAG_MAX_MS = 180
-/** Text that is due is reached within this. */
-const CATCH_UP_MS = 40
+/**
+ * Text that is due is reached within this. Long enough that text running
+ * late (after a stalled frame, or a burst bigger than the pace expected) is
+ * caught up over a few frames instead of in one jump, which would also empty
+ * the backlog and stall the edge until the next burst.
+ */
+const CATCH_UP_MS = 80
 /** How quickly the arrival-rate estimate follows the provider. */
 const ARRIVAL_TAU_MS = 350
 /** Longer silences count as a pause, not as a slow provider. */
@@ -55,8 +60,12 @@ const FLOOR_RATE = 0.04
 /** A backlog beyond both of these is not reading material; it jumps close to the end. */
 const SNAP_MIN_CHARS = 4000
 const SNAP_MS = 1500
-/** The longest frame step integrated at once, so a stalled frame does not leap. */
-const MAX_FRAME_MS = 50
+/**
+ * The longest frame step integrated at once. Time lost to a stalled main
+ * thread beyond it is not made up in one leap: the lag absorbs it, and the
+ * deadlines catch up over the next frames.
+ */
+const MAX_FRAME_MS = 25
 /** Assumed length of the first frame after the clock wakes. */
 const FIRST_FRAME_MS = 16
 /** A finished reply drains on frames; without frames (a hidden window) it shows at once. */

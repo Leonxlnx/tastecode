@@ -109,6 +109,31 @@ describe('reveal clock', () => {
     expect(Math.max(...lags)).toBeLessThanOrEqual(200)
   })
 
+  it('catches up over several frames after a stalled frame instead of in one jump', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    const steps: number[] = []
+    let shown = 0
+    for (let frame = 0; frame < 200; frame += 1) {
+      if (frame < 160 && frame % 2 === 0) {
+        text.appendData('words ')
+        cursor.appended(6)
+      }
+      // The main thread stalls for about 100 ms twice.
+      fake.frame(frame === 60 || frame === 120 ? 104 : 8)
+      const visible = visibleText(root, fake.ranges()).length
+      steps.push(visible - shown)
+      shown = visible
+    }
+
+    // At about 3 characters a frame, a stall used to show 30-40 at once and
+    // then left the edge alternating between 6 and 0.
+    expect(Math.max(...steps.slice(20))).toBeLessThanOrEqual(16)
+    expect(steps.slice(20, 160).every((step) => step > 0)).toBe(true)
+    expect(shown).toBe(480)
+  })
+
   it('drains a finished reply within 250 ms and reports it once', () => {
     const fake = fakeEnvironment()
     const { root, text } = liveRoot()
