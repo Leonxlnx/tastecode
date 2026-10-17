@@ -11,7 +11,8 @@
  * part the reader has not been shown yet in transparent ink. Every frame the
  * clock moves the veil's start forward by a fractional number of characters.
  * The speed follows how fast text arrives and how much is waiting, so the
- * edge moves on every frame at an even pace, 70-180 ms behind the provider.
+ * edge moves on every frame at an even pace, about 100-180 ms behind the
+ * provider.
  *
  * Per frame and live message: a few multiplications, a TreeWalker step over a
  * handful of characters and one StaticRange. No DOM mutation, no layout read.
