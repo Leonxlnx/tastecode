@@ -1895,12 +1895,14 @@
 
 /* An embedded provider terminal (an install or sign-in log) wears the
    workspace terminal's look: its background, font and palette, here inside a
-   hairline frame. The workspace pane and the update notice drop the frame. */
+   hairline frame with the workspace tab's 12px inset (its 13px rows sit flush
+   at line height 1, so a smaller top inset crowds the first line). The
+   workspace pane and the update notice drop the frame. */
 .install-terminal {
   box-sizing: border-box;
   height: 240px;
   overflow: hidden;
-  padding: 8px 12px;
+  padding: 12px;
   background: var(--terminal-workspace-bg);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
