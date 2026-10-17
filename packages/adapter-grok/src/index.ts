@@ -18,3 +18,12 @@ export { readGrokUsageHistory } from './usage-history.js'
 export { grokAccount, parseGrokSubscription } from './account.js'
 export { grokLimitSource, grokLimits, mapGrokBilling, type GrokLimitSource } from './limits.js'
 export { createGrokHistorySource, type GrokHistoryOptions } from './history.js'
+export {
+  discoverGrokProject,
+  mapGrokMcpServer,
+  mapGrokSkills,
+  type GrokDiscoveryRpc,
+  type GrokProjectDiscoveryOptions,
+  type GrokProjectInventory,
+} from './discovery.js'
+export { GROK_MCP_CAPABILITIES } from './mcp.js'
