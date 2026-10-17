@@ -2552,8 +2552,8 @@ function AboutSettings(props: { transport: Transport }) {
  * A provider that is not on this machine yet. When the server knows a real
  * install command the button runs it in the background — no docs page — and
  * the row narrates progress from the live output. App-level callers hand the
- * live terminal to the expanded workspace card; isolated callers keep the
- * attachable details fallback in this row.
+ * live terminal to the expanded workspace card, and Show terminal brings that
+ * one view back; isolated callers keep the attachable details fallback here.
  */
 function InstallableRow(props: {
   provider: ProviderStatus
@@ -2597,18 +2597,19 @@ function InstallableRow(props: {
     [key],
   )
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+      operation: 'install',
+    })
+
   const start = () => {
     setStartError(undefined)
     setShowTerminal(false)
     void beginInstall(props.transport, props.target)
-      .then(() => {
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-          operation: 'install',
-        })
-      })
+      .then(openExpandedTerminal)
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
@@ -2635,8 +2636,14 @@ function InstallableRow(props: {
           }
         : undefined
   const setup = props.provider.setup
-  const details: ProviderAction | undefined =
-    install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
+  // The workspace keeps an install's terminal, failed ones included, until it
+  // is closed; the row reopens that view rather than drawing a second one.
+  const inline = !props.onOpenExpandedTerminal
+  const details: ProviderAction | undefined = !inline
+    ? install?.phase === 'running' || install?.phase === 'failed'
+      ? { label: 'Show terminal', onClick: openExpandedTerminal }
+      : undefined
+    : install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
           expanded: showTerminal,
@@ -2668,7 +2675,7 @@ function InstallableRow(props: {
         primary={primary}
         secondary={details}
       />
-      {install ? (
+      {install && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
@@ -2680,9 +2687,10 @@ function InstallableRow(props: {
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
  * launches that CLI in a server-side pty. App-level callers hand the attached
- * terminal to the expanded workspace pane for every provider; isolated callers
- * keep the guided card and attachable details here. A clean exit refreshes the
- * account, while a dirty exit keeps the log available for a retry.
+ * terminal to the expanded workspace pane for every provider, and Show terminal
+ * brings that one view back while the sign-in runs; isolated callers keep the
+ * guided card and attachable details here. A clean exit refreshes the account,
+ * while a dirty exit keeps the log behind Details for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
@@ -2732,6 +2740,13 @@ function CliSignInRow(props: {
     if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+    })
+
   const start = () => {
     setStarting(true)
     setStartError(undefined)
@@ -2748,11 +2763,7 @@ function CliSignInRow(props: {
     )
       .then(() => {
         if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-        })
+        openExpandedTerminal()
       })
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
@@ -2797,8 +2808,13 @@ function CliSignInRow(props: {
         : login?.phase === 'canceled'
           ? 'Sign-in canceled'
           : 'Not signed in'
-  const details: ProviderAction | undefined =
-    login && (running || login.phase === 'failed')
+  // While the sign-in runs, the workspace terminal is its one view: the row
+  // brings it back instead of attaching a second one. App closes that view when
+  // a sign-in ends, so a failed one keeps its log behind Details here.
+  const inline = !props.onOpenExpandedTerminal || !running
+  const details: ProviderAction | undefined = !inline
+    ? { label: 'Show terminal', disabled: stopping, onClick: openExpandedTerminal }
+    : login && (running || login.phase === 'failed')
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
           expanded: showTerminal,
@@ -2867,7 +2883,7 @@ function CliSignInRow(props: {
           ) : null}
         </div>
       ) : null}
-      {login ? (
+      {login && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>

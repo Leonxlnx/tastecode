@@ -2334,6 +2334,107 @@ describe('provider settings', () => {
     )
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
+
+  it('brings the workspace sign-in terminal back instead of drawing a second one', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: 'term-claude-show' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+    const target = {
+      provider: 'claude-code',
+      displayName: 'Claude Code',
+      installKey: 'login:claude-code',
+    }
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith(target))
+    const row = providerRow('Claude Code')
+    expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull()
+    fireEvent.click(within(row).getByRole('button', { name: 'Show terminal' }))
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+    expect(onProviderLoginTerminalOpen).toHaveBeenLastCalledWith(target)
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+
+    // App closes the workspace view when a sign-in ends; the failed log stays here.
+    act(() => transport.emit('terminal.exit', { terminalId: 'term-claude-show', exitCode: 1 }))
+    await screen.findByRole('button', { name: 'Retry sign-in' })
+    expect(screen.queryByRole('button', { name: 'Show terminal' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+  })
+
+  it('reopens the workspace install terminal instead of drawing a second one', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-codex-show' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://developers.openai.com/codex/cli',
+              installCommand: 'npm install -g @openai/codex',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+    const target = {
+      provider: 'codex',
+      displayName: 'Codex',
+      installKey: 'codex',
+      operation: 'install',
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await waitFor(() => expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith(target))
+    const row = providerRow('Codex')
+    fireEvent.click(within(row).getByRole('button', { name: 'Show terminal' }))
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+    expect(onProviderLoginTerminalOpen).toHaveBeenLastCalledWith(target)
+
+    // The workspace keeps a failed install's terminal, so the row still points there.
+    act(() => transport.emit('terminal.exit', { terminalId: 'term-codex-show', exitCode: 1 }))
+    await screen.findByRole('button', { name: 'Retry install' })
+    expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Show terminal' })).toBeTruthy()
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+  })
 })
 
 describe('provider defaults', () => {
