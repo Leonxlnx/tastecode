@@ -380,15 +380,18 @@ describe('background title source discovery', () => {
 
   it('neither caches nor joins a read that an account change overtook', async () => {
     const { orchestrator, title, started } = harness()
-    const release = gate('account:codex')
+    const releaseCodex = gate('account:codex')
+    const releaseGrok = gate('account:grok')
 
     const first = title()
     await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex']))
     await orchestrator.signOut('codex')
     const second = title()
     await vi.waitFor(() => expect(vendor.calls).toEqual(['account:codex', 'account:codex']))
-    release()
-    await Promise.all([first, second])
+    releaseCodex()
+    await first
+    releaseGrok()
+    await second
     await title()
 
     // The read that began before sign-out still answers its own request, but
