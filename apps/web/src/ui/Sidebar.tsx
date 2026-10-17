@@ -903,7 +903,14 @@ function SidebarComponent(props: {
                     {usageLimit && usageRemaining !== undefined ? (
                       <span
                         className="account__usage"
-                        title={`${providerDisplayName(usageLimit.provider)} · ${usageLimit.label} · ${usageRemaining}% left`}
+                        title={[
+                          providerDisplayName(usageLimit.provider),
+                          usageLimit.label,
+                          `${usageRemaining}% left`,
+                          ...(usageLimit.unknown.length > 0
+                            ? [unknownLimitsLabel(usageLimit.unknown)]
+                            : []),
+                        ].join(' · ')}
                       >
                         <ProviderIcon
                           className="account__usage-mark"
@@ -918,6 +925,9 @@ function SidebarComponent(props: {
                           <span style={{ transform: `scaleX(${usageRemaining / 100})` }} />
                         </span>
                         <span className="account__usage-value">{usageRemaining}% left</span>
+                        {usageLimit.unknown.length > 0 ? (
+                          <span className="account__usage-unknown" aria-hidden />
+                        ) : null}
                       </span>
                     ) : null}
                   </span>
@@ -2077,20 +2087,30 @@ function basename(path: string): string {
   return parts[parts.length - 1] ?? path
 }
 
-type CardUsageLimit = { provider: ProviderId; label: string; usedPercent: number }
+type CardUsageLimit = {
+  provider: ProviderId
+  label: string
+  usedPercent: number
+  /** Providers whose limits could not be read; any of them could be tighter. */
+  unknown: ProviderId[]
+}
 
 /**
  * The card's one usage figure: the tightest percentage limit any provider
  * reports, shown with that provider's mark so it says what it measures. A
- * provider whose read failed with nothing on record could be the tighter one,
- * so the card then shows no figure rather than a reassuring "100% left".
+ * provider whose limits are unknown could be the tighter one, so the figure
+ * then carries a muted marker that names it instead of disappearing.
  */
 function tightestUsageLimit(
   states: readonly AccountLimitsState[] | undefined,
 ): CardUsageLimit | undefined {
-  let tightest: CardUsageLimit | undefined
+  let tightest: Omit<CardUsageLimit, 'unknown'> | undefined
+  const unknown: ProviderId[] = []
   for (const state of states ?? []) {
-    if (state.status === 'error' && !state.summary) return undefined
+    if (limitsUnknown(state)) {
+      unknown.push(state.provider)
+      continue
+    }
     const source = state.summary?.limitSource
     const limits = source
       ? source.status === 'ready'
@@ -2103,7 +2123,24 @@ function tightestUsageLimit(
       tightest = { provider: state.provider, label: limit.label, usedPercent: limit.usedPercent }
     }
   }
-  return tightest
+  return tightest ? { ...tightest, unknown } : undefined
+}
+
+/**
+ * A read that failed with nothing on record, or a source not read yet. A
+ * first read still running is not counted, so the marker does not flash.
+ */
+function limitsUnknown(state: AccountLimitsState): boolean {
+  if (state.status === 'error' && !state.summary) return true
+  const source = state.summary?.limitSource
+  return source?.status === 'unavailable' && source.reason === 'failed'
+}
+
+function unknownLimitsLabel(providers: readonly ProviderId[]): string {
+  const names = providers.map(providerDisplayName)
+  const listed =
+    names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : (names[0] ?? '')
+  return `${listed} limits unknown`
 }
 
 function DialogAction(props: { icon: ReactNode; title: string }) {
