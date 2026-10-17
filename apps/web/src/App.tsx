@@ -129,21 +129,27 @@ import {
   choicesFor,
   customModelChoice,
   customModelKey,
-  defaultHiddenModelKeys,
-  defaultHiddenModels,
   isCustomModelChoice,
-  migratePendingHiddenModels,
-  MODEL_VISIBILITY_VERSION,
   modelChoiceKey,
+  modelVisibilityDefaults,
   providerDisplayName,
   providerMark,
   resolveReasoningEffort,
   sourceKey,
-  unlistedHiddenModels,
   type ModelChoice,
-  type ModelVisibilityMigration,
-  type ModelVisibilityProgress,
 } from './model-catalog.js'
+import {
+  chooseModelsVisibility,
+  EMPTY_MODEL_VISIBILITY,
+  hiddenModelKeys,
+  importLegacyModelVisibility,
+  legacyHiddenChoices,
+  parseModelVisibility,
+  recordModelSuccessors,
+  serializeModelVisibility,
+  settleModelVisibilitySource,
+  type ModelVisibilityRecord,
+} from './model-catalog-visibility.js'
 import {
   freshModelCatalogChoices,
   isModelCatalogSourceFresh,
@@ -246,18 +252,29 @@ const LEGACY_SESSION_ORDER_KEY = 'harness.sessionOrder'
 const STARTUP_PROJECT_NAME_KEY = 'harness.startupProjectName'
 const MODEL_KEY = 'harness.model'
 const MODEL_CATALOG_KEY = 'harness.modelCatalog.v1'
+const MODEL_CATALOG_CACHE_WRITE_DELAY_MS = 1_000
+/** How old the last listing may get before focusing the window lists every model again. */
+const MODEL_CATALOG_REVALIDATE_MS = 6 * 60 * 60_000
 const CUSTOM_MODELS_KEY = 'harness.customModels.v1'
 /** Last model/effort/tier used per source, so returning to a provider
  *  restores the exact working setup instead of a best-guess translation. */
 const MODEL_BY_SOURCE_KEY = 'harness.modelBySource'
 const MODEL_BY_THREAD_PREFIX = 'harness.modelByThread:'
 const EMPTY_PALETTE_COMMANDS: PaletteCommand[] = []
-const HIDDEN_MODELS_KEY = 'harness.hiddenModels'
-const MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
-/** Rows a pending visibility migration already moved, while other sources have not answered yet. */
-const MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
-/** Every direct-provider model key the profile has listed, so a later arrival gets its default. */
-const LISTED_MODELS_KEY = 'harness.listedModels'
+/** Only the user's own visibility choices; the defaults follow the catalog. */
+const MODEL_VISIBILITY_KEY = 'harness.modelVisibility.v2'
+/** One complete hidden list, which mixed the defaults of the build that saved it with choices. */
+const LEGACY_HIDDEN_MODELS_KEY = 'harness.hiddenModels'
+/** The list's format version, and the version rows reached on their own. */
+const LEGACY_MODEL_VISIBILITY_VERSION_KEY = 'harness.modelVisibilityVersion'
+const LEGACY_MODEL_VISIBILITY_ROWS_KEY = 'harness.modelVisibilityRows'
+/** That list and its records, removed once the record above is saved. */
+const LEGACY_MODEL_VISIBILITY_KEYS = [
+  LEGACY_HIDDEN_MODELS_KEY,
+  LEGACY_MODEL_VISIBILITY_VERSION_KEY,
+  LEGACY_MODEL_VISIBILITY_ROWS_KEY,
+  'harness.listedModels',
+] as const
 const PALETTE_CHAT_SEARCH_CACHE = createPaletteChatSearchCache()
 const EFFORT_KEY = 'harness.effort'
 const SERVICE_TIER_KEY = 'harness.serviceTier'
@@ -512,6 +529,24 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+type CatalogSourceControls = {
+  relist: (source: string) => void
+  /** Without a source, every source the run left for later. */
+  discover: (source?: string) => void
+}
+
+/** Replaces one source's rows where they stood, so a source listed again does not move. */
+function replaceSourceRows(
+  catalog: ModelChoice[],
+  source: string,
+  rows: ModelChoice[],
+): ModelChoice[] {
+  const at = catalog.findIndex((choice) => modelSource(choice) === source)
+  const others = catalog.filter((choice) => modelSource(choice) !== source)
+  // Every row before the first one of this source belongs to another source.
+  return at < 0 ? [...others, ...rows] : [...others.slice(0, at), ...rows, ...others.slice(at)]
+}
+
 export function App() {
   const [transport] = useState(() => new Transport(SERVER_BASE_URL))
   // StrictMode replays effect cleanup against this same memoized instance.
@@ -706,6 +741,15 @@ export function App() {
   const [acpAgents, setAcpAgents] = useState<ResultOf<'acp.agents'>['agents']>([])
   const [modelConnections, setModelConnections] = useState<ModelConnection[]>([])
   const [catalogRequest, setCatalogRequest] = useState(0)
+  /** When the catalog was last listed, however that started. */
+  const catalogRequestedAt = useRef(Date.now())
+  /**
+   * The current catalog run's sources: `relist` lists one again when the server
+   * says it changed, `discover` lists one (or every) source the run left for later.
+   */
+  const catalogSources = useRef<CatalogSourceControls | undefined>(undefined)
+  /** Set once the picker or Settings needed every source; later runs list them all at once. */
+  const everyModelSourceWanted = useRef(false)
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
@@ -730,35 +774,21 @@ export function App() {
       reportStartupMilestone('catalog-ready')
     }
   }, [catalogAvailability, projectsStatus])
-  const [initialModelVisibility] = useState<ModelVisibilityMigration>(() => {
-    const saved = readSetting(HIDDEN_MODELS_KEY)
-    let hidden: Set<string>
-    try {
-      const stored: unknown = JSON.parse(saved ?? '[]')
-      hidden = new Set(isStringArray(stored) ? stored : [])
-    } catch {
-      hidden = new Set()
-    }
-    if (saved === null) return { hidden, migrated: [] }
-    // Apply a pending visibility migration to the cached catalog already, so
-    // the picker never opens on models it is about to hide or reveal. Rows a
-    // source lists later get it when discovery first shows them.
-    return migratePendingHiddenModels(
-      hidden,
-      readModelVisibilityProgress(),
-      catalogModels.filter((choice) => !choice.agent && !isCustomModelChoice(choice)),
-    )
-  })
-  const [hiddenModels, setHiddenModels] = useState(initialModelVisibility.hidden)
-  const modelVisibilityInitialized = useRef(readSetting(HIDDEN_MODELS_KEY) !== null)
-  /** Rows a first visibility click saved on their defaults, recorded with that list. */
-  const pendingVisibilityRows = useRef<string[] | undefined>(undefined)
-  const [initialListedModels] = useState(readListedModels)
-  const listedModelsRef = useRef(initialListedModels)
-  // Read via ref inside the catalog effect so toggling visibility does not
-  // refetch every provider's model list.
-  const hiddenModelsRef = useRef(hiddenModels)
-  hiddenModelsRef.current = hiddenModels
+  const [modelVisibility, setModelVisibility] = useState(readModelVisibility)
+  // The catalog effect reads and settles the record per source without
+  // depending on it, so a visibility click never refetches any model list.
+  // Every update goes through `updateModelVisibility`, which keeps this
+  // current before React renders it.
+  const modelVisibilityRef = useRef(modelVisibility)
+  const updateModelVisibility = useCallback(
+    (update: (record: ModelVisibilityRecord) => ModelVisibilityRecord) => {
+      const next = update(modelVisibilityRef.current)
+      if (next === modelVisibilityRef.current) return
+      modelVisibilityRef.current = next
+      setModelVisibility(next)
+    },
+    [],
+  )
   const [modelId, setModelId] = useState<string | undefined>(
     () => readSetting(MODEL_KEY) ?? undefined,
   )
@@ -1037,6 +1067,14 @@ export function App() {
   const hadConnectionModelsRef = useRef(false)
   const modelsRef = useRef(models)
   modelsRef.current = models
+  /** How every listed model starts, recomputed only when the catalog changes. */
+  const modelDefaults = useMemo(() => modelVisibilityDefaults(catalogModels), [catalogModels])
+  const modelDefaultsRef = useRef(modelDefaults)
+  modelDefaultsRef.current = modelDefaults
+  const hiddenModels = useMemo(
+    () => hiddenModelKeys(models, modelDefaults, modelVisibility),
+    [models, modelDefaults, modelVisibility],
+  )
   const visibleModels = useMemo(
     () => models.filter((choice) => !hiddenModels.has(choice.key)),
     [models, hiddenModels],
@@ -1105,6 +1143,18 @@ export function App() {
     [preferredModelSource, selectableModels],
   )
   const preferredSourcePending = pendingModelSources.has(preferredModelSource)
+  // A source left for later is listed as soon as the composer is on it.
+  useEffect(() => {
+    catalogSources.current?.discover(preferredModelSource)
+  }, [preferredModelSource])
+  // Stable identity on purpose: the composer passes it to the picker's menu.
+  const discoverEveryModelSource = useCallback(() => {
+    everyModelSourceWanted.current = true
+    catalogSources.current?.discover()
+  }, [])
+  useEffect(() => {
+    if (settingsOpen) discoverEveryModelSource()
+  }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
     (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
@@ -1880,6 +1930,23 @@ export function App() {
   // unique, so each choice keeps the provider/connection that will pay for it.
   useEffect(() => {
     let cancelled = false
+    catalogRequestedAt.current = Date.now()
+    let runSources: CatalogSourceControls | undefined
+    const controls: CatalogSourceControls = {
+      relist: (source) => runSources?.relist(source),
+      discover: (source) => runSources?.discover(source),
+    }
+    catalogSources.current = controls
+    // Sources settle one by one, and a large catalog costs a full serialize
+    // per write, so their snapshots are coalesced into one trailing write
+    // that the final catalog write replaces.
+    let pendingCacheWrite: { timer: number; write: () => void } | undefined
+    const takePendingCacheWrite = () => {
+      const pending = pendingCacheWrite
+      if (pending) window.clearTimeout(pending.timer)
+      pendingCacheWrite = undefined
+      return pending?.write
+    }
     setCatalogError(undefined)
     const discoveryErrors: Record<string, ComposerError> = {}
     // Latched before the rebuild below drops any choice whose connection is no
@@ -1913,6 +1980,10 @@ export function App() {
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
       providerUnchosenAtLaunch.current = false
+      let launchSource = sourceKey({
+        provider: providerRef.current,
+        agentId: sourceAgentRef.current,
+      })
       if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
@@ -1923,8 +1994,44 @@ export function App() {
         )
         if (fallback) {
           setProvider(fallback.id)
+          launchSource = sourceKey({ provider: fallback.id })
         }
       }
+      // Until the picker or Settings first needs the others, a source the
+      // composer cannot use right now shows its cached rows instead of being
+      // listed, so its CLI (cursor-agent, agy, opencode serve) does not start
+      // with the app.
+      const launchSession = activeIdRef.current
+        ? findSession(projectsRef.current, activeIdRef.current)?.session
+        : undefined
+      const launchSetup = readStoredModelChoice(customModelsRef.current)
+      const launchSources = new Set([
+        launchSource,
+        ...(launchSession
+          ? [
+              sourceKey({
+                provider: launchSession.provider,
+                connectionId: launchSession.connectionId,
+                agentId: launchSession.agent,
+              }),
+            ]
+          : []),
+        ...(launchSetup ? [modelSource(launchSetup)] : []),
+      ])
+      const installedProviders = new Set(
+        providers
+          .filter((entry) => entry.installed)
+          .map((entry) => sourceKey({ provider: entry.id })),
+      )
+      // A provider's own source (a key without an agent or connection part)
+      // that is not installed cannot list anything, and a new chat then falls
+      // back to whatever else is listed, so everything is listed at once.
+      const launchListable = [...launchSources].some(
+        (source) => source.includes(':') || installedProviders.has(source),
+      )
+      // A profile with nothing cached yet lists every source once, so the
+      // picker does not open on providers without rows.
+      const listEverySource = !launchListable || catalogModelsRef.current.length === 0
       setProviderCatalogSource({ transport, request: catalogRequest })
       setPendingModelSources(
         new Set([
@@ -1940,6 +2047,10 @@ export function App() {
       const unknownKeys = new Set(unvalidatedModelKeys)
       const validatedSources = new Map<string, number>()
       let publishedCatalog = catalogModelsRef.current
+      /** Each source's rows as last settled, in this run. */
+      const settledRows = new Map<string, ModelChoice[]>()
+      /** Every source of this run in catalog order, once all of them have answered. */
+      let catalogOrder: readonly string[] | undefined
       const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
         source: string,
         result: T,
@@ -1957,90 +2068,196 @@ export function App() {
         else if (!isModelCatalogSourceFresh(cached, source)) {
           for (const choice of result.models) unknownKeys.add(choice.key)
         }
-        publishedCatalog = [
-          ...publishedCatalog.filter((choice) => modelSource(choice) !== source),
-          ...result.models,
-        ]
+        settledRows.set(source, result.models)
+        // A source first listed after the run (one left for the picker with
+        // nothing cached) goes where the run would have put it, not last.
+        publishedCatalog = catalogOrder
+          ? catalogOrder.flatMap((key) => settledRows.get(key) ?? [])
+          : replaceSourceRows(publishedCatalog, source, result.models)
         setModelCatalog({
           models: publishedCatalog,
           loaded: true,
           unvalidatedModelKeys: new Set(unknownKeys),
         })
         setModelErrors({ ...discoveryErrors })
+        // Per source, so a source that fails never holds back the others.
         if (result.discovered) {
-          writeSetting(
-            MODEL_CATALOG_KEY,
-            serializeModelCatalogCache(publishedCatalog, {
-              validatedSources: validatedSources.keys(),
-              // A later completion must not refresh an earlier source's age.
-              validatedAt: Math.min(...validatedSources.values()),
-            }),
+          updateModelVisibility((record) =>
+            settleModelVisibilitySource(record, source, result.models, Date.now()),
           )
+        }
+        if (result.discovered && !pendingCacheWrite) {
+          // Reads the catalog and source ages as they are when it runs.
+          const write = () => writeModelCatalogCache(publishedCatalog, validatedSources)
+          const timer = window.setTimeout(() => {
+            pendingCacheWrite = undefined
+            write()
+          }, MODEL_CATALOG_CACHE_WRITE_DELAY_MS)
+          pendingCacheWrite = { timer, write }
         }
         return result
       }
-      // A profile without saved visibility gets its curated defaults below,
-      // once every direct source has answered. Until then, hide each source's
-      // older models as soon as that source answers, so a picker opened during
-      // discovery never lists a model it is about to drop. Nothing is saved
-      // here: the first full catalog still decides and persists the profile.
-      // A saved profile only gets this for models it has never listed.
-      const hideDefaultHiddenModels = (models: readonly ModelChoice[]) => {
-        if (cancelled) return
-        const current = hiddenModelsRef.current
-        const candidates = modelVisibilityInitialized.current
-          ? unlistedHiddenModels(models, listedModelsRef.current)
-          : defaultHiddenModels(models)
-        const additions = candidates.filter((choice) => !current.has(choice.key))
-        if (additions.length === 0) return
-        const next = new Set(current)
-        for (const choice of additions) next.add(choice.key)
-        hiddenModelsRef.current = next
-        setHiddenModels(next)
+      // One run per source at a time: a change announced while that source is
+      // still listing lists it once more afterwards.
+      type SourceRun = {
+        discover: () => Promise<unknown>
+        running: boolean
+        again: boolean
+        /** Left for later: shows its cached rows until something needs it. */
+        deferred: boolean
+      }
+      const sourceRuns = new Map<string, SourceRun>()
+      const finishRun = (source: string, run: SourceRun, done: Promise<unknown>) => {
+        void done
+          .catch(() => undefined)
+          .then(() => {
+            run.running = false
+            if (!run.again) return
+            run.again = false
+            runSources?.relist(source)
+          })
+      }
+      const trackSource = (
+        source: string,
+        discover: () => Promise<unknown>,
+      ): Promise<{ source: string }> => {
+        // Read when each source registers: the picker may open while the run
+        // is still waiting for agents or harnesses.
+        if (!listEverySource && !everyModelSourceWanted.current && !launchSources.has(source)) {
+          sourceRuns.set(source, { discover, running: false, again: false, deferred: true })
+          settleSource(source, {
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
+          return Promise.resolve({ source })
+        }
+        const run: SourceRun = { discover, running: true, again: false, deferred: false }
+        sourceRuns.set(source, run)
+        const done = discover()
+        finishRun(source, run, done)
+        return done.then(
+          () => ({ source }),
+          () => ({ source }),
+        )
+      }
+      const startRun = (source: string, run: SourceRun) => {
+        run.running = true
+        delete discoveryErrors[source]
+        finishRun(source, run, run.discover())
+      }
+      const startDeferred = (source: string, run: SourceRun) => {
+        if (!run.deferred) return
+        run.deferred = false
+        setPendingModelSources((current) => new Set([...current, source]))
+        startRun(source, run)
+      }
+      runSources = {
+        relist: (source) => {
+          const run = sourceRuns.get(source)
+          // A source left for later lists its newest models when it is needed.
+          if (cancelled || !run || run.deferred) return
+          if (run.running) {
+            run.again = true
+            return
+          }
+          startRun(source, run)
+        },
+        discover: (source) => {
+          if (cancelled) return
+          if (source === undefined) {
+            for (const [key, run] of sourceRuns) startDeferred(key, run)
+            return
+          }
+          const run = sourceRuns.get(source)
+          if (run) startDeferred(source, run)
+        },
+      }
+      const discoverProvider = async (entry: ProviderStatus) => {
+        const preserveCatalog = () => {
+          const source = sourceKey({ provider: entry.id })
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          return settleSource(source, {
+            provider: entry.id,
+            discovered: false,
+            models: preserved,
+          })
+        }
+        try {
+          const result = await transport.request('models.list', { provider: entry.id })
+          const models = choicesFor(
+            {
+              provider: entry.id,
+              sourceName: entry.displayName,
+              mark: providerMark(entry.id),
+            },
+            result.models,
+            false,
+          )
+          if (models.length === 0) return preserveCatalog()
+          return settleSource(sourceKey({ provider: entry.id }), {
+            provider: entry.id,
+            discovered: true,
+            models,
+          })
+        } catch (cause) {
+          discoveryErrors[sourceKey({ provider: entry.id })] = {
+            id: `models:${entry.id}:${catalogRequest}`,
+            message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+          }
+          return preserveCatalog()
+        }
       }
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
-          .map(async (entry) => {
-            const preserveCatalog = () => {
-              const source = sourceKey({ provider: entry.id })
-              const preserved = catalogModelsRef.current.filter(
-                (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-              )
-              hideDefaultHiddenModels(preserved)
-              return settleSource(source, {
-                provider: entry.id,
-                discovered: false,
-                models: preserved,
-              })
-            }
-            try {
-              const result = await transport.request('models.list', { provider: entry.id })
-              const models = choicesFor(
-                {
-                  provider: entry.id,
-                  sourceName: entry.displayName,
-                  mark: providerMark(entry.id),
-                },
-                result.models,
-                false,
-              )
-              if (models.length === 0) return preserveCatalog()
-              hideDefaultHiddenModels(models)
-              return settleSource(sourceKey({ provider: entry.id }), {
-                provider: entry.id,
-                discovered: true,
-                models,
-              })
-            } catch (cause) {
-              discoveryErrors[sourceKey({ provider: entry.id })] = {
-                id: `models:${entry.id}:${catalogRequest}`,
-                message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-              }
-              return preserveCatalog()
-            }
-          }),
+          .map((entry) =>
+            trackSource(sourceKey({ provider: entry.id }), () => discoverProvider(entry)),
+          ),
       )
+      const discoverAgent = async (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+        const source = sourceKey({ provider: 'acp', agentId: agent.id })
+        const preserveCatalog = () =>
+          settleSource(source, {
+            source,
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
+        try {
+          const result = await transport.request('models.list', {
+            provider: 'acp',
+            agent: agent.id,
+          })
+          const models = choicesFor(
+            {
+              provider: 'acp',
+              sourceName: agent.name,
+              mark: agentMark(agent.id),
+              agent: { id: agent.id, name: agent.name },
+            },
+            result.models,
+            false,
+          )
+          return models.length
+            ? settleSource(source, { source, discovered: true, models })
+            : preserveCatalog()
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: 'models:' + source + ':' + catalogRequest,
+            message:
+              'Could not load ' +
+              agent.name +
+              ' models. ' +
+              (cause instanceof Error ? cause.message : String(cause)),
+          }
+          return preserveCatalog()
+        }
+      }
       const acpPromise = agentsCatalog.then(async (result) => {
         if (cancelled) return []
         const agents = result?.agents ?? []
@@ -2057,46 +2274,11 @@ export function App() {
         return Promise.all(
           agents
             .filter((agent) => agent.installed)
-            .map(async (agent) => {
-              const source = sourceKey({ provider: 'acp', agentId: agent.id })
-              const preserveCatalog = () =>
-                settleSource(source, {
-                  source,
-                  discovered: false,
-                  models: catalogModelsRef.current.filter(
-                    (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-                  ),
-                })
-              try {
-                const result = await transport.request('models.list', {
-                  provider: 'acp',
-                  agent: agent.id,
-                })
-                const models = choicesFor(
-                  {
-                    provider: 'acp',
-                    sourceName: agent.name,
-                    mark: agentMark(agent.id),
-                    agent: { id: agent.id, name: agent.name },
-                  },
-                  result.models,
-                  false,
-                )
-                return models.length
-                  ? settleSource(source, { source, discovered: true, models })
-                  : preserveCatalog()
-              } catch (cause) {
-                discoveryErrors[source] = {
-                  id: 'models:' + source + ':' + catalogRequest,
-                  message:
-                    'Could not load ' +
-                    agent.name +
-                    ' models. ' +
-                    (cause instanceof Error ? cause.message : String(cause)),
-                }
-                return preserveCatalog()
-              }
-            }),
+            .map((agent) =>
+              trackSource(sourceKey({ provider: 'acp', agentId: agent.id }), () =>
+                discoverAgent(agent),
+              ),
+            ),
         )
       })
       const apiPromise = connectionsCatalog.then(async (result) => {
@@ -2177,39 +2359,44 @@ export function App() {
             ),
           ]),
       )
-      const customSourcesPromise = Promise.all(
-        harnesses.map(async (harness) => {
-          const source = sourceKey({ provider: harness.provider, agentId: harness.id })
-          const input = {
+      const discoverHarness = async (harness: ResultOf<'harnesses.list'>['harnesses'][number]) => {
+        const source = sourceKey({ provider: harness.provider, agentId: harness.id })
+        const input = {
+          provider: harness.provider,
+          sourceName: harness.displayName,
+          mark: providerMark(harness.provider),
+          agent: { id: harness.id, name: harness.displayName },
+        }
+        try {
+          const result = await transport.request('models.list', {
             provider: harness.provider,
-            sourceName: harness.displayName,
-            mark: providerMark(harness.provider),
-            agent: { id: harness.id, name: harness.displayName },
+            agent: harness.id,
+          })
+          return settleSource(source, {
+            source,
+            discovered: true,
+            models: choicesFor(input, result.models, true),
+          })
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: `models:${source}:${catalogRequest}`,
+            message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
           }
-          try {
-            const result = await transport.request('models.list', {
-              provider: harness.provider,
-              agent: harness.id,
-            })
-            return settleSource(source, {
-              source,
-              discovered: true,
-              models: choicesFor(input, result.models, true),
-            })
-          } catch (cause) {
-            discoveryErrors[source] = {
-              id: `models:${source}:${catalogRequest}`,
-              message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-            }
-            const preserved = catalogModelsRef.current.filter(
-              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-            )
-            if (preserved.length > 0)
-              return settleSource(source, { source, discovered: false, models: preserved })
-            const fallback = choicesFor(input, [], true)
-            return settleSource(source, { source, discovered: false, models: fallback })
-          }
-        }),
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          if (preserved.length > 0)
+            return settleSource(source, { source, discovered: false, models: preserved })
+          const fallback = choicesFor(input, [], true)
+          return settleSource(source, { source, discovered: false, models: fallback })
+        }
+      }
+      const customSourcesPromise = Promise.all(
+        harnesses.map((harness) =>
+          trackSource(sourceKey({ provider: harness.provider, agentId: harness.id }), () =>
+            discoverHarness(harness),
+          ),
+        ),
       )
       const [direct, acp, api, customSources] = await Promise.all([
         directPromise,
@@ -2219,18 +2406,17 @@ export function App() {
       ])
       if (cancelled) return
       setPendingModelSources(new Set())
-      const discoveries = [...direct, ...acp, ...api, ...customSources]
-      const catalog = discoveries.flatMap((entry) => entry.models)
-      const catalogReady = discoveries.length > 0 && discoveries.every((entry) => entry.discovered)
-      if (validatedSources.size > 0) {
-        writeSetting(
-          MODEL_CATALOG_KEY,
-          serializeModelCatalogCache(catalog, {
-            validatedSources: validatedSources.keys(),
-            validatedAt: Math.min(...validatedSources.values()),
-          }),
-        )
-      }
+      // In source order, with each source's latest rows: one listed again
+      // before this point keeps its newer list.
+      const listedSources = new Set(
+        [...direct, ...acp, ...api, ...customSources].map((entry) => entry.source),
+      )
+      catalogOrder = [...listedSources]
+      const catalog = catalogOrder.flatMap((source) => settledRows.get(source) ?? [])
+      publishedCatalog = catalog
+      // The full catalog supersedes whatever snapshot is still pending.
+      takePendingCacheWrite()
+      if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
       setModelCatalog({ models: catalog, loaded: true, unvalidatedModelKeys: unknownKeys })
       setModelErrors(discoveryErrors)
       // A failed connections.list is otherwise invisible: the models it paid for
@@ -2245,50 +2431,18 @@ export function App() {
         })
       }
       const stored = readSetting(MODEL_KEY)
-      // A hidden model cannot remain the internal selection. Otherwise the
-      // picker shows no such choice while a turn can still silently use it.
-      let hidden = hiddenModelsRef.current
-      let hiddenChanged = false
-      if (!modelVisibilityInitialized.current && catalogReady && catalog.length > 0) {
-        hidden = defaultHiddenModelKeys(catalog)
-        modelVisibilityInitialized.current = true
-        hiddenChanged = true
-      } else if (catalogReady) {
-        const additions = unlistedHiddenModels(catalog, listedModelsRef.current).filter(
-          (choice) => !hidden.has(choice.key),
-        )
-        if (additions.length > 0) {
-          hidden = new Set([...hidden, ...additions.map((choice) => choice.key)])
-          hiddenChanged = true
-        }
-      }
-      if (catalogReady && modelVisibilityInitialized.current) {
-        const listed = listedModelsRef.current
-        if (!listed || catalog.some((choice) => !listed.has(choice.key))) {
-          const next = new Set([...(listed ?? []), ...catalog.map((choice) => choice.key)])
-          listedModelsRef.current = next
-          writeSetting(LISTED_MODELS_KEY, JSON.stringify([...next]))
-        }
-      }
-      if (modelVisibilityInitialized.current) {
-        // Each row gets a pending migration once, even while another source
-        // fails. The moved list is saved together with the record of what moved.
-        const migration = migratePendingHiddenModels(hidden, readModelVisibilityProgress(), catalog)
-        if (migration.migrated.length > 0) {
-          hidden = migration.hidden
-          hiddenChanged = true
-          writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hidden]))
-        }
-        recordModelVisibilityProgress(migration.migrated, catalogReady)
-      }
-      if (hiddenChanged) {
-        hiddenModelsRef.current = hidden
-        setHiddenModels(hidden)
-      }
       const customPool = customModelsRef.current.map((entry) =>
         customModelChoice(entry, providerDisplayName(entry.provider), providerMark(entry.provider)),
       )
       const all = [...catalog, ...customPool]
+      // A hidden model cannot remain the internal selection. Otherwise the
+      // picker shows no such choice while a turn can still silently use it.
+      // Every source has settled its visibility above, so the record is current.
+      const hidden = hiddenModelKeys(
+        all,
+        modelVisibilityDefaults(catalog),
+        modelVisibilityRef.current,
+      )
       const visible = all.filter((choice) => !hidden.has(choice.key))
       const currentSession = activeIdRef.current
         ? findSession(projectsRef.current, activeIdRef.current)?.session
@@ -2404,8 +2558,42 @@ export function App() {
     })
     return () => {
       cancelled = true
+      if (catalogSources.current === controls) catalogSources.current = undefined
+      // Sources this run validated stay cached for the next run to start from.
+      takePendingCacheWrite()?.()
     }
   }, [transport, catalogRequest])
+
+  // The server answers model lists from what it knew and reads them again in
+  // the background; a list that changed is announced so it appears without a
+  // restart.
+  useEffect(
+    () =>
+      transport.on('models.changed', ({ provider, agent }) => {
+        catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
+      }),
+    [transport],
+  )
+
+  // A window left open for hours lists its models again when it comes back,
+  // so a CLI updated outside the app brings its new releases (and retires the
+  // generations they replace) without a restart. An update the app ran
+  // refreshes through the update notice already.
+  useEffect(() => {
+    const revalidate = () => {
+      if (document.visibilityState === 'hidden' || transport.state !== 'open') return
+      const now = Date.now()
+      if (now - catalogRequestedAt.current < MODEL_CATALOG_REVALIDATE_MS) return
+      catalogRequestedAt.current = now
+      setCatalogRequest((request) => request + 1)
+    }
+    window.addEventListener('focus', revalidate)
+    document.addEventListener('visibilitychange', revalidate)
+    return () => {
+      window.removeEventListener('focus', revalidate)
+      document.removeEventListener('visibilitychange', revalidate)
+    }
+  }, [transport])
 
   useEffect(() => {
     if (!isDesktop || !canCaptureVoice() || selectedModelChoice?.agent) {
@@ -2915,24 +3103,21 @@ export function App() {
 
   usePersistedSettingChange(MODEL_KEY, modelId || undefined)
 
+  // Note each newer generation as soon as the catalog lists it, from the
+  // cache or from discovery: an older one shown before that gives way once.
   useEffect(() => {
-    if (!modelVisibilityInitialized.current) return
-    writeSetting(HIDDEN_MODELS_KEY, JSON.stringify([...hiddenModels]))
-    // The rows a first click saved on their defaults are recorded only once
-    // that list is saved.
-    const rows = pendingVisibilityRows.current
-    if (rows) {
-      pendingVisibilityRows.current = undefined
-      recordModelVisibilityProgress(rows, false)
-    }
-  }, [hiddenModels])
+    updateModelVisibility((record) => recordModelSuccessors(record, modelDefaults, Date.now()))
+  }, [modelDefaults, updateModelVisibility])
 
-  // Record what the first paint migrated only after the effect above saved
-  // the moved list, so the next launch does not move those rows again over
-  // the user's later choices.
   useEffect(() => {
-    recordModelVisibilityProgress(initialModelVisibility.migrated, false)
-  }, [initialModelVisibility])
+    writeSetting(MODEL_VISIBILITY_KEY, serializeModelVisibility(modelVisibility))
+  }, [modelVisibility])
+
+  // Declared after the write above, so it runs once the record is saved.
+  useEffect(() => {
+    if (readSetting(MODEL_VISIBILITY_KEY) === null) return
+    for (const key of LEGACY_MODEL_VISIBILITY_KEYS) removeSetting(key)
+  }, [])
 
   usePersistedSettingChange(EFFORT_KEY, effort)
 
@@ -4963,30 +5148,20 @@ export function App() {
     localStorage.clear()
     location.reload()
   }, [cancelWorkspacePanelWidthPersistence])
-  const changeModelVisibility = useCallback((key: string, visible: boolean) => {
-    // On a profile without saved visibility this click creates the saved list.
-    // A failing source can keep discovery from ever saving the curated
-    // defaults, so the click saves them for every row the picker knows, and
-    // those rows are recorded as current: the next launch must not run a
-    // pending migration over this choice. Rows that appear later still get
-    // their defaults when they are first listed. Discovery migrates the whole
-    // catalog here (direct, ACP, API connection and custom harness rows), so
-    // every catalog row is recorded.
-    const created = modelVisibilityInitialized.current
-      ? undefined
-      : catalogModelsRef.current.filter((choice) => !isCustomModelChoice(choice))
-    if (created) pendingVisibilityRows.current = created.map((choice) => choice.key)
-    // A click is an explicit preference even if live discovery is still
-    // replacing a cached catalog. Never let late first-run defaults erase it.
-    modelVisibilityInitialized.current = true
-    setHiddenModels((current) => {
-      const next = new Set(current)
-      for (const hiddenKey of defaultHiddenModelKeys(created ?? [])) next.add(hiddenKey)
-      if (visible) next.delete(key)
-      else next.add(key)
-      return next
-    })
-  }, [])
+  // One update for any number of rows: Settings' All and None on a large
+  // source must not copy the record once per row.
+  const changeModelsVisibility = useCallback(
+    (keys: readonly string[], visible: boolean) => {
+      updateModelVisibility((record) =>
+        chooseModelsVisibility(record, keys, visible, modelDefaultsRef.current, Date.now()),
+      )
+    },
+    [updateModelVisibility],
+  )
+  const changeModelVisibility = useCallback(
+    (key: string, visible: boolean) => changeModelsVisibility([key], visible),
+    [changeModelsVisibility],
+  )
   const closePalette = useCallback(() => {
     setPaletteScope(null)
     setPreferredNewThreadProject(undefined)
@@ -5821,6 +5996,7 @@ export function App() {
                     onReady={handleComposerReady}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
+                    onModelSelectorOpen={discoverEveryModelSource}
                     onModelChange={selectModel}
                     onEffortChange={changeEffort}
                     onServiceTierChange={changeServiceTier}
@@ -5970,6 +6146,7 @@ export function App() {
               modelsLoading={catalogAvailability === 'loading'}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
+              onModelsVisibilityChange={changeModelsVisibility}
               providerDefaults={providerDefaultsControls}
               onConnectionsChanged={refreshCatalog}
               projectCount={projects.length}
@@ -6475,48 +6652,44 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === 'string')
 }
 
-function readModelVisibilityProgress(): ModelVisibilityProgress {
-  const rows = new Map<string, string>()
+/**
+ * The saved visibility record. A profile an older build saved as one hidden
+ * list is imported once: what the user hid stays hidden, and everything else
+ * returns to the current defaults, so an older generation the list still
+ * showed gives way to its successor.
+ */
+function readModelVisibility(): ModelVisibilityRecord {
+  const saved = parseModelVisibility(readSetting(MODEL_VISIBILITY_KEY))
+  if (saved) return saved
+  let legacyHidden: string[] = []
   try {
-    const stored: unknown = JSON.parse(readSetting(MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
+    const stored: unknown = JSON.parse(readSetting(LEGACY_HIDDEN_MODELS_KEY) ?? '[]')
+    if (isStringArray(stored)) legacyHidden = stored
+  } catch {
+    // An unreadable list leaves every model on its default.
+  }
+  if (legacyHidden.length === 0) return EMPTY_MODEL_VISIBILITY
+  const rows: Record<string, string> = {}
+  try {
+    const stored: unknown = JSON.parse(readSetting(LEGACY_MODEL_VISIBILITY_ROWS_KEY) ?? 'null')
     if (isRecord(stored)) {
       for (const [key, version] of Object.entries(stored)) {
-        if (typeof version === 'string') rows.set(key, version)
+        if (typeof version === 'string') rows[key] = version
       }
     }
   } catch {
-    // An unreadable record only means those rows are migrated once more.
+    // Without the row record every row is where the list's version says.
   }
-  return { version: readSetting(MODEL_VISIBILITY_VERSION_KEY), rows }
-}
-
-/**
- * Record the `migrated` rows as moved onto the current visibility defaults.
- * Once every source has been listed, the whole profile is current and the
- * per-row record is no longer needed.
- */
-function recordModelVisibilityProgress(migrated: readonly string[], complete: boolean): void {
-  if (complete) {
-    if (readSetting(MODEL_VISIBILITY_VERSION_KEY) !== MODEL_VISIBILITY_VERSION) {
-      writeSetting(MODEL_VISIBILITY_VERSION_KEY, MODEL_VISIBILITY_VERSION)
-    }
-    removeSetting(MODEL_VISIBILITY_ROWS_KEY)
-    return
-  }
-  if (migrated.length === 0) return
-  const rows = new Map(readModelVisibilityProgress().rows)
-  for (const key of migrated) rows.set(key, MODEL_VISIBILITY_VERSION)
-  writeSetting(MODEL_VISIBILITY_ROWS_KEY, JSON.stringify(Object.fromEntries(rows)))
-}
-
-/** `null` until a full catalog has been recorded; an unreadable record is rebuilt then. */
-function readListedModels(): Set<string> | null {
-  try {
-    const stored: unknown = JSON.parse(readSetting(LISTED_MODELS_KEY) ?? 'null')
-    return isStringArray(stored) ? new Set(stored) : null
-  } catch {
-    return null
-  }
+  legacyHidden = legacyHiddenChoices(
+    legacyHidden,
+    readSetting(LEGACY_MODEL_VISIBILITY_VERSION_KEY),
+    rows,
+  )
+  if (legacyHidden.length === 0) return EMPTY_MODEL_VISIBILITY
+  // Only on the first launch after the upgrade: the sources the cached
+  // catalog lists are imported now, the others once they are listed.
+  const launchCatalog = parseModelCatalogCache(readSetting(MODEL_CATALOG_KEY))?.models ?? []
+  return importLegacyModelVisibility(legacyHidden, launchCatalog, Date.now())
 }
 
 function isProviderId(value: unknown): value is ProviderId {
@@ -6706,4 +6879,23 @@ function removeSetting(key: string): void {
   } catch {
     // Nothing to lose.
   }
+}
+
+/**
+ * Save the catalog snapshot with each validated source's age. A catalog the
+ * reader would reject drops the key instead: an outgrown snapshot is never
+ * read again, and keeping the last one that fit would paint models a source
+ * no longer lists.
+ */
+function writeModelCatalogCache(
+  models: ModelChoice[],
+  validatedSources: ReadonlyMap<string, number>,
+): void {
+  const raw = serializeModelCatalogCache(models, {
+    validatedSources: validatedSources.keys(),
+    // A later completion must not refresh an earlier source's age.
+    validatedAt: Math.min(...validatedSources.values()),
+  })
+  if (raw === undefined) removeSetting(MODEL_CATALOG_KEY)
+  else writeSetting(MODEL_CATALOG_KEY, raw)
 }

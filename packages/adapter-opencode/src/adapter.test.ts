@@ -11,6 +11,7 @@ import {
 } from '@harness/proc'
 import type { Event } from '@opencode-ai/sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import {
   OpenCodeAdapter,
   OPENCODE_CAPABILITIES,
@@ -24,6 +25,41 @@ import type { OpenCodeV2Event, OpenCodeWireEvent } from './events.js'
 const CAPTURED = JSON.parse(
   readFileSync(new URL('./fixtures/events.json', import.meta.url), 'utf8'),
 ) as Event[]
+
+function fixtureText(name: string): string {
+  return readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
+}
+
+function fixture(name: string): JsonRpcValue {
+  return JsonRpcValueSchema.parse(JSON.parse(fixtureText(name)))
+}
+
+/**
+ * Captured from `opencode serve` 1.18.13 with one stored credential (MiniMax
+ * Token Plan) plus OpenCode's free tier, trimmed to the fields the adapter
+ * reads: `GET /config/providers`, the warm v2 `GET /api/model` (with its
+ * deprecated rows) and `GET /api/agent`, and the ids `opencode models` printed.
+ */
+const OPENCODE_CONFIG_PROVIDERS = fixture('opencode-1.18.13-config-providers.json')
+const OPENCODE_API_MODEL = fixture('opencode-1.18.13-api-model.json')
+const OPENCODE_API_AGENT = fixture('opencode-1.18.13-api-agent.json')
+const OPENCODE_MODELS = fixtureText('opencode-1.18.13-models.txt').split(/\r?\n/).filter(Boolean)
+const CONFIG_PROVIDERS = z
+  .object({
+    providers: z.array(
+      z.object({
+        id: z.string(),
+        models: z.record(z.string(), z.object({ id: z.string(), release_date: z.string() })),
+      }),
+    ),
+  })
+  .parse(OPENCODE_CONFIG_PROVIDERS)
+const API_MODEL_ROWS = z.object({ data: z.array(JsonRpcValueSchema) }).parse(OPENCODE_API_MODEL)
+const API_MODELS = z
+  .object({
+    data: z.array(z.object({ id: z.string(), providerID: z.string(), status: z.string() })),
+  })
+  .parse(OPENCODE_API_MODEL)
 const servers: ReturnType<typeof createServer>[] = []
 
 afterEach(async () => {
@@ -363,7 +399,7 @@ describe('OpenCode adapter', () => {
     await expect(adapter.listModels()).resolves.toMatchObject([
       {
         id: 'provider-1/model-1',
-        displayName: 'Provider One · Model One',
+        displayName: 'Model One',
         isDefault: true,
         reasoningEfforts: ['default', 'low', 'high'],
         defaultReasoningEffort: 'default',
@@ -552,13 +588,15 @@ describe('OpenCode adapter', () => {
     await expect(adapter.listModels()).resolves.toMatchObject([
       {
         id: 'provider-1/model-1',
-        displayName: 'Provider One · Model One',
+        displayName: 'Model One',
         isDefault: true,
         reasoningEfforts: ['default', 'low', 'high'],
       },
       {
         id: 'provider-1/model-2',
-        displayName: 'Provider One · Model Two',
+        displayName: 'Model Two',
+        // v2 sessions start on the build agent's model, not a provider's pick.
+        isDefault: false,
         reasoningEfforts: ['default', 'max'],
       },
     ])
@@ -661,6 +699,93 @@ describe('OpenCode adapter', () => {
         ?.body,
     ).toEqual({ text: 'Answer plainly.\n\nCheck it' })
     adapter.dispose()
+  })
+
+  it('offers only the models of providers OpenCode reports as connected', async () => {
+    // The warm v2 catalog with its deprecated rows, plus a models.dev row of a
+    // provider without a credential, as a cold v2 catalog lists them.
+    const catalog = {
+      data: [
+        ...API_MODEL_ROWS.data,
+        { id: 'deepseek-v4-pro', providerID: 'deepseek', name: 'DeepSeek V4 Pro', variants: [] },
+      ],
+    }
+    const mock = await serveCatalog({
+      '/config/providers': OPENCODE_CONFIG_PROVIDERS,
+      '/api/model': catalog,
+      '/api/agent': OPENCODE_API_AGENT,
+      '/api/provider': { data: [{ id: 'opencode' }, { id: 'deepseek' }] },
+    })
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      const models = await adapter.listModels()
+      const ids = models.map((model) => model.id)
+      expect([...ids].sort()).toEqual([...OPENCODE_MODELS].sort())
+      expect(ids.some((id) => id.startsWith('deepseek/'))).toBe(false)
+      const deprecated = API_MODELS.data
+        .filter((model) => model.status === 'deprecated')
+        .map((model) => `${model.providerID}/${model.id}`)
+      expect(deprecated.length).toBeGreaterThan(0)
+      expect(ids.filter((id) => deprecated.includes(id))).toEqual([])
+      const released = new Map(
+        CONFIG_PROVIDERS.providers.flatMap((provider) =>
+          Object.values(provider.models).map((model) => [
+            `${provider.id}/${model.id}`,
+            model.release_date,
+          ]),
+        ),
+      )
+      const days = ids.map((id) => released.get(id) ?? '')
+      expect(days).toEqual([...days].sort().reverse())
+      expect(ids[0]).toBe('opencode/nemotron-3.5-super-vl-free')
+      // No agent names a model and the v2 catalog lists no variants.
+      expect(models.filter((model) => model.isDefault)).toEqual([])
+      expect(models.filter((model) => model.reasoningEfforts.length > 0)).toEqual([])
+      expect(mock.urls.some((url) => url.startsWith('/api/provider'))).toBe(false)
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it("hands OpenCode's model status to the lineage", async () => {
+    const mock = await serveCatalog({
+      '/config/providers': {
+        providers: [
+          {
+            id: 'tinfoil',
+            name: 'Tinfoil',
+            models: {
+              'deepseek-v4-1-flash': {
+                id: 'deepseek-v4-1-flash',
+                name: 'DeepSeek V4.1 Flash',
+                status: 'beta',
+                release_date: '2026-09-10',
+              },
+              'deepseek-v4-flash': {
+                id: 'deepseek-v4-flash',
+                name: 'DeepSeek V4 Flash',
+                status: 'active',
+                release_date: '2026-04-24',
+              },
+            },
+          },
+        ],
+        default: {},
+      },
+      '/api/model': { data: [] },
+      '/api/agent': { data: [] },
+    })
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      expect(
+        (await adapter.listModels()).map((model) => [model.id, model.family, model.generation]),
+      ).toEqual([
+        ['tinfoil/deepseek-v4-1-flash', 'tinfoil/deepseek v# flash beta', '4.1'],
+        ['tinfoil/deepseek-v4-flash', 'tinfoil/deepseek v# flash', '4'],
+      ])
+    } finally {
+      await adapter.dispose()
+    }
   })
 
   it('rejects automatic approval review on resumed sessions too', async () => {
@@ -776,9 +901,9 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
       waiters.splice(waiters.indexOf(waiter), 1)
       waiter.resolve(record)
     }
-    if (request.url?.startsWith('/provider')) {
+    if (request.url?.startsWith('/config/providers')) {
       return json(response, {
-        all: [
+        providers: [
           {
             id: 'provider-1',
             name: 'Provider One',
@@ -789,11 +914,11 @@ async function serveOpenCode(beforeSessionResponse?: () => Promise<void>): Promi
                 name: 'Model One',
                 variants: { low: {}, high: {} },
               },
+              'model-retired': { id: 'model-retired', name: 'Retired', status: 'deprecated' },
             },
           },
         ],
         default: { 'provider-1': 'model-1' },
-        connected: ['provider-1'],
       })
     }
     if (request.method === 'GET' && request.url?.startsWith('/session/session-1')) {
@@ -880,8 +1005,20 @@ async function serveOpenCodeV2(
       waiter.resolve(record)
     }
     if (request.url === '/api/health') return json(response, { healthy: true })
-    if (request.url?.startsWith('/api/provider')) {
-      return json(response, { data: [{ id: 'provider-1', name: 'Provider One' }] })
+    if (request.url?.startsWith('/config/providers')) {
+      return json(response, {
+        providers: [
+          {
+            id: 'provider-1',
+            name: 'Provider One',
+            models: {
+              'model-1': { id: 'model-1', name: 'Model One' },
+              'model-2': { id: 'model-2', name: 'Model Two' },
+            },
+          },
+        ],
+        default: { 'provider-1': 'model-2' },
+      })
     }
     if (request.url?.startsWith('/api/model')) {
       return json(response, {
@@ -989,6 +1126,26 @@ async function requestBody(request: IncomingMessage): Promise<JsonRpcValue | und
   let body = ''
   for await (const chunk of request) body += chunk
   return body ? JsonRpcValueSchema.parse(JSON.parse(body)) : undefined
+}
+
+/** A read-only OpenCode v2 server that answers each path prefix with fixed JSON. */
+async function serveCatalog(
+  routes: Record<string, JsonRpcValue>,
+): Promise<{ baseUrl: string; urls: string[] }> {
+  const urls: string[] = []
+  const server = createServer((request, response) => {
+    const url = request.url ?? ''
+    urls.push(url)
+    if (url === '/api/health') return json(response, { healthy: true })
+    const route = Object.keys(routes).find((path) => url.startsWith(path))
+    if (route) return json(response, routes[route]!)
+    response.writeHead(404)
+    response.end()
+  })
+  servers.push(server)
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  return { baseUrl: `http://127.0.0.1:${serverPort(server)}`, urls }
 }
 
 function json(response: ServerResponse, value: JsonRpcValue): void {

@@ -1,0 +1,223 @@
+{
+  "providers": [
+    {
+      "id": "minimax-coding-plan",
+      "name": "MiniMax Token Plan (minimax.io)",
+      "source": "api",
+      "models": {
+        "MiniMax-M3": {
+          "id": "MiniMax-M3",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M3",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-06-01",
+          "variants": {
+            "none": {},
+            "thinking": {}
+          }
+        },
+        "MiniMax-M2.1": {
+          "id": "MiniMax-M2.1",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2.1",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2025-12-23",
+          "variants": {}
+        },
+        "MiniMax-M3.1-Flash-Preview": {
+          "id": "MiniMax-M3.1-Flash-Preview",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M3.1-Flash-Preview",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-09-27",
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {},
+            "max": {}
+          }
+        },
+        "MiniMax-M2.5": {
+          "id": "MiniMax-M2.5",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2.5",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-02-12",
+          "variants": {}
+        },
+        "MiniMax-M2.7": {
+          "id": "MiniMax-M2.7",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2.7",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-03-18",
+          "variants": {}
+        },
+        "MiniMax-M2.7-highspeed": {
+          "id": "MiniMax-M2.7-highspeed",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2.7-highspeed",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-03-18",
+          "variants": {}
+        },
+        "MiniMax-M2": {
+          "id": "MiniMax-M2",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2025-10-27",
+          "variants": {}
+        },
+        "MiniMax-M2.5-highspeed": {
+          "id": "MiniMax-M2.5-highspeed",
+          "providerID": "minimax-coding-plan",
+          "name": "MiniMax-M2.5-highspeed",
+          "family": "minimax",
+          "status": "active",
+          "release_date": "2026-02-13",
+          "variants": {}
+        }
+      }
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "source": "custom",
+      "models": {
+        "longcat-2.5-preview-free": {
+          "id": "longcat-2.5-preview-free",
+          "providerID": "opencode",
+          "name": "LongCat 2.5 Preview Free",
+          "family": "longcat",
+          "status": "active",
+          "release_date": "2026-09-25",
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {}
+          }
+        },
+        "space-bunny-free": {
+          "id": "space-bunny-free",
+          "providerID": "opencode",
+          "name": "Space Bunny Free",
+          "status": "active",
+          "release_date": "2026-09-23",
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {},
+            "max": {}
+          }
+        },
+        "mimo-v2.6-flash-free": {
+          "id": "mimo-v2.6-flash-free",
+          "providerID": "opencode",
+          "name": "MiMo-V2.6-Flash Free",
+          "family": "mimo",
+          "status": "active",
+          "release_date": "2026-09-22",
+          "variants": {}
+        },
+        "nemotron-3-ultra-free": {
+          "id": "nemotron-3-ultra-free",
+          "providerID": "opencode",
+          "name": "Nemotron 3 Ultra Free",
+          "family": "nemotron-free",
+          "status": "active",
+          "release_date": "2026-06-04",
+          "variants": {}
+        },
+        "glm-5.3-flash-free": {
+          "id": "glm-5.3-flash-free",
+          "providerID": "opencode",
+          "name": "GLM-5.3-Flash Free",
+          "family": "glm-flash",
+          "status": "active",
+          "release_date": "2026-08-26",
+          "variants": {
+            "low": {},
+            "high": {},
+            "max": {}
+          }
+        },
+        "nemotron-3.5-lightning-free": {
+          "id": "nemotron-3.5-lightning-free",
+          "providerID": "opencode",
+          "name": "Nemotron 3.5 Lightning Free",
+          "family": "nemotron-free",
+          "status": "active",
+          "release_date": "2026-08-11",
+          "variants": {}
+        },
+        "nemotron-3.5-super-vl-free": {
+          "id": "nemotron-3.5-super-vl-free",
+          "providerID": "opencode",
+          "name": "Nemotron 3.5 Super VL Free",
+          "family": "nemotron-free",
+          "status": "active",
+          "release_date": "2026-10-15",
+          "variants": {
+            "none": {},
+            "minimal": {},
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {}
+          }
+        },
+        "deepseek-v4.1-flash-free": {
+          "id": "deepseek-v4.1-flash-free",
+          "providerID": "opencode",
+          "name": "DeepSeek V4.1 Flash Free",
+          "family": "deepseek-flash",
+          "status": "active",
+          "release_date": "2026-09-10",
+          "variants": {
+            "low": {},
+            "high": {},
+            "max": {}
+          }
+        },
+        "beam-free": {
+          "id": "beam-free",
+          "providerID": "opencode",
+          "name": "Beam Free",
+          "family": "beam",
+          "status": "active",
+          "release_date": "2026-10-05",
+          "variants": {
+            "low": {},
+            "medium": {},
+            "high": {},
+            "xhigh": {},
+            "max": {}
+          }
+        },
+        "big-pickle": {
+          "id": "big-pickle",
+          "providerID": "opencode",
+          "name": "Big Pickle",
+          "family": "big-pickle",
+          "status": "active",
+          "release_date": "2025-10-17",
+          "variants": {}
+        }
+      }
+    }
+  ],
+  "default": {
+    "minimax-coding-plan": "MiniMax-M3.1-Flash-Preview",
+    "opencode": "big-pickle"
+  }
+}
