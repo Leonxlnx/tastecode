@@ -814,7 +814,8 @@ export class Orchestrator {
       Math.floor(handlers.idleThreadRuntimeMs ?? IDLE_THREAD_RUNTIME_MS),
     )
     this.#controls = new ProviderControls({
-      listModels: (provider, agent) => this.#runtimeFor(provider, this.#onLog).listModels(agent),
+      listModels: (provider, agent, read) =>
+        this.#runtimeFor(provider, this.#onLog).listModels(agent, read),
       onLog: (_provider, line) => this.#onLog(line),
       onLogin: this.#onLogin,
       onUsageChanged: this.#onUsageChanged,
@@ -827,9 +828,9 @@ export class Orchestrator {
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
     })
     this.#modelLists = new ModelListCache({
-      list: (provider, agent) => {
+      list: (provider, agent, read) => {
         const control = this.#controls.forProvider(provider)
-        return control.listModels ? control.listModels(agent) : Promise.resolve([])
+        return control.listModels ? control.listModels(agent, read) : Promise.resolve([])
       },
       onChanged: (provider, agent) => this.#onModelsChanged(provider, agent),
       onLog: (line) => this.#onLog(line),

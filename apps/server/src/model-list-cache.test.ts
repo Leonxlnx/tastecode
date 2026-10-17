@@ -61,9 +61,9 @@ describe('model list cache', () => {
     void cache.list('acp', 'kimi')
     await flush()
     expect(list.mock.calls).toEqual([
-      ['codex', undefined],
-      ['codex', 'work-codex'],
-      ['acp', 'kimi'],
+      ['codex', undefined, { refresh: false }],
+      ['codex', 'work-codex', { refresh: false }],
+      ['acp', 'kimi', { refresh: false }],
     ])
     expect(reads).toHaveLength(3)
   })
@@ -79,6 +79,8 @@ describe('model list cache', () => {
     await expect(cache.list('claude-code')).resolves.toEqual([model('opus')])
     await flush()
     expect(list).toHaveBeenCalledTimes(2)
+    // The provider learns the list survives a failed read, so it need not guess.
+    expect(list.mock.calls.map((call) => call[2])).toEqual([{ refresh: false }, { refresh: true }])
     // A request during the refresh answers from the same list without another read.
     await expect(cache.list('claude-code')).resolves.toEqual([model('opus')])
     expect(list).toHaveBeenCalledTimes(2)
@@ -190,15 +192,15 @@ describe('model list cache', () => {
     await Promise.all([cache.list('codex'), cache.list('codex', 'work'), cache.list('grok')])
     await flush()
     expect(list).toHaveBeenCalledTimes(4)
-    expect(list).toHaveBeenLastCalledWith('codex', 'work')
+    expect(list).toHaveBeenLastCalledWith('codex', 'work', { refresh: true })
 
     cache.invalidate('codex')
     await Promise.all([cache.list('codex'), cache.list('codex', 'work'), cache.list('grok')])
     await flush()
     // The read `work` had in flight predates this invalidation, so it reads again.
     expect(list.mock.calls.slice(4)).toEqual([
-      ['codex', undefined],
-      ['codex', 'work'],
+      ['codex', undefined, { refresh: true }],
+      ['codex', 'work', { refresh: true }],
     ])
   })
 
@@ -252,6 +254,8 @@ describe('model lists across launches', () => {
     expect(list).not.toHaveBeenCalled()
     await vi.waitFor(() => expect(list).toHaveBeenCalledOnce())
     expect(Date.now() - launchedAt).toBeGreaterThanOrEqual(190)
+    // A failed read keeps the last launch's list, so the provider must not guess.
+    expect(list).toHaveBeenCalledWith('codex', undefined, { refresh: true })
 
     reads[0]!.resolve([model('gpt-6.1-sol'), model('gpt-6-astra')])
     await vi.waitFor(() => expect(onChanged).toHaveBeenCalledExactlyOnceWith('codex', undefined))
@@ -311,8 +315,8 @@ describe('model lists across launches', () => {
     void cache.list('grok')
     await flush()
     expect(list.mock.calls).toEqual([
-      ['codex', undefined],
-      ['grok', undefined],
+      ['codex', undefined, { refresh: false }],
+      ['grok', undefined, { refresh: false }],
     ])
 
     for (const raw of ['{', JSON.stringify({ version: 2, lists: [] }), undefined]) {

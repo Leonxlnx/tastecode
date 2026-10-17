@@ -8,9 +8,18 @@ export type ModelListSnapshotStore = {
   write(value: string): void
 }
 
+/** How a read stands to the list the cache already holds. */
+export type ModelListRead = {
+  /**
+   * The cache holds a list it keeps when this read fails, so a provider that
+   * cannot reach its CLI should fail rather than answer with built-in values.
+   */
+  refresh: boolean
+}
+
 export type ModelListCacheOptions = {
   /** Reads one source's models from its provider; `agent` names a custom or ACP source. */
-  list: (provider: ProviderId, agent: string | undefined) => Promise<Model[]>
+  list: (provider: ProviderId, agent: string | undefined, read: ModelListRead) => Promise<Model[]>
   /** A refresh changed a list that callers may already hold. */
   onChanged?: ((provider: ProviderId, agent: string | undefined) => void) | undefined
   onLog?: ((line: string) => void) | undefined
@@ -264,7 +273,9 @@ export class ModelListCache {
       this.#entries.get(entryKey(entry.provider, entry.agent)) === entry &&
       entry.version === version
     const reading = Promise.resolve()
-      .then(() => this.#options.list(entry.provider, entry.agent))
+      .then(() =>
+        this.#options.list(entry.provider, entry.agent, { refresh: previous !== undefined }),
+      )
       .then(
         (models) => {
           if (current()) {
