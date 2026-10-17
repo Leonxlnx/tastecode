@@ -1,4 +1,4 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import type { ParamsOf, ProviderId, ResultOf, UsageReadIntent } from '@harness/contracts'
 import { errorMessage } from './boundary.js'
 
 type Summary = ResultOf<'usage.summary'>
@@ -22,8 +22,10 @@ function sameTarget(left: Target | undefined, right: Target): boolean {
   return left?.provider === right.provider && left.threadId === right.threadId
 }
 
-function paramsOf(target: Target): ParamsOf<'usage.summary'> {
-  return target.threadId ? { threadId: target.threadId } : { provider: target.provider }
+function paramsOf(target: Target, intent: UsageReadIntent): ParamsOf<'usage.summary'> {
+  return target.threadId
+    ? { threadId: target.threadId, intent }
+    : { provider: target.provider, intent }
 }
 
 /**
@@ -36,8 +38,12 @@ function paramsOf(target: Target): ParamsOf<'usage.summary'> {
 export class UsageSummaryController {
   readonly #load: LoadSummary
   readonly #coalesceMs: number
+  /** Why the next request is made unless a caller names a reason; see UsageReadIntent. */
+  readonly #intent: () => UsageReadIntent
   readonly #listeners = new Set<() => void>()
   #target: Target | undefined
+  /** A reason a caller gave that the next request has not carried yet. */
+  #requestedIntent: UsageReadIntent | undefined
   #state: UsageSummaryState | undefined
   #revision = 0
   #request: { revision: number; id: number } | undefined
@@ -46,9 +52,14 @@ export class UsageSummaryController {
   #timer: ReturnType<typeof setTimeout> | undefined
   #disposed = false
 
-  constructor(load: LoadSummary, coalesceMs = 100) {
+  constructor(
+    load: LoadSummary,
+    coalesceMs = 100,
+    intent: () => UsageReadIntent = () => 'visible',
+  ) {
     this.#load = load
     this.#coalesceMs = coalesceMs
+    this.#intent = intent
   }
 
   snapshot(): UsageSummaryState | undefined {
@@ -66,13 +77,16 @@ export class UsageSummaryController {
     this.#target = target
     this.#state = undefined
     this.#dirty = false
+    this.#requestedIntent = undefined
     this.#clearTimer()
     this.#start(this.#revision)
   }
 
   /** Manual retry, reconnect, and ordinary polling all use the same guarded path. */
-  refresh(): void {
+  refresh(intent?: UsageReadIntent): void {
     if (this.#disposed || !this.#target) return
+    // A retry is the strongest reason and survives a later, weaker one.
+    if (intent && this.#requestedIntent !== 'retry') this.#requestedIntent = intent
     if (this.#request?.revision === this.#revision) {
       this.#dirty = true
       return
@@ -108,8 +122,10 @@ export class UsageSummaryController {
     })
     const request = { revision, id: ++this.#nextRequestId }
     this.#request = request
+    const intent = this.#requestedIntent ?? this.#intent()
+    this.#requestedIntent = undefined
     void Promise.resolve()
-      .then(() => this.#load(paramsOf(target)))
+      .then(() => this.#load(paramsOf(target, intent)))
       .then(
         (next) => {
           if (!this.#isCurrent(request)) return

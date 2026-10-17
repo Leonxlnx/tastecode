@@ -1,4 +1,4 @@
-import type { ProviderId, ResultOf } from '@harness/contracts'
+import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UsageSummaryController } from './usage-summary-state.js'
 
@@ -83,8 +83,47 @@ describe('UsageSummaryController', () => {
     grok.resolve(summary(2))
     await settle()
     expect(state.snapshot()).toEqual({ status: 'ready', provider: 'grok', summary: summary(2) })
-    expect(load).toHaveBeenNthCalledWith(1, { threadId: 'thread-a' })
-    expect(load).toHaveBeenNthCalledWith(2, { provider: 'grok' })
+    // Without a reason from its owner, a request counts as a shown view.
+    expect(load).toHaveBeenNthCalledWith(1, { threadId: 'thread-a', intent: 'visible' })
+    expect(load).toHaveBeenNthCalledWith(2, { provider: 'grok', intent: 'visible' })
+  })
+
+  it('asks with the reason its owner gives at the time of each request', async () => {
+    let intent: 'background' | 'visible' = 'background'
+    const load = vi.fn(async (_params: ParamsOf<'usage.summary'>) => summary(1))
+    const state = new UsageSummaryController(load, 100, () => intent)
+
+    state.select({ provider: 'codex' })
+    await settle()
+    intent = 'visible'
+    state.refresh()
+    await settle()
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'codex', intent: 'background' },
+      { provider: 'codex', intent: 'visible' },
+    ])
+  })
+
+  it('keeps a retry for the request after the one in flight, over a weaker reason', async () => {
+    const first = deferred<Summary>()
+    const load = vi
+      .fn((_params: ParamsOf<'usage.summary'>) => Promise.resolve(summary(2)))
+      .mockReturnValueOnce(first.promise)
+    const state = new UsageSummaryController(load, 100, () => 'background')
+
+    state.select({ provider: 'claude-code' })
+    state.refresh('retry')
+    state.refresh('visible')
+    first.reject(new Error('Claude usage request timed out.'))
+    await settle()
+    // One retry, and the request after it falls back to the owner's reason.
+    state.refresh()
+    await settle()
+    expect(load.mock.calls.map(([params]) => params)).toEqual([
+      { provider: 'claude-code', intent: 'background' },
+      { provider: 'claude-code', intent: 'retry' },
+      { provider: 'claude-code', intent: 'background' },
+    ])
   })
 
   it('filters provider pushes and coalesces bursts during and after a read', async () => {

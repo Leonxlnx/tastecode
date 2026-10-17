@@ -21,14 +21,23 @@ export type AccountLimitsState = UsageSummaryState
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Called once while the limits are on screen; returns the release for when they leave. */
+  onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
+  const onShow = useRef(props.onShow)
   const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
 
   // The popup lands on the list itself rather than on its first Retry or Use.
   useLayoutEffect(() => panel.current?.focus(), [])
+  useLayoutEffect(() => {
+    onShow.current = props.onShow
+  })
+  // Showing the limits is what lets the server read the sources it reads only
+  // on view. Once per mount, so a new callback identity does not ask again.
+  useEffect(() => onShow.current?.(), [])
 
   const retry = (provider: ProviderId) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.

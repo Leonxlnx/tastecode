@@ -4489,17 +4489,29 @@ describe('new chats', () => {
       ).toHaveLength(2)
     })
     transport.request.mockClear()
+    // The popup's own request never answers here, so what it shows was preloaded.
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'usage.summary' ? new Promise(() => {}) : request(method, params),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     const codexLimits = await screen.findByRole('region', { name: 'Codex' })
     expect(within(codexLimits).getByText('75% left')).toBeTruthy()
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    // Opening asks once, StrictMode's replay included, and says the limits are on screen.
+    await waitFor(() =>
+      expect(transport.request.mock.calls.filter(([method]) => method === 'usage.summary')).toEqual(
+        [['usage.summary', { provider: 'codex', intent: 'visible' }]],
+      ),
+    )
   })
 
   it('cancels trailing plan-limit refreshes after a real unmount', async () => {
     const view = render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4519,23 +4531,48 @@ describe('new chats', () => {
     render(<App />)
 
     await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'claude-code',
+        intent: 'background',
+      })
     })
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ provider: 'grok' }),
+    )
 
     transport.request.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    // Each installed source is asked once now that its limits are on screen.
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'visible',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'claude-code',
+        intent: 'visible',
+      })
+    })
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+    ).toHaveLength(2)
   })
 
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4560,7 +4597,10 @@ describe('new chats', () => {
     ]
     render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4570,7 +4610,10 @@ describe('new chats', () => {
     })
 
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
   })
 
@@ -4600,6 +4643,7 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         provider: 'claude-code',
+        intent: 'background',
       }),
     )
     transport.request.mockClear()
@@ -4607,6 +4651,7 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         threadId: 'claude-thread',
+        intent: 'background',
       }),
     )
     transport.request.mockClear()
@@ -4620,9 +4665,13 @@ describe('new chats', () => {
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         threadId: 'claude-thread',
+        intent: 'background',
       }),
     )
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ provider: 'codex' }),
+    )
   })
 
   it('shows consecutive prompts while the new session is still starting', async () => {
@@ -11920,6 +11969,7 @@ describe('reopening a session', () => {
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         threadId: 'untouched-thread',
+        intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
@@ -12242,6 +12292,7 @@ describe('reopening a session', () => {
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
         threadId: 'untouched-thread',
+        intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})

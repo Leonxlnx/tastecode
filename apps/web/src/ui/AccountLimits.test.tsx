@@ -90,6 +90,30 @@ describe('account limits', () => {
     expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
   })
 
+  it('says once that the limits are on screen and releases that when it closes', () => {
+    const release = vi.fn()
+    const onShow = vi.fn(() => release)
+    const state: AccountLimitsState = {
+      status: 'ready',
+      provider: 'codex',
+      summary: summary([{ label: 'Weekly', usedPercent: 12 }]),
+    }
+    const view = render(<AccountLimits states={[state]} onShow={onShow} onRetry={() => {}} />)
+    expect(onShow).toHaveBeenCalledOnce()
+    // New states and a new callback identity are no new showing.
+    view.rerender(
+      <AccountLimits
+        states={[{ ...state, status: 'loading' }]}
+        onShow={() => release}
+        onRetry={() => {}}
+      />,
+    )
+    expect(onShow).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+    view.unmount()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
   it('keeps ordered provider states and hides sources without limits', () => {
     render(
       <AccountLimits
