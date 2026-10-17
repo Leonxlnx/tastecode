@@ -5,10 +5,6 @@ export type ThreadSearchIndex = {
   searchable: readonly string[]
 }
 
-export function createThreadSearchIndex(items: readonly Item[]): ThreadSearchIndex {
-  return { searchable: items.map(searchableItemText) }
-}
-
 /**
  * Retain normalized history across structural updates. Rows are immutable, so
  * an identity check finds every row the reducer replaced, wherever it sits: a
