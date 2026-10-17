@@ -542,9 +542,10 @@
 }
 
 /* A code chip whose text is still veiled would show as an empty box; it
-   fades in once the reveal reaches its first character. */
+   fades in once the reveal reaches its first character, slowly at first,
+   so its text leads. */
 .md[data-streaming-markdown] :not(pre) > code {
-  transition: background-color var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-in-out);
 }
 
 .md [data-reveal-pending] {
