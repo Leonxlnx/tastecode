@@ -738,6 +738,8 @@ export class Orchestrator {
       idleThreadRuntimeMs?: number
       /** Test override for releasing one-shot Codex control processes. */
       controlIdleMs?: number
+      /** Waited on before an uncached limit read; the server holds it while a turn streams. */
+      beforeLimitRead?: () => Promise<void>
       /** Where isolated checkouts live. Outside any repository, on purpose. */
       worktreeRoot?: string
     },
@@ -795,6 +797,7 @@ export class Orchestrator {
       onSkillsChanged: this.#onSkillsChanged,
       onAuthChanged: () => this.#invalidateBackgroundSources(),
       ...(handlers.controlIdleMs !== undefined ? { controlIdleMs: handlers.controlIdleMs } : {}),
+      ...(handlers.beforeLimitRead ? { beforeLimitRead: handlers.beforeLimitRead } : {}),
     })
   }
 
