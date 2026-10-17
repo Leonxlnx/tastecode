@@ -24,6 +24,7 @@ const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
 const loadAntigravity = retryableLazy(() => import('@harness/adapter-antigravity'))
+const loadOpenCode = retryableLazy(() => import('@harness/adapter-opencode'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -172,7 +173,14 @@ const defaultServices = {
   },
   api: {},
   codex: {},
-  opencode: {},
+  opencode: {
+    account: async () => (await loadOpenCode()).openCodeAccount(),
+    // Being signed in means one or more connected model providers, each
+    // removed on its own; signing out of all of them is not one action.
+    signOut: async () => {
+      throw new Error('Remove an OpenCode sign-in with `opencode auth logout` in a terminal.')
+    },
+  },
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
