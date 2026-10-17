@@ -280,6 +280,8 @@ function SettingsComponent(props: {
   modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  /** Several rows at once, as one change. */
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
   providerDefaults?: ProviderDefaultsControls | undefined
   onConnectionsChanged: () => void
   projectCount: number
@@ -1361,6 +1363,7 @@ function ModelSettings(props: {
   modelsLoading?: boolean | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
@@ -1379,6 +1382,7 @@ function ModelSettings(props: {
               choices={group.entries}
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
+              onModelsVisibilityChange={props.onModelsVisibilityChange}
             />
           ))}
         </div>
@@ -1684,18 +1688,19 @@ function ModelVisibilityGroup(props: {
   choices: ModelChoice[]
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
 }) {
   const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
   const allVisible = visibleCount === props.choices.length
   const noneVisible = visibleCount === 0
 
   const setAllVisible = (visible: boolean) => {
-    for (const choice of props.choices) {
-      const currentlyVisible = !props.hiddenModels.has(choice.key)
-      if (currentlyVisible !== visible) {
-        props.onModelVisibilityChange(choice.key, visible)
-      }
-    }
+    props.onModelsVisibilityChange(
+      props.choices
+        .filter((choice) => props.hiddenModels.has(choice.key) === visible)
+        .map((choice) => choice.key),
+      visible,
+    )
   }
 
   return (
