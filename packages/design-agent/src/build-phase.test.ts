@@ -2,6 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
+import type { AssetManifest } from './assets.js'
+import type { BrandSystem } from './brand.js'
+import type { DesignBrief } from './brief.js'
 import {
   DesignSourceQualityError,
   designBuildCorrectionPrompt,
@@ -13,8 +16,9 @@ import {
   validateDesignSourceQuality,
   validateExactBuildFiles,
 } from './build-phase.js'
+import type { PageBlueprint } from './page.js'
 
-const artifacts = [
+const artifacts: [DesignBrief, BrandSystem, PageBlueprint, AssetManifest] = [
   {
     originalRequest: 'Build a page.',
     subject: 'Coffee',
@@ -33,8 +37,28 @@ const artifacts = [
     unresolved: [],
   },
   {
-    version: 1 as const,
-    creativeDirection: { summary: 'Warm.', keywords: [], avoid: [] },
+    version: 1,
+    foundation: {
+      strategy: 'extend',
+      existingAssets: ['public/logo.svg'],
+      assetActions: [
+        { asset: 'public/logo.svg', action: 'protect', reason: 'Supplied official mark.' },
+      ],
+      lockedDecisions: ['Keep the supplied logo.'],
+      assumptions: [],
+    },
+    creativeDirection: {
+      summary: 'Warm.',
+      traits: [{ quality: 'tactile', boundary: 'not rustic' }],
+      productiveTension: 'Warm craft with precise utility.',
+      signatureDevice: {
+        description: 'A cropped circular roast mark.',
+        status: 'existing',
+        invariants: ['Circular silhouette'],
+      },
+      restraint: 'Use the roast mark once per major surface.',
+      avoid: [],
+    },
     colorPalette: [{ name: 'Ink', value: '#111', usage: 'Text' }],
     typefaces: [{ family: 'Geist', source: 'Project', roles: ['UI'], weights: [500] }],
     interfaceDirection: 'Editorial.',
@@ -43,25 +67,38 @@ const artifacts = [
     voice: { summary: 'Direct.', avoid: [] },
   },
   {
-    version: 1 as const,
+    version: 1,
     page: { title: 'Coffee', route: '/', description: 'Fresh coffee.' },
+    architecture: {
+      contract: 'Help home brewers choose a subscription.',
+      mode: 'persuade_convert',
+      novelty: 'medium',
+      grid: 'Reading rail with product breakouts.',
+      signatureRule: 'Product evidence breaks the right edge.',
+      rhythm: 'Explanation alternates with proof.',
+    },
     navigation: [],
     sections: [
       {
         id: 'hero',
         purpose: 'Lead.',
+        userQuestion: 'What can I order?',
+        stage: 'orient',
+        dependencies: [],
+        evidence: [],
         copy: { heading: 'Fresh.', body: [], callsToAction: [] },
         layout: 'Split.',
         componentNeeds: [],
         assetNeeds: [],
+        transformation: { compact: 'Stack.', medium: 'Split.', expanded: 'Split.' },
       },
     ],
     responsive: [],
     interactions: [],
     acceptanceCriteria: [],
   },
-  { version: 1 as const, assets: [] },
-] as const
+  { version: 1, assets: [] },
+]
 
 describe('build phase', () => {
   it('requires the existing architecture and leaves preview to the harness', () => {
