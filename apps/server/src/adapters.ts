@@ -978,6 +978,17 @@ function claudeRuntime(
     respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
     setApproval: (approval) => adapter.setApproval(approval),
     onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    listMcpServers: (threadId) => adapter.listMcpServers(threadId),
+    isMcpLoading: () => adapter.isMcpLoading(),
+    onMcpChanged: (listener) => {
+      adapter.on('mcpChanged', listener)
+      return () => adapter.off('mcpChanged', listener)
+    },
+    listCommands: (threadId) => adapter.listCommands(threadId),
+    onCommandsChanged: (listener) => {
+      adapter.on('commandsChanged', listener)
+      return () => adapter.off('commandsChanged', listener)
+    },
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),

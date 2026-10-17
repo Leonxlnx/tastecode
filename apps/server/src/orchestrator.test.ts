@@ -7049,7 +7049,7 @@ describe('MCP inventory', () => {
   })
 
   it('reports provider MCP capabilities without starting one', async () => {
-    const { orchestrator } = harness()
+    const { orchestrator, sessions } = harness()
 
     await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
       capabilities: {
@@ -7060,9 +7060,52 @@ describe('MCP inventory', () => {
         reload: false,
         startOAuth: false,
         cancelOAuth: false,
+        hideInherited: false,
       },
       servers: [],
     })
+    expect(sessions).toEqual([])
+  })
+
+  it("reads Claude's servers from a live chat in the project", async () => {
+    const { orchestrator, sessions } = harness()
+    await orchestrator.startThread('claude-code', '/repo')
+    sessions[0]!.mcpServers = [
+      {
+        id: 'plugin:acme-docs:acme-docs',
+        displayName: 'acme-docs',
+        description: 'Plugin acme-docs',
+        scope: 'global',
+        enabled: true,
+        auth: { status: 'not_required' },
+        startup: { state: 'starting' },
+        tools: [],
+        resources: [],
+        resourceTemplates: [],
+      },
+    ]
+    sessions[0]!.mcpLoading = true
+
+    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        startOAuth: false,
+        cancelOAuth: false,
+        hideInherited: false,
+      },
+      servers: sessions[0]!.mcpServers,
+      loading: true,
+    })
+    // Another project has no Claude chat, so it has no inventory yet.
+    await expect(orchestrator.listMcpServers('claude-code', '/other')).resolves.toMatchObject({
+      capabilities: { inventory: false },
+      servers: [],
+    })
+    await orchestrator.disposeAll()
   })
 
   it('reads live startup state from the project session', async () => {

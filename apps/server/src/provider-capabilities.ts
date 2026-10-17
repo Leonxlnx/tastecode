@@ -44,6 +44,7 @@ export const PROVIDER_CAPABILITIES = {
     ...unsupported,
     resume: true,
     managedMcp: true,
+    mcpInventory: true,
     nativeModels: true,
     account: true,
     login: true,

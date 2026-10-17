@@ -16,7 +16,10 @@ import type {
   SkillDiscoveryError,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
-import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
+import {
+  CLAUDE_MCP_CAPABILITIES,
+  validateClaudeMcpServer,
+} from '@harness/adapter-claude-code/capabilities'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -203,6 +206,18 @@ const defaultServices = {
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
+    // Claude reports its servers only from a running session; without a chat
+    // in the project there is no inventory yet.
+    listMcpServers: async (_projectPath, read) => {
+      if (read.readActive) {
+        try {
+          return { capabilities: CLAUDE_MCP_CAPABILITIES, ...(await read.readActive()) }
+        } catch {
+          // The chat closed during the read; answer as if it had not been open.
+        }
+      }
+      return { capabilities: { ...CLAUDE_MCP_CAPABILITIES, inventory: false }, servers: [] }
+    },
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),

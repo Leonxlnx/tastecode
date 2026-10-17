@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
 import {
   ProviderIdSchema,
+  type McpServer,
   type Model,
   type ProviderCommand,
   type ProviderLimit,
@@ -141,7 +142,6 @@ describe('declared provider controls', () => {
     const { registry, createCodex } = setup()
     const control = registry.forProvider('claude-code')
     expect(control.capabilities.managedMcp).toBe(true)
-    expect(control.listMcpServers).toBeUndefined()
     expect(() => control.validateMcpServer!({ id: 'inherited', enabled: false })).toThrow(
       'cannot hide an inherited MCP server',
     )
@@ -161,6 +161,51 @@ describe('declared provider controls', () => {
     ).not.toThrow()
     expect(createCodex).not.toHaveBeenCalled()
   })
+
+  it("answers Claude's MCP inventory from a live chat and says when there is none", async () => {
+    const { registry, createCodex } = setup()
+    const claude = registry.forProvider('claude-code')
+    const readOnly = {
+      add: true,
+      update: true,
+      remove: true,
+      reload: false,
+      startOAuth: false,
+      cancelOAuth: false,
+      hideInherited: false,
+    }
+    const server: McpServer = {
+      id: 'claude.ai Gmail',
+      displayName: 'Gmail',
+      scope: 'global',
+      enabled: true,
+      auth: { status: 'sign_in_required', method: 'oauth' },
+      startup: { state: 'stopped' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    }
+
+    await expect(claude.listMcpServers!('/project')).resolves.toEqual({
+      capabilities: { inventory: false, ...readOnly },
+      servers: [],
+    })
+    await expect(
+      claude.listMcpServers!('/project', async () => ({ servers: [server], loading: true })),
+    ).resolves.toEqual({
+      capabilities: { inventory: true, ...readOnly },
+      servers: [server],
+      loading: true,
+    })
+    // A chat that closes during the read leaves the answer for no chat.
+    await expect(
+      claude.listMcpServers!('/project', async () => {
+        throw new Error('Claude Agent SDK session is not running')
+      }),
+    ).resolves.toEqual({ capabilities: { inventory: false, ...readOnly }, servers: [] })
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
   it('keeps the full roster and creates no processes until a read needs one', async () => {
     const { registry, createCodex } = setup()
     expect(Object.keys(PROVIDER_CAPABILITIES).sort()).toEqual([...ProviderIdSchema.options].sort())
