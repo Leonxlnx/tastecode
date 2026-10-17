@@ -1,5 +1,5 @@
 import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { CURSOR_CAPABILITIES } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
@@ -19,8 +19,8 @@ import { commandVersion, isInstalled } from '@harness/proc/cli'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * A probe may declare a short sign-in check that reads its CLI's public output
+ * (Codex does); every other provider is answered later by its account read.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -34,9 +34,19 @@ type Probe = {
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
   updater?: CliUpdateSource
-  supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
+  /**
+   * A short sign-in check the scan runs for an installed CLI, from that CLI's
+   * public output. Without one the scan reports `unknown` and the account read
+   * decides later.
+   */
+  auth?: () => Promise<ProviderStatus['auth']>
+  /**
+   * False when the scan must never start the CLI to ask its version: finding
+   * the binary is enough to call it installed, and the version stays unknown.
+   */
+  readsVersion?: false
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
   /** What its chat sources must name. Absent means `DIRECT_SOURCE`. */
@@ -82,6 +92,7 @@ const PROBES: Probe[] = [
       loginOpensBrowser: true,
     },
     loginCommand: 'codex login',
+    auth: () => codexLoginStatus(),
   },
   {
     id: 'grok',
@@ -102,7 +113,9 @@ const PROBES: Probe[] = [
     displayName: 'Cursor',
     command: 'cursor-agent',
     capabilities: CURSOR_CAPABILITIES,
-    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    // No version gate: cursor-agent updates itself to a new date-stamped build
+    // every month, and a gate blocked each working one. A changed wire still
+    // fails the turn, through the stream's ProtocolFrameError.
     setup: {
       installUrl: 'https://docs.cursor.com/en/cli/installation',
       login: 'app',
@@ -130,8 +143,14 @@ const PROBES: Probe[] = [
       login: 'provider',
     },
     // First interactive run signs in with the user's Google account; there is
-    // no separate login subcommand as of agy 1.1.10.
+    // no separate login subcommand as of agy 1.4.0.
     loginCommand: 'agy',
+    // Every agy start launches its language server and may launch its
+    // self-updater, which replaces agy.exe in place. A scan that started it
+    // for `--version` (12.8 s cold, minutes right after an update) and killed
+    // it at the time limit could stop that updater mid-swap and leave no
+    // binary behind. Finding agy is all the scan needs.
+    readsVersion: false,
   },
   {
     id: 'pi',
@@ -166,8 +185,12 @@ const REAL_SYSTEM: SystemProbe = {
   isInstalled,
   version: commandVersion,
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  auth: (provider) => installTimeAuth(provider),
+}
+
+/** The sign-in check a provider's probe declares, or `unknown` when it has none. */
+export function installTimeAuth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']> {
+  return PROBES.find((entry) => entry.id === provider)?.auth?.() ?? Promise.resolve('unknown')
 }
 
 export function providerUpdateSources() {
@@ -314,8 +337,10 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
-  const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
+  const [version, auth] = await Promise.all([
+    entry.readsVersion === false ? undefined : system.version(entry.command),
+    system.auth(entry.id),
+  ])
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -325,11 +350,6 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     source,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
-    ...(unsupported
-      ? {
-          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-        }
-      : {}),
   }
 }
 
