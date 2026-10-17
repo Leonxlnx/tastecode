@@ -16,6 +16,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
+import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -293,10 +294,17 @@ const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['cl
     discover: async () => ({ commands: [], servers: [] }),
   },
 }
-/** The same for Grok's probe. */
+/** The same for Grok's and OpenCode's probes. */
 const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
   projectInventory: {
     mcpCapabilities: GROK_MCP_CAPABILITIES,
+    skillCapabilities: { inventory: true, configure: false, install: false },
+    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  },
+}
+const quietOpenCodeInventory: NonNullable<ProviderControlsOptions['services']>['opencode'] = {
+  projectInventory: {
+    mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
     skillCapabilities: { inventory: true, configure: false, install: false },
     discover: async () => ({ commands: [], servers: [], skills: [] }),
   },
@@ -443,6 +451,7 @@ function harness(
       ...providerServices,
       'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
       grok: { ...quietGrokInventory, ...providerServices?.grok },
+      opencode: { ...quietOpenCodeInventory, ...providerServices?.opencode },
     },
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
@@ -7541,9 +7550,11 @@ describe('skills inventory', () => {
         skills: [],
         errors: [],
       })
-      await expect(orchestrator.listSkills('opencode', project)).resolves.toMatchObject({
-        capabilities: { inventory: false },
+      // OpenCode's own skills come from its project probe, also without .agents.
+      await expect(orchestrator.listSkills('opencode', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
         skills: [],
+        errors: [],
       })
       // A provider's own skill inventory comes without the .agents folders.
       await expect(orchestrator.listSkills('grok', project)).resolves.toEqual({

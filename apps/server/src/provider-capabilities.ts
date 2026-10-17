@@ -94,6 +94,13 @@ export const PROVIDER_CAPABILITIES = {
     signOut: true,
     usageLimits: true,
   },
-  opencode: { ...unsupported, resume: true, managedMcp: true, nativeModels: true },
+  opencode: {
+    ...unsupported,
+    resume: true,
+    managedMcp: true,
+    mcpInventory: true,
+    nativeSkills: true,
+    nativeModels: true,
+  },
   pi: { ...unsupported, nativeModels: true },
 } as const satisfies Readonly<Record<ProviderId, ProviderControlCapabilities>>

@@ -232,7 +232,7 @@ describe('declared provider controls', () => {
     expect(createCodex).not.toHaveBeenCalled()
   })
 
-  it('offers Claude and Grok project inventories by default without starting anything', () => {
+  it('offers Claude, Grok and OpenCode project inventories by default without starting anything', () => {
     const { registry, createCodex } = setup()
     const claude = registry.forProvider('claude-code')
     expect(claude.listMcpServers).toBeDefined()
@@ -243,6 +243,10 @@ describe('declared provider controls', () => {
     expect(grok.listMcpServers).toBeDefined()
     expect(grok.listCommands).toBeDefined()
     expect(grok.listSkills).toBeDefined()
+    const opencode = registry.forProvider('opencode')
+    expect(opencode.listMcpServers).toBeDefined()
+    expect(opencode.listCommands).toBeDefined()
+    expect(opencode.listSkills).toBeDefined()
     expect(registry.forProvider('cursor').listCommands).toBeUndefined()
     expect(createCodex).not.toHaveBeenCalled()
   })

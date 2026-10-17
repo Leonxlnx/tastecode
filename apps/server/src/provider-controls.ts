@@ -21,6 +21,7 @@ import {
   validateClaudeMcpServer,
 } from '@harness/adapter-claude-code/capabilities'
 import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
+import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
@@ -31,6 +32,7 @@ const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
+const loadOpenCode = retryableLazy(() => import('@harness/adapter-opencode'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -207,7 +209,18 @@ const defaultServices = {
   antigravity: {},
   api: {},
   codex: {},
-  opencode: {},
+  opencode: {
+    // OpenCode reports these from a running server. A project without a chat
+    // starts one without a session (4-12 s), cached.
+    projectInventory: {
+      mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadOpenCode()).discoverOpenCodeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadOpenCode()).openCodeInventoryWatchPaths(projectPath),
+    },
+  },
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
