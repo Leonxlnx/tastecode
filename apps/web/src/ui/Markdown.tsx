@@ -1,4 +1,12 @@
-import { memo, startTransition, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  memo,
+  startTransition,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import {
   LIVE_MARKDOWN_BULK_TEXT_MIN,
   LiveMarkdownParser,
@@ -40,7 +48,9 @@ function useCompletedMarkdown(needed: boolean) {
     let current = true
     loadCompletedMarkdown().then(
       () => {
-        if (current) setLoaded(true)
+        // Mounting a long reply's finished renderer takes well over a frame:
+        // in a transition it renders in slices beside the live DOM.
+        if (current) startTransition(() => setLoaded(true))
       },
       () => undefined,
     )
@@ -542,12 +552,17 @@ export const Markdown = memo(function Markdown({
   if (!streaming && revealing && !revealEnabled) setRevealing(false)
   const drained = useRef(() => startTransition(() => setRevealing(false)))
   const live = streaming || (revealing && revealEnabled)
-  const rich = !live && needsRichMarkdown(text)
+  // The finished renderer takes over in a background render, never in the
+  // commit that ends the reply: rendering a long reply's Markdown takes well
+  // over a frame, and the live DOM stays until it is ready. History mounts
+  // finished at once (a deferred value starts at its first value).
+  const settled = useDeferredValue(!live) && !live
+  const rich = settled && needsRichMarkdown(text)
   const RichMarkdown = useCompletedMarkdown(rich)
   if (RichMarkdown) return <RichMarkdown text={text} projectPath={projectPath} />
   // A rich reply that completes before its renderer has loaded keeps the live
   // DOM at the same position in the tree, so it never collapses meanwhile.
-  if (live || rich) {
+  if (!settled || rich) {
     return (
       <StreamingMarkdown
         text={text}
