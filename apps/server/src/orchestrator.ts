@@ -1630,6 +1630,11 @@ export class Orchestrator {
     return this.#checkoutAccess.exclusive(resolved, () => switchWorkspaceBranch(resolved, branch))
   }
 
+  /** Run a git write such as a commit while no chat works in this checkout or starts to. */
+  async whileCheckoutIdle<T>(checkout: string, operation: () => Promise<T>): Promise<T> {
+    return this.#checkoutAccess.exclusive(checkout, operation)
+  }
+
   async #startThread(
     provider: ProviderId,
     workspacePath: string,
