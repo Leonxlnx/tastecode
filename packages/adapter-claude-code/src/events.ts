@@ -125,18 +125,6 @@ export function toDomainEvents(
     })
   }
 
-  if (event.type === 'result') {
-    const events: DomainEvent[] = []
-    const usage = toUsage(event.usage, event.total_cost_usd)
-    if (usage) events.push({ type: 'usage.updated', usage })
-    events.push({
-      type: 'turn.completed',
-      turnId,
-      status: event.is_error ? 'failed' : 'completed',
-    })
-    return events
-  }
-
   return []
 }
 
