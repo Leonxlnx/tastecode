@@ -205,42 +205,70 @@ async function conversation(
   return result
 }
 
+/**
+ * What a listing needs from a transcript, folded from its rows in file order: the
+ * first visible message, the first one with a working directory, the first prompt,
+ * the last visible message, and the last relocation and titles. A fold keeps a few
+ * strings instead of the rows, which can hold megabytes of tool output or images.
+ */
+type Digest = {
+  message: boolean
+  firstAt?: unknown
+  lastAt?: unknown
+  cwd?: string
+  /** The first prompt, already shaped as a title. */
+  prompt?: string
+  relocatedCwd?: unknown
+  customTitle?: string
+  aiTitle?: string
+}
+
+function titleText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+function observe(digest: Digest, row: SavedRecord): void {
+  if (!visible(row)) return
+  if (row.type === 'user' || row.type === 'assistant') {
+    if (!digest.message) digest.firstAt = row.timestamp
+    digest.message = true
+    digest.lastAt = row.timestamp
+    if (digest.cwd === undefined && typeof row.cwd === 'string') digest.cwd = row.cwd
+    if (digest.prompt === undefined && isPrompt(row))
+      digest.prompt = titleText(
+        contentBlocks(row)
+          .map((block) => string(block.text) ?? '')
+          .join(' '),
+      )
+  }
+  if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd
+  if (typeof row.customTitle === 'string') digest.customTitle = row.customTitle
+  if (typeof row.aiTitle === 'string') digest.aiTitle = row.aiTitle
+}
+
 function metadata(
-  rows: SavedRecord[],
+  digest: Digest,
   id: string,
   locator: string,
   revision: string,
   mtime: number,
   index: SavedRecord,
 ): ProviderHistorySession | undefined {
-  const main = rows.filter(visible)
-  const messages = main.filter((row) => row.type === 'user' || row.type === 'assistant')
-  if (!messages.length) return undefined
-  const workspacePath =
-    string(main.findLast((row) => row.type === 'relocated')?.relocatedCwd) ??
-    string(messages.find((row) => typeof row.cwd === 'string')?.cwd) ??
-    string(index.projectPath)
+  if (!digest.message) return undefined
+  const workspacePath = string(digest.relocatedCwd) ?? digest.cwd ?? string(index.projectPath)
   if (!workspacePath) return undefined
-  const firstPrompt = messages.find(isPrompt)
-  const promptText = firstPrompt
-    ? contentBlocks(firstPrompt)
-        .map((block) => string(block.text) ?? '')
-        .join(' ')
-    : ''
-  const title =
-    string(main.findLast((row) => typeof row.customTitle === 'string')?.customTitle) ??
-    string(main.findLast((row) => typeof row.aiTitle === 'string')?.aiTitle) ??
-    string(index.summary) ??
-    string(index.firstPrompt) ??
-    promptText
+  const named =
+    digest.customTitle ?? digest.aiTitle ?? string(index.summary) ?? string(index.firstPrompt)
   return {
     id,
     locator,
     revision,
     workspacePath,
-    title: title.replace(/\s+/g, ' ').trim().slice(0, 200) || 'Claude Code conversation',
-    createdAt: timestamp(messages[0]?.timestamp) ?? timestamp(index.created) ?? mtime,
-    updatedAt: Math.max(mtime, timestamp(messages.at(-1)?.timestamp) ?? 0),
+    title:
+      (named === undefined ? (digest.prompt ?? '') : titleText(named)) ||
+      'Claude Code conversation',
+    createdAt: timestamp(digest.firstAt) ?? timestamp(index.created) ?? mtime,
+    updatedAt: Math.max(mtime, timestamp(digest.lastAt) ?? 0),
   }
 }
 
@@ -381,16 +409,11 @@ export function createClaudeHistorySource(
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
               const id = file.name.slice(0, -6)
+              const digest: Digest = { message: false }
+              for (const row of await metadataRecords(locator)) observe(digest, row)
               cached = {
                 revision,
-                session: metadata(
-                  await metadataRecords(locator),
-                  id,
-                  locator,
-                  revision,
-                  info.mtimeMs,
-                  byId.get(id) ?? {},
-                ),
+                session: metadata(digest, id, locator, revision, info.mtimeMs, byId.get(id) ?? {}),
               }
               cache.set(locator, cached)
             }
