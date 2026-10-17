@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { methods, SkillSchema } from '@harness/contracts'
 import type { JsonRpcValue } from '@harness/proc'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -67,24 +69,61 @@ class ReplayRpc implements GrokDiscoveryRpc {
   }
 }
 
+const SESSION = '01a14b32-0000-7000-8000-000000000002'
+let home: string
 beforeEach(() => {
-  vi.useFakeTimers()
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+  home = mkdtempSync(path.join(tmpdir(), 'grok-home-'))
 })
 afterEach(() => {
   vi.useRealTimers()
+  rmSync(home, { recursive: true, force: true })
 })
+
+/** What grok 1.0.62 logs to the session's events.jsonl as it connects servers (sanitized). */
+function logConnections(projectPath: string): void {
+  const folder = path.join(home, 'sessions', encodeURIComponent(projectPath), SESSION)
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(
+    path.join(folder, 'events.jsonl'),
+    [
+      { ts: '2026-10-17T18:49:09.900Z', type: 'mcp_config_resolved', servers: [], disabled: [] },
+      {
+        ts: '2026-10-17T18:49:10.600Z',
+        type: 'mcp_server_failed',
+        server_name: 'remote-docs',
+        transport: 'http',
+        error_type: 'auth_required',
+      },
+      {
+        ts: '2026-10-17T18:49:10.700Z',
+        type: 'mcp_server_connected',
+        server_name: 'design-kit',
+        transport: 'stdio',
+        tool_count: 2,
+        duration_ms: 400,
+        tools: ['preview', 'capture'],
+      },
+    ]
+      .map((event) => JSON.stringify(event))
+      .join('\n') + '\n{"type":"mcp_ser',
+  )
+}
 
 describe('Grok project discovery', () => {
   it('reports the captured commands, skills and MCP servers, then closes the session', async () => {
     const rpc = new ReplayRpc()
     const updates: Awaited<ReturnType<typeof discoverGrokProject>>[] = []
+    logConnections('C:\\repo')
     const discovery = discoverGrokProject('C:\\repo', {
       connect: () => rpc,
+      grokHome: home,
       onUpdate: (inventory) => updates.push(inventory),
     })
-    await vi.advanceTimersByTimeAsync(3_700)
+    // The last status, at 2935 ms, completes it; tool names come from the log.
+    await vi.advanceTimersByTimeAsync(2_934)
     expect(rpc.disposed).toBe(false)
-    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(1)
     const inventory = await discovery
 
     expect(inventory.commands).toHaveLength(13)
@@ -155,7 +194,11 @@ describe('Grok project discovery', () => {
           (frame.method !== '_x.ai/mcp/server_status' && frame.method !== '_x.ai/mcp_initialized'),
       ),
     )
-    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc, settleMs: 5_000 })
+    const discovery = discoverGrokProject('C:\\repo', {
+      connect: () => rpc,
+      grokHome: home,
+      settleMs: 5_000,
+    })
     await vi.advanceTimersByTimeAsync(2_444 + 4_999)
     expect(rpc.disposed).toBe(false)
     await vi.advanceTimersByTimeAsync(1)
@@ -167,13 +210,25 @@ describe('Grok project discovery', () => {
     expect(rpc.disposed).toBe(true)
   })
 
-  it('waits briefly for a ready server to name its tools', async () => {
+  it('names tools from a command update when Grok sends one in time, without a log', async () => {
+    // The update with the servers' tools came 0.4-0.9 s after mcp_initialized on
+    // some runs; here it lands before the last status.
+    const rpc = new ReplayRpc(
+      captured.map((frame) => (frame.at === 3_767 ? { ...frame, at: 2_900 } : frame)),
+    )
+    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc, grokHome: home })
+    await vi.advanceTimersByTimeAsync(2_935)
+    const inventory = await discovery
+    expect(inventory.servers.find((server) => server.id === 'design-kit')?.tools).toEqual([
+      { name: 'preview', inputSchema: {} },
+      { name: 'capture', inputSchema: {} },
+    ])
+  })
+
+  it('leaves a server without tools when neither source names them', async () => {
     const rpc = new ReplayRpc(captured.filter((frame) => frame.at !== 3_767))
-    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc })
-    // mcp_initialized at 2867 ms, then at most 2 s for tool names that never come.
-    await vi.advanceTimersByTimeAsync(4_866)
-    expect(rpc.disposed).toBe(false)
-    await vi.advanceTimersByTimeAsync(1)
+    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc, grokHome: home })
+    await vi.advanceTimersByTimeAsync(2_935)
     const inventory = await discovery
     expect(inventory.servers.find((server) => server.id === 'design-kit')).toMatchObject({
       startup: { state: 'ready' },
@@ -185,7 +240,7 @@ describe('Grok project discovery', () => {
     const rpc = new ReplayRpc(
       captured.filter((frame) => !('method' in frame) || !frame.method.startsWith('_x.ai/mcp')),
     )
-    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc })
+    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc, grokHome: home })
     await vi.advanceTimersByTimeAsync(2_444 + 1_500)
     const inventory = await discovery
     expect(inventory.commands).toHaveLength(13)
@@ -197,6 +252,7 @@ describe('Grok project discovery', () => {
     const canceled = new ReplayRpc()
     const discovery = discoverGrokProject('C:\\repo', {
       connect: () => canceled,
+      grokHome: home,
       signal: abort.signal,
     })
     const rejected = expect(discovery).rejects.toThrow('canceled')
@@ -208,7 +264,7 @@ describe('Grok project discovery', () => {
 
     const signedOut = new ReplayRpc(captured, { failSessionNew: new Error('Auth required') })
     const failed = expect(
-      discoverGrokProject('C:\\repo', { connect: () => signedOut }),
+      discoverGrokProject('C:\\repo', { connect: () => signedOut, grokHome: home }),
     ).rejects.toThrow('Auth required')
     await vi.advanceTimersByTimeAsync(1_000)
     await failed
