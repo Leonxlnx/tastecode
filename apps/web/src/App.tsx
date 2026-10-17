@@ -529,6 +529,18 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+/** Replaces one source's rows where they stood, so a source listed again does not move. */
+function replaceSourceRows(
+  catalog: ModelChoice[],
+  source: string,
+  rows: ModelChoice[],
+): ModelChoice[] {
+  const at = catalog.findIndex((choice) => modelSource(choice) === source)
+  const others = catalog.filter((choice) => modelSource(choice) !== source)
+  // Every row before the first one of this source belongs to another source.
+  return at < 0 ? [...others, ...rows] : [...others.slice(0, at), ...rows, ...others.slice(at)]
+}
+
 export function App() {
   const [transport] = useState(() => new Transport(SERVER_BASE_URL))
   // StrictMode replays effect cleanup against this same memoized instance.
@@ -1969,6 +1981,8 @@ export function App() {
       const unknownKeys = new Set(unvalidatedModelKeys)
       const validatedSources = new Map<string, number>()
       let publishedCatalog = catalogModelsRef.current
+      /** Each source's rows as last settled, in this run. */
+      const settledRows = new Map<string, ModelChoice[]>()
       const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
         source: string,
         result: T,
@@ -1986,10 +2000,8 @@ export function App() {
         else if (!isModelCatalogSourceFresh(cached, source)) {
           for (const choice of result.models) unknownKeys.add(choice.key)
         }
-        publishedCatalog = [
-          ...publishedCatalog.filter((choice) => modelSource(choice) !== source),
-          ...result.models,
-        ]
+        settledRows.set(source, result.models)
+        publishedCatalog = replaceSourceRows(publishedCatalog, source, result.models)
         setModelCatalog({
           models: publishedCatalog,
           loaded: true,
@@ -2027,12 +2039,18 @@ export function App() {
             relistSource?.(source)
           })
       }
-      const trackSource = <T,>(source: string, discover: () => Promise<T>): Promise<T> => {
+      const trackSource = (
+        source: string,
+        discover: () => Promise<unknown>,
+      ): Promise<{ source: string }> => {
         const run: SourceRun = { discover, running: true, again: false }
         sourceRuns.set(source, run)
         const done = discover()
         finishRun(source, run, done)
-        return done
+        return done.then(
+          () => ({ source }),
+          () => ({ source }),
+        )
       }
       relistSource = (source) => {
         const run = sourceRuns.get(source)
@@ -2277,8 +2295,13 @@ export function App() {
       ])
       if (cancelled) return
       setPendingModelSources(new Set())
-      const discoveries = [...direct, ...acp, ...api, ...customSources]
-      const catalog = discoveries.flatMap((entry) => entry.models)
+      // In source order, with each source's latest rows: one listed again
+      // before this point keeps its newer list.
+      const listedSources = new Set(
+        [...direct, ...acp, ...api, ...customSources].map((entry) => entry.source),
+      )
+      const catalog = [...listedSources].flatMap((source) => settledRows.get(source) ?? [])
+      publishedCatalog = catalog
       // The full catalog supersedes whatever snapshot is still pending.
       takePendingCacheWrite()
       if (validatedSources.size > 0) writeModelCatalogCache(catalog, validatedSources)
