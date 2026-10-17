@@ -903,7 +903,14 @@ async function openCheckpointHistory() {
   >
   act(() => header.onOpenRollback())
   fireEvent.click(await screen.findByRole('button', { name: /Before “Fix the parser”/ }))
-  await screen.findByRole('button', { name: 'Restore checkpoint' })
+  await waitFor(() => expect(restoreButton().disabled).toBe(false))
+}
+
+function restoreButton() {
+  return within(screen.getByRole('dialog', { name: 'Restore' })).getByRole<HTMLButtonElement>(
+    'button',
+    { name: /^Restor/ },
+  )
 }
 
 describe('web client', () => {
@@ -1495,7 +1502,7 @@ describe('web client', () => {
       })
       await openNewSession()
       await openCheckpointHistory()
-      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      fireEvent.click(restoreButton())
       fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
       await waitFor(() =>
         expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
@@ -1504,7 +1511,7 @@ describe('web client', () => {
         }),
       )
       expect(rpcCount('thread.restore')).toBe(1)
-      expect(screen.queryByRole('dialog', { name: 'Restore checkpoint' })).toBeNull()
+      expect(screen.queryByRole('dialog', { name: 'Restore' })).toBeNull()
     },
   )
 
@@ -1527,7 +1534,7 @@ describe('web client', () => {
     })
     await openNewSession()
     await openCheckpointHistory()
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => expect(finishInfo.length).toBeGreaterThan(0))
 
@@ -1623,9 +1630,9 @@ describe('web client', () => {
     await openNewSession()
     await openCheckpointHistory()
     fireEvent.click(screen.getByRole('button', { name: /Before “Fix the tests”/ }))
-    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(restoreButton().disabled).toBe(true)
     await act(async () => reject(new Error('inspection failed')))
-    expect(screen.queryByRole('button', { name: 'Restore checkpoint' })).toBeNull()
+    expect(restoreButton().disabled).toBe(true)
     expect(rpcCount('thread.restore')).toBe(0)
   })
 
@@ -6618,7 +6625,7 @@ describe('new chats', () => {
       for (const listener of transport.stateListeners) listener('open')
     })
     await waitFor(() => expect(historyReads).toBe(2))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     await waitFor(() => expect(restoreRequests).toBe(1))
     await act(async () => releaseRestoreHistory?.())
     await act(async () => rejectRestore(new IndeterminateRequestError('restore reply lost')))
@@ -6627,7 +6634,7 @@ describe('new chats', () => {
       for (const listener of transport.stateListeners) listener('open')
     })
     await waitFor(() => expect(historyReads).toBeGreaterThanOrEqual(3))
-    fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+    fireEvent.click(restoreButton())
     fireEvent.click(await screen.findByRole('button', { name: 'Undo restore' }))
     await waitFor(() => {
       expect(transport.request).toHaveBeenCalledWith('thread.undoRestore', {
