@@ -258,8 +258,8 @@ describe('workspace panel layout', () => {
       expect(rule(selector)).toContain('flex: none')
       expect(rule(selector)).toContain('white-space: nowrap')
     }
-    expect(narrow).toMatch(/\.workspace-review__generate-label \{[^}]*display: none;/)
-    expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__generate-label/)
+    expect(narrow).toMatch(/\.workspace-review__action-label \{[^}]*display: none;/)
+    expect(css).not.toMatch(/@media \(max-width: \d+px\) \{\s*\.workspace-review__action-label/)
   })
 
   it('wraps the browser address onto its own row instead of cutting off the preview sizes', () => {

@@ -6,19 +6,18 @@ import {
   IconCheck as Check,
   IconChevronDown as ChevronDown,
   IconChevronRight as ChevronRight,
-  IconCopy as Copy,
   IconFolder as Folder,
   IconGitBranch as GitBranch,
-  IconLoader2 as LoaderCircle,
+  IconGitCommit as GitCommit,
   IconRefresh as RefreshCw,
   IconSearch as Search,
-  IconSparkles as Sparkles,
 } from '@tabler/icons-react'
 import { writeClipboardText } from '../../bridge.js'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
 import { SkeletonCode, SkeletonStatus } from '../Skeleton.js'
+import { ReviewCommitBox } from './ReviewComposer.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
 import {
   buildReviewTree,
@@ -108,6 +107,8 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   threadId?: string | undefined
   branch?: string | undefined
   theme: 'light' | 'dark'
+  /** The chat's turn is running; commits wait for it. */
+  turnRunning?: boolean | undefined
 }) {
   // The server does not know a chat's provisional id while its first message
   // creates it; stay in the project checkout until the real id arrives.
@@ -116,68 +117,80 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
-  const [commitMessage, setCommitMessage] = useState<string>()
-  const [commitError, setCommitError] = useState<string>()
+  const [composer, setComposer] = useState<'commit'>()
+  const [commitMessage, setCommitMessage] = useState('')
+  const [actionError, setActionError] = useState<string>()
+  const [actionDone, setActionDone] = useState<string>()
+  const [busy, setBusy] = useState<'commit'>()
   const [generatingCommit, setGeneratingCommit] = useState(false)
   const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
   const draftGeneration = useRef(0)
+  const actionGeneration = useRef(0)
+  /** The message is a generated draft nobody edited, so other changes make it stale. */
+  const untouchedDraft = useRef(false)
   const diffVersion = useRef<string>(undefined)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
-  const clearCommitDraft = useCallback(() => {
+  const dropStaleDraft = useCallback(() => {
     draftGeneration.current += 1
-    setCommitMessage(undefined)
-    setCommitError(undefined)
     setGeneratingCommit(false)
     setCopiedCommit(false)
+    if (!untouchedDraft.current) return
+    untouchedDraft.current = false
+    setCommitMessage('')
   }, [])
 
-  const refresh = useCallback(
-    async (keepDraft = false) => {
-      if (!props.projectPath) return
-      const mine = ++generation.current
-      setLoading(true)
-      setError(undefined)
-      if (!keepDraft) clearCommitDraft()
-      try {
-        const result = await props.transport.request('workspace.diff', {
-          projectPath: props.projectPath,
-          ...(threadId ? { threadId } : {}),
-        })
-        if (generation.current === mine) {
-          // The version names the changes, so a draft survives a refresh that found the same ones.
-          if (result.version !== diffVersion.current) clearCommitDraft()
-          diffVersion.current = result.version
-          setDiff(result)
-        }
-      } catch (cause) {
-        if (generation.current === mine) {
-          setError(cause instanceof Error ? cause.message : String(cause))
-        }
-      } finally {
-        if (generation.current === mine) setLoading(false)
+  const resetActions = useCallback(() => {
+    actionGeneration.current += 1
+    untouchedDraft.current = false
+    dropStaleDraft()
+    setComposer(undefined)
+    setCommitMessage('')
+    setActionError(undefined)
+    setActionDone(undefined)
+    setBusy(undefined)
+  }, [dropStaleDraft])
+
+  const refresh = useCallback(async () => {
+    if (!props.projectPath) return
+    const mine = ++generation.current
+    setLoading(true)
+    setError(undefined)
+    try {
+      const result = await props.transport.request('workspace.diff', {
+        projectPath: props.projectPath,
+        ...(threadId ? { threadId } : {}),
+      })
+      if (generation.current === mine) {
+        // The version names the changes, so a draft survives a refresh that found the same ones.
+        if (result.version !== diffVersion.current) dropStaleDraft()
+        diffVersion.current = result.version
+        setDiff(result)
       }
-    },
-    [clearCommitDraft, props.projectPath, threadId, props.transport],
-  )
+    } catch (cause) {
+      if (generation.current === mine) setError(messageOf(cause))
+    } finally {
+      if (generation.current === mine) setLoading(false)
+    }
+  }, [dropStaleDraft, props.projectPath, threadId, props.transport])
 
   const generateCommitMessage = useCallback(async () => {
     if (!props.projectPath) return
     const mine = draftGeneration.current
     setGeneratingCommit(true)
-    setCommitError(undefined)
+    setActionError(undefined)
     setCopiedCommit(false)
     try {
       const result = await props.transport.request('backgroundModel.generateCommitMessage', {
         projectPath: props.projectPath,
         ...(threadId ? { threadId } : {}),
       })
-      if (draftGeneration.current === mine) setCommitMessage(result.message)
+      if (draftGeneration.current !== mine) return
+      untouchedDraft.current = true
+      setCommitMessage(result.message)
     } catch (cause) {
-      if (draftGeneration.current === mine) {
-        setCommitError(cause instanceof Error ? cause.message : String(cause))
-      }
+      if (draftGeneration.current === mine) setActionError(messageOf(cause))
     } finally {
       if (draftGeneration.current === mine) setGeneratingCommit(false)
     }
@@ -189,23 +202,78 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       await writeClipboardText(commitMessage)
       setCopiedCommit(true)
     } catch {
-      setCommitError('Could not copy the commit message.')
+      setActionError('Could not copy the commit message.')
     }
   }, [commitMessage])
+
+  /** One git write at a time; a reply for another checkout is dropped. */
+  const runAction = useCallback(async (kind: 'commit', action: () => Promise<string>) => {
+    const mine = actionGeneration.current
+    setBusy(kind)
+    setActionError(undefined)
+    setActionDone(undefined)
+    try {
+      const done = await action()
+      if (actionGeneration.current === mine) setActionDone(done)
+    } catch (cause) {
+      if (actionGeneration.current === mine) setActionError(messageOf(cause))
+    } finally {
+      if (actionGeneration.current === mine) setBusy(undefined)
+    }
+  }, [])
+
+  const checkoutParams = useMemo(
+    () =>
+      props.projectPath
+        ? { projectPath: props.projectPath, ...(threadId ? { threadId } : {}) }
+        : undefined,
+    [props.projectPath, threadId],
+  )
+
+  const commit = useCallback(() => {
+    const message = commitMessage
+    if (!checkoutParams || !message.trim()) return
+    const mine = actionGeneration.current
+    void runAction('commit', async () => {
+      // Review shows untracked files, so committing what it shows includes them.
+      const result = await props.transport.request('workspace.commit', {
+        ...checkoutParams,
+        message,
+        includeUntracked: true,
+      })
+      // The box closes onto the new diff, never onto the changes just committed.
+      if (actionGeneration.current === mine) await refresh()
+      if (actionGeneration.current === mine) {
+        untouchedDraft.current = false
+        setCommitMessage('')
+        setComposer(undefined)
+      }
+      return `Committed ${result.commit.slice(0, 7)}${result.branch ? ` to ${result.branch}` : ''}`
+    })
+  }, [checkoutParams, commitMessage, props.transport, refresh, runAction])
 
   useEffect(() => {
     setDiff(undefined)
     diffVersion.current = undefined
-    clearCommitDraft()
+    resetActions()
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
       draftGeneration.current += 1
+      actionGeneration.current += 1
     }
-  }, [clearCommitDraft, props.projectPath, threadId, refresh])
+  }, [resetActions, props.projectPath, threadId, refresh])
 
-  const refreshAfterChange = useCallback(() => void refresh(true), [refresh])
+  const refreshAfterChange = useCallback(() => void refresh(), [refresh])
   useWorkspaceRefresh(props.transport, threadId, refreshAfterChange)
+
+  const fileCount = diff?.files.length ?? 0
+  const waitReason = props.turnRunning ? 'Wait until the chat finishes its turn.' : undefined
+  const toggleComposer = (next: 'commit') => {
+    setActionError(undefined)
+    setActionDone(undefined)
+    setComposer((current) => (current === next ? undefined : next))
+  }
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
@@ -290,26 +358,25 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
           <span className="is-delete">−{stats.removed.toLocaleString()}</span>
         </span>
         <span className="workspace-review__file-count">
-          {diff?.files.length ?? 0} file{diff?.files.length === 1 ? '' : 's'}
+          {fileCount} file{fileCount === 1 ? '' : 's'}
         </span>
         <button
           type="button"
-          className="workspace-review__generate-commit"
-          title="Draft commit message"
-          aria-label="Draft commit message"
-          disabled={loading || generatingCommit || !diff || diff.files.length === 0}
-          onClick={() => void generateCommitMessage()}
+          className={`workspace-review__action${composer === 'commit' ? ' is-open' : ''}`}
+          title="Commit changes"
+          aria-label="Commit changes"
+          aria-expanded={composer === 'commit'}
+          disabled={fileCount === 0}
+          onClick={() => toggleComposer('commit')}
         >
-          <IconMorph active={generatingCommit ? 1 : 0}>
-            <Sparkles size={14} aria-hidden />
-            <LoaderCircle className="spinner" size={14} aria-hidden />
-          </IconMorph>
-          <span className="workspace-review__generate-label">Commit message</span>
+          <GitCommit size={14} aria-hidden />
+          <span className="workspace-review__action-label">Commit</span>
         </button>
         <button
           type="button"
           className="icon-btn"
           title="Refresh diff"
+          aria-label="Refresh diff"
           disabled={loading}
           onClick={() => void refresh()}
         >
@@ -317,34 +384,46 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         </button>
       </header>
 
-      <div className="workspace-review__notices" aria-live="polite">
-        {error ? (
-          <div className="workspace-review__message" role="alert">
-            {error}
-          </div>
+      <div className="workspace-review__notices">
+        {composer === 'commit' && fileCount > 0 ? (
+          <ReviewCommitBox
+            message={commitMessage}
+            fileCount={fileCount}
+            generating={generatingCommit}
+            copied={copiedCommit}
+            committing={busy === 'commit'}
+            blocked={waitReason}
+            disabled={busy !== undefined || loading}
+            onMessageChange={(message) => {
+              untouchedDraft.current = false
+              setCopiedCommit(false)
+              setCommitMessage(message)
+            }}
+            onGenerate={() => void generateCommitMessage()}
+            onCopy={() => void copyCommitMessage()}
+            onCommit={commit}
+            onCancel={() => setComposer(undefined)}
+          />
         ) : null}
 
-        {commitError ? (
-          <div className="workspace-review__message" role="alert">
-            {commitError}
-          </div>
-        ) : null}
-
-        {commitMessage ? (
-          <div className="workspace-review__commit-draft" role="status">
-            <pre>{commitMessage}</pre>
-            <button
-              type="button"
-              aria-label="Copy commit message"
-              onClick={() => void copyCommitMessage()}
-            >
-              <IconMorph active={copiedCommit ? 1 : 0}>
-                <Copy size={14} aria-hidden />
-                <Check size={14} aria-hidden />
-              </IconMorph>
-            </button>
-          </div>
-        ) : null}
+        <div className="workspace-review__status" aria-live="polite">
+          {error ? (
+            <div className="workspace-review__message" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {actionError ? (
+            <div className="workspace-review__message is-action" role="alert">
+              {actionError}
+            </div>
+          ) : null}
+          {actionDone ? (
+            <div className="workspace-review__done" role="status">
+              <Check size={14} aria-hidden />
+              {actionDone}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {!diff && loading ? (
@@ -646,4 +725,8 @@ function reviewFileId(path: string): string {
 
 function statusLetter(status: DiffFile['status']): string {
   return status === 'added' ? 'A' : status === 'deleted' ? 'D' : status === 'renamed' ? 'R' : 'M'
+}
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
 }
