@@ -185,11 +185,12 @@ function liveRow(
 
 /**
  * The plan-limit windows a `rate_limit_event` reports during a turn. Claude
- * Code 2.1.296 sends every window it knows in `unifiedWindows` (utilization as
- * a fraction, reset times in epoch seconds) and the top-level `utilization`
- * only near a limit. A refused request with no utilization means the window
- * is used up. Windows this mapping does not know, such as overage, are left
- * to the full read rather than guessed.
+ * Code 2.1.296 lists the windows an event reports in `unifiedWindows`
+ * (utilization as a fraction, reset times in epoch seconds; each of the 27
+ * events captured so far listed only `five_hour`) and sets the top-level
+ * `utilization` only near a limit. A refused request with no utilization
+ * means the window is used up. Windows this mapping does not know, such as
+ * overage, are left to the full read rather than guessed.
  */
 export function mapClaudeRateLimitEvent(info: unknown): ProviderLimit[] {
   const parsed = RateLimitInfoSchema.safeParse(info)
