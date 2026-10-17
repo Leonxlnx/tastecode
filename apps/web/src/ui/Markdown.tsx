@@ -528,9 +528,13 @@ export const Markdown = memo(function Markdown({
   // A finished reply stays live until its reveal has caught up; only then
   // does the finished renderer take over, as a transition.
   const [revealing, setRevealing] = useState(streaming)
+  const revealEnabled = revealClock().enabled()
   if (streaming && !revealing) setRevealing(true)
+  // Finished while nothing is revealed (reduced motion, a hidden window): it
+  // is done at once, and a later render must not bring the live view back.
+  if (!streaming && revealing && !revealEnabled) setRevealing(false)
   const drained = useRef(() => startTransition(() => setRevealing(false)))
-  const live = streaming || (revealing && revealClock().enabled())
+  const live = streaming || (revealing && revealEnabled)
   const rich = !live && needsRichMarkdown(text)
   const RichMarkdown = useCompletedMarkdown(rich)
   if (RichMarkdown) return <RichMarkdown text={text} projectPath={projectPath} />
