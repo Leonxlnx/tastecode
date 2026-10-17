@@ -6,8 +6,11 @@ import type {
   ApprovalRequest,
   Capabilities,
   DomainEvent,
+  McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
+  Skill,
   Thread,
 } from '@harness/contracts'
 import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode-ai/sdk'
@@ -19,6 +22,7 @@ import {
   spawnCli,
   type JsonRpcValue,
 } from '@harness/proc'
+import { mapOpenCodeCommands, mapOpenCodeMcpServers, mapOpenCodeSkills } from './inventory.js'
 import { z } from 'zod'
 import {
   OpenCodeEventMapper,
@@ -38,6 +42,8 @@ export const OPENCODE_CAPABILITIES: Capabilities = {
 }
 
 type Events = { event: [DomainEvent]; log: [string]; disconnected: [] }
+/** `/mcp` waits for the directory's servers to connect; a stuck one must not hold a read. */
+const INVENTORY_TIMEOUT_MS = 20_000
 type OpenCodeProtocol = 'v1' | 'v2'
 type Spawn = typeof spawnCli
 
@@ -637,6 +643,36 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#replyingApprovals.clear()
     this.#processStop = stopped
     return stopped
+  }
+
+  /** Commands and skills OpenCode runs itself when a message starts with `/name`. */
+  async listCommands(_threadId?: string): Promise<ProviderCommand[]> {
+    return this.commands(this.#workspacePath)
+  }
+
+  /** The MCP servers this chat's server loaded, with their state. */
+  async listMcpServers(_threadId?: string): Promise<McpServer[]> {
+    return this.mcpServers(this.#workspacePath)
+  }
+
+  async commands(directory: string): Promise<ProviderCommand[]> {
+    return mapOpenCodeCommands(await this.#inventory('/command', directory))
+  }
+
+  async skills(directory: string): Promise<Skill[]> {
+    return mapOpenCodeSkills(await this.#inventory('/skill', directory), directory)
+  }
+
+  /** OpenCode connects a directory's servers on the first read, which can take seconds. */
+  async mcpServers(directory: string): Promise<McpServer[]> {
+    return mapOpenCodeMcpServers(await this.#inventory('/mcp', directory))
+  }
+
+  #inventory(route: '/command' | '/skill' | '/mcp', directory: string): Promise<unknown> {
+    if (!this.#baseUrl || !directory) return Promise.reject(new Error('OpenCode is not running'))
+    return this.#v2Request(`${route}?directory=${encodeURIComponent(directory)}`, {
+      signal: AbortSignal.timeout(INVENTORY_TIMEOUT_MS),
+    })
   }
 
   #newClient(directory?: string): OpencodeClient {

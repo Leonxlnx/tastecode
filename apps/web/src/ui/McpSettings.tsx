@@ -398,7 +398,13 @@ function ProviderMcpSettings(props: {
   // hiding them made a fully configured provider read as having no MCP servers.
   const inheritedServers =
     currentInventory?.servers.filter((server) => server.scope === 'global') ?? []
-  const loadingInventory = Boolean(props.projectPath) && loading && !inventory
+  // The provider is still collecting its servers, so an empty list is not final.
+  const checking = Boolean(currentInventory?.loading)
+  const canHide = currentInventory ? canHideInherited(currentInventory.capabilities) : false
+  const loadingInventory =
+    Boolean(props.projectPath) &&
+    ((loading && !inventory) ||
+      (checking && projectServers.length === 0 && inheritedServers.length === 0))
   const projectList = !props.projectPath ? (
     <SettingsEmpty title="Select a project in the sidebar first." />
   ) : loadingInventory ? (
@@ -435,9 +441,7 @@ function ProviderMcpSettings(props: {
       actions={
         <>
           {props.providerPicker}
-          {props.projectPath &&
-          currentInventory?.capabilities.add &&
-          currentInventory.capabilities.inventory ? (
+          {props.projectPath && canHide ? (
             <button
               className="set-button set-button--quiet"
               type="button"
@@ -495,6 +499,9 @@ function ProviderMcpSettings(props: {
           here.
         </SettingsNotice>
       ) : null}
+      {checking && !loadingInventory ? (
+        <SettingsNotice tone="progress">Checking {props.providerName} MCP servers…</SettingsNotice>
+      ) : null}
       {notice ? <SettingsNotice tone="info">{notice}</SettingsNotice> : null}
       {editor ? (
         <ServerEditor
@@ -528,9 +535,7 @@ function ProviderMcpSettings(props: {
             <>
               Every {props.providerName} chat in this project loads these. Change them in{' '}
               {props.providerName}
-              {currentInventory.capabilities.add && currentInventory.capabilities.inventory
-                ? ', or turn one off for this project only.'
-                : '.'}
+              {canHide ? ', or turn one off for this project only.' : '.'}
             </>
           }
         >
@@ -590,7 +595,9 @@ function ServerRow(props: {
   const canToggle =
     props.capabilities.remove &&
     ((!props.server.enabled && props.server.scope === 'project') ||
-      (props.capabilities.add && props.capabilities.inventory && props.server.scope === 'global'))
+      (canHideInherited(props.capabilities) && props.server.scope === 'global'))
+  // A server can report hundreds of tools; render them only once someone looks.
+  const [toolsOpen, setToolsOpen] = useState(false)
   const canEdit =
     props.capabilities.update && props.server.scope === 'project' && props.server.transport
   const canRemove =
@@ -625,12 +632,15 @@ function ServerRow(props: {
             {startup.message}
           </p>
         ) : null}
-        <details className="mcp-row__details">
+        <details
+          className="mcp-row__details"
+          onToggle={(event) => setToolsOpen(event.currentTarget.open)}
+        >
           <summary>
             {props.server.tools.length} tools · {props.server.resources.length} resources ·{' '}
             {props.server.resourceTemplates.length} templates
           </summary>
-          {props.server.tools.length ? (
+          {!toolsOpen ? null : props.server.tools.length ? (
             <ul>
               {props.server.tools.map((tool) => (
                 <li key={tool.name}>
@@ -781,6 +791,11 @@ function ServerEditor(props: {
       </footer>
     </form>
   )
+}
+
+/** Absent means the rule from before the capability was declared. */
+function canHideInherited(capabilities: Inventory['capabilities']): boolean {
+  return capabilities.hideInherited ?? (capabilities.add && capabilities.inventory)
 }
 
 function name(server: McpServer): string {

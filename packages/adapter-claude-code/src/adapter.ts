@@ -17,8 +17,10 @@ import type {
   Capabilities,
   DomainEvent,
   Item,
+  McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
   ProviderContextSettings,
   Thread,
   UserInputQuestion,
@@ -26,6 +28,7 @@ import type {
 import { JsonRpcValueSchema, killTree, spawnCli } from '@harness/proc'
 import { z } from 'zod'
 import { CLAUDE_CAPABILITIES } from './capabilities.js'
+import { mapClaudeCommands, mapClaudeMcpServers } from './inventory.js'
 import { ClaudeMcpRedactor, prepareClaudeMcpServers } from './mcp.js'
 import { activateClaudeMcpServers, createClaudeMcpBootstrap } from './mcp-bootstrap.js'
 import {
@@ -226,7 +229,16 @@ export type ClaudeAdapterEvents = {
   /** Plan-limit windows a rate_limit_event reported, by stable row id. */
   limitsUpdated: [ProviderLimit[]]
   disconnected: []
+  /** The session's MCP servers finished starting; a new read shows their final state. */
+  mcpChanged: []
+  /** The session reported a new command list or what its skills are. */
+  commandsChanged: []
 }
+
+/** Claude starts MCP servers in the background; this long is a server still worth waiting for. */
+const MCP_SETTLE_MS = 30_000
+const MCP_SETTLE_POLL_MS = 1_000
+type McpSettling = { timer?: ReturnType<typeof setTimeout> | undefined }
 
 export type ClaudeStartOptions = {
   instructions?: string | undefined
@@ -281,6 +293,14 @@ function isMissingClaudeConversation(error: unknown): boolean {
   return /No conversation found with session ID/i.test(
     error instanceof Error ? error.message : String(error),
   )
+}
+
+function sameNames(
+  left: ReadonlySet<string> | undefined,
+  right: ReadonlySet<string> | undefined,
+): boolean {
+  if (!left || !right) return left === right
+  return left.size === right.size && [...left].every((name) => right.has(name))
 }
 
 type ImageMediaType = 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp'
@@ -439,6 +459,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   /** Tool calls awaiting their result, by tool_use id, so the result lands on the call. */
   readonly #toolCalls = new Map<string, Item>()
   readonly #streamedMessageIds = new Set<string>()
+  /** system/init `skills` and `terminal_slash_commands`; they arrive with the first prompt. */
+  #skillNames: ReadonlySet<string> | undefined
+  #terminalCommands: ReadonlySet<string> | undefined
+  /** Polls MCP startup after a query starts, until nothing is pending. */
+  #mcpSettling: McpSettling | undefined
+  /** The latest status list still had a server starting. */
+  #mcpPending = false
 
   constructor(
     options: {
@@ -740,6 +767,47 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     return fallback(failure)
   }
 
+  /** The MCP servers this session loaded, from Claude's own status list. */
+  async listMcpServers(threadId?: string): Promise<McpServer[]> {
+    const { query, redactor } = await this.#liveQuery(threadId)
+    try {
+      const statuses = await query.mcpServerStatus()
+      if (query === this.#query)
+        this.#mcpPending = statuses.some((status) => status.status === 'pending')
+      return mapClaudeMcpServers(statuses, (text) => redactor.redact(text))
+    } catch (error) {
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  /** Some servers were still starting at the last read, and `mcpChanged` follows. */
+  isMcpLoading(): boolean {
+    return this.#mcpPending && this.#mcpSettling !== undefined
+  }
+
+  /** Commands and skills this session runs when a message starts with `/name`. */
+  async listCommands(threadId?: string): Promise<ProviderCommand[]> {
+    const { query, redactor } = await this.#liveQuery(threadId)
+    try {
+      // The SDK answers from the list it keeps current; this is not a CLI round trip.
+      return mapClaudeCommands(await query.supportedCommands(), {
+        skills: this.#skillNames,
+        terminal: this.#terminalCommands,
+      })
+    } catch (error) {
+      throw new Error(redactor.redact(error instanceof Error ? error.message : String(error)))
+    }
+  }
+
+  async #liveQuery(threadId?: string) {
+    if (threadId !== undefined) this.#assertThread(threadId)
+    // A start or an effort restart replaces the query; wait for it rather than report none.
+    await this.#configuration
+    await this.#starting?.catch(() => undefined)
+    if (threadId !== undefined) this.#assertThread(threadId)
+    return { query: this.#requireQuery(), redactor: this.#redactor }
+  }
+
   dispose(): Promise<void> {
     const cleanup = () =>
       Promise.all([
@@ -753,6 +821,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#disposed = true
     this.#sessionGeneration += 1
     this.#queryGeneration += 1
+    this.#stopMcpSettle()
     this.#settlePending('Claude session closed.')
     this.#queryAbort?.abort()
     this.#promptQueue?.close()
@@ -771,6 +840,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.#options = {}
+    this.#skillNames = undefined
+    this.#terminalCommands = undefined
     this.#redactor = new ClaudeMcpRedactor()
     this.removeAllListeners()
     return cleanup().then(() => {
@@ -890,6 +961,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
           if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
+          this.#settleMcp(query, generation)
         })(),
         this.#startupTimeoutMs,
         () => claudeStartupTimeoutMessage(phase, this.#startupTimeoutMs),
@@ -950,6 +1022,50 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       },
       () => undefined,
     )
+  }
+
+  /**
+   * Claude starts plugin, connector and settings servers after init without
+   * telling the stream, so the first status list shows them pending. Poll
+   * until none is (at most 30 s), then announce one change. The first check
+   * waits a poll interval, so the owner has subscribed by then.
+   */
+  #settleMcp(query: ClaudeQueryRuntime, generation: number): void {
+    this.#stopMcpSettle()
+    const settling: McpSettling = {}
+    this.#mcpSettling = settling
+    const deadline = Date.now() + MCP_SETTLE_MS
+    const live = () =>
+      this.#mcpSettling === settling &&
+      this.#query === query &&
+      generation === this.#queryGeneration &&
+      !this.#disposed
+    const check = async () => {
+      settling.timer = undefined
+      if (!live()) return
+      let pending: boolean
+      try {
+        pending = (await query.mcpServerStatus()).some((status) => status.status === 'pending')
+      } catch {
+        // A query that cannot answer has nothing left to settle.
+        pending = false
+      }
+      if (!live()) return
+      this.#mcpPending = pending
+      if (pending && Date.now() < deadline) {
+        settling.timer = setTimeout(() => void check(), MCP_SETTLE_POLL_MS)
+        return
+      }
+      this.#mcpSettling = undefined
+      this.emit('mcpChanged')
+    }
+    settling.timer = setTimeout(() => void check(), MCP_SETTLE_POLL_MS)
+  }
+
+  #stopMcpSettle(): void {
+    if (this.#mcpSettling?.timer) clearTimeout(this.#mcpSettling.timer)
+    this.#mcpSettling = undefined
+    this.#mcpPending = false
   }
 
   async #restartSession(options: ClaudeStartOptions): Promise<void> {
@@ -1150,9 +1266,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       return
     }
 
+    if (message.type === 'system' && message.subtype === 'commands_changed') {
+      // The SDK keeps supportedCommands() current with this push.
+      this.emit('commandsChanged')
+      return
+    }
+
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model
       this.#messageLifecycle = message.capabilities?.includes('msg_lifecycle_v1') ?? false
+      this.#onCommandHints(message.skills, message.terminal_slash_commands)
       if (message.claude_code_version && !message.claude_code_version.startsWith(SUPPORTED)) {
         this.emit(
           'log',
@@ -1160,6 +1283,26 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         )
       }
     }
+  }
+
+  /** system/init says which commands are skills and which only work in a terminal. */
+  #onCommandHints(skills: unknown, terminal: unknown): void {
+    const names = (value: unknown) =>
+      Array.isArray(value)
+        ? new Set(value.filter((entry): entry is string => typeof entry === 'string'))
+        : undefined
+    const nextSkills = names(skills)
+    const nextTerminal = names(terminal)
+    if (
+      sameNames(nextSkills, this.#skillNames) &&
+      sameNames(nextTerminal ?? this.#terminalCommands, this.#terminalCommands)
+    )
+      return
+    this.#skillNames = nextSkills
+    // Claude leaves the field out when no command carries the tag and on older
+    // CLIs; the list known so far (the captured one at first) then stays.
+    if (nextTerminal) this.#terminalCommands = nextTerminal
+    this.emit('commandsChanged')
   }
 
   #onCommandLifecycle(message: unknown): void {

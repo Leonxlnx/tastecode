@@ -173,6 +173,19 @@ export const ListMcpServerStatusResponseSchema = z.object({
   nextCursor: nullableString,
 })
 
+/**
+ * `config/read` from Codex 0.163: `config.mcp_servers` maps each configured
+ * server name to its TOML entry. Only `enabled` is read; commands, URLs,
+ * environments and header variables never leave this parser.
+ */
+export const ConfiguredMcpServersSchema = z.object({
+  config: z.object({
+    mcp_servers: z
+      .record(z.string(), z.object({ enabled: z.boolean().nullish() }).catch({}))
+      .nullish(),
+  }),
+})
+
 const SkillToolDependencySchema = z.object({
   type: z.string(),
   value: z.string(),

@@ -26,6 +26,7 @@ export type ClaudeQueryRuntime = Pick<
   | 'supportedModels'
   | 'mcpServerStatus'
   | 'setMcpServers'
+  | 'supportedCommands'
 > &
   ClaudeSettingsReader &
   AsyncIterable<SDKMessage>
