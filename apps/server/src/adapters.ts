@@ -13,6 +13,7 @@ import type {
   Model,
   ProviderContextSettings,
   ProviderId,
+  ProviderLimit,
   StoredModelConnection,
   Thread,
 } from '@harness/contracts'
@@ -197,6 +198,11 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /**
+   * Plan-limit windows the live session reported, each with a stable `id`.
+   * Sparse: windows it does not name keep their held values.
+   */
+  onLimitsUpdated?(listener: (limits: ProviderLimit[]) => void): void
   /** Provider MCP discovery changed; the project inventory should be refreshed. */
   onMcpChanged?(listener: () => void): (() => void) | void
   /**
