@@ -12,6 +12,7 @@ import {
   type ProviderStatus,
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
+import { cliProbe, invalidateCliProbes } from './cli-probe.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
@@ -40,9 +41,13 @@ import { createHistoryResponseProjector } from './history-response.js'
 import { InvalidHistoryCursorError } from './history-page.js'
 import { createSerializedResultCache, serializeSuccessResponse } from './response-serializer.js'
 import { ProviderHistory } from './provider-history.js'
+import { HistoryRefreshSchedule } from './history-refresh-schedule.js'
+import { STREAM_QUIET_BACKGROUND_WAIT_MS, StreamQuiet } from './stream-quiet.js'
 
 const SERVER_VERSION = '0.0.0'
 const DEFAULT_RENDERER_ORIGIN = 'http://127.0.0.1:5183'
+/** When no client has asked for its projects by then, background work starts anyway. */
+const BACKGROUND_WORK_DELAY_MS = 1_500
 export { DEFAULT_PORT } from './server-config.js'
 
 const startupStartedAt = Number(process.env['HARNESS_STARTUP_STARTED_AT'])
@@ -100,13 +105,18 @@ export function startServer(
     throw error
   }
   const push = new PushBus()
+  // Install, update and sign-in terminals can add, replace or update a CLI.
+  const setupTerminals = new Set<string>()
+  const setupTerminal = (terminalId: string) => {
+    setupTerminals.add(terminalId)
+    return terminalId
+  }
   const providerService = import('./providers.js')
   let updatesService: Promise<import('./provider-updates.js').ProviderUpdateService> | undefined
   const providerUpdates = () =>
     (updatesService ??= import('./provider-updates.js').then(
       ({ ProviderUpdateService }) => new ProviderUpdateService(),
     ))
-  void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
   const previewCapture = new PreviewCaptureCoordinator(
     (socket, request) => push.send(socket, 'preview.captureRequested', request),
     35_000,
@@ -149,8 +159,11 @@ export function startServer(
       else void service.startBackgroundRefresh()
       return service
     }))
+  const streamQuiet = new StreamQuiet()
+  cliProbe.waitBeforeReads(() => streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -158,6 +171,7 @@ export function startServer(
       }
     },
     onSideEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'item.delta') streamQuiet.noteDelta()
       if (serializedEvent === undefined) {
         push.broadcast('sideChat.event', { threadId, event, seq })
       } else {
@@ -179,8 +193,11 @@ export function startServer(
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
     onTerminalOutput: (terminalId, data, outputOffset) =>
       push.broadcast('terminal.output', { terminalId, data, outputOffset }),
-    onTerminalExit: (terminalId, exitCode) =>
-      push.broadcast('terminal.exit', { terminalId, exitCode }),
+    onTerminalExit: (terminalId, exitCode) => {
+      // Before the exit reaches a client, which re-lists providers right away.
+      if (setupTerminals.delete(terminalId)) invalidateCliProbes()
+      push.broadcast('terminal.exit', { terminalId, exitCode })
+    },
     capturePreview: (url, viewports, signal) =>
       previewCapture.available
         ? previewCapture.capture(url, viewports, signal)
@@ -188,6 +205,7 @@ export function startServer(
     // A preview on the control port or the trusted renderer's port would pass
     // the Origin check whenever nothing else holds that port.
     reservedPreviewPorts: new Set([port, ...httpOriginPort(rendererOrigin)]),
+    beforeLimitRead: () => streamQuiet.whenQuiet(),
   })
   reportStartupMilestone('server-orchestrator-ready')
   let providerStatuses: readonly ProviderStatus[] = []
@@ -253,42 +271,46 @@ export function startServer(
   ] satisfies Array<{ provider: ProviderId; load(): Promise<ProviderHistorySource> }>
   /** Why a source failed to load, keyed by the id prefix of the chats it imports. */
   const unavailableHistory = new Map<string, unknown>()
-  const providerHistory = Promise.allSettled(historySources.map(({ load }) => load())).then(
-    (results) =>
-      new ProviderHistory(
-        store,
-        historySources.flatMap(({ provider }, index) => {
-          const result = results[index]!
-          if (result.status === 'fulfilled') return [{ provider, history: result.value }]
-          unavailableHistory.set(`external:${provider}:`, result.reason)
-          console.log(`[history] ${provider} history could not be loaded`)
-          return []
-        }),
-        {
-          isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
-          canImport: () => historySessionStarts === 0,
-          changed: (threadIds) => {
-            if (!historyClosing) {
-              lifecycleScheduler.changed()
-              push.broadcast('providerHistory.changed', { threadIds })
-            }
+  const loadHistoryService = () =>
+    Promise.allSettled(historySources.map(({ load }) => load())).then(
+      (results) =>
+        new ProviderHistory(
+          store,
+          historySources.flatMap(({ provider }, index) => {
+            const result = results[index]!
+            if (result.status === 'fulfilled') return [{ provider, history: result.value }]
+            unavailableHistory.set(`external:${provider}:`, result.reason)
+            console.log(`[history] ${provider} history could not be loaded`)
+            return []
+          }),
+          {
+            isBusy: (threadId) => orchestrator.isTurnRunning(threadId),
+            canImport: () => historySessionStarts === 0,
+            changed: (threadIds) => {
+              if (!historyClosing) {
+                lifecycleScheduler.changed()
+                push.broadcast('providerHistory.changed', { threadIds })
+              }
+            },
+            log: (message) => console.log(`[history] ${message}`),
           },
-          log: (message) => console.log(`[history] ${message}`),
-        },
-      ),
-  )
-  const refreshProviderHistory = () => {
-    if (!historyClosing)
-      void providerHistory.then((history) => history.refresh()).catch(() => undefined)
-  }
-  const providerHistoryTimer = setInterval(refreshProviderHistory, 15_000)
-  providerHistoryTimer.unref()
-  // Opening a task during startup must not replay an obsolete imported transcript
-  // before adapter revisions and ownership have been refreshed.
-  const initialProviderHistory = providerHistory.then(async (history) => {
-    await history.refresh()
-    return history
+        ),
+    )
+  /** Set once background work starts; see startBackgroundWork. */
+  let providerHistory: Promise<ProviderHistory> | undefined
+  let initialProviderHistory: Promise<ProviderHistory> | undefined
+  const historySchedule = new HistoryRefreshSchedule(async () => {
+    if (historyClosing || !providerHistory) return false
+    // A timed refresh can read an index for hundreds of milliseconds; not mid-stream.
+    await streamQuiet.whenQuiet(STREAM_QUIET_BACKGROUND_WAIT_MS)
+    return historyClosing ? false : (await providerHistory).refresh()
   })
+  const refreshProviderHistory = () => {
+    // Before background work starts, its first scan will pick the change up.
+    if (historyClosing) return
+    historySchedule.activity()
+    void providerHistory?.then((history) => history.refresh()).catch(() => undefined)
+  }
   // That first scan reads every saved provider session and can take seconds
   // (about 10 s on a large ~/.claude). A native chat's transcript is already
   // in the store, so reading it does not wait: the import a read would have
@@ -296,30 +318,68 @@ export function startServer(
   // chat so open clients reload it.
   let initialProviderHistorySettled = false
   const importsAfterInitialScan = new Set<string>()
-  void initialProviderHistory
-    .then(async (history) => {
-      initialProviderHistorySettled = true
-      const changed: string[] = []
-      for (const threadId of importsAfterInitialScan) {
-        importsAfterInitialScan.delete(threadId)
-        try {
-          if (await history.load(threadId)) {
-            orchestrator.invalidateImportedHistory(threadId)
-            changed.push(threadId)
+
+  function startProviderHistory(): void {
+    const service = loadHistoryService()
+    providerHistory = service
+    // Opening a task during startup must not replay an obsolete imported transcript
+    // before adapter revisions and ownership have been refreshed.
+    const initial = service.then(async (history) => {
+      await history.refresh()
+      return history
+    })
+    initialProviderHistory = initial
+    historySchedule.start()
+    void initial
+      .then(async (history) => {
+        initialProviderHistorySettled = true
+        const changed: string[] = []
+        for (const threadId of importsAfterInitialScan) {
+          importsAfterInitialScan.delete(threadId)
+          try {
+            if (await history.load(threadId)) {
+              orchestrator.invalidateImportedHistory(threadId)
+              changed.push(threadId)
+            }
+          } catch {
+            // The chat's next read or turn retries the import.
           }
-        } catch {
-          // The chat's next read or turn retries the import.
         }
-      }
-      if (changed.length && !historyClosing) {
-        lifecycleScheduler.changed()
-        push.broadcast('providerHistory.changed', { threadIds: changed })
-      }
-    })
-    .catch(() => {
-      initialProviderHistorySettled = true
-      importsAfterInitialScan.clear()
-    })
+        if (changed.length && !historyClosing) {
+          lifecycleScheduler.changed()
+          push.broadcast('providerHistory.changed', { threadIds: changed })
+        }
+      })
+      .catch(() => {
+        initialProviderHistorySettled = true
+        importsAfterInitialScan.clear()
+      })
+  }
+
+  // Background startup work starts CLIs for their versions, reads the Windows
+  // PATH from the registry, scans every saved provider session and recovers
+  // worktrees. Much of it holds the event loop for seconds (a Codex index read,
+  // version probes, adapter modules loading), and the renderer's first
+  // requests waited behind all of it. It now starts once the first client has
+  // its project list, or shortly after listening when no client comes.
+  let backgroundStarted = false
+  let backgroundTimer: ReturnType<typeof setTimeout> | undefined
+  wss.once('listening', () => {
+    if (backgroundStarted || historyClosing) return
+    backgroundTimer = setTimeout(startBackgroundWork, BACKGROUND_WORK_DELAY_MS)
+    backgroundTimer.unref()
+  })
+  function startBackgroundWork(): void {
+    if (backgroundStarted || historyClosing) return
+    backgroundStarted = true
+    clearTimeout(backgroundTimer)
+    void providerService.then(({ prewarmProviders }) => prewarmProviders()).catch(() => undefined)
+    startProviderHistory()
+    // A previous run killed mid-session leaves git believing in checkouts that
+    // are gone. Clearing that up at startup means the next session on that path
+    // starts instead of failing with a message about our own leftovers.
+    void orchestrator.recoverWorktrees().catch(() => undefined)
+  }
 
   /** Import outside changes before a history read, without holding a native chat on the first scan. */
   async function loadProviderHistoryForRead(threadId: string): Promise<void> {
@@ -331,8 +391,12 @@ export function startServer(
   }
 
   async function loadProviderHistory(threadId: string): Promise<void> {
+    // An imported chat or a turn needs the scan now, not after the start delay.
+    startBackgroundWork()
+    historySchedule.activity()
     let history: ProviderHistory
     try {
+      if (!initialProviderHistory) throw new Error('Provider history is closed')
       history = await initialProviderHistory
     } catch (error) {
       // Only an imported chat depends on the history service for its transcript.
@@ -344,10 +408,6 @@ export function startServer(
     }
     if (await history.load(threadId)) orchestrator.invalidateImportedHistory(threadId)
   }
-  // A previous run killed mid-session leaves git believing in checkouts that
-  // are gone. Clearing that up at startup means the next session on that path
-  // starts instead of failing with a message about our own leftovers.
-  void orchestrator.recoverWorktrees().catch(() => undefined)
 
   wss.on('connection', (socket, request) => {
     // Rejected sockets remain live until their close handshake ends. Handle
@@ -434,6 +494,8 @@ export function startServer(
       )
     } finally {
       if (createsSession) historySessionStarts -= 1
+      // One turn of the event loop first, so the answer leaves before the work starts.
+      if (method === 'projects.list' && !backgroundStarted) setImmediate(startBackgroundWork)
     }
   }
 
@@ -485,10 +547,11 @@ export function startServer(
         const { githubSetupCommand } = await import('./pull-requests.js')
         const command = githubSetupCommand(p.action)
         return {
-          terminalId:
+          terminalId: setupTerminal(
             p.action === 'install'
               ? orchestrator.installProvider('github-cli', command, p.columns, p.rows)
               : orchestrator.launchProviderLogin('github-cli', command, p.columns, p.rows),
+          ),
         }
       }
 
@@ -549,11 +612,8 @@ export function startServer(
         const p = parseParams(method, params)
         const command = await (await providerUpdates()).commandFor(p.provider)
         return {
-          terminalId: orchestrator.installProvider(
-            `update:${p.provider}`,
-            command,
-            p.columns,
-            p.rows,
+          terminalId: setupTerminal(
+            orchestrator.installProvider(`update:${p.provider}`, command, p.columns, p.rows),
           ),
         }
       }
@@ -584,7 +644,11 @@ export function startServer(
         const { installCommandFor } = await import('./providers.js')
         const command = await installCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
-        return { terminalId: orchestrator.installProvider(target, command, p.columns, p.rows) }
+        return {
+          terminalId: setupTerminal(
+            orchestrator.installProvider(target, command, p.columns, p.rows),
+          ),
+        }
       }
 
       case 'providers.launch': {
@@ -593,7 +657,9 @@ export function startServer(
         const command = await launchCommandFor(p.provider, p.agent)
         const target = p.agent ? `${p.provider}:${p.agent}` : p.provider
         return {
-          terminalId: orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          terminalId: setupTerminal(
+            orchestrator.launchProviderLogin(target, command, p.columns, p.rows),
+          ),
         }
       }
 
@@ -800,6 +866,7 @@ export function startServer(
 
       case 'projects.list': {
         reportStartupMilestone('server-projects-requested')
+        historySchedule.activity()
         lifecycleScheduler.refreshIfDue()
         const projects = store.projects()
         const threads = store.sidebarThreads()
@@ -951,6 +1018,7 @@ export function startServer(
 
       case 'thread.history': {
         const p = parseParams(method, params)
+        historySchedule.activity()
         await loadProviderHistoryForRead(p.threadId)
         if (p.page) {
           const history = await orchestrator.historyPage(p.threadId, p.page)
@@ -1238,11 +1306,13 @@ export function startServer(
     port,
     close: async () => {
       historyClosing = true
-      clearInterval(providerHistoryTimer)
+      clearTimeout(backgroundTimer)
+      historySchedule.stop()
+      cliProbe.waitBeforeReads(undefined)
       // Terminal jobs get a fixed shutdown budget; waiting on provider history
       // first would spend it. disposeAll below waits for the same close.
       void orchestrator.closeAllTerminals().catch(() => undefined)
-      await providerHistory.then((history) => history.close()).catch(() => undefined)
+      await providerHistory?.then((history) => history.close()).catch(() => undefined)
       lifecycleScheduler.dispose()
       usageHistoryClosing = true
       await usageHistory?.then((service) => service.dispose()).catch(() => undefined)

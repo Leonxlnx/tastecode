@@ -85,6 +85,19 @@ const messages = (id: string) =>
   )
 
 describe('provider history integration', () => {
+  it('reports whether a refresh changed any chat, so the server can poll less', async () => {
+    const sessions = [metadata()]
+    const { history, source } = setup(sessions)
+    await expect(history.refresh()).resolves.toBe(true)
+    await expect(history.refresh()).resolves.toBe(false)
+    sessions[0] = { ...metadata(), revision: '2', updatedAt: 3000 }
+    await expect(history.refresh()).resolves.toBe(true)
+    vi.mocked(source.list).mockRejectedValueOnce(new Error('locked'))
+    await expect(history.refresh()).resolves.toBe(false)
+    await history.close()
+    await expect(history.refresh()).resolves.toBe(false)
+  })
+
   it('honors a temporary-session tombstone created after discovery started and before its first scan', async () => {
     const { history, source } = setup()
     source.resolveSessionId = (id) => id.replace(/^local-/, '')
