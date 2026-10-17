@@ -324,6 +324,23 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__row-title/)
   })
 
+  it('lists skills on the shared entity rows, without cards', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity \{[^}]*grid-template-columns: minmax\(0, 1fr\) max-content;[^}]*padding-block: 10px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(32px, 1fr\) minmax\(0, max-content\);[^}]*min-height: 28px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__detail \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    // The entity rows step aside from their leader where every row does.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(0, 1fr\);/s,
+    )
+    expect(settingsCss).not.toMatch(/skills-settings|skill-row/)
+  })
+
   it('draws the provider updates line from quiet buttons at the note size', () => {
     expect(settingsCss).toMatch(
       /\.settings \.provider-updates-check \{[^}]*margin: 24px 0 0;[^}]*font-size: var\(--t-sm\);/s,
