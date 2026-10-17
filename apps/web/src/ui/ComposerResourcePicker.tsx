@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { McpServer, ProviderCommand, ProviderId, ResultOf, Skill } from '@harness/contracts'
 import { IconBox as Box, IconServer as Server, IconSlash as Slash } from '@tabler/icons-react'
+import type { AppCommand } from '../app-commands.js'
 import { providerDisplayName } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
 import '../styles/composer-resource-picker.css'
@@ -62,6 +63,7 @@ const MARKER_MENUS = {
   '@': { sources: ['mcp'], noun: 'MCP servers', browse: 'Choose a project to browse MCP servers.' },
 } satisfies Record<ComposerResourceMarker, MarkerMenu>
 const NO_SOURCES: ReadonlySet<InventorySource> = new Set()
+const NO_APP_COMMANDS: readonly AppCommand[] = []
 // Name widths for placeholder rows while the first inventory arrives.
 const RESOURCE_SKELETON_WIDTHS = [108, 76, 132, 92]
 
@@ -73,6 +75,8 @@ export const ComposerResourcePicker = forwardRef<
     projectPath: string | undefined
     /** The open chat, so the provider can answer from its live session. */
     threadId?: string | undefined
+    /** TasteCode's own commands, listed before the provider's under `/`. */
+    appCommands?: readonly AppCommand[] | undefined
     trigger: ComposerResourceTrigger | undefined
     selectedKeys: ReadonlySet<string>
     onSelect: (resource: ComposerResource) => void
@@ -187,7 +191,8 @@ export const ComposerResourcePicker = forwardRef<
     revision,
   ])
 
-  const entries = useMemo(() => menuEntries(inventory), [inventory])
+  const ownCommands = props.appCommands ?? NO_APP_COMMANDS
+  const entries = useMemo(() => menuEntries(inventory, ownCommands), [inventory, ownCommands])
   const markerEntries = entries[marker]
   const query = props.trigger?.query.trim().toLocaleLowerCase() ?? ''
   const filtered = useMemo(
@@ -286,11 +291,12 @@ export const ComposerResourcePicker = forwardRef<
       >
         {filtered.map(({ resource }, index) => {
           const Icon =
-            resource.kind === 'mcp'
+            resource.icon ??
+            (resource.kind === 'mcp'
               ? Server
               : resource.kind === 'command' && resource.commandKind !== 'skill'
                 ? Slash
-                : Box
+                : Box)
           const selected = index === resolvedActiveIndex
           return (
             <button
@@ -346,18 +352,30 @@ function markerMenu(marker: ComposerResourceMarker): MarkerMenu {
 }
 
 /** Builds each marker's rows once per inventory; typing only filters them. */
-function menuEntries(inventory: Inventory) {
+function menuEntries(inventory: Inventory, ownCommands: readonly AppCommand[]) {
   const commands: MenuEntry[] = []
   const commandNames = new Set<string>()
+  // TasteCode's own commands come first and keep their names: a provider
+  // command called the same is left out here, but still runs typed in full
+  // whenever TasteCode does not handle that name itself.
+  const addCommand = (resource: ComposerResource) => {
+    const name = lowercase(resource.id)
+    if (commandNames.has(name)) return
+    const aliases = resource.aliases?.filter((alias) => !commandNames.has(lowercase(alias)))
+    const names = [name, ...(aliases ?? []).map(lowercase)]
+    for (const entry of names) commandNames.add(entry)
+    commands.push(
+      menuEntry(
+        aliases?.length === resource.aliases?.length ? resource : { ...resource, aliases },
+        names,
+      ),
+    )
+  }
+  for (const command of ownCommands) addCommand(appCommandResource(command))
   const providerCommands = [...(inventory.commands?.commands ?? [])]
   // The provider's own order, but its commands before its skills.
   providerCommands.sort((left, right) => commandOrder(left) - commandOrder(right))
-  for (const command of providerCommands) {
-    const names = [command.name, ...(command.aliases ?? [])].map(lowercase)
-    if (commandNames.has(names[0]!)) continue
-    for (const name of names) commandNames.add(name)
-    commands.push(menuEntry(commandResource(command), names))
-  }
+  for (const command of providerCommands) addCommand(commandResource(command))
   const skills = (inventory.skills?.skills ?? []).map((skill) =>
     menuEntry(skillResource(skill), [skill.displayName ?? skill.name, skill.name].map(lowercase)),
   )
@@ -446,6 +464,25 @@ function commandResource(command: ProviderCommand): ComposerResource {
     // A command without an argument hint takes no input, so its bare name runs
     // as typed. A skill always waits for the task it should work on.
     runsAsTyped: command.argumentHint === undefined && command.kind !== 'skill',
+  }
+}
+
+function appCommandResource(command: AppCommand): ComposerResource {
+  return {
+    key: `app:${command.name}`,
+    kind: 'command',
+    id: command.name,
+    name: `/${command.name}`,
+    description: command.description,
+    scope: 'TasteCode',
+    token: `/${command.name}`,
+    available: true,
+    commandKind: 'command',
+    ...(command.aliases?.length ? { aliases: command.aliases } : {}),
+    ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+    // TasteCode handles the bare name too, so Enter on it runs at once.
+    runsAsTyped: true,
+    icon: command.icon,
   }
 }
 

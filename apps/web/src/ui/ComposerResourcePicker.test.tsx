@@ -3,6 +3,7 @@ import { createRef } from 'react'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ResultOf } from '@harness/contracts'
+import { appCommands } from '../app-commands.js'
 import { TestTransport } from '../test-transport.js'
 import { ComposerResourcePicker, type ComposerResource } from './ComposerResourcePicker.js'
 import type { ComposerResourcePickerHandle, ComposerResourceTrigger } from './composer-resource.js'
@@ -247,6 +248,63 @@ describe('ComposerResourcePicker', () => {
     expect(optionNames()).toEqual(['/context', '/init'])
     expect(screen.queryByText('Loading commands and skills…')).toBeNull()
     expect(transport.requests.filter(({ method }) => method === 'commands.list')).toHaveLength(2)
+  })
+
+  it("puts TasteCode's commands first and leaves out provider commands with their names", async () => {
+    const transport = createResourceTransport(
+      () => ({
+        commands: [
+          { name: 'init', description: 'Initialize a CLAUDE.md' },
+          { name: 'side', description: 'Provider side command' },
+          { name: 'aside', description: 'Provider aside', aliases: ['btw', 'as'] },
+        ],
+        loading: false,
+      }),
+      [{ ...ANIMATE_SKILL, name: 'feedback', displayName: undefined }],
+    )
+    const onSelect = vi.fn<(resource: ComposerResource) => void>()
+    const pickerRef = createRef<ComposerResourcePickerHandle>()
+    render(
+      <ComposerResourcePicker
+        ref={pickerRef}
+        transport={transport}
+        provider="grok"
+        projectPath="/work/project"
+        appCommands={appCommands({ sideChat: true, feedback: true })}
+        trigger={slash('')}
+        selectedKeys={new Set()}
+        onSelect={onSelect}
+      />,
+    )
+
+    await screen.findByRole('option', { name: /\/init/ })
+    expect(optionNames()).toEqual(['/side', '/feedback', '/init', '/aside'])
+    expect(screen.getByRole('option', { name: /\/side/ }).getAttribute('title')).toBe(
+      '/side [question]',
+    )
+    expect(pickerRef.current?.selectActive('Tab')).toBe('selected')
+    expect(onSelect).toHaveBeenLastCalledWith(
+      expect.objectContaining({ key: 'app:side', token: '/side', aliases: ['btw'] }),
+    )
+  })
+
+  it('lists TasteCode commands without a project, before any inventory', () => {
+    const transport = createResourceTransport()
+    render(
+      <ComposerResourcePicker
+        transport={transport}
+        provider="codex"
+        projectPath={undefined}
+        appCommands={appCommands({ sideChat: false, feedback: true })}
+        trigger={slash('fee')}
+        selectedKeys={new Set()}
+        onSelect={vi.fn()}
+      />,
+    )
+
+    expect(optionNames()).toEqual(['/feedback'])
+    expect(transport.requests).toEqual([])
+    expect(screen.queryByRole('status')).toBeNull()
   })
 
   it('treats a server without provider commands as having none', async () => {

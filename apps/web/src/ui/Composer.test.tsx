@@ -30,7 +30,6 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
   const query = match[3] ?? ''
   const start = cursor - query.length - 1
   if (marker === '/' && text.slice(0, start).trim() !== '') return undefined
-  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
   return { marker, query, start, end }
@@ -105,11 +104,21 @@ describe('composer resource triggers', () => {
     })
   })
 
-  it('rejects embedded markers and reserved slash commands', () => {
+  it('rejects embedded markers and lists TasteCode commands like any other', () => {
     expect(composerResourceTriggerAt('email@example.com', 17)).toBeUndefined()
     expect(composerResourceTriggerAt('Run /side', 9)).toBeUndefined()
-    expect(composerResourceTriggerAt('Run /btw', 8)).toBeUndefined()
-    expect(composerResourceTriggerAt('/feedback', 9)).toBeUndefined()
+    expect(composerResourceTriggerAt('/btw', 4)).toEqual({
+      marker: '/',
+      query: 'btw',
+      start: 0,
+      end: 4,
+    })
+    expect(composerResourceTriggerAt('/feedback', 9)).toEqual({
+      marker: '/',
+      query: 'feedback',
+      start: 0,
+      end: 9,
+    })
   })
 
   it('preserves resource names longer than the fast scan window', () => {
@@ -1347,18 +1356,6 @@ describe('Composer prompts', () => {
     expect(screen.queryByRole('menu')).toBeNull()
   })
 
-  it('keeps the built-in side-chat slash commands out of the resource picker', () => {
-    const onSend = vi.fn()
-    renderComposer(onSend, { transport: populatedResourceTransport() })
-
-    const composer = screen.getByPlaceholderText('Do anything')
-    fireEvent.change(composer, { target: { value: '/side' } })
-    expect(screen.queryByRole('listbox')).toBeNull()
-    fireEvent.keyDown(composer, { key: 'Enter' })
-
-    expect(onSend).toHaveBeenCalledWith('/side', [])
-  })
-
   it('sends on the first Enter when the resource picker has nothing to select', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
@@ -1563,6 +1560,87 @@ describe('Composer provider commands', () => {
 
     expect(onSend).not.toHaveBeenCalled()
     expect(composer.value).toBe('/compact ')
+  })
+
+  it("lists TasteCode's own commands first and in place of a provider's namesake", async () => {
+    renderComposer(vi.fn(), {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+      onFeedbackCommand: vi.fn(),
+    })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/', selectionStart: 1 } })
+    await screen.findByRole('option', { name: /\/code-review/ })
+
+    expect(
+      screen
+        .getAllByRole('option')
+        .map((option) => option.querySelector('.composer-resource-picker__name')?.textContent),
+    ).toEqual(['/side', '/feedback', '/code-review', '/context', '/compact'])
+    expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
+      'Report a bug or share an idea with the TasteCode team',
+    )
+  })
+
+  it('offers /side only in a started chat and /feedback only while feedback works', async () => {
+    renderComposer(vi.fn(), { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/', selectionStart: 1 } })
+    await screen.findByRole('option', { name: /\/code-review/ })
+
+    expect(screen.queryByRole('option', { name: /\/side/ })).toBeNull()
+    expect(screen.getByRole('option', { name: /\/feedback/ }).textContent).toContain(
+      'Send feedback to the provider',
+    )
+  })
+
+  it('runs an exactly typed TasteCode command on the first Enter', async () => {
+    const onSend = vi.fn()
+    const onFeedbackCommand = vi.fn()
+    renderComposer(onSend, {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+      onFeedbackCommand,
+      sendAvailability: 'setup-required',
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/feedback', selectionStart: 9 } })
+    await screen.findByRole('option', { name: /\/feedback/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onFeedbackCommand).toHaveBeenCalledWith('')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('completes /side from its prefix or alias and keeps the side-chat send', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, {
+      transport: commandResourceTransport(),
+      provider: 'claude-code',
+      threadId: 'thread-1',
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/si', selectionStart: 3 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(composer.value).toBe('/side ')
+
+    fireEvent.change(composer, { target: { value: '/bt', selectionStart: 3 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Tab' })
+    expect(composer.value).toBe('/btw ')
+
+    fireEvent.change(composer, { target: { value: '/btw', selectionStart: 4 } })
+    await screen.findByRole('option', { name: /\/side/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/btw', [])
   })
 
   it('sends a fully typed command the picker has not listed yet', () => {
@@ -2404,6 +2482,7 @@ function commandResourceTransport(): Transport {
             description: 'Free up context by summarizing the conversation so far',
             argumentHint: '<optional custom summarization instructions>',
           },
+          { name: 'feedback', description: 'Send feedback to the provider' },
         ],
         loading: false,
       }

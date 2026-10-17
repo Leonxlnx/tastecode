@@ -39,6 +39,7 @@ import {
   savePastedFile,
   type PickedAttachment,
 } from '../bridge.js'
+import { appCommands } from '../app-commands.js'
 import { parseFeedbackCommand } from '../feedback-command.js'
 import { DEFAULT_KEYBINDINGS, shortcutAria, type Keybindings } from '../shortcuts.js'
 import type { Transport } from '../transport.js'
@@ -406,7 +407,6 @@ export function composerResourceTriggerAt(
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   if (marker === '/' && !onlySpaceBefore(text, markerIndex)) return undefined
   const query = text.slice(queryStart, position)
-  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = position
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start: markerIndex, end }
@@ -424,7 +424,6 @@ function composerResourceTriggerAtLongToken(
   const query = match[3] ?? ''
   const start = cursor - query.length - 1
   if (marker === '/' && !onlySpaceBefore(text, start)) return undefined
-  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = cursor
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start, end }
@@ -629,6 +628,13 @@ function ComposerComponent(props: {
   const selectedResourceKeys = useMemo(
     () => new Set(selectedResources.map((resource) => resource.key)),
     [selectedResources],
+  )
+  // A side chat branches off a started chat; feedback needs this build's service.
+  const sideChatAvailable = props.threadId !== undefined
+  const feedbackAvailable = props.onFeedbackCommand !== undefined
+  const ownCommands = useMemo(
+    () => appCommands({ sideChat: sideChatAvailable, feedback: feedbackAvailable }),
+    [sideChatAvailable, feedbackAvailable],
   )
 
   const updateResourceTrigger = (trigger: ComposerResourceTrigger | undefined) => {
@@ -1765,6 +1771,7 @@ function ComposerComponent(props: {
                 provider={props.provider}
                 projectPath={props.projectPath}
                 threadId={props.threadId}
+                appCommands={ownCommands}
                 trigger={resourceTrigger}
                 selectedKeys={selectedResourceKeys}
                 onSelect={selectResource}

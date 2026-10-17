@@ -1,3 +1,5 @@
+import type { TablerIcon } from '@tabler/icons-react'
+
 /**
  * `skill` and `mcp` become chips whose token is sent ahead of the prompt.
  * `command` is typed into the draft as `/name `, which the provider expands.
@@ -22,6 +24,8 @@ export type ComposerResource = {
   argumentHint?: string | undefined
   /** Commands only: Enter on the exactly typed name sends it instead of completing it. */
   runsAsTyped?: boolean | undefined
+  /** TasteCode's own commands only: the icon their feature uses elsewhere. */
+  icon?: TablerIcon | undefined
 }
 
 export type ComposerResourceMarker = '/' | '$' | '@'
