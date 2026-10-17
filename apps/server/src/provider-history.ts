@@ -24,10 +24,12 @@ type Imported = {
 export class ProviderHistory {
   #entries = new Map<string, Imported>()
   #byThread = new Map<string, Imported>()
-  #refreshing: Promise<void> | undefined
+  #refreshing: Promise<boolean> | undefined
   #reading = new Map<string, Promise<boolean>>()
   /** Internal sessions are never imported, so one absent copy stays absent. */
   #internalWithoutCopy = new Set<string>()
+  /** Settles once each provider's first scan is done, whether it found anything or failed. */
+  #scanned = new Map<ProviderId, { done: Promise<void>; settle: () => void }>()
   #closed = false
 
   constructor(
@@ -41,6 +43,22 @@ export class ProviderHistory {
     },
   ) {
     for (const entry of store.providerHistories()) this.#remember(entry)
+    for (const { provider } of sources) {
+      let settle!: () => void
+      const done = new Promise<void>((resolve) => (settle = resolve))
+      this.#scanned.set(provider, { done, settle })
+    }
+  }
+
+  /**
+   * Resolves once this provider's saved sessions were scanned for the first
+   * time. A chat of one provider needs only its own scan before it is read or
+   * continued; a large Claude history took 30-180 s, and a Codex turn waited
+   * for all of it.
+   */
+  scanned(provider: ProviderId): Promise<void> {
+    if (this.#closed) return Promise.resolve()
+    return this.#scanned.get(provider)?.done ?? Promise.resolve()
   }
 
   #remember(entry: Imported): void {
@@ -50,14 +68,16 @@ export class ProviderHistory {
     this.#byThread.set(entry.threadId, entry)
   }
 
-  refresh(): Promise<void> {
-    if (this.#closed) return Promise.resolve()
+  /** Resolves whether any chat changed, so a caller can poll less while nothing does. */
+  refresh(): Promise<boolean> {
+    if (this.#closed) return Promise.resolve(false)
     return (this.#refreshing ??= this.#refresh().finally(() => {
       this.#refreshing = undefined
     }))
   }
 
-  async #refresh(): Promise<void> {
+  async #refresh(): Promise<boolean> {
+    let anyChanged = false
     await Promise.all(
       this.sources.map(async ({ provider, history }) => {
         try {
@@ -215,14 +235,20 @@ export class ProviderHistory {
             }
           })
           for (const entry of imported) this.#remember(entry)
-          if (changed.length) this.hooks.changed(changed)
+          if (changed.length) {
+            anyChanged = true
+            this.hooks.changed(changed)
+          }
           for (const threadId of repair) await this.load(threadId)
         } catch {
           // Never log source content or paths from a malformed provider record.
           this.hooks.log(`${provider} history could not be refreshed; will retry`)
+        } finally {
+          this.#scanned.get(provider)?.settle()
         }
       }),
     )
+    return anyChanged
   }
 
   async load(threadId: string): Promise<boolean> {
@@ -306,6 +332,7 @@ export class ProviderHistory {
 
   async close(): Promise<void> {
     this.#closed = true
+    for (const scan of this.#scanned.values()) scan.settle()
     await Promise.allSettled([this.#refreshing, ...this.#reading.values()])
     await Promise.allSettled(this.sources.map(({ history }) => history.dispose?.()))
   }

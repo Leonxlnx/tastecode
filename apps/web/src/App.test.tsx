@@ -1406,6 +1406,40 @@ describe('web client', () => {
     },
   )
 
+  it('lists branches for a new chat only, and again when its menu opens after 30 s', async () => {
+    serverProjects.push(
+      serverProject('/work/other', 'other', [{ id: 'other-thread', title: 'Other chat' }]),
+    )
+    render(<App />)
+    await waitFor(() => expect(composerProps().branches).toEqual(['main', 'feature/shelf']))
+    expect(rpcCount('workspace.branches')).toBe(1)
+
+    // Opening chats, here and in another project, reads the checkout but no branch list.
+    act(() => sidebarProps().onSelectSession('other-thread'))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('workspace.info', { path: '/work/other' }),
+    )
+    expect(composerProps().branches).toEqual([])
+    act(() => sidebarProps().onSelectSession('untouched-thread'))
+    await waitFor(() => expect(composerProps().projectPath).toBe('/work/project'))
+    expect(rpcCount('workspace.branches')).toBe(1)
+
+    // A new chat within 30 s offers the kept list, also when its menu opens.
+    act(() => sidebarProps().onNewSession('/work/project'))
+    await waitFor(() => expect(composerProps().newSession).toBe(true))
+    expect(composerProps().branches).toEqual(['main', 'feature/shelf'])
+    act(() => composerProps().onBranchMenuOpen?.())
+    expect(rpcCount('workspace.branches')).toBe(1)
+
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 30_001)
+    try {
+      act(() => composerProps().onBranchMenuOpen?.())
+      await waitFor(() => expect(rpcCount('workspace.branches')).toBe(2))
+    } finally {
+      clock.mockRestore()
+    }
+  })
+
   it('keeps the next project workspace when a restore Undo finishes after a switch', async () => {
     serverProjects.push(
       serverProject('/work/other', 'other', [{ id: 'other-thread', title: 'Other chat' }]),
