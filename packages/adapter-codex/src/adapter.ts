@@ -138,6 +138,25 @@ export function isIgnorableCodexNotification(method: string): boolean {
   return IGNORABLE_NOTIFICATIONS.has(method)
 }
 
+/**
+ * Notifications that name a thread but are not part of its chat. A subagent's
+ * request must still resolve, and MCP state can arrive before thread/start
+ * answers, so these pass for every thread on the connection.
+ */
+const CONNECTION_NOTIFICATIONS = new Set([
+  'serverRequest/resolved',
+  'warning',
+  'mcpServer/startupStatus/updated',
+  'mcpServer/oauthLogin/completed',
+])
+
+/** The thread a notification reports on; one property read, since deltas pass here too. */
+function notificationThreadId(params: JsonRpcValue | undefined): string | undefined {
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return undefined
+  const threadId = params['threadId']
+  return typeof threadId === 'string' ? threadId : undefined
+}
+
 export function formatCodexWarning(notification: WarningNotification): string {
   return `Codex warning: ${notification.message}`
 }
@@ -615,6 +634,12 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #mcpInventory = new Map<string, McpServer[]>()
   #mcpInventoryLoads = new Map<string, Promise<void>>()
   #threadModels = new Map<string, string>()
+  /**
+   * Threads this adapter started or resumed. Codex 0.163 streams the threads
+   * its subagents run in over the same connection; their turns, items and
+   * usage are not this chat's.
+   */
+  readonly #ownThreads = new Set<string>()
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
   #sessionThread: { id: string; workspacePath: string } | undefined
@@ -759,6 +784,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#processStop = Promise.resolve(rpc.dispose())
     this.#sessionThread = undefined
     this.#threadModels.clear()
+    this.#ownThreads.clear()
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
@@ -1075,6 +1101,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ThreadStartResponseSchema,
       THREAD_START_TIMEOUT_MS,
     )
+    this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
@@ -1115,6 +1142,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       },
       ThreadResumeResponseSchema,
     )
+    this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
@@ -1287,6 +1315,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
     this.#threadModels.clear()
+    this.#ownThreads.clear()
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
     this.#sessionThread = undefined
@@ -1443,6 +1472,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   #onNotification(method: string, params: JsonRpcValue | undefined): void {
     if (isIgnorableCodexNotification(method)) return
+    const threadId = notificationThreadId(params)
+    if (
+      threadId !== undefined &&
+      !this.#ownThreads.has(threadId) &&
+      !CONNECTION_NOTIFICATIONS.has(method)
+    ) {
+      this.#onForeignNotification(method, params)
+      return
+    }
 
     const emit = (event: DomainEvent) => this.emit('event', event)
 
@@ -1472,6 +1510,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'thread/started': {
         const p = ThreadStartedNotificationSchema.parse(params)
+        // A subagent's thread; its parent is the chat.
+        if (p.thread.parentThreadId && !this.#ownThreads.has(p.thread.id)) return
         emit({
           type: 'thread.started',
           thread: {
@@ -1697,6 +1737,16 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         // etc.). Ignoring the rest is correct; logging it is how we
         // notice when something worth mapping appears.
         this.emit('log', `unmapped notification: ${method}`)
+    }
+  }
+
+  /** A thread this chat did not start, such as a subagent's: nothing of it enters the chat. */
+  #onForeignNotification(method: string, params: JsonRpcValue | undefined): void {
+    // Its approvals reached the user like any other, so its finished turn still declines
+    // the ones nobody answered.
+    if (method === 'turn/completed') {
+      const p = TurnCompletedNotificationSchema.parse(params)
+      this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
     }
   }
 
