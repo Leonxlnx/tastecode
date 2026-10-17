@@ -227,14 +227,19 @@ function withLiveWindows(
  * time they were read, so clients can say how old they are.
  */
 function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLimitSource {
-  const message = failure.error instanceof Error ? failure.error.message.trim() : ''
   return {
     ...heldValues(held),
     stale: true,
-    refreshError: message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK,
+    refreshError: refreshErrorOf(failure),
     // A source that ran out of timeouts waits for an account change, not a time.
     ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
   }
+}
+
+/** The stable, bounded text a client may show for a failed read. */
+function refreshErrorOf(failure: LimitFailure): string {
+  const message = failure.error instanceof Error ? failure.error.message.trim() : ''
+  return message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK
 }
 
 /** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
