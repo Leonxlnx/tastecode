@@ -152,6 +152,7 @@ import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import {
+  SettingsEmpty,
   SettingsNotice,
   SettingsPage,
   SettingsSection,
@@ -1389,7 +1390,7 @@ function ModelSettings(props: {
   )
 
   return (
-    <SettingsPanel title="Models" groupClassName="settings__group--plain model-settings">
+    <SettingsPage title="Models" className="model-settings">
       <BackgroundModelSettings transport={props.transport} />
       {sources.length > 0 ? (
         <div className="model-settings__sources">
@@ -1406,12 +1407,12 @@ function ModelSettings(props: {
       ) : props.modelsLoading ? (
         <ModelSourcesSkeleton />
       ) : (
-        <div className="model-settings__empty">
-          <Boxes size={18} aria-hidden />
-          <p>No models are available from your connected providers yet.</p>
-        </div>
+        <SettingsEmpty
+          icon={<Boxes aria-hidden />}
+          title="No models are available from your connected providers yet."
+        />
       )}
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 
@@ -1421,45 +1422,43 @@ function ModelSourcesSkeleton() {
   return (
     <SkeletonStatus label="Loading models…" className="model-settings__sources">
       {[4, 3].map((rows, index) => (
-        <section className="model-visibility" key={index} aria-hidden>
-          <header className="model-visibility__source">
-            <h3>
+        <div className="set-section" key={index} aria-hidden>
+          <div className="set-section__head">
+            <span className="set-section__title">
               <span className="source-identity source-identity--regular">
                 <span className="source-identity__mark">
                   <Skeleton className="skeleton--icon" width={15} height={15} />
                 </span>
                 <Skeleton width={index === 0 ? 64 : 92} height={9} />
               </span>
-            </h3>
-            <div className="model-visibility__bulk-actions">
-              <button type="button" disabled>
-                All
-              </button>
-              <button type="button" disabled>
-                None
-              </button>
-            </div>
-          </header>
-          <div className="model-visibility__models">
-            <div>
-              {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
-                <SettingsRow
-                  key={row}
-                  className="model-visibility__model"
-                  title={
-                    <span className="settings-value-skeleton">
-                      <Skeleton width={width} height={9} />
-                    </span>
-                  }
-                >
-                  <span className="settings__switch-skeleton">
-                    <Skeleton width={30} height={18} />
-                  </span>
-                </SettingsRow>
-              ))}
+            </span>
+            <div className="set-section__action">
+              <div className="model-visibility__bulk-actions">
+                <button type="button" disabled>
+                  All
+                </button>
+                <button type="button" disabled>
+                  None
+                </button>
+              </div>
             </div>
           </div>
-        </section>
+          {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
+            <SettingsLeaderRow
+              key={row}
+              className="model-visibility__model"
+              name={
+                <span className="settings-value-skeleton">
+                  <Skeleton width={width} height={9} />
+                </span>
+              }
+            >
+              <span className="settings__switch-skeleton">
+                <Skeleton width={30} height={18} />
+              </span>
+            </SettingsLeaderRow>
+          ))}
+        </div>
       ))}
     </SkeletonStatus>
   )
@@ -1705,14 +1704,18 @@ function ModelVisibilityGroup(props: {
     }
   }
 
+  // A source is one section: its identity is the heading, All and None its
+  // action, and every model a leader row whose value is the switch.
   return (
-    <section className="model-visibility" aria-label={props.source}>
-      <header className="model-visibility__source">
-        {props.choices[0] ? (
-          <h3>
-            <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
-          </h3>
-        ) : null}
+    <SettingsSection
+      title={
+        props.choices[0] ? (
+          <SourceIdentity presentation={{ label: props.source, mark: props.choices[0].mark }} />
+        ) : (
+          props.source
+        )
+      }
+      action={
         <div
           className="model-visibility__bulk-actions"
           role="group"
@@ -1735,34 +1738,31 @@ function ModelVisibilityGroup(props: {
             None
           </button>
         </div>
-      </header>
-
-      <div className="model-visibility__models">
-        <div>
-          {props.choices.map((choice) => {
-            const visible = !props.hiddenModels.has(choice.key)
-            return (
-              <SettingsRow
-                className={`model-visibility__model${visible ? '' : ' is-hidden'}`}
-                key={choice.key}
-                title={choice.model.displayName}
-              >
-                <button
-                  className={`switch${visible ? ' is-on' : ''}`}
-                  type="button"
-                  role="switch"
-                  aria-label={`Include ${choice.model.displayName} in model picker`}
-                  aria-checked={visible}
-                  onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
-                >
-                  <span className="switch__thumb" />
-                </button>
-              </SettingsRow>
-            )
-          })}
-        </div>
-      </div>
-    </section>
+      }
+    >
+      {props.choices.map((choice) => {
+        const visible = !props.hiddenModels.has(choice.key)
+        return (
+          <SettingsLeaderRow
+            className="model-visibility__model"
+            key={choice.key}
+            name={choice.model.displayName}
+            tone={visible ? undefined : 'muted'}
+          >
+            <button
+              className={`switch${visible ? ' is-on' : ''}`}
+              type="button"
+              role="switch"
+              aria-label={`Include ${choice.model.displayName} in model picker`}
+              aria-checked={visible}
+              onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
+            >
+              <span className="switch__thumb" />
+            </button>
+          </SettingsLeaderRow>
+        )
+      })}
+    </SettingsSection>
   )
 }
 
@@ -2418,23 +2418,6 @@ function AboutSettings(props: { transport: Transport }) {
         </button>
       </SettingsLeaderRow>
     </SettingsPage>
-  )
-}
-
-// No group subtitle between the title and the card: one heading carries a
-// panel, and the removed line was repeating it in smaller type.
-function SettingsPanel(props: { title: string; groupClassName?: string; children: ReactNode }) {
-  // An id derived from the title breaks on spaces ("Data & privacy").
-  const titleId = useId()
-  return (
-    <section className="settings__panel" aria-labelledby={titleId}>
-      <h1 className="settings__title" id={titleId}>
-        {props.title}
-      </h1>
-      <div className={`settings__group${props.groupClassName ? ` ${props.groupClassName}` : ''}`}>
-        {props.children}
-      </div>
-    </section>
   )
 }
 

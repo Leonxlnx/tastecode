@@ -24,7 +24,6 @@ describe('settings viewport CSS', () => {
       /\.settings \.settings__row:has\(> \.settings__row-control > :is\(\.switch, \.settings__switch-skeleton\)\) \{[^}]*padding: 12px 14px;/s,
     )
     expect(settingsCss).toMatch(/\.settings__group-note \{[^}]*padding: 10px 14px;/s)
-    expect(settingsCss).toMatch(/\.model-visibility__source \{[^}]*padding: 6px 14px;/s)
   })
 
   it('lays every v1 row out as name, leader and value on one 40px rhythm', () => {
@@ -138,10 +137,23 @@ describe('settings viewport CSS', () => {
   })
 
   it('keeps provider model bulk actions compact, on the segmented track', () => {
-    expect(settingsCss).toMatch(/\.model-visibility__bulk-actions \{[^}]*justify-self: end;/s)
     expect(settingsCss).toMatch(/\.model-visibility__bulk-actions button \{[^}]*min-width: 42px;/s)
     expect(systemCss).toMatch(
       /:is\(\.set-segmented, \.settings \.model-visibility__bulk-actions\) \{[^}]*display: inline-flex;[^}]*height: 28px;[^}]*padding: 2px;/s,
+    )
+  })
+
+  it('lays Models out as open sections on the shared rows, without cards', () => {
+    // Every source is a settings section; the cards, their headers and the
+    // 52px switch rows are gone.
+    expect(settingsCss).not.toMatch(
+      /\.model-settings \{|\.model-visibility \{|model-visibility__(source|models|search|empty)|model-settings__empty/,
+    )
+    expect(settingsSource).not.toContain('function SettingsPanel')
+    expect(settingsCss).toMatch(/\.settings \.model-settings__sources \{[^}]*margin-top: 36px;/s)
+    // A model left out of the picker is a muted row whose name steps down.
+    expect(settingsCss).toMatch(
+      /\.settings \.model-visibility__model\[data-tone='muted'\]:not\(:hover, :focus-within\) \.set-row__name \{[^}]*color: var\(--text-3\);/s,
     )
   })
 

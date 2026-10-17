@@ -2367,92 +2367,25 @@
   font-size: var(--t-sm);
 }
 
-.model-settings {
-  display: grid;
-  gap: 14px;
+/* Models: Background work, then one section per source on the shared rows,
+   at the section gap. */
+.settings .model-settings__sources {
+  margin-top: 36px;
 }
 
-.model-settings__empty p,
-.model-visibility__source h3 {
-  margin: 0;
+/* The empty line's own padding makes up the rest of the gap. */
+.settings .model-settings > .set-empty {
+  margin-top: 24px;
 }
 
-.model-settings__sources {
-  display: grid;
-  gap: 12px;
-}
-
-.model-settings__empty {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 60px;
-  padding: 12px 14px;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.model-visibility {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.model-visibility__source {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 40px;
-  padding: 6px 14px;
-  color: var(--text);
-}
-
-/* The segmented track from settings-system.css, kept to the header's end. */
-.model-visibility__bulk-actions {
-  justify-self: end;
-}
-
+/* All and None keep one width, so the pair holds still as either dims. */
 .model-visibility__bulk-actions button {
   min-width: 42px;
 }
 
-.model-visibility__source h3 {
-  overflow: hidden;
-  font-size: var(--t-sm);
-  font-weight: 500;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.model-visibility__search {
-  width: 100%;
-}
-
-.model-visibility__models {
-  border-top: 1px solid var(--line);
-}
-
-.model-visibility__model {
-  min-height: 40px;
-  padding-block: 6px;
-}
-
-.model-visibility__model.is-hidden .settings__row-title {
-  color: var(--text-2);
-}
-
-.model-visibility__empty {
-  margin: 0;
-  padding: 16px;
+/* A model left out of the picker reads a step quieter than one in it. */
+.settings .model-visibility__model[data-tone='muted']:not(:hover, :focus-within) .set-row__name {
   color: var(--text-3);
-  font-size: var(--t-sm);
-  text-align: center;
 }
 
 /* Errors never grow a second line: a red dot next to the row's control
@@ -3146,22 +3079,8 @@
     margin-bottom: 32px;
   }
 
-  .model-visibility__source {
-    grid-template-columns: minmax(0, 1fr) auto;
-    row-gap: 8px;
-  }
-
-  .model-visibility__search {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-
   .settings__row {
     align-items: flex-start;
-  }
-
-  .model-visibility__model {
-    align-items: center;
   }
 }
 
@@ -3190,20 +3109,6 @@
 
   .settings__row-control {
     align-self: flex-end;
-  }
-
-  .model-visibility__source,
-  .model-visibility__model {
-    padding-inline: 14px;
-  }
-
-  .model-visibility__model {
-    flex-direction: row;
-    gap: 12px;
-  }
-
-  .model-visibility__model .settings__row-control {
-    align-self: auto;
   }
 }
 

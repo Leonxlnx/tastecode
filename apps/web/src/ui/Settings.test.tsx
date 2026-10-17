@@ -532,15 +532,16 @@ describe('settings loading values', () => {
     const loading = screen.getByText('Loading models…').closest('[role="status"]')!
     expect(loading.getAttribute('aria-busy')).toBe('true')
     expect(loading.classList.contains('model-settings__sources')).toBe(true)
-    expect(loading.querySelectorAll('.model-visibility')).toHaveLength(2)
-    expect(loading.querySelectorAll('.model-visibility__model')).toHaveLength(7)
+    // Placeholder sources are the same open sections and leader rows.
+    expect(loading.querySelectorAll('.set-section')).toHaveLength(2)
+    expect(loading.querySelectorAll('.set-row.model-visibility__model')).toHaveLength(7)
     expect(loading.querySelectorAll('.settings__switch-skeleton')).toHaveLength(7)
     // The placeholder has the one settings switch size.
     const switchStyle =
       loading.querySelector('.settings__switch-skeleton .skeleton')?.getAttribute('style') ?? ''
     expect(switchStyle).toContain('width: 30px')
     expect(switchStyle).toContain('height: 18px')
-    expect(container.querySelector('.model-settings__empty')).toBeNull()
+    expect(container.querySelector('.set-empty')).toBeNull()
     expect(within(loading as HTMLElement).queryByRole('switch')).toBeNull()
 
     const models: ModelChoice[] = [
@@ -568,7 +569,9 @@ describe('settings loading values', () => {
 
     rerenderSettings({ modelsLoading: false, models: [] })
     expect(
-      screen.getByText('No models are available from your connected providers yet.'),
+      screen
+        .getByText('No models are available from your connected providers yet.')
+        .closest('.set-empty'),
     ).toBeTruthy()
     await act(async () => {})
   })
@@ -1250,6 +1253,15 @@ describe('model settings', () => {
     ).toBeNull()
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
+    // A source is an open section: its identity the heading, All and None its
+    // action, each model a leader row; a hidden model's row is muted.
+    const source = screen.getByRole('region', { name: 'Grok' })
+    expect(source.querySelector('.set-section__title .source-identity')).toBe(sourceHeading)
+    expect(source.querySelector('.set-section__action .model-visibility__bulk-actions')).toBe(
+      allButton.parentElement,
+    )
+    expect(ling.closest('.set-row')?.getAttribute('data-tone')).toBe('muted')
+    expect(qwen.closest('.set-row')?.hasAttribute('data-tone')).toBe(false)
 
     fireEvent.click(allButton)
     expect(onModelVisibilityChange).toHaveBeenCalledOnce()
