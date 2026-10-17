@@ -21,6 +21,7 @@ import { PushBus } from './push-bus.js'
 import { storeLocation } from './data-location.js'
 import { acquireDataLease } from './data-lease.js'
 import { PreviewCaptureCoordinator } from './preview-capture.js'
+import type { CheckoutPullRequests } from './checkout-pull-request.js'
 import type { PullRequestService } from './pull-requests.js'
 import { DEFAULT_PORT } from './server-config.js'
 import { Store } from './store.js'
@@ -136,6 +137,26 @@ export function startServer(
     (pullRequests ??= import('./pull-requests.js').then(
       ({ PullRequestService }) => new PullRequestService(),
     ))
+  let checkoutPullRequests: Promise<CheckoutPullRequests> | undefined
+  const checkoutPullRequestService = () =>
+    (checkoutPullRequests ??= Promise.all([
+      pullRequestService(),
+      import('./checkout-pull-request.js'),
+    ]).then(
+      ([service, { CheckoutPullRequests }]) =>
+        new CheckoutPullRequests({ account: (refresh) => service.account(refresh) }),
+    ))
+  /** A finished turn may have pushed or opened a pull request from its checkout. */
+  const turnEndedInCheckout = (threadId: string) => {
+    if (!checkoutPullRequests) return
+    const thread = store.thread(threadId)
+    if (!thread) return
+    const checkout = resolveWorkspacePath(thread.worktreePath ?? thread.projectPath)
+    void checkoutPullRequests.then(
+      (service) => service.invalidateCheckout(checkout),
+      () => {},
+    )
+  }
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   let usageHistory: Promise<UsageHistoryService> | undefined
   let usageHistoryClosing = false
@@ -151,6 +172,7 @@ export function startServer(
     }))
   const orchestrator = new Orchestrator(store, {
     onEvent: (threadId, event, seq, serializedEvent) => {
+      if (event.type === 'turn.completed') turnEndedInCheckout(threadId)
       if (serializedEvent === undefined) {
         push.broadcast('thread.event', { threadId, event, seq })
       } else {
@@ -422,6 +444,10 @@ export function startServer(
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
         return
       }
+      if (error instanceof UnknownMethodError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
+        return
+      }
       if (error instanceof InvalidHistoryCursorError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
@@ -520,7 +546,21 @@ export function startServer(
 
       case 'pullRequests.action': {
         const p = parseParams(method, params)
-        return (await pullRequestService()).action(p.repository, p.number, p.action)
+        try {
+          return await (await pullRequestService()).action(p.repository, p.number, p.action)
+        } finally {
+          // Even a failed action may have changed the pull request on GitHub.
+          void checkoutPullRequests?.then(
+            (service) => service.invalidateRepository(p.repository),
+            () => {},
+          )
+        }
+      }
+
+      case 'pullRequests.forCheckout': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return (await checkoutPullRequestService()).forCheckout(checkout, p.refresh ?? false)
       }
 
       case 'pullRequests.image':
@@ -1212,6 +1252,12 @@ export function startServer(
         lifecycleScheduler.refreshNow()
         return settings
       }
+
+      default:
+        // The contract can declare a method before this server routes it (a
+        // newer client, or a contract that landed ahead of its handler). Say
+        // so instead of replying with an empty result the client would trust.
+        throw new UnknownMethodError(method)
     }
   }
 
@@ -1342,6 +1388,13 @@ class InvalidParamsError extends Error {
     readonly detail?: string,
   ) {
     super(`invalid params for ${method}`)
+  }
+}
+
+/** A declared method that `route` has no case for yet. */
+class UnknownMethodError extends Error {
+  constructor(method: string) {
+    super(`unknown method: ${method}`)
   }
 }
 
