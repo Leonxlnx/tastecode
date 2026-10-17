@@ -280,7 +280,7 @@ describe('Cursor adapter', () => {
       await vi.advanceTimersByTimeAsync(59_000)
       expect(settled).toBe(false)
       await vi.advanceTimersByTimeAsync(1_000)
-      await expect(hung).rejects.toThrow('CLI did not respond within the time limit')
+      await expect(hung).rejects.toThrow('did not answer within 60 seconds')
       expect(silent.killed).toBe(true)
     } finally {
       vi.useRealTimers()

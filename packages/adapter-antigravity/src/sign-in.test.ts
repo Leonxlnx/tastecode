@@ -119,7 +119,7 @@ describe('antigravityAccount', () => {
     await vi.advanceTimersByTimeAsync(119_999)
     expect(settled).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
-    await expect(account).rejects.toThrow('CLI did not respond within the time limit')
+    await expect(account).rejects.toThrow('did not answer within 120 seconds')
   })
 })
 
