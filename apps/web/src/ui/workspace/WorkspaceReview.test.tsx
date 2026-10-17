@@ -541,4 +541,57 @@ describe('WorkspaceReview git actions', () => {
     })
     expect(screen.queryByRole('button', { name: 'Create pull request' })).toBeNull()
   })
+
+  it("follows a running turn's edits with the diff alone, and not while hidden", async () => {
+    vi.useFakeTimers()
+    const { transport, calls } = gitCheckout({ diff: changed, checkout: lookup() })
+    const edit = () =>
+      act(() =>
+        transport.emit('thread.event', {
+          threadId: 'thread-1',
+          event: {
+            type: 'item.completed',
+            item: {
+              id: 'edit',
+              turnId: 'turn',
+              type: 'file_change',
+              status: 'completed',
+              createdAt: 1,
+            },
+          },
+        }),
+      )
+    const view = render(
+      <WorkspaceReview
+        transport={transport}
+        projectPath="/repo"
+        threadId="thread-1"
+        branch="feature/review"
+        theme="dark"
+        visible
+      />,
+    )
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(calls('workspace.diff')).toHaveLength(1)
+    expect(calls('pullRequests.forCheckout')).toHaveLength(1)
+
+    edit()
+    await act(() => vi.advanceTimersByTimeAsync(300))
+    expect(calls('workspace.diff')).toHaveLength(2)
+    expect(calls('pullRequests.forCheckout')).toHaveLength(1)
+
+    view.rerender(
+      <WorkspaceReview
+        transport={transport}
+        projectPath="/repo"
+        threadId="thread-1"
+        branch="feature/review"
+        theme="dark"
+        visible={false}
+      />,
+    )
+    edit()
+    await act(() => vi.advanceTimersByTimeAsync(5_000))
+    expect(calls('workspace.diff')).toHaveLength(2)
+  })
 })

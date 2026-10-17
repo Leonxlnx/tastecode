@@ -121,6 +121,8 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   theme: 'light' | 'dark'
   /** The chat's turn is running; commits and pushes wait for it. */
   turnRunning?: boolean | undefined
+  /** On screen: follows a running turn's edits. Hidden, it reads nothing until shown. */
+  visible?: boolean | undefined
   onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
 }) {
   // The server does not know a chat's provisional id while its first message
@@ -192,29 +194,32 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
     [props.projectPath, threadId, props.transport],
   )
 
-  /** The checkout's uncommitted changes. */
-  const readDiff = useCallback(async () => {
-    if (!props.projectPath) return
-    const mine = ++generation.current
-    setLoading(true)
-    setError(undefined)
-    try {
-      const result = await props.transport.request('workspace.diff', {
-        projectPath: props.projectPath,
-        ...(threadId ? { threadId } : {}),
-      })
-      if (generation.current === mine) {
-        // The version names the changes, so a draft survives a refresh that found the same ones.
-        if (result.version !== diffVersion.current) dropStaleDraft()
-        diffVersion.current = result.version
-        setDiff(result)
+  /** The checkout's uncommitted changes. A quiet read, during a turn, shows no spinner. */
+  const readDiff = useCallback(
+    async (quiet = false) => {
+      if (!props.projectPath) return
+      const mine = ++generation.current
+      if (!quiet) setLoading(true)
+      setError(undefined)
+      try {
+        const result = await props.transport.request('workspace.diff', {
+          projectPath: props.projectPath,
+          ...(threadId ? { threadId } : {}),
+        })
+        if (generation.current === mine) {
+          // The version names the changes, so a draft survives a refresh that found the same ones.
+          if (result.version !== diffVersion.current) dropStaleDraft()
+          diffVersion.current = result.version
+          setDiff(result)
+        }
+      } catch (cause) {
+        if (generation.current === mine) setError(messageOf(cause))
+      } finally {
+        if (generation.current === mine) setLoading(false)
       }
-    } catch (cause) {
-      if (generation.current === mine) setError(messageOf(cause))
-    } finally {
-      if (generation.current === mine) setLoading(false)
-    }
-  }, [dropStaleDraft, props.projectPath, threadId, props.transport])
+    },
+    [dropStaleDraft, props.projectPath, threadId, props.transport],
+  )
 
   const refresh = useCallback(
     async (refreshPullRequest = false) => {
@@ -382,7 +387,11 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   }, [resetActions, props.projectPath, threadId, refresh])
 
   const refreshAfterChange = useCallback(() => void refresh(), [refresh])
-  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange)
+  const followTurn = useCallback(() => readDiff(true), [readDiff])
+  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange, {
+    visible: props.visible ?? true,
+    onLiveChange: followTurn,
+  })
 
   const fileCount = diff?.files.length ?? 0
   const git = useMemo(() => reviewGitState(checkout), [checkout])

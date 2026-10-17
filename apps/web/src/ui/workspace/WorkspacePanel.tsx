@@ -646,6 +646,7 @@ function WorkspaceToolSurface(props: {
         turnRunning={
           props.sideChatParentStatus !== 'idle' && props.sideChatParentStatus !== 'failed'
         }
+        visible={props.active}
         onOpenPullRequest={props.onOpenPullRequest}
       />
     )
