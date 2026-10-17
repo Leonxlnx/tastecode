@@ -2677,6 +2677,51 @@ describe('web client', () => {
       await settled()
       expect(rpcCount('models.list')).toBe(2)
     })
+
+    it('keeps the source where it stood', async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider()]
+      mockLiveDiscovery()
+      const sourceOrder = () => [...new Set(composerProps().models.map((choice) => choice.provider))]
+
+      render(<App />)
+      await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
+      await settled()
+      expect(sourceOrder()).toEqual(['codex', 'claude-code'])
+      announce({ provider: 'codex' })
+      await waitFor(() => expect(rpcCount('models.list')).toBe(3))
+      await settled()
+      expect(sourceOrder()).toEqual(['codex', 'claude-code'])
+    })
+
+    it('keeps a newer list that settled before the rest of the catalog', async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider()]
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      let releaseClaude!: () => void
+      const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+        releaseClaude = () => resolve({ models: claudeCodeLineup() })
+      })
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) => {
+        if (method !== 'models.list') return request(method, params)
+        return methods['models.list'].params.parse(params).provider === 'claude-code'
+          ? claudeModels
+          : Promise.resolve({ models: lineup })
+      })
+
+      render(<App />)
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+      lineup = [...lineup, row('gpt-6.1-sol', 'GPT-6.1-Sol')]
+      announce({ provider: 'codex' })
+      await waitFor(() =>
+        expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol']),
+      )
+      // Claude Code still holds the catalog open; its end must not bring back
+      // the list Codex answered first.
+      await act(async () => releaseClaude())
+      await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
+      await settled()
+      expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol'])
+    })
   })
 
   it('explains project loading failures and recovers after reconnect', async () => {
