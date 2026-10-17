@@ -20,6 +20,7 @@ import {
   CLAUDE_MCP_CAPABILITIES,
   validateClaudeMcpServer,
 } from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
@@ -232,6 +233,16 @@ const defaultServices = {
   grok: {
     // Grok's MCP sessions run through ACP.
     validateMcpServer: validateAcpMcpServer,
+    // Grok reports commands, skills and MCP status only from a session, and
+    // its print-mode chats report none. A project without an ACP chat starts
+    // one without a prompt (about 3 s), cached.
+    projectInventory: {
+      mcpCapabilities: GROK_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadGrok()).discoverGrokProject(projectPath, options),
+      watchPaths: async (projectPath) => (await loadGrok()).grokInventoryWatchPaths(projectPath),
+    },
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),

@@ -15,6 +15,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -292,6 +293,14 @@ const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['cl
     discover: async () => ({ commands: [], servers: [] }),
   },
 }
+/** The same for Grok's probe. */
+const quietGrokInventory: NonNullable<ProviderControlsOptions['services']>['grok'] = {
+  projectInventory: {
+    mcpCapabilities: GROK_MCP_CAPABILITIES,
+    skillCapabilities: { inventory: true, configure: false, install: false },
+    discover: async () => ({ commands: [], servers: [], skills: [] }),
+  },
+}
 
 type QueueNotificationError = { current?: Error }
 type CredentialFailure = { current?: Error }
@@ -433,6 +442,7 @@ function harness(
     providerServices: {
       ...providerServices,
       'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
+      grok: { ...quietGrokInventory, ...providerServices?.grok },
     },
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
@@ -7336,8 +7346,16 @@ describe('MCP inventory', () => {
       transport: { type: 'stdio', command: 'node', args: ['test-mcp.js'] },
     })
 
+    // Grok's own servers come from its project probe; inherited ones cannot be hidden.
     await expect(orchestrator.listMcpServers('grok', '/repo')).resolves.toMatchObject({
-      capabilities: { inventory: false, add: true, update: true, remove: true, reload: false },
+      capabilities: {
+        inventory: true,
+        add: true,
+        update: true,
+        remove: true,
+        reload: false,
+        hideInherited: false,
+      },
       servers: [
         {
           id: 'test-tools',
@@ -7435,14 +7453,14 @@ describe('provider commands', () => {
       })
 
       // Without a service only a running chat can answer.
-      await expect(orchestrator.listCommands('grok', '/repo')).resolves.toEqual({
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
         commands: [],
         loading: false,
       })
-      await orchestrator.startThread('grok', '/repo')
-      sessions[3]!.commands = [command('grok')]
-      await expect(orchestrator.listCommands('grok', '/repo')).resolves.toEqual({
-        commands: [command('grok')],
+      await orchestrator.startThread('cursor', '/repo')
+      sessions[3]!.commands = [command('cursor')]
+      await expect(orchestrator.listCommands('cursor', '/repo')).resolves.toEqual({
+        commands: [command('cursor')],
         loading: false,
       })
     } finally {

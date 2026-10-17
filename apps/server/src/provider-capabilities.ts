@@ -7,6 +7,7 @@ export type ProviderControlCapabilities = Readonly<{
   inheritedMcp: boolean
   /** The provider can list the MCP servers its own settings load (server-internal). */
   mcpInventory: boolean
+  /** The provider lists the skills it loads itself (server-internal). */
   nativeSkills: boolean
   /**
    * The provider's CLI loads Agent Skills from `.agents/skills` in the project
@@ -86,6 +87,8 @@ export const PROVIDER_CAPABILITIES = {
     ...unsupported,
     resume: true,
     managedMcp: true,
+    mcpInventory: true,
+    nativeSkills: true,
     nativeModels: true,
     account: true,
     signOut: true,

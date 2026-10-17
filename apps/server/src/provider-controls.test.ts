@@ -5,6 +5,7 @@ import {
   type Model,
   type ProviderCommand,
   type ProviderLimit,
+  type Skill,
 } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
@@ -231,12 +232,88 @@ describe('declared provider controls', () => {
     expect(createCodex).not.toHaveBeenCalled()
   })
 
-  it('offers Claude project inventories by default without starting anything', () => {
+  it('offers Claude and Grok project inventories by default without starting anything', () => {
     const { registry, createCodex } = setup()
     const claude = registry.forProvider('claude-code')
     expect(claude.listMcpServers).toBeDefined()
     expect(claude.listCommands).toBeDefined()
+    // Claude's skills arrive only as commands; Grok's probe also names them as skills.
+    expect(claude.listSkills).toBeUndefined()
+    const grok = registry.forProvider('grok')
+    expect(grok.listMcpServers).toBeDefined()
+    expect(grok.listCommands).toBeDefined()
+    expect(grok.listSkills).toBeDefined()
     expect(registry.forProvider('cursor').listCommands).toBeUndefined()
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
+  it("answers Grok's commands, skills and MCP servers from one cached project probe", async () => {
+    const capabilities = {
+      inventory: true,
+      add: true,
+      update: true,
+      remove: true,
+      reload: false,
+      startOAuth: false,
+      cancelOAuth: false,
+      hideInherited: false,
+    }
+    const skillCapabilities = { inventory: true, configure: false, install: false }
+    const skill: Skill = {
+      id: '/home/dev/.grok/skills/help/SKILL.md',
+      name: 'user:help',
+      displayName: 'help',
+      description: 'Help',
+      source: { type: 'folder', path: '/home/dev/.grok/skills/help' },
+      scope: 'user',
+      enabled: true,
+      dependencyErrors: [],
+    }
+    const commands: ProviderCommand[] = [
+      { name: 'compact', description: 'Compact' },
+      { name: 'user:help', description: 'Help', kind: 'skill' },
+    ]
+    const probe = deferred<{ commands: ProviderCommand[]; servers: McpServer[]; skills: Skill[] }>()
+    const discover = vi.fn(() => probe.promise)
+    const watchPaths = vi.fn(() => [])
+    const { registry, hooks, createCodex } = setup({
+      services: {
+        grok: {
+          projectInventory: {
+            mcpCapabilities: capabilities,
+            skillCapabilities,
+            discover,
+            watchPaths,
+          },
+        },
+      },
+    })
+    const grok = registry.forProvider('grok')
+
+    await expect(grok.listSkills!('/project')).resolves.toEqual({
+      capabilities: skillCapabilities,
+      skills: [],
+      errors: [],
+    })
+    await expect(grok.listCommands!('/project')).resolves.toEqual({ commands: [], loading: true })
+    await flush()
+    expect(discover).toHaveBeenCalledOnce()
+    probe.resolve({ commands, servers: [], skills: [skill] })
+    await flush()
+    expect(hooks.onSkillsChanged.mock.calls).toEqual([['grok', '/project']])
+    expect(hooks.onCommandsChanged.mock.calls).toEqual([['grok', '/project']])
+    await expect(grok.listSkills!('/project')).resolves.toEqual({
+      capabilities: skillCapabilities,
+      skills: [skill],
+      errors: [],
+    })
+    await expect(grok.listCommands!('/project')).resolves.toEqual({ commands, loading: false })
+    await expect(grok.listMcpServers!('/project')).resolves.toEqual({ capabilities, servers: [] })
+    // Watching the skills alone watches the folders they come from.
+    grok.watch('/project', ['skills'])
+    await flush()
+    expect(watchPaths.mock.calls).toEqual([['/project']])
+    expect(discover).toHaveBeenCalledOnce()
     expect(createCodex).not.toHaveBeenCalled()
   })
 
@@ -316,7 +393,8 @@ describe('declared provider controls', () => {
       expect(Boolean(control.listModels)).toBe(flags.nativeModels)
       expect(Boolean(control.listMcpServers)).toBe(flags.mcpInventory)
       expect(Boolean(control.listSkills)).toBe(flags.nativeSkills)
-      expect(Boolean(control.setSkillEnabled)).toBe(flags.nativeSkills)
+      // Listing skills is not configuring them: only Codex can turn one off.
+      expect(Boolean(control.setSkillEnabled)).toBe(flags.nativeSkills && flags.skillsInstall)
       expect(Boolean(control.startLogin)).toBe(flags.login)
       expect(Boolean(control.cancelLogin)).toBe(flags.login)
       expect(Boolean(control.useApiKey)).toBe(flags.apiKey)
