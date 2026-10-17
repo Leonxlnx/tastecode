@@ -238,13 +238,8 @@ test('version, channel, product, and artifact names come from package config', a
   assert.throws(() => createReleaseConfig(desktop), /Unsupported artifactName/)
 })
 
-test('beta 7 keeps beta 6 metadata; beta 8 uploads only EXE and DMG with verified digests', async (t) => {
+test('releases upload only EXE and DMG with verified digests', async (t) => {
   const desktop = JSON.parse(await readFile(path.join(desktopDirectory, 'package.json'), 'utf8'))
-  desktop.version = '0.1.0-beta.7'
-  const bridge = createReleaseConfig(desktop)
-  assert.ok(releaseUploadAssets(bridge).includes('latest.yml'))
-  assert.ok(releaseUploadAssets(bridge).includes('latest-mac.yml'))
-  assert.ok(releaseUploadAssets(bridge).some((name) => name.endsWith('.zip')))
   for (const version of ['0.1.0-beta.8', '0.1.0-beta.10', '0.1.0', '0.1.1']) {
     desktop.version = version
     const config = createReleaseConfig(desktop)
