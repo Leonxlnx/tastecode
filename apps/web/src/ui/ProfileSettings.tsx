@@ -9,14 +9,14 @@ import {
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { Account, ResultOf, UsageHistoryDay } from '@harness/contracts'
+import type { Account, UsageHistoryDay } from '@harness/contracts'
 import {
   IconDice5 as Dice,
   IconAlertCircle as CircleAlert,
   IconRefresh as RefreshCw,
 } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
-import { useUsageHistory } from '../usage-history-state.js'
+import { cacheHitRate, useUsageHistory } from '../usage-history-state.js'
 import { providerPresentation } from '../provider-presentation.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import {
@@ -431,7 +431,7 @@ function ProfileHistory(props: { transport: Transport }) {
   const topModels = data.models
     .toSorted((left, right) => right.totals.processedTokens - left.totals.processedTokens)
     .slice(0, 5)
-  const cacheRate = cacheHitRate(data)
+  const cacheRate = cacheHitRate(data.totals)
   const perActiveDay =
     data.activeDays > 0 ? data.totals.processedTokens / data.activeDays : undefined
 
@@ -759,11 +759,6 @@ function streakSummary(daily: UsageHistoryDay[]) {
     index -= 1
   }
   return { current, longest }
-}
-
-function cacheHitRate(data: ResultOf<'usage.history'>): number | undefined {
-  const observed = data.totals.cachedInputTokens + data.totals.uncachedInputTokens
-  return observed > 0 ? data.totals.cachedInputTokens / observed : undefined
 }
 
 function activityLevel(tokens: number, maximum: number): number {

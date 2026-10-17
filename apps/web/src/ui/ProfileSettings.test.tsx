@@ -171,6 +171,21 @@ describe('profile settings', () => {
     })
   })
 
+  it('counts cache writes as input in the cache hit rate, like the Usage page', async () => {
+    const result = historyResult()
+    result.totals = {
+      ...result.totals,
+      uncachedInputTokens: 150_000,
+      cachedInputTokens: 750_000,
+      cacheWriteInputTokens: 100_000,
+    }
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+
+    const rate = (await screen.findByText('Cache hit rate')).closest('div')
+    expect(rate?.querySelector('dd')?.textContent).toBe('75%')
+  })
+
   it('shows an actionable error when no cached profile can be loaded', async () => {
     const request = vi.fn(async () => {
       throw new Error('History unavailable')
