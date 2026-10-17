@@ -23,6 +23,7 @@ const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
+const loadAntigravity = retryableLazy(() => import('@harness/adapter-antigravity'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -161,7 +162,14 @@ type AccountEntry = {
 }
 
 const defaultServices = {
-  antigravity: {},
+  antigravity: {
+    account: async () => (await loadAntigravity()).antigravityAccount(),
+    // agy keeps its Google sign-in in the OS keyring and drops it only from
+    // its own TUI; doing nothing here would show a sign-out that never happened.
+    signOut: async () => {
+      throw new Error('Sign out of Antigravity in agy itself: run agy and enter /logout.')
+    },
+  },
   api: {},
   codex: {},
   opencode: {},

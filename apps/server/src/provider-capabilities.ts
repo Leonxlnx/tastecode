@@ -35,7 +35,7 @@ const unsupported: ProviderControlCapabilities = {
 
 export const PROVIDER_CAPABILITIES = {
   acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
-  antigravity: { ...unsupported, nativeModels: true },
+  antigravity: { ...unsupported, nativeModels: true, account: true },
   api: { ...unsupported, resume: true },
   'claude-code': {
     ...unsupported,
