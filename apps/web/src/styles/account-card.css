@@ -142,6 +142,18 @@
   white-space: nowrap;
 }
 
+/* A source whose limits are unknown could be the tighter one. One open ring
+   after the figure says so without an alert; hover names the source. */
+.account__usage-unknown {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: -1px;
+  border: 1px solid currentColor;
+  border-radius: var(--r-circle);
+  opacity: 0.75;
+}
+
 .account-card__settings {
   position: absolute;
   top: 50%;

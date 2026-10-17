@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useId,
   useMemo,
   useState,
   type FocusEvent as ReactFocusEvent,
@@ -125,6 +126,7 @@ export function KeybindSettings(props: {
   const [held, setHeld] = useState<Modifiers>(NO_MODIFIERS)
   const [fault, setFault] = useState<Fault>()
   const [landed, setLanded] = useState<KeybindingId>()
+  const titleId = useId()
   const recordingShortcut = recording !== undefined
   useEffect(() => {
     if (!recordingShortcut) return
@@ -220,9 +222,9 @@ export function KeybindSettings(props: {
   const keepFocus = (event: ReactMouseEvent) => event.preventDefault()
 
   return (
-    <section className="settings__panel keybind-settings" aria-labelledby="settings-keybinds">
+    <section className="settings__panel keybind-settings" aria-labelledby={titleId}>
       <header className="keybind-settings__header">
-        <h1 className="settings__title" id="settings-keybinds">
+        <h1 className="settings__title" id={titleId}>
           Keybinds
         </h1>
         {changed ? (
@@ -363,7 +365,7 @@ export function KeybindSettings(props: {
                           >
                             {rowFault?.conflict && rowFault.attempt ? (
                               <button
-                                className="keybind-row__action is-primary"
+                                className="set-button keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -377,7 +379,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {fallback && !sameShortcut(shortcut, fallback) ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -396,7 +398,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {shortcut ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 aria-label={`Clear ${definition.label} keybind`}
                                 onMouseDown={keepFocus}
