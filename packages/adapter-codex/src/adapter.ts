@@ -1504,27 +1504,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const activeTurn = this.#activeTurns.get(p.threadId)
         for (const completed of this.#pendingTurnCompletions) completed.add(p.turn.id)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
-        // A turn that ends with unanswered approvals must not leave the
-        // thread pinned to 'approval' forever — the request is durably in
-        // the event log, so without a resolved event even a restart keeps
-        // the ghost card. Decline what nobody answered.
-        for (const [id, pending] of this.#approvals) {
-          if (
-            (pending.threadId !== undefined && pending.threadId !== p.threadId) ||
-            (pending.turnId !== undefined && pending.turnId !== p.turn.id) ||
-            (pending.turnId === undefined && activeTurn !== undefined && activeTurn !== p.turn.id)
-          )
-            continue
-          this.#approvals.delete(id)
-          pending.respond(approvalReply(pending, 'deny'))
-          emit({ type: 'approval.resolved', id })
-        }
-        for (const [id, pending] of this.#userInputs) {
-          if (pending.threadId !== p.threadId || pending.turnId !== p.turn.id) continue
-          this.#userInputs.delete(id)
-          pending.respond({ answers: {} })
-          emit({ type: 'user_input.resolved', id })
-        }
+        this.#declineOpenRequests(p.threadId, p.turn.id, activeTurn)
         emit({
           type: 'turn.completed',
           turnId: p.turn.id,
@@ -1717,6 +1697,32 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         // etc.). Ignoring the rest is correct; logging it is how we
         // notice when something worth mapping appears.
         this.emit('log', `unmapped notification: ${method}`)
+    }
+  }
+
+  /**
+   * A turn that ends with unanswered approvals must not leave the thread
+   * pinned to 'approval' forever — the request is durably in the event log,
+   * so without a resolved event even a restart keeps the ghost card. Decline
+   * what nobody answered.
+   */
+  #declineOpenRequests(threadId: string, turnId: string, activeTurn: string | undefined): void {
+    for (const [id, pending] of this.#approvals) {
+      if (
+        (pending.threadId !== undefined && pending.threadId !== threadId) ||
+        (pending.turnId !== undefined && pending.turnId !== turnId) ||
+        (pending.turnId === undefined && activeTurn !== undefined && activeTurn !== turnId)
+      )
+        continue
+      this.#approvals.delete(id)
+      pending.respond(approvalReply(pending, 'deny'))
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    for (const [id, pending] of this.#userInputs) {
+      if (pending.threadId !== threadId || pending.turnId !== turnId) continue
+      this.#userInputs.delete(id)
+      pending.respond({ answers: {} })
+      this.emit('event', { type: 'user_input.resolved', id })
     }
   }
 }
