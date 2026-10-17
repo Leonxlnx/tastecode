@@ -4958,6 +4958,10 @@ export function App() {
     openSettings('providers')
   }, [refreshCatalog, openSettings])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const forceOnboarding = useCallback(() => {
+    setSettingsOpen(false)
+    setOnboardingPreview(true)
+  }, [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
     localStorage.clear()
@@ -5968,6 +5972,8 @@ export function App() {
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}
+              modelErrors={modelErrors}
+              pendingModelSources={pendingModelSources}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
               providerDefaults={providerDefaultsControls}
@@ -5993,10 +5999,7 @@ export function App() {
               authRefreshRevision={providerAuthRefreshRevision}
               onProviderLoginTerminalOpen={openProviderLoginTerminal}
               onReset={resetSettings}
-              onForceOnboarding={() => {
-                setSettingsOpen(false)
-                setOnboardingPreview(true)
-              }}
+              onForceOnboarding={forceOnboarding}
               onClose={closeSettings}
             />
           </SurfaceErrorBoundary>
