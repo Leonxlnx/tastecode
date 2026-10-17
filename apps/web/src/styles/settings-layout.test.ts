@@ -79,8 +79,26 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.theme-picker \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/s,
     )
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-leader \{[^}]*display: none;/s,
+    )
+  })
+
+  it('lays Appearance out on the shared rows and sections', () => {
+    // Its private row, leader and section copies are gone.
+    expect(settingsCss).not.toMatch(/appearance-row|appearance-section|--appearance-leader/)
+    expect(settingsSource).not.toContain('AppearanceRow')
+    expect(settingsSource).not.toContain('appearance-section')
+    // The previews start at the column edge, under the section heading.
+    expect(settingsCss).not.toMatch(/\.theme-picker \{[^}]*justify-content/s)
+    expect(settingsCss).toMatch(/\.theme-picker \{[^}]*margin: 12px 0 0;/s)
     expect(settingsCss).toMatch(
-      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.appearance-row__leader \{[^}]*display: none;/s,
+      /\.theme-option__label \{[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+    )
+    // Reset colors is the section's quiet action, flush with the column edge.
+    expect(systemCss).toMatch(/\.settings \.set-section__action \{[^}]*margin-block: -6px;/s)
+    expect(systemCss).toMatch(
+      /\.settings \.set-section__action > \.set-button--quiet:last-child \{[^}]*margin-right: -10px;/s,
     )
   })
 

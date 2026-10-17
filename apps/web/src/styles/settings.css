@@ -1680,13 +1680,15 @@
   box-shadow: none;
 }
 
+/* The previews keep their four-up size and start at the column edge, like
+   every row under them. The gap under the section heading leaves room for the
+   chosen preview's ring. */
 .theme-picker {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, calc((100% - 48px) / 4)));
-  justify-content: center;
   gap: 16px;
   min-width: 0;
-  margin: 0;
+  margin: 12px 0 0;
   padding: 0;
   border: 0;
 }
@@ -1842,130 +1844,26 @@
   translate: 0 -50%;
 }
 
+/* The picture choice label, as in General. */
 .theme-option__label {
   display: block;
   margin-top: 10px;
   overflow: hidden;
-  font-size: var(--t-md);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.4;
   text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.theme-option:not(.is-selected):hover .theme-option__label {
+  color: var(--text-2);
 }
 
 .theme-option.is-selected .theme-option__label {
   color: var(--text);
-}
-
-/* Appearance reads like the provider roster: open rows with a dotted leader
-   from each name to its value, which lights while the row is hovered, and no
-   card or fill behind anything. Name and value share one size and baseline;
-   only ink tells them apart. */
-.appearance-section + .appearance-section {
-  margin-top: 40px;
-}
-
-.appearance-section__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.appearance-section__heading {
-  margin: 0 0 6px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  font-weight: 500;
-  letter-spacing: -0.003em;
-}
-
-.appearance-section > .appearance-section__heading {
-  margin-bottom: 18px;
-}
-
-.appearance-section__reset {
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  font-size: var(--t-sm);
-}
-
-.appearance-section__reset:hover {
-  color: var(--text-2);
-}
-
-.appearance-section__reset:focus-visible {
-  border-radius: var(--r-xs);
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.appearance-row {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
-
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
-  align-items: baseline;
-  padding-block: 11px;
-  font-size: 14px;
-  letter-spacing: -0.009em;
-  line-height: 1.35;
-  transition: --appearance-leader var(--dur-fast) var(--ease-out);
-}
-
-.appearance-row:is(:hover, :focus-within) {
-  --appearance-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
-}
-
-@property --appearance-leader {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
-
-.appearance-row__name {
-  min-width: 0;
-  margin: 0;
-  color: var(--text-2);
-  font-weight: 400;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.appearance-row:is(:hover, :focus-within) .appearance-row__name {
-  color: var(--text);
-}
-
-.appearance-row__note {
-  grid-column: 1 / -1;
-  max-width: 52ch;
-  margin: 3px 0 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  letter-spacing: -0.003em;
-  line-height: 1.4;
-}
-
-/* The provider defaults' leader, dot for dot: small and close-set on the
-   baseline, so it reads as a line rather than a row of beads. */
-.appearance-row__leader {
-  height: 5px;
-  margin-inline: 14px;
-  background: radial-gradient(circle, var(--appearance-leader) 0.75px, transparent 1.15px) left
-    center / 5px 100% repeat-x;
-}
-
-.appearance-row__value {
-  display: flex;
-  justify-content: flex-end;
-  min-width: 0;
-  color: var(--text);
-}
-
-.appearance-row__value:has(> .switch) {
-  align-self: center;
 }
 
 .settings__row {
@@ -3268,18 +3166,11 @@
 
 /* The settings rail can leave a narrow content pane while the window is still
    wider than the viewport breakpoints below. Compact appearance from its actual
-   usable width: two theme previews to a row, and rows drop their leaders. */
+   usable width: two theme previews to a row. Its rows drop their leaders with
+   every other v1 row (settings-system.css). */
 @container settings-content (max-width: 560px) {
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .appearance-row {
-    grid-template-columns: minmax(0, 1fr) max-content;
-  }
-
-  .appearance-row__leader {
-    display: none;
   }
 }
 

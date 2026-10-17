@@ -34,6 +34,29 @@ describe('settings layout primitives', () => {
     expect(within(section).getByText('Nothing is uploaded.')).toBeTruthy()
   })
 
+  it('names an untitled section by its label and puts its action on the heading line', () => {
+    render(
+      <>
+        <SettingsSection label="Shared appearance controls">
+          <SettingsRow name="Font smoothing">On</SettingsRow>
+        </SettingsSection>
+        <SettingsSection
+          title="Dark mode"
+          label="ignored while a heading names the section"
+          action={<button type="button">Reset colors</button>}
+        >
+          <SettingsRow name="Accent">Rose</SettingsRow>
+        </SettingsSection>
+      </>,
+    )
+
+    expect(screen.getByRole('region', { name: 'Shared appearance controls' })).toBeTruthy()
+    const dark = screen.getByRole('region', { name: 'Dark mode' })
+    expect(dark.getAttribute('aria-label')).toBeNull()
+    const head = dark.querySelector('.set-section__head')!
+    expect(within(head as HTMLElement).getByRole('button', { name: 'Reset colors' })).toBeTruthy()
+  })
+
   it('lays a row out as name, leader and value, with the note after them', () => {
     const { container } = render(
       <SettingsRow name="Updates" note="Checks GitHub." tone="error">

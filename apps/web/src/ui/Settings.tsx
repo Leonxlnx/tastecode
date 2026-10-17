@@ -1789,17 +1789,14 @@ function AppearanceSettings(props: {
   showMacOSHaptics?: boolean | undefined
 }) {
   return (
-    <SettingsPanel title="Appearance" groupClassName="settings__group--plain appearance">
-      <section className="appearance-section" aria-labelledby="appearance-theme-heading">
-        <h2 className="appearance-section__heading" id="appearance-theme-heading">
-          Theme
-        </h2>
+    <SettingsPage title="Appearance">
+      <SettingsSection title="Theme">
         <ThemePicker
           value={props.themePreference}
           preferences={props.appearancePreferences}
           onChange={props.onThemePreferenceChange}
         />
-      </section>
+      </SettingsSection>
       {(['light', 'dark'] as const).map((mode) => (
         <AppearanceEditor
           key={mode}
@@ -1809,10 +1806,10 @@ function AppearanceSettings(props: {
         />
       ))}
       {props.showMacOSHaptics || props.showMacOSFontSmoothing ? (
-        <section className="appearance-section" aria-label="Shared appearance controls">
+        <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <AppearanceRow name="Font smoothing">
+            <SettingsLeaderRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1823,27 +1820,11 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </AppearanceRow>
+            </SettingsLeaderRow>
           ) : null}
-        </section>
+        </SettingsSection>
       ) : null}
-    </SettingsPanel>
-  )
-}
-
-/**
- * One appearance setting, laid out like a provider in the roster: the name,
- * a dotted leader that lights while the row is hovered, and the value at the
- * far edge. Nothing behind it is painted.
- */
-function AppearanceRow(props: { name: string; note?: string; children: ReactNode }) {
-  return (
-    <div className="appearance-row">
-      <p className="appearance-row__name">{props.name}</p>
-      <span className="appearance-row__leader" aria-hidden />
-      <div className="appearance-row__value">{props.children}</div>
-      {props.note ? <p className="appearance-row__note">{props.note}</p> : null}
-    </div>
+    </SettingsPage>
   )
 }
 
@@ -1901,20 +1882,21 @@ function AppearanceEditor(props: {
     props.preference.accent === 'neutral' && props.preference.backdrop === 'default'
 
   return (
-    <section className="appearance-section" aria-label={title}>
-      <div className="appearance-section__head">
-        <h2 className="appearance-section__heading">{title}</h2>
-        {defaultColors ? null : (
+    <SettingsSection
+      title={title}
+      action={
+        defaultColors ? undefined : (
           <button
-            className="appearance-section__reset"
+            className="set-button set-button--quiet"
             type="button"
             onClick={() => props.onChange({ accent: 'neutral', backdrop: 'default' })}
           >
             Reset colors
           </button>
-        )}
-      </div>
-      <AppearanceRow name="Accent">
+        )
+      }
+    >
+      <SettingsLeaderRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -1922,8 +1904,8 @@ function AppearanceEditor(props: {
           options={ACCENT_OPTIONS}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Background">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -1931,8 +1913,8 @@ function AppearanceEditor(props: {
           options={BACKDROP_OPTIONS}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Interface font">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Interface font">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Interface font"
@@ -1944,8 +1926,8 @@ function AppearanceEditor(props: {
           search={FONT_SEARCH}
           onChange={(font) => props.onChange({ font })}
         />
-      </AppearanceRow>
-      <AppearanceRow name="Sidebar translucency">
+      </SettingsLeaderRow>
+      <SettingsLeaderRow name="Sidebar translucency">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Sidebar translucency"
@@ -1954,15 +1936,15 @@ function AppearanceEditor(props: {
           options={GLASS_SELECT_OPTIONS}
           onChange={(value) => props.onChange({ glass: Number(value) })}
         />
-      </AppearanceRow>
-    </section>
+      </SettingsLeaderRow>
+    </SettingsSection>
   )
 }
 
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <AppearanceRow
+    <SettingsLeaderRow
       name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
@@ -1983,7 +1965,7 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </AppearanceRow>
+    </SettingsLeaderRow>
   )
 }
 

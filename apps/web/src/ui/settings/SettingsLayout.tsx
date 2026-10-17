@@ -43,9 +43,14 @@ export function SettingsPage(props: {
   )
 }
 
-/** A run of rows under a quiet heading, with an optional note and one quiet action. */
+/**
+ * A run of rows under a quiet heading, with an optional note and one quiet
+ * action. A section without a visible heading can still be named for
+ * assistive technology with `label`.
+ */
 export function SettingsSection(props: {
   title?: ReactNode
+  label?: string | undefined
   note?: ReactNode
   action?: ReactNode
   children: ReactNode
@@ -53,7 +58,11 @@ export function SettingsSection(props: {
   const titleId = useId()
   const titled = props.title !== undefined
   return (
-    <section className="set-section" aria-labelledby={titled ? titleId : undefined}>
+    <section
+      className="set-section"
+      aria-labelledby={titled ? titleId : undefined}
+      aria-label={titled ? undefined : props.label}
+    >
       {titled || props.action ? (
         <div className="set-section__head">
           {titled ? (

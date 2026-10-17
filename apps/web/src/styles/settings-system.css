@@ -71,6 +71,20 @@
   line-height: 1.4;
 }
 
+/* One quiet action on the heading's line (Reset colors): the 28px button
+   overhangs the 12.5px line instead of growing it, and its label sits flush
+   with the column edge, under the values. */
+.settings .set-section__action {
+  display: flex;
+  flex: none;
+  gap: 8px;
+  margin-block: -6px;
+}
+
+.settings .set-section__action > .set-button--quiet:last-child {
+  margin-right: -10px;
+}
+
 .settings .set-section__note {
   max-width: 64ch;
   margin: 0 0 8px;
