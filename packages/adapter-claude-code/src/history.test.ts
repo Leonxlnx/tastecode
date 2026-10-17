@@ -330,6 +330,19 @@ describe('Claude Code saved history', () => {
     expect(await f.source.list()).toEqual(await fresh())
   })
 
+  it('lists a session again when its sessions index entry changes', async () => {
+    const f = await fixture([row('u1', 'user', 'Prompt'), row('a1', 'assistant', 'Answer', 'u1')])
+    const index = (summary: string) =>
+      writeFile(
+        path.join(f.project, 'sessions-index.json'),
+        JSON.stringify({ entries: [{ sessionId: SESSION, summary }] }),
+      )
+    await index('First summary')
+    expect((await f.source.list())[0]?.title).toBe('First summary')
+    await index('Second summary')
+    expect((await f.source.list())[0]?.title).toBe('Second summary')
+  })
+
   it('reads rows longer than a chunk at the head, around a title and at the tail', async () => {
     const at = (second: number) => new Date(AT + second * 1000).toISOString()
     const moved = path.join(os.tmpdir(), 'claude-long-moved')

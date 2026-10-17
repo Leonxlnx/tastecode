@@ -470,6 +470,14 @@ function metadata(
   }
 }
 
+/** A short digest of the sessions index fields `metadata` reads. */
+function fingerprintIndex(index: SavedRecord): string {
+  return createHash('sha256')
+    .update(JSON.stringify([index.projectPath, index.summary, index.firstPrompt, index.created]))
+    .digest('base64url')
+    .slice(0, 16)
+}
+
 function eventsFor(rows: SavedRecord[], session: ProviderHistorySession): DomainEvent[] {
   const events: DomainEvent[] = [
     {
@@ -556,9 +564,10 @@ export function createClaudeHistorySource(
     options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
     'projects',
   )
+  // `key` is the transcript's revision plus its sessions index entry, if any.
   const cache = new Map<
     string,
-    { revision: string; session: ProviderHistorySession | undefined; progress: Progress }
+    { key: string; session: ProviderHistorySession | undefined; progress: Progress }
   >()
   const validLocator = async (locator: string): Promise<boolean> => {
     const relative = path.relative(projects, locator)
@@ -621,17 +630,20 @@ export function createClaudeHistorySource(
             // Reimport saved transcripts that previously exposed machine notifications
             // or Stop markers.
             const revision = `3:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
+            const id = path.basename(locator).slice(0, -6)
+            const index = byId.get(id)
+            // A sessions index entry can name a session without its transcript changing.
+            const key = index ? `${revision}:${fingerprintIndex(index)}` : revision
             let cached = cache.get(locator)
-            if (cached?.revision !== revision) {
-              const id = path.basename(locator).slice(0, -6)
+            if (cached?.key !== key) {
               const { digest, progress } = await readTranscript(
                 locator,
                 info.size,
                 cached?.progress,
               )
               cached = {
-                revision,
-                session: metadata(digest, id, locator, revision, info.mtimeMs, byId.get(id) ?? {}),
+                key,
+                session: metadata(digest, id, locator, revision, info.mtimeMs, index ?? {}),
                 progress,
               }
               cache.set(locator, cached)
