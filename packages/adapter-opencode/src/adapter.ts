@@ -285,7 +285,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
         abort.signal,
       )
     } catch {
-      if (generation !== this.#generation) throw new Error('OpenCode stopped while it was starting.')
+      if (generation !== this.#generation)
+        throw new Error('OpenCode stopped while it was starting.')
       throw new Error('OpenCode is unavailable. Install it and run `opencode` once to sign in.')
     } finally {
       if (this.#launchAbort === abort) this.#launchAbort = undefined
