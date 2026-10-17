@@ -2,7 +2,12 @@ import os from 'node:os'
 import path from 'node:path'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
 import { discoverFileArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
-import { readUsageLog, type UsageLogParser } from '@harness/proc/usage-log'
+import {
+  readUsageLog,
+  type UsageCheckpoint,
+  type UsageLogParser,
+  type UsageLogRead,
+} from '@harness/proc/usage-log'
 
 /** The Grok CLI appends every turn's token counts to `<GROK_HOME>/logs/unified.jsonl`. */
 export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
@@ -10,13 +15,27 @@ export const GROK_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord
   label: 'Grok',
   root: (home = process.env['GROK_HOME'] ?? path.join(os.homedir(), '.grok')) =>
     path.join(home, 'logs', 'unified.jsonl'),
-  discover: (root) => discoverFileArchive(root, readGrokUsageHistory),
+  discover: (root) => discoverFileArchive(root, readGrokUsageHistory, resumeGrokUsageHistory),
 }
 
 /** Reads the Grok CLI's append-only local token log in one streaming pass. */
 export async function readGrokUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
   return (await readUsageLog(filePath, GROK_LOG_PARSER)).entries
 }
+
+/**
+ * Reads only what the log gained since the checkpoint of an earlier read. The
+ * CLI rewrites the log from time to time; a rewritten log starts differently
+ * and is read in full, so token rows it no longer holds drop out of the index.
+ */
+export function resumeGrokUsageHistory(
+  filePath: string,
+  checkpoint?: UsageCheckpoint,
+): Promise<UsageLogRead<LocalUsageRecord>> {
+  return readUsageLog(filePath, GROK_LOG_PARSER, checkpoint)
+}
+
+const SAVED_STATE_VERSION = 1
 
 /** The token rows so far, and which model and session each CLI process is on. */
 type GrokLogState = {
@@ -25,11 +44,54 @@ type GrokLogState = {
   sessionByProcess: Map<number, string>
 }
 
+/** What the next read needs: the model and session of every process seen so far. */
+type SavedGrokState = {
+  version: typeof SAVED_STATE_VERSION
+  models: [processId: number, model: string][]
+  sessions: [processId: number, sessionId: string][]
+}
+
 const GROK_LOG_PARSER: UsageLogParser<LocalUsageRecord, GrokLogState> = {
   create: () => ({ entries: new Map(), modelByProcess: new Map(), sessionByProcess: new Map() }),
-  restore: () => undefined,
+  restore: (saved) =>
+    isSavedGrokState(saved)
+      ? {
+          entries: new Map(),
+          modelByProcess: new Map(saved.models),
+          sessionByProcess: new Map(saved.sessions),
+        }
+      : undefined,
   line: parseGrokLine,
-  finish: (state) => ({ entries: [...state.entries.values()] }),
+  finish: (state) => {
+    const saved: SavedGrokState = {
+      version: SAVED_STATE_VERSION,
+      models: [...state.modelByProcess],
+      sessions: [...state.sessionByProcess],
+    }
+    return { entries: [...state.entries.values()], saved }
+  },
+}
+
+function isSavedGrokState(value: unknown): value is SavedGrokState {
+  const saved = asRecord(value)
+  return (
+    saved?.['version'] === SAVED_STATE_VERSION &&
+    isProcessPairs(saved['models']) &&
+    isProcessPairs(saved['sessions'])
+  )
+}
+
+function isProcessPairs(value: unknown): value is [number, string][] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (pair) =>
+        Array.isArray(pair) &&
+        pair.length === 2 &&
+        Number.isSafeInteger(pair[0]) &&
+        typeof pair[1] === 'string',
+    )
+  )
 }
 
 function parseGrokLine(state: GrokLogState, line: string): void {
