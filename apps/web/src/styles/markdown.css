@@ -540,6 +540,15 @@
   display: none;
 }
 
+/* The finished renderer puts each code line in its own block, so its lines
+   take their height from the code font alone. Live code is one run of text
+   in an inline <code> whose lines also hold the <pre>'s strut in another
+   font: about a pixel taller each, 35 px over a 35-line block, lost at
+   completion. A block <code> lays its lines out the same way. */
+.md[data-streaming-markdown] pre > code {
+  display: block;
+}
+
 /* Streamed text is laid out as it arrives; the part not shown yet is painted
    in transparent ink, so its line breaks are already final when it appears. */
 ::highlight(md-veil) {
