@@ -28,7 +28,7 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (marker === '/' && /^(?:side|btw)$/i.test(query)) return undefined
+  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
@@ -94,6 +94,7 @@ describe('composer resource triggers', () => {
     expect(composerResourceTriggerAt('email@example.com', 17)).toBeUndefined()
     expect(composerResourceTriggerAt('Run /side', 9)).toBeUndefined()
     expect(composerResourceTriggerAt('Run /btw', 8)).toBeUndefined()
+    expect(composerResourceTriggerAt('/feedback', 9)).toBeUndefined()
   })
 
   it('preserves resource names longer than the fast scan window', () => {
@@ -109,7 +110,18 @@ describe('composer resource triggers', () => {
   it('matches the previous parser across token boundaries and cursor positions', () => {
     const prefixes = ['', ' ', '\t', '(', '[', '{', 'a', '.', ')']
     const markers = ['/', '$', '@']
-    const queries = ['', 'a', 'side', 'btw', 'foo.bar', 'foo-bar', 'foo:bar', 'foo/bar', 'é']
+    const queries = [
+      '',
+      'a',
+      'side',
+      'btw',
+      'feedback',
+      'foo.bar',
+      'foo-bar',
+      'foo:bar',
+      'foo/bar',
+      'é',
+    ]
     const suffixes = ['', ' rest', '-tail', ')']
     for (const prefix of prefixes) {
       for (const marker of markers) {
@@ -341,6 +353,37 @@ describe('Composer draft state', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     expect(onSend).toHaveBeenCalledWith('Keep this native draft', [])
     expect(composer.value).toBe('')
+  })
+
+  it('opens feedback for /feedback instead of sending it, even when no provider can send', () => {
+    const onSend = vi.fn()
+    const onFeedbackCommand = vi.fn()
+    const onProjectRequired = vi.fn()
+    renderComposer(onSend, {
+      onFeedbackCommand,
+      onProjectRequired,
+      sendAvailability: 'setup-required',
+      projectPath: undefined,
+    })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/feedback the export button does nothing' } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onFeedbackCommand).toHaveBeenCalledWith('the export button does nothing')
+    expect(onSend).not.toHaveBeenCalled()
+    expect(onProjectRequired).not.toHaveBeenCalled()
+    expect(composer.value).toBe('')
+  })
+
+  it('sends /feedback to the provider when the app does not handle it', () => {
+    const onSend = vi.fn()
+    renderComposer(onSend)
+    const composer = screen.getByPlaceholderText('Do anything')
+    fireEvent.change(composer, { target: { value: '/feedback hello' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/feedback hello', [])
   })
 
   it('clears the saved draft before handing the text over', () => {
