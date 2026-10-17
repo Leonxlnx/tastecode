@@ -9,6 +9,7 @@ import {
 import { IconSearch as Search } from '@tabler/icons-react'
 import '../styles/keybinds.css'
 import { suspendNativeMenuShortcuts } from '../bridge.js'
+import { SettingsEmpty, SettingsPage, SettingsSection } from './settings/SettingsLayout.js'
 import {
   DEFAULT_KEYBINDINGS,
   findKeybindingConflict,
@@ -220,14 +221,13 @@ export function KeybindSettings(props: {
   const keepFocus = (event: ReactMouseEvent) => event.preventDefault()
 
   return (
-    <section className="settings__panel keybind-settings" aria-labelledby="settings-keybinds">
-      <header className="keybind-settings__header">
-        <h1 className="settings__title" id="settings-keybinds">
-          Keybinds
-        </h1>
-        {changed ? (
+    <SettingsPage
+      title="Keybinds"
+      description="Click an action, then press the keys you want for it. Changes save as you go."
+      actions={
+        changed ? (
           <button
-            className="keybind-settings__restore"
+            className="set-button set-button--quiet"
             type="button"
             onClick={() => {
               props.onReset()
@@ -237,15 +237,13 @@ export function KeybindSettings(props: {
           >
             Restore defaults
           </button>
-        ) : null}
-      </header>
-      <p className="keybind-settings__intro">
-        Click an action, then press the keys you want for it. Changes save as you go.
-      </p>
-
+        ) : undefined
+      }
+    >
       <label className="keybind-settings__search">
-        <Search className="keybind-settings__search-icon" size={15} stroke={1.75} aria-hidden />
+        <Search className="keybind-settings__search-icon" size={14} stroke={1.75} aria-hidden />
         <input
+          className="set-input"
           type="search"
           value={query}
           onChange={(event) => setQuery(event.currentTarget.value)}
@@ -255,7 +253,7 @@ export function KeybindSettings(props: {
         />
         {query ? (
           <button
-            className="keybind-settings__search-clear"
+            className="set-button set-button--quiet keybind-settings__search-clear"
             type="button"
             aria-label="Clear search"
             onClick={(event) => {
@@ -272,10 +270,7 @@ export function KeybindSettings(props: {
         const definitions = filtered.filter((definition) => definition.group === group)
         if (definitions.length === 0) return null
         return (
-          <section className="keybind-group" key={group} aria-labelledby={`keybind-${group}`}>
-            <h2 className="keybind-group__heading" id={`keybind-${group}`}>
-              {group}
-            </h2>
+          <SettingsSection key={group} title={group}>
             {definitions.map((definition) => {
               const shortcut = props.keybindings[definition.id]
               const fallback = DEFAULT_KEYBINDINGS[definition.id]
@@ -283,17 +278,18 @@ export function KeybindSettings(props: {
               const rowFault = fault?.action === definition.id ? fault : undefined
               const descriptionId = `keybind-description-${definition.id}`
               const messageId = `keybind-message-${definition.id}`
+              // The shared leader carries the row's state: refused, recording, or not set.
+              const tone = rowFault ? 'error' : active ? 'active' : shortcut ? undefined : 'muted'
               return (
                 <div
-                  className="keybind-row"
+                  className="set-row keybind-row"
                   key={definition.id}
+                  data-tone={tone}
                   data-recording={active || undefined}
-                  data-fault={rowFault ? true : undefined}
-                  data-bound={shortcut ? true : undefined}
                   data-landed={landed === definition.id || undefined}
                 >
-                  <p className="keybind-row__name">{definition.label}</p>
-                  <span className="keybind-row__leader" aria-hidden />
+                  <p className="set-row__name keybind-row__name">{definition.label}</p>
+                  <span className="set-leader" aria-hidden />
                   <button
                     className="keybind-recorder"
                     type="button"
@@ -363,7 +359,7 @@ export function KeybindSettings(props: {
                           >
                             {rowFault?.conflict && rowFault.attempt ? (
                               <button
-                                className="keybind-row__action is-primary"
+                                className="set-button keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -377,7 +373,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {fallback && !sameShortcut(shortcut, fallback) ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 onMouseDown={keepFocus}
                                 onBlur={leaveRow}
@@ -396,7 +392,7 @@ export function KeybindSettings(props: {
                             ) : null}
                             {shortcut ? (
                               <button
-                                className="keybind-row__action"
+                                className="set-button set-button--quiet keybind-row__action"
                                 type="button"
                                 aria-label={`Clear ${definition.label} keybind`}
                                 onMouseDown={keepFocus}
@@ -414,15 +410,18 @@ export function KeybindSettings(props: {
                 </div>
               )
             })}
-          </section>
+          </SettingsSection>
         )
       })}
 
       {filtered.length === 0 ? (
-        <p className="keybind-settings__empty" role="status">
-          No action matches “{query.trim()}”.
-        </p>
+        <div role="status">
+          <SettingsEmpty
+            icon={<Search stroke={1.75} />}
+            title={`No action matches “${query.trim()}”.`}
+          />
+        </div>
       ) : null}
-    </section>
+    </SettingsPage>
   )
 }
