@@ -4489,17 +4489,29 @@ describe('new chats', () => {
       ).toHaveLength(2)
     })
     transport.request.mockClear()
+    // The popup's own request never answers here, so what it shows was preloaded.
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'usage.summary' ? new Promise(() => {}) : request(method, params),
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     const codexLimits = await screen.findByRole('region', { name: 'Codex' })
     expect(within(codexLimits).getByText('75% left')).toBeTruthy()
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    // Opening asks once, StrictMode's replay included, and says the limits are on screen.
+    await waitFor(() =>
+      expect(transport.request.mock.calls.filter(([method]) => method === 'usage.summary')).toEqual(
+        [['usage.summary', { provider: 'codex', intent: 'visible' }]],
+      ),
+    )
   })
 
   it('cancels trailing plan-limit refreshes after a real unmount', async () => {
     const view = render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4518,24 +4530,104 @@ describe('new chats', () => {
     ]
     render(<App />)
 
-    await waitFor(() => {
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'claude-code' })
-    })
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'grok' })
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
+    )
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+    // Only the active provider is read at launch; the others wait for the popup.
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+    ).toHaveLength(1)
 
     transport.request.mockClear()
     fireEvent.click(screen.getByRole('button', { name: 'Account' }))
     expect(await screen.findByRole('region', { name: 'Codex' })).toBeTruthy()
     expect(screen.getByRole('region', { name: 'Claude Code' })).toBeTruthy()
     expect(screen.queryByRole('region', { name: 'Grok' })).toBeNull()
+    // Each installed source is asked once now that its limits are on screen.
+    await waitFor(() => {
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'visible',
+      })
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'claude-code',
+        intent: 'visible',
+      })
+    })
+    expect(
+      transport.request.mock.calls.filter(([method]) => method === 'usage.summary'),
+    ).toHaveLength(2)
+  })
+
+  it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'First chat, Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
+    )
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Second chat, Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-b' }),
+      ),
+    )
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    expect(screen.getByText('75% left')).toBeTruthy()
+  })
+
+  it('shows pushed plan limits without asking again', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() =>
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 40 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      }),
+    )
+
+    expect(await screen.findByText('60% left')).toBeTruthy()
     expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
   })
 
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4560,7 +4652,10 @@ describe('new chats', () => {
     ]
     render(<App />)
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
     transport.request.mockClear()
 
@@ -4570,7 +4665,10 @@ describe('new chats', () => {
     })
 
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', { provider: 'codex' }),
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
     )
   })
 
@@ -4599,14 +4697,17 @@ describe('new chats', () => {
     render(<App />)
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        provider: 'claude-code',
+        provider: 'codex',
+        intent: 'background',
       }),
     )
     transport.request.mockClear()
     fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
+    // The provider switch reads the newly active source.
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'claude-thread',
+        provider: 'claude-code',
+        intent: 'background',
       }),
     )
     transport.request.mockClear()
@@ -4619,10 +4720,14 @@ describe('new chats', () => {
 
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'claude-thread',
+        provider: 'claude-code',
+        intent: 'background',
       }),
     )
-    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', { provider: 'codex' })
+    expect(transport.request).not.toHaveBeenCalledWith(
+      'usage.summary',
+      expect.objectContaining({ provider: 'codex' }),
+    )
   })
 
   it('shows consecutive prompts while the new session is still starting', async () => {
@@ -9597,6 +9702,23 @@ describe('global shortcuts', () => {
     expect(await screen.findByTestId('terminal-pane')).toBeTruthy()
   })
 
+  it('keeps open Settings from re-rendering when unrelated shell state changes', async () => {
+    render(<App />)
+    await screen.findByRole('button', { name: /^New session,/ })
+    fireEvent.keyDown(window, { key: ',', metaKey: true })
+    await screen.findByRole('dialog', { name: 'Settings' })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    utilityRenders.settings.mockClear()
+    appRenders.mockClear()
+
+    act(() => nativeMenu.listener?.('toggleSidebar'))
+
+    expect(document.querySelector('.shell')?.classList).toContain('is-narrow')
+    expect(appRenders).toHaveBeenCalled()
+    expect(utilityRenders.settings).not.toHaveBeenCalled()
+  })
   it('keeps the bottom panel closed when it remounts after the active project is removed', async () => {
     localStorage.setItem(TERMINAL_PLACEMENT_KEY, 'bottom')
     serverProjects.push({
@@ -11919,7 +12041,8 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'untouched-thread',
+        provider: 'codex',
+        intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
@@ -12241,7 +12364,8 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'untouched-thread',
+        provider: 'codex',
+        intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
       expect(transport.request).toHaveBeenCalledWith('sidebar.settings', {})
