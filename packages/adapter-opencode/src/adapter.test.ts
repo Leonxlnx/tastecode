@@ -399,7 +399,7 @@ describe('OpenCode adapter', () => {
     await expect(adapter.listModels()).resolves.toMatchObject([
       {
         id: 'provider-1/model-1',
-        displayName: 'Provider One · Model One',
+        displayName: 'Model One',
         isDefault: true,
         reasoningEfforts: ['default', 'low', 'high'],
         defaultReasoningEffort: 'default',
@@ -588,13 +588,13 @@ describe('OpenCode adapter', () => {
     await expect(adapter.listModels()).resolves.toMatchObject([
       {
         id: 'provider-1/model-1',
-        displayName: 'Provider One · Model One',
+        displayName: 'Model One',
         isDefault: true,
         reasoningEfforts: ['default', 'low', 'high'],
       },
       {
         id: 'provider-1/model-2',
-        displayName: 'Provider One · Model Two',
+        displayName: 'Model Two',
         // v2 sessions start on the build agent's model, not a provider's pick.
         isDefault: false,
         reasoningEfforts: ['default', 'max'],

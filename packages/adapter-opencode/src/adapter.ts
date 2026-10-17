@@ -169,6 +169,7 @@ const ModelEnvelopeSchema = z.object({ data: z.array(OpenCodeV2CatalogModelSchem
 const ConnectedModelSchema = z.object({
   id: z.string(),
   name: z.string(),
+  family: z.string().optional(),
   status: z.string().optional(),
   release_date: z.string().optional(),
   variants: JsonRpcValueSchema.optional(),
@@ -558,6 +559,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
               providerName: provider.name,
               modelID: model.id,
               name: model.name,
+              family: model.family,
               releaseDate: model.release_date,
               isDefault: v2
                 ? v2.defaultModel === id
