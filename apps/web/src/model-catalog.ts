@@ -56,32 +56,9 @@ const DEFAULT_HIDDEN_MODELS = new Set([
 const LONG_CONTEXT_SUFFIX = /\[1m\]$/
 const SNAPSHOT_DATE_SUFFIX = /-\d{8}$/
 
-/** The id defaults and migrations match: lowercase, without context or snapshot-date suffix. */
+/** The id the legacy models above are listed by: lowercase, without context or snapshot-date suffix. */
 function visibilityId(model: Model): string {
   return model.id.toLowerCase().replace(LONG_CONTEXT_SUFFIX, '').replace(SNAPSHOT_DATE_SUFFIX, '')
-}
-
-const NAME_SEPARATOR = /[\s-]+/
-const VERSION_WORD = /^\d+(?:\.\d+)*$/
-const FAMILY_WORD = /^[a-z]+$/
-
-type Lineage = { family: string; version: number[] }
-
-/**
- * A model's family and generation, read from its display name: plain words
- * around exactly one version number, such as `GPT-6.1-Sol` (family `gpt sol`,
- * 6.1) or `Opus 5.5` (family `opus`, 5.5). The name works for every provider,
- * including Claude Code's aliases, whose ids carry no version. A name that
- * does not read this way has no lineage and is never hidden for its age.
- */
-function modelLineage(model: Model): Lineage | undefined {
-  if (typeof model.displayName !== 'string') return undefined
-  const words = model.displayName.trim().toLowerCase().split(NAME_SEPARATOR).filter(Boolean)
-  const versions = words.filter((word) => VERSION_WORD.test(word))
-  const family = words.filter((word) => !VERSION_WORD.test(word))
-  if (versions.length !== 1 || family.length === 0) return undefined
-  if (!family.every((word) => FAMILY_WORD.test(word))) return undefined
-  return { family: family.join(' '), version: versions[0]!.split('.').map(Number) }
 }
 
 function compareVersions(left: readonly number[], right: readonly number[]): number {
@@ -92,204 +69,223 @@ function compareVersions(left: readonly number[], right: readonly number[]): num
   return 0
 }
 
-/** Rows that can be superseded, by source and family. Custom models never are. */
-function lineageRows(choices: readonly ModelChoice[]) {
-  const families = new Map<string, { choice: ModelChoice; version: number[] }[]>()
-  for (const choice of choices) {
-    if (isCustomModelChoice(choice)) continue
-    const lineage = modelLineage(choice.model)
-    if (!lineage) continue
-    const family = `${sourceKey({ provider: choice.provider, agentId: choice.agent?.id })}\n${lineage.family}`
-    const rows = families.get(family)
-    const row = { choice, version: lineage.version }
-    if (rows) rows.push(row)
-    else families.set(family, [row])
+const LINEAGE_SEPARATOR = /[\s\-_/·:()]+/
+const LINEAGE_DIGIT = /\d/
+/** A version with an optional letter prefix, or a context size such as `1m` or `300k`. */
+const LINEAGE_NUMBER = /^([a-z]*)(\d+(?:\.\d+)*)([km]?)$/
+const LINEAGE_LETTER = /[a-z]/
+
+/** The family a model belongs to within its source, and its generation there. */
+export type ModelLineage = { family: string; generation: readonly number[] }
+
+/**
+ * Read a lineage from a display name: its words around exactly one version,
+ * which may carry a letter prefix such as `V4.1`, `M2.7` or `Qwen3.6`. The
+ * family is the name with that version left out, so `GPT-6.1-Sol` and
+ * `GPT-5.6-Sol` share `gpt # sol`, and `MiniMax-M3` and `MiniMax-M2.7` share
+ * `minimax m#`. A context size such as `1M` or `300K` is not part of the
+ * name, and an integer of four or more digits is a date or a size, never a
+ * generation. A name without a version, or with more than one, has none.
+ */
+export function readModelLineage(displayName: string): ModelLineage | undefined {
+  const family: string[] = []
+  let generation: number[] | undefined
+  for (const token of displayName.toLowerCase().split(LINEAGE_SEPARATOR)) {
+    if (!token) continue
+    const numeric = LINEAGE_DIGIT.test(token) ? LINEAGE_NUMBER.exec(token) : null
+    const prefix = numeric?.[1] ?? ''
+    const digits = numeric?.[2] ?? ''
+    const firstDot = digits.indexOf('.')
+    if (numeric?.[3]) {
+      // `1m` and `300k` are context sizes and drop out; `v4k` stays a word.
+      if (!prefix && firstDot === digits.lastIndexOf('.')) continue
+      family.push(token)
+      continue
+    }
+    if (!numeric || (firstDot < 0 && digits.length >= 4)) {
+      family.push(token)
+      continue
+    }
+    if (generation) return undefined
+    generation = digits.split('.').map(Number)
+    family.push(`${prefix}#`)
   }
-  return families.values()
+  const name = family.join(' ')
+  return generation && LINEAGE_LETTER.test(name) ? { family: name, generation } : undefined
+}
+
+const DECLARED_GENERATION = /^\d+(?:\.\d+)*$/
+
+/**
+ * The lineage an adapter declared, when it declared both parts. Declared
+ * families live apart from the ones read out of names, so a declared
+ * `gpt-terra` never meets a parsed `gpt # terra` of the same source.
+ */
+function declaredLineage(model: Model): ModelLineage | undefined {
+  const { family, generation } = model
+  if (!family || !generation || !DECLARED_GENERATION.test(generation)) return undefined
+  return { family: `declared:${family}`, generation: generation.split('.').map(Number) }
 }
 
 /**
- * Keys of the choices that start hidden in this catalog: known legacy models,
- * and every model whose source also lists a newer generation of its family,
- * so `gpt-6.1-sol` replaces `gpt-6-sol` and `Opus 5.5` replaces `Opus 5`.
- * A new release needs no change here; it starts visible by being newest.
+ * Lineages by listed model. A refresh keeps the model objects of every source
+ * it did not relist, so recomputing the defaults per settled source only
+ * reads the names that are new.
  */
-export function defaultHiddenModelKeys(choices: readonly ModelChoice[]): Set<string> {
-  const hidden = new Set<string>()
-  for (const choice of choices) {
-    if (DEFAULT_HIDDEN_MODELS.has(visibilityId(choice.model))) hidden.add(choice.key)
+const lineageByModel = new WeakMap<Model, ModelLineage | null>()
+
+function listedLineage(model: Model): ModelLineage | undefined {
+  let lineage = lineageByModel.get(model)
+  if (lineage === undefined) {
+    lineage = declaredLineage(model) ?? readModelLineage(model.displayName) ?? null
+    lineageByModel.set(model, lineage)
   }
-  for (const rows of lineageRows(choices)) {
-    let newest = rows[0]!.version
-    for (const row of rows) if (compareVersions(row.version, newest) > 0) newest = row.version
-    for (const row of rows) {
-      if (compareVersions(row.version, newest) < 0) hidden.add(row.choice.key)
+  return lineage ?? undefined
+}
+
+/** A source with more rows than this starts with only a few of them visible. */
+const LARGE_SOURCE_ROWS = 20
+const LARGE_SOURCE_VISIBLE_ROWS = 4
+
+/** How every choice in a catalog starts out, before any choice of the user's. */
+export type ModelVisibilityDefaults = {
+  /** Keys of the choices that start hidden. */
+  hidden: ReadonlySet<string>
+  /** For a choice its source lists a newer generation of, that newest key. */
+  supersededBy: ReadonlyMap<string, string>
+}
+
+type LineageMember = { key: string; generation: readonly number[] }
+
+/**
+ * The visibility each choice starts with, from the catalog alone. Within its
+ * own source, a choice starts hidden when it is a known legacy model, when
+ * the adapter marks it deprecated, or when the source lists a newer
+ * generation of its family (the family and generation the adapter declared,
+ * otherwise the ones its name reads as). A source whose adapter recommends
+ * any of its rows then shows only those and its default. Any other source
+ * that still has more than 20 rows shows only the first 4 of them in the
+ * adapter's order and its default. Custom models always start visible. One
+ * pass over the catalog, with nothing to migrate when a rule or a provider's
+ * lineup changes.
+ */
+export function modelVisibilityDefaults(choices: readonly ModelChoice[]): ModelVisibilityDefaults {
+  const hidden = new Set<string>()
+  const supersededBy = new Map<string, string>()
+  const stock: { choice: ModelChoice; source: string }[] = []
+  const curatedSources = new Set<string>()
+  const families = new Map<string, { newest: LineageMember; members: LineageMember[] }>()
+  for (const choice of choices) {
+    if (isCustomModelChoice(choice)) continue
+    const source = sourceKey({
+      provider: choice.provider,
+      connectionId: choice.connectionId,
+      agentId: choice.agent?.id,
+    })
+    stock.push({ choice, source })
+    if (choice.model.recommended === true) curatedSources.add(source)
+    if (DEFAULT_HIDDEN_MODELS.has(visibilityId(choice.model))) hidden.add(choice.key)
+    // A retiring model starts hidden and never takes over from an older one.
+    if (choice.model.deprecated === true) {
+      hidden.add(choice.key)
+      continue
     }
+    const lineage = listedLineage(choice.model)
+    if (!lineage) continue
+    const member = { key: choice.key, generation: lineage.generation }
+    const familyKey = `${source}\n${lineage.family}`
+    const family = families.get(familyKey)
+    if (!family) {
+      families.set(familyKey, { newest: member, members: [member] })
+      continue
+    }
+    family.members.push(member)
+    if (compareVersions(member.generation, family.newest.generation) > 0) family.newest = member
+  }
+  for (const { newest, members } of families.values()) {
+    for (const member of members) {
+      if (compareVersions(member.generation, newest.generation) >= 0) continue
+      hidden.add(member.key)
+      supersededBy.set(member.key, newest.key)
+    }
+  }
+  const remaining = new Map<string, ModelChoice[]>()
+  for (const { choice, source } of stock) {
+    if (hidden.has(choice.key)) continue
+    if (curatedSources.has(source)) {
+      if (choice.model.recommended !== true && !choice.model.isDefault) hidden.add(choice.key)
+      continue
+    }
+    const rows = remaining.get(source)
+    if (rows) rows.push(choice)
+    else remaining.set(source, [choice])
+  }
+  for (const rows of remaining.values()) {
+    if (rows.length <= LARGE_SOURCE_ROWS) continue
+    rows.forEach((choice, index) => {
+      if (index >= LARGE_SOURCE_VISIBLE_ROWS && !choice.model.isDefault) hidden.add(choice.key)
+    })
+  }
+  return { hidden, supersededBy }
+}
+
+/** A visibility the user chose for one model, and when. */
+export type ModelVisibilityOverride = { visible: boolean; at: number }
+
+/**
+ * The keys hidden right now: a choice's own override when it has one, its
+ * default otherwise. Showing a superseded model sticks only when the user did
+ * so after its successor was first listed. An older choice predates that
+ * generation, which takes over once, and so does a successor without a
+ * recorded first sighting, which has only just been listed.
+ */
+export function effectiveHiddenModels(
+  choices: readonly ModelChoice[],
+  defaults: ModelVisibilityDefaults,
+  overrides: Readonly<Record<string, ModelVisibilityOverride>>,
+  firstSeen: Readonly<Record<string, number>>,
+): Set<string> {
+  const hidden = new Set<string>()
+  for (const { key } of choices) {
+    const override = Object.hasOwn(overrides, key) ? overrides[key] : undefined
+    if (!override) {
+      if (defaults.hidden.has(key)) hidden.add(key)
+      continue
+    }
+    if (!override.visible) {
+      hidden.add(key)
+      continue
+    }
+    const successor = defaults.supersededBy.get(key)
+    if (successor === undefined) continue
+    const successorSeen = Object.hasOwn(firstSeen, successor) ? firstSeen[successor] : undefined
+    if (successorSeen === undefined || override.at < successorSeen) hidden.add(key)
   }
   return hidden
 }
 
-/** The choices that start hidden in this catalog. */
-export function defaultHiddenModels(choices: readonly ModelChoice[]): ModelChoice[] {
-  const hidden = defaultHiddenModelKeys(choices)
-  return choices.filter((choice) => hidden.has(choice.key))
-}
-
 /**
- * Choices a saved profile should hide now that `choices` lists models it has
- * never listed: each new model that starts hidden, and each listed model a new
- * generation of its family replaces. The handover happens once, when the new
- * generation is first listed, so turning the older one back on sticks. A model
- * can appear long after the profile was set up: a new release, a newly
- * installed provider, or an older catalog row that an alias used to stand in
- * for. Without a record of the listed keys, a new model cannot be told apart
- * from one the user turned on, so nothing is returned.
+ * Overrides for a profile saved as one complete hidden list, which mixed the
+ * user's own choices with the defaults of the build that saved it. A hidden
+ * model that the current defaults show, or that this catalog does not list,
+ * becomes a hidden override, so nothing the user hid comes back. Every other
+ * model returns to the current defaults once: one hidden by default needs no
+ * override, and an older generation the profile still showed is hidden now.
  */
-export function unlistedHiddenModels(
+export function importLegacyVisibility(
+  legacyHidden: Iterable<string>,
   choices: readonly ModelChoice[],
-  listed: ReadonlySet<string> | null,
-): ModelChoice[] {
-  if (!listed) return []
-  const hidden = defaultHiddenModelKeys(choices)
-  const handedOver = new Set<string>()
-  for (const rows of lineageRows(choices)) {
-    for (const successor of rows) {
-      // Only a new newest generation takes over, not an older row that shows up late.
-      if (listed.has(successor.choice.key) || hidden.has(successor.choice.key)) continue
-      for (const row of rows) {
-        if (listed.has(row.choice.key) && compareVersions(row.version, successor.version) < 0) {
-          handedOver.add(row.choice.key)
-        }
-      }
-    }
+  defaults: ModelVisibilityDefaults,
+  now: number,
+): Record<string, ModelVisibilityOverride> {
+  const listed = new Set(choices.map((choice) => choice.key))
+  const entries: [string, ModelVisibilityOverride][] = []
+  for (const key of legacyHidden) {
+    if (listed.has(key) && defaults.hidden.has(key)) continue
+    entries.push([key, { visible: false, at: now }])
   }
-  return choices.filter((choice) =>
-    listed.has(choice.key) ? handedOver.has(choice.key) : hidden.has(choice.key),
-  )
-}
-
-/**
- * Raise together with an entry in `MODEL_VISIBILITY_CHANGES` when a default
- * above changes for models a saved profile already lists.
- */
-export const MODEL_VISIBILITY_VERSION = '8'
-
-type VisibilityChange = {
-  /** Models, by visibility id, whose default changed. */
-  ids?: readonly string[]
-  /** Stock sources whose every listed model goes back to its default. */
-  sources?: readonly string[]
-}
-
-/**
- * What each version changed. A profile saved at version 4 or later only has
- * these models moved to their default, so its other manual choices survive
- * the upgrade.
- */
-const MODEL_VISIBILITY_CHANGES = new Map<number, VisibilityChange>([
-  // Claude Code's `haiku` alias now resolves to Haiku 5.5, the current small model.
-  [5, { ids: ['haiku'] }],
-  // While `opus`, `sonnet` and `haiku` resolved to the 5.0 generation, their
-  // alias rows stood in for these catalog rows. Once the aliases moved to 5.5
-  // the older rows came back under their own ids and, being unknown to the
-  // saved profile, started visible.
-  [6, { ids: ['claude-fable-5', 'claude-opus-5', 'claude-sonnet-5', 'claude-haiku-4-5'] }],
-  // Profiles saved by older builds can still hide the `sonnet` and `haiku`
-  // aliases from when they named an older generation, and show the dated
-  // Haiku 4.5 row the id list never matched. Claude Code's rows return to
-  // the current lineup once; every other source keeps its choices.
-  [7, { sources: ['claude-code'] }],
-  // Codex's defaults came from a fixed list that hid every GPT-5.6 tier. They
-  // now follow the generation rule, so Codex rows return to the newest of
-  // each tier once; every other source keeps its choices.
-  [8, { sources: ['codex'] }],
-])
-const FIRST_INCREMENTAL_VISIBILITY_VERSION = 4
-
-function changedSince(
-  choice: ModelChoice,
-  changed: { ids: ReadonlySet<string>; sources: ReadonlySet<string> },
-): boolean {
-  if (changed.ids.has(visibilityId(choice.model))) return true
-  if (isCustomModelChoice(choice)) return false
-  return changed.sources.has(sourceKey({ provider: choice.provider, agentId: choice.agent?.id }))
-}
-
-/**
- * Move a saved visibility profile onto the current defaults for the models in
- * `choices`. `defaults` are the keys hidden by default in the whole catalog,
- * which can be larger than `choices`.
- */
-export function migrateHiddenModels(
-  hidden: ReadonlySet<string>,
-  storedVersion: string | null,
-  choices: readonly ModelChoice[],
-  defaults: ReadonlySet<string> = defaultHiddenModelKeys(choices),
-): Set<string> {
-  const migrated = new Set(hidden)
-  if (storedVersion === MODEL_VISIBILITY_VERSION) return migrated
-  const from = Number(storedVersion)
-  const to = Number(MODEL_VISIBILITY_VERSION)
-  // Older or unknown profiles predate incremental changes and take every default once.
-  let changed: { ids: Set<string>; sources: Set<string> } | undefined
-  if (Number.isInteger(from) && from >= FIRST_INCREMENTAL_VISIBILITY_VERSION && from < to) {
-    changed = { ids: new Set(), sources: new Set() }
-    for (let version = from + 1; version <= to; version += 1) {
-      const change = MODEL_VISIBILITY_CHANGES.get(version)
-      for (const id of change?.ids ?? []) changed.ids.add(id)
-      for (const source of change?.sources ?? []) changed.sources.add(source)
-    }
-  }
-  for (const choice of choices) {
-    if (changed && !changedSince(choice, changed)) continue
-    if (defaults.has(choice.key)) migrated.add(choice.key)
-    else migrated.delete(choice.key)
-  }
-  return migrated
-}
-
-/**
- * How far a saved visibility profile has come: the version every row last
- * reached together, and the rows a pending migration has already moved on
- * their own, by choice key, each with the version it reached.
- */
-export type ModelVisibilityProgress = {
-  version: string | null
-  rows: ReadonlyMap<string, string>
-}
-
-/** The hidden list after a migration, and the choice keys it moved. */
-export type ModelVisibilityMigration = { hidden: Set<string>; migrated: string[] }
-
-/**
- * Apply the pending migration to each row in `choices` that has not had it
- * yet, and name the rows it moved. A row is migrated once, as soon as it is
- * known, whether from the cached catalog or from its source's listing: a later
- * run must not undo what the user chose since, and a source that cannot be
- * listed must not hold back the others.
- */
-export function migratePendingHiddenModels(
-  hidden: ReadonlySet<string>,
-  progress: ModelVisibilityProgress,
-  choices: readonly ModelChoice[],
-): ModelVisibilityMigration {
-  const pending = new Map<string | null, ModelChoice[]>()
-  for (const choice of choices) {
-    const version = progress.rows.get(choice.key) ?? progress.version
-    if (version === MODEL_VISIBILITY_VERSION) continue
-    const rows = pending.get(version)
-    if (rows) rows.push(choice)
-    else pending.set(version, [choice])
-  }
-  let migrated = new Set(hidden)
-  const defaults = defaultHiddenModelKeys(choices)
-  for (const [version, rows] of pending) {
-    migrated = migrateHiddenModels(migrated, version, rows, defaults)
-  }
-  return {
-    hidden: migrated,
-    migrated: [...pending.values()].flatMap((rows) => rows.map((choice) => choice.key)),
-  }
+  // Built as own data properties, whatever a stored key looks like.
+  return Object.fromEntries(entries)
 }
 
 const REASONING_EFFORT_RANKS = new Map([

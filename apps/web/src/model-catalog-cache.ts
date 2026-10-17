@@ -3,8 +3,8 @@ import { modelChoiceKey, sourceKey, type ModelChoice } from './model-catalog.js'
 import type { ProviderMark } from './provider-presentation.js'
 
 const CACHE_VERSION = 2
-const MAX_CACHE_CHARACTERS = 2_000_000
-const MAX_CACHED_MODELS = 2_000
+export const MAX_CACHE_CHARACTERS = 2_000_000
+export const MAX_CACHED_MODELS = 2_000
 export const MODEL_CATALOG_CACHE_FRESH_MS = 5 * 60_000
 const PROVIDER_MARKS = new Set<ProviderMark>([
   'openai',
@@ -39,28 +39,44 @@ type SerializeModelCatalogCacheOptions = {
  * catalog available on the first frame and avoids respawning provider helpers
  * during rapid relaunches. Opening the picker and explicit refreshes still
  * revalidate immediately.
+ *
+ * Returns undefined when `parseModelCatalogCache` would reject the snapshot,
+ * so a caller can drop the key instead of paying for a write that every
+ * launch throws away. A validated source without any row is left out, since
+ * the reader refuses the whole snapshot for it.
  */
 export function serializeModelCatalogCache(
   models: ModelChoice[],
   options: SerializeModelCatalogCacheOptions = {},
-): string {
+): string | undefined {
+  if (models.length > MAX_CACHED_MODELS) return undefined
   const validatedAt = options.validatedAt ?? Date.now()
-  const validatedSources = [
-    ...new Set(
-      options.validatedSources ??
-        models.map((choice) =>
-          sourceKey({
-            provider: choice.provider,
-            connectionId: choice.connectionId,
-            agentId: choice.agent?.id,
-          }),
-        ),
+  const modelSources = new Set(
+    models.map((choice) =>
+      sourceKey({
+        provider: choice.provider,
+        connectionId: choice.connectionId,
+        agentId: choice.agent?.id,
+      }),
     ),
-  ].map((source) => ({ source, validatedAt }))
-  return JSON.stringify({ version: CACHE_VERSION, validatedSources, models })
+  )
+  const validatedSources = [...new Set(options.validatedSources ?? modelSources)].filter((source) =>
+    modelSources.has(source),
+  )
+  if (validatedSources.length > 0 && (!Number.isSafeInteger(validatedAt) || validatedAt < 0)) {
+    return undefined
+  }
+  const raw = JSON.stringify({
+    version: CACHE_VERSION,
+    validatedSources: validatedSources.map((source) => ({ source, validatedAt })),
+    models,
+  })
+  return raw.length > MAX_CACHE_CHARACTERS ? undefined : raw
 }
 
-export function parseModelCatalogCache(raw: string | null): ModelCatalogCache | undefined {
+export function parseModelCatalogCache(
+  raw: string | null | undefined,
+): ModelCatalogCache | undefined {
   if (!raw || raw.length > MAX_CACHE_CHARACTERS) return undefined
 
   let value: unknown
@@ -270,6 +286,48 @@ function parseModel(value: unknown): Model | undefined {
     ...(defaultReasoningEffort === undefined ? {} : { defaultReasoningEffort }),
     serviceTiers,
     ...(defaultServiceTier === undefined ? {} : { defaultServiceTier }),
+    ...parseModelMetadata(value),
+  }
+}
+
+const CACHED_GENERATION = /^\d+(?:\.\d+)*$/
+const CACHED_RELEASE_DATE = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * The optional lineage and curation fields an adapter declared, within the
+ * limits the protocol accepts. A value outside them is left out on its own:
+ * it only shapes default visibility, which falls back to reading the name,
+ * so it is no reason to throw away the whole snapshot.
+ */
+function parseModelMetadata(
+  value: Record<string, unknown>,
+): Pick<Model, 'lab' | 'family' | 'generation' | 'released' | 'recommended' | 'deprecated'> {
+  const text = (field: string, maxLength: number, pattern?: RegExp) => {
+    const entry = value[field]
+    return typeof entry === 'string' &&
+      entry.length > 0 &&
+      entry.length <= maxLength &&
+      (!pattern || pattern.test(entry))
+      ? entry
+      : undefined
+  }
+  const flag = (field: string) => {
+    const entry = value[field]
+    return typeof entry === 'boolean' ? entry : undefined
+  }
+  const lab = text('lab', 80)
+  const family = text('family', 120)
+  const generation = text('generation', 32, CACHED_GENERATION)
+  const released = text('released', 10, CACHED_RELEASE_DATE)
+  const recommended = flag('recommended')
+  const deprecated = flag('deprecated')
+  return {
+    ...(lab === undefined ? {} : { lab }),
+    ...(family === undefined ? {} : { family }),
+    ...(generation === undefined ? {} : { generation }),
+    ...(released === undefined ? {} : { released }),
+    ...(recommended === undefined ? {} : { recommended }),
+    ...(deprecated === undefined ? {} : { deprecated }),
   }
 }
 

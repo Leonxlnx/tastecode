@@ -148,6 +148,14 @@ const OLDER_CLAUDE_MODELS: Model[] = [
 ]
 export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
+/**
+ * The last live answer per Claude config directory, for this process. Live rows
+ * use the runtime's alias ids (`opus`, `claude-fable-5-1[1m]`) where the catalog
+ * uses versioned ids, so answering a slow discovery with the catalog would change
+ * the ids behind the user's selection and visibility choices.
+ */
+const lastDiscoveredClaudeModels = new Map<string, Model[]>()
+
 function claudeModel(
   id: string,
   displayName: string,
@@ -661,8 +669,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     })
   }
 
-  /** Ask the installed Claude runtime for its live model inventory without sending a prompt. */
-  async listModels(): Promise<Model[]> {
+  /**
+   * Ask the installed Claude runtime for its live model inventory without
+   * sending a prompt. With `refresh`, the caller already holds a list it keeps
+   * when this fails, so a discovery that cannot answer rejects instead of
+   * answering with the catalog.
+   */
+  async listModels(options: { refresh?: boolean } = {}): Promise<Model[]> {
     const abort = new AbortController()
     const query = this.#createQuery({
       prompt: waitForAbort(abort.signal),
@@ -675,32 +688,54 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         strictMcpConfig: true,
       }),
     })
+    const discoveryKey = this.#environment.CLAUDE_CONFIG_DIR ?? ''
+    const fallback = (reason: string): Model[] => {
+      const previous = lastDiscoveredClaudeModels.get(discoveryKey)
+      if (previous) {
+        this.#log(`Claude model discovery kept the last live list: ${reason}`)
+        return previous
+      }
+      // The caller's list may come from an earlier launch with the live alias
+      // ids, which the catalog's versioned ids would replace.
+      if (options.refresh) throw new Error(`Claude model discovery did not answer: ${reason}`)
+      this.#log(`Claude model discovery fell back to known values: ${reason}`)
+      return CLAUDE_MODELS
+    }
+    // Settled outside the try, so a refresh that rejects is not caught as a
+    // discovery failure of its own.
+    let failure: string
     try {
       const models = await withTimeout(
         query.supportedModels(),
         30_000,
         'Claude model discovery timed out',
       )
-      if (models.length === 0) return CLAUDE_MODELS
-      const ultracodeAvailable = await withTimeout(
-        readClaudeAppliedSettings(query),
-        10_000,
-        'Claude settings discovery timed out',
-      ).then(
-        (applied) => applied?.ultracodeAvailable === true,
-        (error: unknown) => {
-          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
-          return false
-        },
-      )
-      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
+      if (models.length > 0) {
+        const ultracodeAvailable = await withTimeout(
+          readClaudeAppliedSettings(query),
+          10_000,
+          'Claude settings discovery timed out',
+        ).then(
+          (applied) => applied?.ultracodeAvailable === true,
+          (error: unknown) => {
+            this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+            return false
+          },
+        )
+        const discovered = mergeClaudeModels(models).map((model) =>
+          withUltracode(model, ultracodeAvailable),
+        )
+        lastDiscoveredClaudeModels.set(discoveryKey, discovered)
+        return discovered
+      }
+      failure = 'the runtime listed no models'
     } catch (error) {
-      this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
-      return CLAUDE_MODELS
+      failure = String(error)
     } finally {
       abort.abort()
       query.close()
     }
+    return fallback(failure)
   }
 
   dispose(): Promise<void> {

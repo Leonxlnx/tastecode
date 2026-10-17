@@ -174,6 +174,8 @@ export function startServer(
     onSkillsChanged: (provider, projectPath) =>
       push.broadcast('skills.changed', { provider, projectPath }),
     onUsageChanged: (provider) => push.broadcast('usage.changed', { provider }),
+    onModelsChanged: (provider, agent) =>
+      push.broadcast('models.changed', agent === undefined ? { provider } : { provider, agent }),
     onLifecycle: (threadId, lifecycle) =>
       push.broadcast('thread.lifecycle', { threadId, lifecycle }),
     onLifecycleScheduleChanged: (hint) => notifyLifecycleScheduleChanged(hint),
