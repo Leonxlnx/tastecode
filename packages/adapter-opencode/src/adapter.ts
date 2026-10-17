@@ -25,6 +25,7 @@ import {
   type OpenCodeV2Event,
   type OpenCodeWireEvent,
 } from './events.js'
+import { openCodeModels, type OpenCodeCatalogEntry } from './models.js'
 
 export const OPENCODE_CAPABILITIES: Capabilities = {
   steer: false,
@@ -207,7 +208,6 @@ const LegacySessionPropertiesSchema = z.object({
 type OpenCodeV2Session = z.infer<typeof OpenCodeV2SessionSchema>
 type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
 type ConnectedProviders = z.infer<typeof ConnectedProvidersSchema>
-type ConnectedModel = z.infer<typeof ConnectedModelSchema>
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
@@ -544,32 +544,32 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       this.#readConnectedProviders(directory),
       this.#protocol === 'v2' ? this.#readV2ModelDetails(directory) : undefined,
     ])
-    const rows = connected.providers.flatMap((provider) =>
-      Object.values(provider.models)
-        .filter((model) => model.status !== 'deprecated')
-        .map((model) => ({ provider, model })),
-    )
-    // Newest first, as OpenCode's own catalog orders them; a stable sort keeps
-    // OpenCode's provider order between models of the same day.
-    rows.sort((left, right) => releaseDay(right.model).localeCompare(releaseDay(left.model)))
-    return rows.map(({ provider, model }) => {
-      const id = `${provider.id}/${model.id}`
-      // A v2 session takes a variant from v2's own catalog row, so v2 offers
-      // only those; 1.18.13 lists none there and the effort stays OpenCode's.
-      const reasoningEfforts = openCodeReasoningEfforts(v2 ? v2.catalog.get(id) : model)
-      return {
-        id,
-        displayName: `${provider.name} · ${model.name}`,
-        isDefault: v2 ? v2.defaultModel === id : connected.default?.[provider.id] === model.id,
-        reasoningEfforts,
-        ...(reasoningEfforts.length > 0
-          ? {
-              defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+    return openCodeModels(
+      connected.providers.flatMap((provider) =>
+        Object.values(provider.models)
+          .filter((model) => model.status !== 'deprecated')
+          .map((model): OpenCodeCatalogEntry => {
+            const id = `${provider.id}/${model.id}`
+            // A v2 session takes a variant from v2's own catalog row, so v2 offers
+            // only those; 1.18.13 lists none there and the effort stays OpenCode's.
+            const reasoningEfforts = openCodeReasoningEfforts(v2 ? v2.catalog.get(id) : model)
+            return {
+              providerID: provider.id,
+              providerName: provider.name,
+              modelID: model.id,
+              name: model.name,
+              releaseDate: model.release_date,
+              isDefault: v2
+                ? v2.defaultModel === id
+                : connected.default?.[provider.id] === model.id,
+              reasoningEfforts,
+              ...(reasoningEfforts.length > 0
+                ? { defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT }
+                : {}),
             }
-          : {}),
-        serviceTiers: [],
-      }
-    })
+          }),
+      ),
+    )
   }
 
   dispose(): Promise<void> {
@@ -891,11 +891,6 @@ function parseModel(
   const slash = value.indexOf('/')
   if (slash < 1 || slash === value.length - 1) throw new Error('OpenCode models use provider/model')
   return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) }
-}
-
-/** A model's release day as an ISO date, which sorts as text; empty when unknown. */
-function releaseDay(model: ConnectedModel): string {
-  return model.release_date ?? ''
 }
 
 function openCodeThread(session: OpenCodeV2Session, workspacePath: string): Thread {
