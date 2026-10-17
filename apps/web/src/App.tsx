@@ -5766,6 +5766,7 @@ export function App() {
                     projects={projectChoices}
                     projectPath={activePath}
                     projectName={activeProject ? displayName(activeProject) : undefined}
+                    threadId={activeId && !activeId.startsWith('pending:') ? activeId : undefined}
                     projectsLoading={projectsStatus === 'loading'}
                     branch={
                       (!activeId && activePath

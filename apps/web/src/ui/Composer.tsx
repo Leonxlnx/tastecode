@@ -48,7 +48,9 @@ import type { ComposerVoiceState } from './ComposerVoiceControl.js'
 import { DesignBeam, preloadDesignBeamStyles } from './DesignBeam.js'
 import {
   COMPOSER_RESOURCE_LIST_ID,
+  composerResourceListLabel,
   type ComposerResource,
+  type ComposerResourceMarker,
   type ComposerResourcePickerHandle,
   type ComposerResourceTrigger,
 } from './composer-resource.js'
@@ -104,16 +106,17 @@ function VoiceControlSkeleton() {
   )
 }
 
-function ResourcePickerSkeleton() {
+function ResourcePickerSkeleton(props: { marker: ComposerResourceMarker }) {
+  const labels = composerResourceListLabel(props.marker)
   return (
     <div className="composer-skeleton-picker">
       <div
         id={COMPOSER_RESOURCE_LIST_ID}
         className="composer-skeleton-picker__list"
         role="listbox"
-        aria-label="Skills and MCP servers"
+        aria-label={labels.label}
       >
-        <SkeletonStatus label="Loading skills and MCP servers…">
+        <SkeletonStatus label={labels.loading}>
           <SkeletonRows rows={4} icon widths={RESOURCE_SKELETON_WIDTHS} />
         </SkeletonStatus>
       </div>
@@ -401,6 +404,7 @@ export function composerResourceTriggerAt(
 
   const marker = text[markerIndex]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
+  if (marker === '/' && !onlySpaceBefore(text, markerIndex)) return undefined
   const query = text.slice(queryStart, position)
   if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = position
@@ -418,11 +422,24 @@ function composerResourceTriggerAtLongToken(
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
+  if (marker === '/' && !onlySpaceBefore(text, start)) return undefined
+  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = cursor
   while (end < text.length && isResourceQueryCharacter(text.charCodeAt(end))) end += 1
   return { marker, query, start, end }
+}
+
+/**
+ * A slash names a command only at the start of the message, as providers read
+ * it. The walk stops at the first other character, so a long draft costs one
+ * step.
+ */
+function onlySpaceBefore(text: string, index: number): boolean {
+  for (let position = index - 1; position >= 0; position -= 1) {
+    if (!/\s/.test(text[position]!)) return false
+  }
+  return true
 }
 
 function isResourceQueryCharacter(code: number): boolean {
@@ -450,6 +467,8 @@ function ComposerComponent(props: {
   projects: ReadonlyArray<ProjectChoice>
   projectPath: string | undefined
   projectName: string | undefined
+  /** The started chat this composer writes to; absent for a new chat. */
+  threadId?: string | undefined
   projectsLoading?: boolean
   branch: string | undefined
   branches: string[]
@@ -1451,6 +1470,20 @@ function ComposerComponent(props: {
   const selectResource = (resource: ComposerResource) => {
     const trigger = resourceTrigger
     if (!trigger) return
+    if (resource.kind === 'command') {
+      // The provider expands `/name` itself, so the draft keeps it as text and
+      // the caret waits after it for any arguments.
+      const before = `${textRef.current.slice(0, trigger.start)}${resource.token} `
+      const after = textRef.current.slice(trigger.end).replace(/^ /, '')
+      updateText(before + after)
+      setResourceTrigger(undefined)
+      requestAnimationFrame(() => {
+        area.current?.focus()
+        area.current?.setSelectionRange(before.length, before.length)
+        grow()
+      })
+      return
+    }
     setSelectedResources((current) =>
       current.some((entry) => entry.key === resource.key) ? current : [...current, resource],
     )
@@ -1721,12 +1754,17 @@ function ComposerComponent(props: {
           ) : null}
 
           {resourcePickerMounted ? (
-            <Suspense fallback={resourceTrigger ? <ResourcePickerSkeleton /> : null}>
+            <Suspense
+              fallback={
+                resourceTrigger ? <ResourcePickerSkeleton marker={resourceTrigger.marker} /> : null
+              }
+            >
               <ComposerResourcePicker
                 ref={resourcePicker}
                 transport={props.transport}
                 provider={props.provider}
                 projectPath={props.projectPath}
+                threadId={props.threadId}
                 trigger={resourceTrigger}
                 selectedKeys={selectedResourceKeys}
                 onSelect={selectResource}
@@ -1893,15 +1931,16 @@ function ComposerComponent(props: {
                         return
                       }
                       if (e.key === 'Tab') {
-                        if (resourcePicker.current?.selectActive()) e.preventDefault()
+                        if (resourcePicker.current?.selectActive('Tab')) e.preventDefault()
                         return
                       }
                       if (e.key === 'Enter') {
-                        if (resourcePicker.current?.selectActive()) {
+                        if (resourcePicker.current?.selectActive('Enter') === 'selected') {
                           e.preventDefault()
                           return
                         }
-                        // Nothing to pick ("echo $HOME"): Enter keeps its usual meaning.
+                        // Nothing to pick ("echo $HOME"), or a command typed in
+                        // full that needs no arguments: Enter sends as usual.
                         setResourceTrigger(undefined)
                       }
                       if (e.key === 'Escape') {
