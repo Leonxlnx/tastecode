@@ -1,6 +1,18 @@
 import { createReadStream } from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 import readline from 'node:readline'
-import type { LocalUsageRecord } from '@harness/contracts'
+import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
+import { discoverJsonlArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+
+/** Claude Code keeps one JSONL transcript per session under `<config dir>/projects`. */
+export const CLAUDE_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
+  provider: 'claude-code',
+  label: 'Claude Code',
+  root: (home = process.env['CLAUDE_CONFIG_DIR'] ?? path.join(os.homedir(), '.claude')) =>
+    path.join(home, 'projects'),
+  discover: (root) => discoverJsonlArchive(root, readClaudeUsageHistory),
+}
 
 /** Reads Claude Code JSONL and collapses its repeated message snapshots. */
 export async function readClaudeUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
