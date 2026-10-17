@@ -1941,6 +1941,26 @@ describe('Claude Agent SDK session', () => {
       ])
       cold.adapter.dispose()
     })
+
+    it('rejects a refresh before any live answer instead of answering with the catalog', async () => {
+      const environment = freshEnvironment()
+      const cold = adapterFor(environment, async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      // The caller's list may hold this account's alias ids from an earlier launch.
+      await expect(cold.adapter.listModels({ refresh: true })).rejects.toThrow(
+        'Claude model discovery did not answer: Error: Claude model discovery timed out',
+      )
+      cold.adapter.dispose()
+
+      const live = adapterFor(environment, async () => aliases)
+      const listed = await live.adapter.listModels({ refresh: true })
+      live.adapter.dispose()
+      const stalled = adapterFor(environment, async () => [])
+      // Once this process has a live answer, a refresh keeps it.
+      await expect(stalled.adapter.listModels({ refresh: true })).resolves.toEqual(listed)
+      stalled.adapter.dispose()
+    })
   })
 })
 

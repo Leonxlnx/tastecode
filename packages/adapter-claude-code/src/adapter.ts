@@ -669,8 +669,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     })
   }
 
-  /** Ask the installed Claude runtime for its live model inventory without sending a prompt. */
-  async listModels(): Promise<Model[]> {
+  /**
+   * Ask the installed Claude runtime for its live model inventory without
+   * sending a prompt. With `refresh`, the caller already holds a list it keeps
+   * when this fails, so a discovery that cannot answer rejects instead of
+   * answering with the catalog.
+   */
+  async listModels(options: { refresh?: boolean } = {}): Promise<Model[]> {
     const abort = new AbortController()
     const query = this.#createQuery({
       prompt: waitForAbort(abort.signal),
@@ -686,12 +691,15 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const discoveryKey = this.#environment.CLAUDE_CONFIG_DIR ?? ''
     const fallback = (reason: string): Model[] => {
       const previous = lastDiscoveredClaudeModels.get(discoveryKey)
-      this.#log(
-        previous
-          ? `Claude model discovery kept the last live list: ${reason}`
-          : `Claude model discovery fell back to known values: ${reason}`,
-      )
-      return previous ?? CLAUDE_MODELS
+      if (previous) {
+        this.#log(`Claude model discovery kept the last live list: ${reason}`)
+        return previous
+      }
+      // The caller's list may come from an earlier launch with the live alias
+      // ids, which the catalog's versioned ids would replace.
+      if (options.refresh) throw new Error(`Claude model discovery did not answer: ${reason}`)
+      this.#log(`Claude model discovery fell back to known values: ${reason}`)
+      return CLAUDE_MODELS
     }
     try {
       const models = await withTimeout(
