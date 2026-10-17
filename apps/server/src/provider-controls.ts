@@ -734,7 +734,9 @@ export class ProviderControls {
         },
       )
     }
-    if (entry.failure && startedAt < entry.failure.retryAt) {
+    // Someone asked again: that request reads even inside the backoff or after
+    // the timeout limit; the next automatic one waits as before.
+    if (entry.failure && startedAt < entry.failure.retryAt && intent !== 'retry') {
       return entry.value?.status === 'ready'
         ? Promise.resolve(entry.value)
         : Promise.reject(entry.failure.error)

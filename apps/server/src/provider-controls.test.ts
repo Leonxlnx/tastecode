@@ -1086,6 +1086,33 @@ describe('read intent', () => {
     expect(usageLimitSource).toHaveBeenCalledOnce()
   })
 
+  it('reads at once for a retry, inside the backoff and after the timeout limit', async () => {
+    const timeout = () => Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+    const usageLimitSource = vi
+      .fn()
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(timeout())
+      .mockRejectedValueOnce(timeout())
+      .mockResolvedValue(weekly(30))
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    // Inside the 5-minute backoff only a retry reads.
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await expect(claude.usageLimitSource('retry')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    // Two timeouts stop automatic reads for this account; a retry still tries once more.
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000)
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    await expect(claude.usageLimitSource('retry')).rejects.toThrow('fixture-timed-out')
+    await expect(claude.usageLimitSource('retry')).resolves.toMatchObject({
+      limits: [{ usedPercent: 30 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledTimes(4)
+  })
+
   it('still reads other providers for a passive figure', async () => {
     expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadsWhenShown')
     const usageLimitSource = vi.fn(async () => weekly(20))
