@@ -27,7 +27,7 @@ describe('responsive chat pane CSS', () => {
       expect(selector).toContain('.composer__permission .tool > span:not(.icon-morph),')
     }
     expect(css).toMatch(
-      /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.composer \{[^}]*padding-inline: 10px;/s,
+      /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.stage__body \{[^}]*--chat-gutter: 10px;/s,
     )
     expect(resourcePickerCss).toMatch(
       /@container chat-stage \(max-width: 480px\) \{[\s\S]*?\.composer-resource-picker__description,[\s\S]*?display: none;/s,

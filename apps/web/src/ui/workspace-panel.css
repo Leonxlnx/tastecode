@@ -1278,6 +1278,9 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
+  /* The side chat is its own chat pane: the transcript column and the prompt
+     bar both size from it, the way the main chat sizes from .stage. */
+  container: side-chat / inline-size;
 }
 
 .workspace-side-chat__conversation {
@@ -1295,12 +1298,6 @@
 .workspace-side-chat__skeleton .thread-skeleton {
   padding-top: 12px;
   font-size: var(--t-md);
-}
-
-.workspace-side-chat__conversation .thread__col,
-.workspace-side-chat__skeleton .thread-skeleton__col {
-  max-width: 720px;
-  padding-inline: 24px;
 }
 
 .workspace-side-chat__skeleton,
@@ -1340,7 +1337,7 @@
 
 .workspace-side-chat__composer {
   position: relative;
-  width: calc(100% - 48px);
+  width: calc(100% - 2 * var(--chat-gutter));
   max-width: var(--chat-w);
   margin: 4px auto 12px;
   background: var(--bg-prompt);
@@ -1358,7 +1355,7 @@
   width: 100%;
   min-height: 68px;
   resize: none;
-  padding: 16px 48px 12px 18px;
+  padding: 16px 48px 12px calc(var(--chat-text-inset) - 1px);
   background: transparent;
   border: 0;
   border-radius: inherit;
@@ -1390,16 +1387,12 @@
   opacity: 0.28;
 }
 
-/* The main chat's narrow gutters (chat-stage at 480px), which do not reach
-   this panel: it is not inside the stage. */
+/* A narrower gutter in a narrow panel, read by the composer and the column
+   alike. The main chat's own (chat-stage at 480px) does not reach this panel:
+   it is not inside the stage. */
 @container workspace-panel (max-width: 480px) {
-  .workspace-side-chat__conversation .thread__col,
-  .workspace-side-chat__skeleton .thread-skeleton__col {
-    padding-inline: 14px;
-  }
-
-  .workspace-side-chat__composer {
-    width: calc(100% - 28px);
+  .workspace-side-chat {
+    --chat-gutter: 14px;
   }
 }
 
