@@ -2681,7 +2681,9 @@ describe('web client', () => {
     it('keeps the source where it stood', async () => {
       serverProviders = [...serverProviders, claudeCodeServerProvider()]
       mockLiveDiscovery()
-      const sourceOrder = () => [...new Set(composerProps().models.map((choice) => choice.provider))]
+      const sourceOrder = () => [
+        ...new Set(composerProps().models.map((choice) => choice.provider)),
+      ]
 
       render(<App />)
       await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
