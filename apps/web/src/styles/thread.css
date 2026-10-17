@@ -1167,14 +1167,6 @@ button.thread__older:hover {
   background: currentColor;
 }
 
-.working {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
 .live-status {
   padding: 1px 0 4px;
   color: var(--text-3);

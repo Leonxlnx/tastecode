@@ -1265,7 +1265,7 @@
     box-shadow 360ms var(--ease-out);
 }
 
-.preview :is(.preview__project, .preview__profile)[data-hint] {
+.preview .preview__profile[data-hint] {
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--line-strong);
 }
