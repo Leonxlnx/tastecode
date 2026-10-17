@@ -156,8 +156,44 @@ class FakeAntigravityAdapter extends FakeTurnAdapter {
 }
 
 class FakeClaudeCodeAdapter extends FakeResumableAdapter {
+  readonly inventoryListeners = new Map<string, Set<() => void>>()
+  readonly inventoryReads: Array<[string, string | undefined]> = []
+
   constructor(options?: Record<string, unknown>) {
     super('claude-code', options)
+  }
+
+  override on(event?: string, listener?: (value: string) => void): this {
+    if ((event === 'mcpChanged' || event === 'commandsChanged') && listener) {
+      const listeners = this.inventoryListeners.get(event) ?? new Set()
+      listeners.add(listener as () => void)
+      this.inventoryListeners.set(event, listeners)
+      return this
+    }
+    return super.on(event, listener)
+  }
+
+  off(event: string, listener: () => void): this {
+    this.inventoryListeners.get(event)?.delete(listener)
+    return this
+  }
+
+  emitInventory(event: 'mcpChanged' | 'commandsChanged'): void {
+    for (const listener of this.inventoryListeners.get(event) ?? []) listener()
+  }
+
+  async listMcpServers(threadId?: string) {
+    this.inventoryReads.push(['mcp', threadId])
+    return []
+  }
+
+  isMcpLoading(): boolean {
+    return true
+  }
+
+  async listCommands(threadId?: string) {
+    this.inventoryReads.push(['commands', threadId])
+    return [{ name: 'context', description: 'Show current context usage' }]
   }
 }
 
@@ -259,6 +295,32 @@ describe('resumable provider setup', () => {
       }
     },
   )
+
+  it("forwards the live Claude session's MCP servers and commands", async () => {
+    const { thread, session } = await providerRuntime('claude-code', () => {}).start('/repo', {})
+    const adapter = turnAdapters.at(-1) as FakeClaudeCodeAdapter
+    await expect(session.listMcpServers!(thread.id)).resolves.toEqual([])
+    expect(session.isMcpLoading!(thread.id)).toBe(true)
+    await expect(session.listCommands!(thread.id)).resolves.toEqual([
+      { name: 'context', description: 'Show current context usage' },
+    ])
+    expect(adapter.inventoryReads).toEqual([
+      ['mcp', thread.id],
+      ['commands', thread.id],
+    ])
+
+    const mcp = vi.fn()
+    const commands = vi.fn()
+    const offMcp = session.onMcpChanged!(mcp)
+    const offCommands = session.onCommandsChanged!(commands)
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    offMcp?.()
+    offCommands?.()
+    adapter.emitInventory('mcpChanged')
+    adapter.emitInventory('commandsChanged')
+    expect([mcp.mock.calls.length, commands.mock.calls.length]).toEqual([1, 1])
+  })
 
   it.each([false, true])(
     'passes Claude MCP options and cleans up a failed open (resume: %s)',
