@@ -1223,7 +1223,7 @@ describe('provider history integration', () => {
     await history.refresh()
     await history.load('local')
     expect(source.read).toHaveBeenCalledTimes(2)
-    expect(messages('local').map((item) => item.text).at(-1)).toBe('From outside')
+    expect(messages('local').at(-1)?.text).toBe('From outside')
   })
 
   it('matches local turns whose provider IDs differ using user content and native time', async () => {
