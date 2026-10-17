@@ -4,11 +4,12 @@ import path from 'node:path'
 import type {
   DomainEvent,
   Item,
+  ProviderHistoryListOptions,
   ProviderHistorySession,
   ProviderHistorySource,
   ProviderId,
 } from '@harness/contracts'
-import { Store } from './store.js'
+import { Store, type ProviderHistoryListing } from './store.js'
 import { projectHistoryItems } from './side-chat.js'
 import { DESIGN_PHASE_NOTICE, RESTORE_CONTEXT_NOTICE } from './provider-session.js'
 
@@ -30,6 +31,8 @@ export class ProviderHistory {
   #internalWithoutCopy = new Set<string>()
   /** Settles once each provider's first scan is done, whether it found anything or failed. */
   #scanned = new Map<ProviderId, { done: Promise<void>; settle: () => void }>()
+  /** Each source's stored listings, read from the store at its first scan. */
+  #listings = new Map<ProviderId, Map<string, ProviderHistoryListing>>()
   #closed = false
 
   constructor(
@@ -68,6 +71,49 @@ export class ProviderHistory {
     this.#byThread.set(entry.threadId, entry)
   }
 
+  /**
+   * Callbacks that let a source skip transcripts it listed before, also across
+   * restarts: a cold Claude listing read 3 GB. `save` stores what the source
+   * computed and, after a complete listing, forgets transcripts it no longer named.
+   */
+  #listing(provider: ProviderId) {
+    const stored = this.#listings.get(provider) ?? this.store.providerHistoryMetadata(provider)
+    this.#listings.set(provider, stored)
+    const named = new Set<string>()
+    const remembered = new Map<string, ProviderHistoryListing>()
+    return {
+      options: {
+        cached: (locator, revision) => {
+          named.add(locator)
+          const entry = stored.get(locator)
+          return entry?.revision === revision ? entry.session : undefined
+        },
+        remember: (locator, revision, session) => {
+          named.add(locator)
+          const entry = stored.get(locator)
+          if (
+            entry?.revision !== revision ||
+            JSON.stringify(entry.session) !== JSON.stringify(session)
+          )
+            remembered.set(locator, { revision, session })
+        },
+      } satisfies ProviderHistoryListOptions,
+      save: (complete: boolean) => {
+        const forgotten = complete ? [...stored.keys()].filter((key) => !named.has(key)) : []
+        if (!remembered.size && !forgotten.length) return
+        try {
+          this.store.saveProviderHistoryMetadata(provider, remembered, forgotten)
+        } catch {
+          // Unsaved listings are only read again after the next restart.
+          this.hooks.log(`${provider} history metadata could not be saved`)
+          return
+        }
+        for (const [locator, entry] of remembered) stored.set(locator, entry)
+        for (const locator of forgotten) stored.delete(locator)
+      },
+    }
+  }
+
   /** Resolves whether any chat changed, so a caller can poll less while nothing does. */
   refresh(): Promise<boolean> {
     if (this.#closed) return Promise.resolve(false)
@@ -81,7 +127,17 @@ export class ProviderHistory {
     await Promise.all(
       this.sources.map(async ({ provider, history }) => {
         try {
-          const sessions = await history.list()
+          const listing = this.#listing(provider)
+          const sessions = await history.list(listing.options).then(
+            (sessions) => {
+              listing.save(true)
+              return sessions
+            },
+            (error: unknown) => {
+              listing.save(false)
+              throw error
+            },
+          )
           if (this.#closed || this.hooks.canImport?.() === false) return
           // Temporary sessions can close between scans, or disappear on restart.
           // Their durable marker must win even before discovery has seen a row.

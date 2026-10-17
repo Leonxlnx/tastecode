@@ -134,6 +134,78 @@ describe('provider history integration', () => {
     await expect(history.scanned('grok')).resolves.toBeUndefined()
   })
 
+  it('keeps what a source listed across restarts and forgets transcripts it no longer names', async () => {
+    const transcripts = new Map([
+      ['a.jsonl', 'a1'],
+      ['b.jsonl', 'b1'],
+      ['empty.jsonl', 'e1'],
+    ])
+    let fail = false
+    const reads: string[] = []
+    const source = (): ProviderHistorySource => ({
+      list: vi.fn(async (options) => {
+        const sessions: ProviderHistorySession[] = []
+        for (const [locator, revision] of transcripts) {
+          let session = options?.cached?.(locator, revision)
+          if (session === undefined) {
+            reads.push(locator)
+            session =
+              locator === 'empty.jsonl'
+                ? null
+                : { ...metadata(locator.slice(0, -6)), locator, revision }
+            options?.remember?.(locator, revision, session)
+          }
+          if (session) sessions.push(session)
+        }
+        if (fail) throw new Error('locked')
+        return sessions
+      }),
+      read: vi.fn(async () => []),
+    })
+    const start = () => {
+      const history = new ProviderHistory(store, [{ provider: 'codex', history: source() }], {
+        isBusy: () => false,
+        changed: vi.fn(),
+        log: vi.fn(),
+      })
+      histories.push(history)
+      return history
+    }
+
+    await start().refresh()
+    expect(reads.splice(0)).toEqual(['a.jsonl', 'b.jsonl', 'empty.jsonl'])
+    expect(store.thread('external:codex:a')).toBeDefined()
+
+    // After a restart only the transcript that changed meanwhile is read.
+    transcripts.set('b.jsonl', 'b2')
+    await start().refresh()
+    expect(reads.splice(0)).toEqual(['b.jsonl'])
+
+    // A failed listing keeps every row; a complete one forgets what it did not name.
+    transcripts.delete('a.jsonl')
+    fail = true
+    const history = start()
+    await history.refresh()
+    expect([...store.providerHistoryMetadata('codex').keys()].sort()).toEqual([
+      'a.jsonl',
+      'b.jsonl',
+      'empty.jsonl',
+    ])
+    fail = false
+    await history.refresh()
+    expect(store.providerHistoryMetadata('codex')).toEqual(
+      new Map([
+        [
+          'b.jsonl',
+          { revision: 'b2', session: { ...metadata('b'), locator: 'b.jsonl', revision: 'b2' } },
+        ],
+        ['empty.jsonl', { revision: 'e1', session: null }],
+      ]),
+    )
+    expect(reads).toEqual([])
+    expect(store.providerHistoryMetadata('claude-code').size).toBe(0)
+  })
+
   it('lets nobody wait on a first scan after close', async () => {
     const source: ProviderHistorySource = {
       list: vi.fn(() => new Promise<ProviderHistorySession[]>(() => undefined)),
