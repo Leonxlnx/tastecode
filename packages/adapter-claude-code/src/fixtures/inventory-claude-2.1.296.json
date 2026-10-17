@@ -1,0 +1,350 @@
+{
+  "_note": "Captured from claude 2.1.296 through @anthropic-ai/claude-agent-sdk 0.3.232 without a prompt (initializationResult, mcpServerStatus before and after startup, supportedCommands), plus the system/init frame of a free local /context command. Field names, order and value shapes are as captured, including the undeclared `builtin` flag and empty argumentHint strings. Personal skills, plugins, servers, paths, ids and URLs are invented; long descriptions are shortened.",
+  "claude": "2.1.296",
+  "sdk": "0.3.232",
+  "initializationResult": {
+    "commands": [
+      {
+        "name": "release-notes",
+        "description": "Draft release notes from the merged changes",
+        "argumentHint": ""
+      },
+      {
+        "name": "deep-research",
+        "description": "Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report. (dynamic workflow)",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "acme-docs:acme-docs",
+        "description": "(acme-docs) Write documentation in the Acme house style",
+        "argumentHint": "",
+        "aliases": ["acme-docs"]
+      },
+      {
+        "name": "design",
+        "description": "Make a new Design artifact from a brief",
+        "argumentHint": "[what to design]",
+        "builtin": true
+      },
+      {
+        "name": "code-review",
+        "description": "Review the current diff, or a PR number/branch/path target, for correctness bugs",
+        "argumentHint": "[low|medium|high|xhigh|max] [--fix] [--comment] [<pr#>|<branch>|<path>] [--max-findings <n>|all]",
+        "aliases": ["review"],
+        "builtin": true
+      },
+      {
+        "name": "simplify",
+        "description": "Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes.",
+        "argumentHint": "[<target>]",
+        "builtin": true
+      },
+      {
+        "name": "doctor",
+        "description": "Health-check the user's Claude Code setup and fix issues",
+        "argumentHint": "[prompt-audit [<path>]]",
+        "aliases": ["checkup"],
+        "builtin": true
+      },
+      {
+        "name": "loop",
+        "description": "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace.",
+        "argumentHint": "[interval] [prompt]",
+        "aliases": ["proactive"],
+        "builtin": true
+      },
+      {
+        "name": "advisor",
+        "description": "Let Claude consult a stronger model at key moments",
+        "argumentHint": "[fable|opus|sonnet|off]",
+        "builtin": true
+      },
+      {
+        "name": "agents",
+        "description": "(removed) Ask Claude to create/manage subagents, or edit .claude/agents/",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "autocompact",
+        "description": "Configure the auto-compact window size",
+        "argumentHint": "[auto|<tokens>]",
+        "builtin": true
+      },
+      {
+        "name": "clear",
+        "description": "Start a new session with empty context; previous session stays on disk (resumable with /resume)",
+        "argumentHint": "[name]",
+        "aliases": ["reset", "new"],
+        "builtin": true
+      },
+      {
+        "name": "color",
+        "description": "Set the prompt bar color for this session",
+        "argumentHint": "[red|blue|green|yellow|purple|orange|pink|cyan|default]",
+        "builtin": true
+      },
+      {
+        "name": "compact",
+        "description": "Free up context by summarizing the conversation so far",
+        "argumentHint": "<optional custom summarization instructions>",
+        "builtin": true
+      },
+      {
+        "name": "config",
+        "description": "Set a setting by key",
+        "argumentHint": "key=value",
+        "aliases": ["settings"],
+        "builtin": true
+      },
+      {
+        "name": "output-style",
+        "description": "List output styles or switch to one",
+        "argumentHint": "[style]",
+        "builtin": true
+      },
+      {
+        "name": "context",
+        "description": "Show current context usage",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "effort",
+        "description": "Set effort level for model usage",
+        "argumentHint": "<low|medium|high|xhigh|max|auto|ultracode [on|off]>",
+        "builtin": true
+      },
+      {
+        "name": "fast",
+        "description": "Toggle fast mode (Opus 5.5)",
+        "argumentHint": "[on|off]",
+        "builtin": true
+      },
+      {
+        "name": "focus",
+        "description": "Toggle focus view: just your prompt, summary, and response",
+        "argumentHint": "[on|off]",
+        "builtin": true
+      },
+      {
+        "name": "heapdump",
+        "description": "Dump the JS heap to the Desktop; on Linux with no Desktop folder, the home directory",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "init",
+        "description": "Initialize a new CLAUDE.md file with codebase documentation",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "mcp",
+        "description": "Manage MCP servers",
+        "argumentHint": "[reconnect|enable|disable [<server>|all]]",
+        "builtin": true
+      },
+      {
+        "name": "model",
+        "description": "Set the AI model for Claude Code",
+        "argumentHint": "<model>",
+        "builtin": true
+      },
+      {
+        "name": "__remote-workflow",
+        "description": "Run the workflow script delivered in this session environment (server-launched sessions only)",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "workflow-launch-exec",
+        "description": "Execute a server-launched workflow handoff (workflow_launch event sessions only)",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "reload-plugins",
+        "description": "Activate pending plugin changes in the current session",
+        "argumentHint": "[--force]",
+        "builtin": true
+      },
+      {
+        "name": "rename",
+        "description": "Rename the current conversation",
+        "argumentHint": "[name]",
+        "aliases": ["name"],
+        "builtin": true
+      },
+      {
+        "name": "security-review",
+        "description": "Complete a security review of the pending changes on the current branch",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "usage-credits",
+        "description": "Configure usage credits or request them from your admin when you hit a limit",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "extra-usage",
+        "description": "Renamed to /usage-credits",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "usage",
+        "description": "Show session cost, plan usage, and what's contributing to your limits",
+        "argumentHint": "",
+        "aliases": ["cost", "stats"],
+        "builtin": true
+      },
+      {
+        "name": "goal",
+        "description": "Set a goal — keep working until the condition is met",
+        "argumentHint": "",
+        "builtin": true
+      },
+      {
+        "name": "pdf",
+        "description": "Use this skill whenever the user wants to do anything with PDF files. (claude.ai sync)",
+        "argumentHint": "",
+        "aliases": ["anthropic-skills:pdf"]
+      },
+      {
+        "name": "anthropic-skills:deep-research",
+        "description": "Use this skill when the user's prompt requires researching a topic across multiple sources. (claude.ai sync)",
+        "argumentHint": ""
+      },
+      {
+        "name": "standup",
+        "description": "Summarize yesterday's commits for a standup",
+        "argumentHint": ""
+      }
+    ]
+  },
+  "systemInit": {
+    "skills": [
+      "release-notes",
+      "deep-research",
+      "acme-docs:acme-docs",
+      "design",
+      "code-review",
+      "simplify",
+      "doctor",
+      "loop",
+      "anthropic-skills:pdf",
+      "anthropic-skills:deep-research"
+    ],
+    "terminal_slash_commands": ["doctor", "color", "focus", "reload-plugins"]
+  },
+  "mcpServerStatus": {
+    "atInit": [
+      {
+        "name": "plugin:acme-docs:acme-docs",
+        "status": "pending",
+        "config": {
+          "type": "stdio",
+          "command": "node",
+          "args": ["C:\\Users\\dev\\.claude\\plugins\\cache\\acme\\acme-docs\\0.5.0\\server.js"]
+        },
+        "scope": "dynamic"
+      },
+      {
+        "name": "issue-tracker",
+        "status": "needs-auth",
+        "config": { "type": "http", "url": "https://mcp.example.com/mcp" },
+        "scope": "user"
+      },
+      {
+        "name": "project-notes",
+        "status": "connected",
+        "serverInfo": { "name": "project-notes", "version": "1.0.0" },
+        "config": { "type": "http", "url": "http://127.0.0.1:49152/notes" },
+        "scope": "dynamic",
+        "tools": []
+      },
+      {
+        "name": "claude.ai Claude Docs",
+        "status": "pending",
+        "config": {
+          "type": "claudeai-proxy",
+          "url": "https://api.anthropic.com/v1/pages/mcp",
+          "id": "mcpsrv_example0000000000000001"
+        },
+        "scope": "claudeai"
+      },
+      {
+        "name": "claude.ai Gmail",
+        "status": "needs-auth",
+        "config": {
+          "type": "claudeai-proxy",
+          "url": "https://gmailmcp.googleapis.com/mcp/v1",
+          "id": "mcpsrv_example0000000000000002"
+        },
+        "scope": "claudeai"
+      }
+    ],
+    "settled": [
+      {
+        "name": "plugin:acme-docs:acme-docs",
+        "status": "connected",
+        "serverInfo": { "name": "acme-docs", "version": "0.5.0" },
+        "config": {
+          "type": "stdio",
+          "command": "node",
+          "args": ["C:\\Users\\dev\\.claude\\plugins\\cache\\acme\\acme-docs\\0.5.0\\server.js"]
+        },
+        "scope": "dynamic",
+        "tools": [
+          { "name": "search_docs", "annotations": { "readOnly": true } },
+          { "name": "write_page", "annotations": {} },
+          { "name": "fetch_asset", "annotations": { "openWorld": true } }
+        ]
+      },
+      {
+        "name": "issue-tracker",
+        "status": "needs-auth",
+        "config": { "type": "http", "url": "https://mcp.example.com/mcp" },
+        "scope": "user"
+      },
+      {
+        "name": "project-notes",
+        "status": "connected",
+        "serverInfo": { "name": "project-notes", "version": "1.0.0" },
+        "config": { "type": "http", "url": "http://127.0.0.1:49152/notes" },
+        "scope": "dynamic",
+        "tools": []
+      },
+      {
+        "name": "claude.ai Claude Docs",
+        "status": "connected",
+        "serverInfo": { "name": "Claude Docs", "version": "0.1.0" },
+        "config": {
+          "type": "claudeai-proxy",
+          "url": "https://api.anthropic.com/v1/pages/mcp",
+          "id": "mcpsrv_example0000000000000001"
+        },
+        "scope": "claudeai",
+        "tools": [
+          { "name": "read", "annotations": { "readOnly": true } },
+          { "name": "update", "annotations": {} },
+          { "name": "delete", "annotations": { "destructive": true } }
+        ]
+      },
+      {
+        "name": "claude.ai Gmail",
+        "status": "needs-auth",
+        "config": {
+          "type": "claudeai-proxy",
+          "url": "https://gmailmcp.googleapis.com/mcp/v1",
+          "id": "mcpsrv_example0000000000000002"
+        },
+        "scope": "claudeai"
+      }
+    ]
+  }
+}
