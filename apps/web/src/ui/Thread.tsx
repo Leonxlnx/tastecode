@@ -4,7 +4,10 @@ import {
   lazy,
   memo,
   Suspense,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type WheelEvent as ReactWheelEvent,
   useCallback,
   useContext,
   useEffect,
@@ -16,7 +19,6 @@ import {
 } from 'react'
 import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
-import { ThinkingOrb } from 'thinking-orbs'
 import {
   IconArrowBarToDown as ArrowDownToLine,
   IconBook2 as BookOpen,
@@ -77,9 +79,11 @@ import {
   activeTurnAnchor,
   isAtBottom,
   modeForNewTurn,
-  shouldReleaseAnchor,
+  TURN_TOP_GAP,
+  turnRoom,
   type ScrollMode,
 } from './scroll-mode.js'
+import { createFollowGlide, type FollowGlide } from './scroll-follow.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { shiftPendingScrollIndex } from './pending-scroll.js'
@@ -178,7 +182,14 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   )
   const currentApproval = thread.approvals[0]
   const scroller = useRef<HTMLDivElement>(null)
-  const runwayRef = useRef<HTMLDivElement>(null)
+  const runwayRef = useRef<HTMLDivElement | null>(null)
+  const threadIdRef = useRef(props.threadId)
+  threadIdRef.current = props.threadId
+  /** The chat the follow last opened at its end; nothing follows a chat before that. */
+  const openedThread = useRef<{ threadId: string | undefined } | undefined>(undefined)
+  /** What runs once the virtual list has measured a row; set once its parts exist below. */
+  const virtualChanged = useRef<() => void>(() => undefined)
+  const onVirtualChange = useCallback(() => virtualChanged.current(), [])
   /** Scroll to apply once the runway has committed a disclosure's new height. */
   const pendingEndAnchor = useRef<EndAnchor | undefined>(undefined)
   /** Settled scroll height in reveal-hold; growth past it is new content. */
@@ -189,8 +200,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const completedRevealRequest = useRef(props.revealRequest ?? 0)
   const modeRef = useRef(mode)
   modeRef.current = mode
+  /**
+   * Jump to latest is offered only once the end is a real distance away, and
+   * withdrawn only once it is close again. Without the gap between the two a
+   * scroll that hovers around one threshold made the pill flicker, and a
+   * small move up during a stream put it over the very text being read.
+   */
+  const [jumpShown, setJumpShown] = useState(false)
+  const jumpShownRef = useRef(false)
+  const updateJump = useCallback((distance: number) => {
+    const shown = jumpShownRef.current
+    const next =
+      modeRef.current === 'free' && (shown ? distance >= JUMP_HIDE_PX : distance > JUMP_SHOW_PX)
+    if (next === shown) return
+    jumpShownRef.current = next
+    setJumpShown(next)
+  }, [])
 
-  /** Index the current turn starts at, for anchor mode. */
+  /** Index the latest turn starts at: the row a pinned prompt holds near the top. */
   const anchorIndex = useRef(0)
   const activeAnchor = useMemo(
     () => activeTurnAnchor(thread.items, thread.activeTurn?.id, thread.liveStart),
@@ -209,15 +236,54 @@ export const Thread = memo(function Thread(props: ThreadProps) {
    * cannot get out of step that way.
    */
   const writtenScrollTop = useRef<number | undefined>(undefined)
-  const writeScrollTop = useCallback((el: HTMLElement, top: number) => {
-    // Clamp before comparing: an out-of-range target gets clamped by the
-    // browser, so the write would land somewhere we did not record.
-    const max = Math.max(0, el.scrollHeight - el.clientHeight)
-    const target = Math.min(Math.max(top, 0), max)
-    if (Math.abs(el.scrollTop - target) < 1) return
-    writtenScrollTop.current = target
-    el.scrollTop = target
-  }, [])
+  const follow = useRef<FollowState>({
+    knownTop: 0,
+    measured: false,
+    extra: 0,
+    clientHeight: 0,
+    total: 0,
+    contentTop: 0,
+    pinned: false,
+    room: 0,
+    liveUntil: 0,
+    instantUntil: 0,
+    holding: false,
+    intent: undefined,
+  })
+  // While a turn streams, the end glides into view instead of jumping a line
+  // at a time. Its writes are ours like any other, so they are recorded the
+  // same way; sub-pixel steps are exact, hence no 1px early return here.
+  const [glide] = useState<FollowGlide>(() =>
+    createFollowGlide({
+      write: (top) => {
+        const el = scroller.current
+        if (!el) return
+        writtenScrollTop.current = top
+        follow.current.knownTop = top
+        el.scrollTop = top
+      },
+    }),
+  )
+  useEffect(() => () => glide.stop(), [glide])
+  const writeScrollTop = useCallback(
+    (el: HTMLElement, top: number) => {
+      // A write puts the scroll somewhere on purpose; a glide continuing from
+      // its own idea of the position would undo it on the next frame.
+      glide.stop()
+      // Clamp before comparing: an out-of-range target gets clamped by the
+      // browser, so the write would land somewhere we did not record.
+      const max = Math.max(0, el.scrollHeight - el.clientHeight)
+      const target = Math.min(Math.max(top, 0), max)
+      if (Math.abs(el.scrollTop - target) < 1) {
+        follow.current.knownTop = el.scrollTop
+        return
+      }
+      writtenScrollTop.current = target
+      follow.current.knownTop = target
+      el.scrollTop = target
+    },
+    [glide],
+  )
   /**
    * The frame request of a running "Jump to latest" glide. A native smooth
    * scroll fixes its target when it starts, so it lands short of a reply that
@@ -236,12 +302,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     stopJump()
     const instant = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     let last: number | undefined
+    let velocity = 0
     const step = (now: number) => {
       jumpFrame.current = undefined
       const elapsed = last === undefined ? 16 : Math.min(64, Math.max(0, now - last))
       last = now
-      const end = Math.max(0, settledScrollHeight(el) - el.clientHeight)
-      const gap = end - el.scrollTop
+      // The room below a pinned prompt counts: that end is the latest.
+      const end = Math.max(0, settledScrollHeight(el) + follow.current.room - el.clientHeight)
+      const from = el.scrollTop
+      const gap = end - from
+      // Within reach of the follow glide, hand over at the chase's own speed:
+      // the last stretch then slows into the end and keeps following it,
+      // instead of arriving at full speed and stopping dead.
+      if (!instant && Math.abs(gap) <= JUMP_HANDOVER_PX) {
+        modeRef.current = 'follow-end'
+        setMode('follow-end')
+        glide.setTarget(end, from, velocity)
+        return
+      }
       // Ease out towards wherever the end is now, at the same pace whatever
       // the frame rate. An ease alone trails an end that keeps moving by a
       // constant distance and never arrives; the minimum speed is faster
@@ -254,17 +332,24 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         return
       }
       const travel = Math.max(Math.abs(gap) * (1 - Math.exp(-elapsed / JUMP_EASE_MS)), minimum)
-      writeScrollTop(el, el.scrollTop + Math.sign(gap) * travel)
+      velocity = (Math.sign(gap) * travel) / Math.max(1, elapsed)
+      writeScrollTop(el, from + Math.sign(gap) * travel)
       jumpFrame.current = window.requestAnimationFrame(step)
     }
     // Stay in free mode for the whole glide. Flipping to follow-end first
     // would unmount the button mid-flight; the glide hands over itself.
     jumpFrame.current = window.requestAnimationFrame(step)
-  }, [stopJump, writeScrollTop])
+  }, [glide, stopJump, writeScrollTop])
   // Any other mode means something else owns the scroll position now.
   useLayoutEffect(() => {
     if (mode !== 'free') stopJump()
-  }, [mode, stopJump])
+    if (mode === 'free' || mode === 'reveal-hold') glide.stop()
+    // The next time the user takes over, the pill waits for the full distance again.
+    if (mode !== 'free' && jumpShownRef.current) {
+      jumpShownRef.current = false
+      setJumpShown(false)
+    }
+  }, [mode, stopJump, glide])
   useEffect(() => stopJump, [props.threadId, stopJump])
   const {
     status: olderHistory,
@@ -344,6 +429,22 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }
   shiftedItems.current = { threadId: props.threadId, items: thread.items }
 
+  const projectThread = useMemo(createThreadProjector, [props.threadId])
+  const { turns, presentations } = projectThread(
+    thread.items,
+    thread.turnTiming,
+    thread.activeTurn?.id,
+  )
+  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const showWorkingRail = running && thread.activeTurn !== undefined
+  const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
+  // Until the turn's first response row exists, the working rail sits at the
+  // end of the runway, in space the runway itself keeps for it. A spacer
+  // outside the runway left in the commit that added the row, a layout before
+  // the row was measured with the rail's room: the transcript was briefly
+  // shorter and the scroll was clamped.
+  const railReserve = showWorkingRail && railIndex === undefined ? WORKING_RAIL_PX : 0
+
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     getScrollElement: () => scroller.current,
@@ -360,56 +461,263 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // Without it the first frame contains no rows at all, which reads as a
     // blank thread for one frame when switching sessions.
     initialRect: { width: 720, height: 800 },
+    // Row positions and the runway height go to the DOM in the same callback
+    // that measured a row. Through React, every wrapped line of a streamed
+    // reply rendered the whole transcript again, and the runway took its new
+    // height a render after the row that grew. The transcript now renders when
+    // the rows it shows change.
+    directDomUpdates: true,
+    onChange: onVirtualChange,
+    paddingEnd: railReserve,
   })
   virtualizerRef.current = virtualizer
+  // Mocked lists in tests have no container to size.
+  const sizeRunway = (virtualizer as { containerRef?: (node: HTMLElement | null) => void })
+    .containerRef
+  const setRunway = useCallback(
+    (node: HTMLDivElement | null) => {
+      runwayRef.current = node
+      sizeRunway?.(node)
+    },
+    [sizeRunway],
+  )
+  /**
+   * Gives the runway the virtual total now. The virtual list sizes it when it
+   * measures a row, but for rows added or removed only after the commit's
+   * effects; a follow that reads layout or scrolls before that would meet
+   * last commit's runway. Both write the same total, so they never disagree.
+   */
+  const sizeRunwayNow = useCallback(() => {
+    const runway = runwayRef.current
+    const height = `${virtualizer.getTotalSize()}px`
+    if (runway && runway.style.height !== height) runway.style.height = height
+  }, [virtualizer])
+  /** The settled scroll height, with the runway at the virtual total. */
+  const settledHeight = useCallback(
+    (el: HTMLElement) => {
+      sizeRunwayNow()
+      return settledScrollHeight(el)
+    },
+    [sizeRunwayNow],
+  )
 
-  // A turn starting is the one moment the reading position should change.
-  // Watch its first item rather than the running boolean: a queued turn can
-  // start in the same render batch that the previous turn completes, leaving
-  // `running` true throughout. The submission id also survives the local ->
-  // durable handoff, so provider confirmation does not cause a second jump.
-  useEffect(() => {
-    if (anchoredTurn.current.threadId !== props.threadId) {
-      anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
-      return
-    }
-    if (!running) {
-      anchoredTurn.current.itemId = undefined
-      return
-    }
-    if (!activeAnchor || anchoredTurn.current.itemId === activeAnchor.id) return
-
-    anchoredTurn.current.itemId = activeAnchor.id
-    anchorIndex.current = activeAnchor.index
-    const el = scroller.current
-    setMode(modeForNewTurn(el ? isAtBottom(el) : true))
-  }, [running, props.threadId, activeAnchor])
+  /**
+   * Reads what the end is made of besides the virtual rows. Only called
+   * where layout is clean or has been read anyway (a resize notification,
+   * opening a chat, a disclosure), never once per streamed frame.
+   */
+  const measureFollow = useCallback(
+    (el: HTMLElement, settled = settledHeight(el)) => {
+      const state = follow.current
+      state.measured = true
+      state.clientHeight = el.clientHeight
+      state.extra = settled - virtualizer.getTotalSize()
+      state.contentTop = Number.parseFloat(getComputedStyle(el).paddingTop) || 0
+    },
+    [settledHeight, virtualizer],
+  )
+  /**
+   * The settled end of the scroll, from the virtual total and what was last
+   * measured, held at a pinned prompt while its answer is shorter than the
+   * screen; and the room below the content that makes that end reachable.
+   */
+  const endAndRoom = useCallback(() => {
+    const state = follow.current
+    const natural = Math.round(virtualizer.getTotalSize() + state.extra) - state.clientHeight
+    const start = state.pinned
+      ? virtualizer.measurementsCache[anchorIndex.current]?.start
+      : undefined
+    const pinned =
+      start === undefined ? undefined : Math.round(state.contentTop + start - TURN_TOP_GAP)
+    return turnRoom(natural, pinned)
+  }, [virtualizer])
+  const endOf = useCallback(() => endAndRoom().end, [endAndRoom])
+  const roomRef = useRef<HTMLDivElement>(null)
+  /**
+   * Gives the transcript the room below its content that the end needs.
+   * Written in the same step as the change that needs it, so the scroll
+   * height stays the same while an answer grows into the room, and a scroll
+   * towards the end is never clamped short of it. Outside the column, so the
+   * settled height the follow measures never includes it.
+   */
+  const applyRoom = useCallback(() => {
+    const state = follow.current
+    const room = state.pinned && state.measured ? endAndRoom().room : 0
+    if (room === state.room) return
+    state.room = room
+    if (roomRef.current) roomRef.current.style.height = room > 0 ? `${room}px` : ''
+  }, [endAndRoom])
+  const reducedMotion = useMemo(() => window.matchMedia('(prefers-reduced-motion: reduce)'), [])
+  /**
+   * Moves the viewport to a new end. While a turn streams it glides there;
+   * otherwise, and whenever motion is unwanted or nobody can see it, the end
+   * is written at once. Content that shrank is followed in the same frame:
+   * the browser clamps the scroll there anyway.
+   */
+  const followTo = useCallback(
+    (el: HTMLElement, end: number) => {
+      const state = follow.current
+      const now = performance.now()
+      // The user has hold of the transcript, or just turned the wheel up and
+      // its scroll has not arrived yet: nothing moves on its own meanwhile.
+      if (state.holding || (state.intent?.up && now - state.intent.at < INTENT_MS)) return
+      const glides =
+        (glide.running || now < state.liveUntil) &&
+        now >= state.instantUntil &&
+        document.visibilityState === 'visible' &&
+        !reducedMotion.matches
+      const from = glide.running ? glide.position : state.knownTop
+      if (!glides || end < from - 0.5) {
+        if (glide.running || Math.abs(end - state.knownTop) >= 0.5) writeScrollTop(el, end)
+        return
+      }
+      if (!glide.running && Math.abs(end - from) < 0.5) return
+      glide.setTarget(end, from)
+    },
+    [glide, reducedMotion, writeScrollTop],
+  )
+  /**
+   * The user handed the scroll back short of the end (a scroll that landed
+   * near it, a released scrollbar). They moved there themselves, so the rest
+   * of the way glides even when nothing is streaming.
+   */
+  const catchUp = useCallback(
+    (el: HTMLElement) => {
+      const state = follow.current
+      if (state.holding) return
+      const end = endOf()
+      if (glide.running || reducedMotion.matches || document.visibilityState !== 'visible') {
+        followTo(el, end)
+      } else if (Math.abs(end - state.knownTop) >= 0.5) {
+        glide.setTarget(end, state.knownTop)
+      }
+    },
+    [endOf, followTo, glide, reducedMotion],
+  )
+  /**
+   * A pointer or finger on the transcript means the user is selecting,
+   * clicking or dragging the scrollbar; a glide would pull the content from
+   * under them. Following resumes when they let go.
+   */
+  const hold = useCallback(
+    (releaseOn: readonly string[]) => {
+      stopJump()
+      glide.stop()
+      const state = follow.current
+      if (state.holding) return
+      state.holding = true
+      const release = () => {
+        for (const type of releaseOn) window.removeEventListener(type, release, true)
+        state.holding = false
+        const el = scroller.current
+        if (el && modeRef.current === 'follow-end') catchUp(el)
+      }
+      for (const type of releaseOn) window.addEventListener(type, release, true)
+    },
+    [catchUp, glide, stopJump],
+  )
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent) => {
+      // Touch has its own events below: a touch scroll cancels the pointer
+      // while the finger is still down.
+      if (event.pointerType !== 'touch') hold(POINTER_RELEASE)
+    },
+    [hold],
+  )
+  const onTouchStart = useCallback(() => hold(TOUCH_RELEASE), [hold])
+  /**
+   * The user asked the transcript to move by `delta` px; the scroll arrives
+   * after this. Successive steps of one gesture add up, as the browser's own
+   * target does, so a flick that asked for the end is known to have done so
+   * even when a burst of text lands in the same frame as its scroll.
+   */
+  const steer = useCallback(
+    (delta: number) => {
+      const state = follow.current
+      const now = performance.now()
+      const up = delta < 0
+      const previous = state.intent
+      const continued = previous?.up === up && now - previous.at < INTENT_MS
+      const reach = (continued ? previous.reach : state.knownTop) + delta
+      state.intent = { up, at: now, reach, toEnd: !up && reach >= endOf() - END_TOLERANCE_PX }
+      if (up) glide.stop()
+    },
+    [endOf, glide],
+  )
+  const onWheel = useCallback(
+    (event: ReactWheelEvent) => {
+      // The user steering in any way ends a running jump on the spot.
+      stopJump()
+      if (event.deltaY === 0) return
+      const unit =
+        event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? follow.current.clientHeight : 1
+      steer(event.deltaY * unit)
+    },
+    [steer, stopJump],
+  )
+  const onKeyDown = useCallback(
+    (event: ReactKeyboardEvent) => {
+      stopJump()
+      // Keys typed into a field inside the transcript move a caret, not the view.
+      if (event.defaultPrevented || isEditableTarget(event.target)) return
+      const step = scrollKeyStep(event, follow.current.clientHeight)
+      if (step !== undefined) steer(step)
+    },
+    [steer, stopJump],
+  )
 
   const onScroll = useCallback(() => {
     const el = scroller.current
     if (!el) return
+    const top = el.scrollTop
+    const state = follow.current
     // Our own corrections are not the user's opinion. The event that lands
     // where we wrote is ours; anything else is a real gesture.
-    if (
-      writtenScrollTop.current !== undefined &&
-      Math.abs(el.scrollTop - writtenScrollTop.current) < 1
-    ) {
+    if (writtenScrollTop.current !== undefined && Math.abs(top - writtenScrollTop.current) < 1) {
       writtenScrollTop.current = undefined
+      state.knownTop = top
       return
     }
     writtenScrollTop.current = undefined
-    // Any manual move away from the exact end hands control back at once.
-    // isAtBottom intentionally has 80px of slack for starting a new turn,
-    // but that slack must not trap small upward gestures during streaming.
-    const nextMode = el.scrollHeight - el.scrollTop - el.clientHeight <= 1 ? 'follow-end' : 'free'
-    if (modeRef.current !== nextMode) {
+    const mode = modeRef.current
+    const moved = top - state.knownTop
+    state.knownTop = top
+    const intent =
+      state.intent && performance.now() - state.intent.at < INTENT_MS ? state.intent : undefined
+    const distance = endOf() - top
+    // At the settled end the follow aims for, or at the raw scroll limit,
+    // where the browser clamps a glide that ran ahead of a commit.
+    const atEnd = distance <= END_TOLERANCE_PX || el.scrollHeight - top - el.clientHeight <= 1
+    let nextMode: ScrollMode = mode
+    if (atEnd) nextMode = 'follow-end'
+    else if (mode === 'follow-end') {
+      // Only a move up is the user taking over. A glide trails the end, the
+      // virtual list corrects for rows it measured, and the end moves away
+      // with every line; none of that leaves the follow. isAtBottom's 80px
+      // slack is for starting a turn and must not trap a small gesture here.
+      if (moved < -2 || (intent?.up === true && moved < 0)) nextMode = 'free'
+    } else if (
+      (moved > 0 || intent?.up === false) &&
+      (distance <= REENGAGE_PX || intent?.toEnd === true)
+    ) {
+      // Heading back down and nearly there, or sent to the end. A wheel fixes
+      // its target when it starts, so it lands short of an end that kept
+      // moving; that is still the user asking to follow, and the glide closes
+      // the rest.
+      nextMode = 'follow-end'
+    } else if (mode === 'reveal-hold') nextMode = 'free'
+    if (nextMode === 'free') glide.stop()
+    else if (glide.running) glide.sync(top)
+    if (mode !== nextMode) {
       // Update the ref before the next streamed chunk can run the layout
       // effect and pull the viewport back to the end.
       modeRef.current = nextMode
       setMode(nextMode)
+      if (nextMode === 'follow-end') catchUp(el)
     }
+    updateJump(distance)
     if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
-  }, [canLoadOnScroll, loadOlder])
+  }, [canLoadOnScroll, catchUp, endOf, glide, loadOlder, updateJump])
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -442,12 +750,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [virtualizer],
   )
 
-  const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(
-    thread.items,
-    thread.turnTiming,
-    thread.activeTurn?.id,
-  )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
   estimateRow.current = (index) => {
@@ -458,7 +760,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
-  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
   const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
   // The older-history hook stops waiting for the complete read when its effects
   // are torn down, which StrictMode also does on mount; the next run must ask again.
@@ -567,15 +868,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       const el = scroller.current
       const index = virtualizer.indexFromElement(row)
       const size = Math.round(row.getBoundingClientRect().height)
-      // resizeItem's rerender is flushed after this layout effect, so the
-      // runway has not changed yet; the cache says by how much it will.
+      // The runway still has the row's old height until resizeItem below;
+      // the cache says by how much it will change.
       const delta = size - (virtualizer.measurementsCache[index]?.size ?? size)
+      if (!el || delta === 0) {
+        virtualizer.resizeItem(index, size)
+        return
+      }
       // Read before resizeItem: the virtualizer may correct the scroll for a
       // row it thinks is above the fold, and adding the shift below on top
       // of that would move the viewport twice.
-      const from = el?.scrollTop ?? 0
-      virtualizer.resizeItem(index, size)
-      if (!el || delta === 0) return
+      const from = el.scrollTop
       // Another toggle is not new content, even when the scroll cannot follow it.
       if (modeRef.current === 'reveal-hold') heldHeight.current += delta
       if (header) slideFollowingInRow(row, header, delta)
@@ -587,7 +890,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       // When the scroll cannot follow (a thread shorter than its viewport,
       // closing at the very top) the rows below slide instead, which is the
       // only honest option left.
-      const nextMax = Math.max(0, settledScrollHeight(el) + delta - el.clientHeight)
+      const nextMax = Math.max(0, settledHeight(el) + delta - el.clientHeight)
       // The summary the user just clicked must stay on screen: it may rise to
       // the top edge or sink to the bottom edge, no further. Past that the
       // details push the text below instead, so a long reveal never scrolls
@@ -598,16 +901,17 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       const roomAbove = Math.max(0, headerTop - HEADER_MARGIN)
       const roomBelow = Math.max(0, viewport.height - headerTop - headerBox.height - HEADER_MARGIN)
       const shift = delta > 0 ? Math.min(delta, roomAbove) : Math.max(delta, -roomBelow)
-      // The runway commits its height in this same render; the follower
-      // applies the scroll before paint and starts everything that moved
-      // from where it was.
       pendingEndAnchor.current = {
         from,
         target: Math.min(Math.max(from + shift, 0), nextMax),
         delta,
       }
+      // Taking the size writes the runway's new height at once, and the
+      // list's change notification applies the scroll above (syncFollow) and
+      // starts everything that moved from where it was, before paint.
+      virtualizer.resizeItem(index, size)
     },
-    [virtualizer],
+    [settledHeight, virtualizer],
   )
 
   // Keep the turn timer above its first response until the whole turn ends.
@@ -616,13 +920,200 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // measurementsCache, not getOffsetForIndex: the latter clamps to the
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
-  const showWorkingRail = running && thread.activeTurn !== undefined
-  const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
-  const railOffset =
-    railIndex === undefined
-      ? virtualizer.getTotalSize()
-      : (virtualizer.measurementsCache[railIndex]?.start ?? virtualizer.getTotalSize())
+  const railIndexRef = useRef(railIndex)
+  railIndexRef.current = railIndex
+  const railReserveRef = useRef(railReserve)
+  railReserveRef.current = railReserve
+  const rail = useRef<{ element: HTMLDivElement | null; offset: number | undefined }>({
+    element: null,
+    offset: undefined,
+  })
+  // Like the rows, the rail moves where the virtual list says, when it says:
+  // rows above it change size without the transcript rendering.
+  const placeRail = useCallback(() => {
+    const { element, offset } = rail.current
+    if (!element) return
+    const index = railIndexRef.current
+    // Without a response row, over the room the runway keeps at its end.
+    const reserved = virtualizer.getTotalSize() - railReserveRef.current
+    const next =
+      index === undefined ? reserved : (virtualizer.measurementsCache[index]?.start ?? reserved)
+    if (next === offset) return
+    rail.current.offset = next
+    element.style.transform = `translateY(${next}px)`
+  }, [virtualizer])
+  const setRail = useCallback(
+    (element: HTMLDivElement | null) => {
+      rail.current = { element, offset: undefined }
+      placeRail()
+    },
+    [placeRail],
+  )
+  useLayoutEffect(placeRail)
 
+  /**
+   * Keeps the viewport where the mode wants it after the transcript changed
+   * size: after every commit and streamed frame (FrameScrollFollower) and
+   * whenever the virtual list measured a row. Reads no layout in follow-end.
+   */
+  const syncFollow = useCallback(() => {
+    const element = scroller.current
+    if (!element) return
+    const state = follow.current
+    state.total = virtualizer.getTotalSize()
+    sizeRunwayNow()
+
+    // A disclosure just changed its row's height: apply its scroll (see
+    // measureRow), whatever the mode.
+    const anchor = pendingEndAnchor.current
+    if (anchor) {
+      pendingEndAnchor.current = undefined
+      // The room gives way first: while a pinned answer is shorter than the
+      // screen, details open into it and the end stays where it is. The
+      // scroll below is then clamped to that end, and recorded as ours.
+      applyRoom()
+      writeScrollTop(element, anchor.target)
+      // Not the scroll position read here: a shrinking runway has already
+      // clamped it by the time this runs, which would hide the shift.
+      const shift = element.scrollTop - anchor.from
+      const settled = settledHeight(element)
+      measureFollow(element, settled)
+      const atEnd = settled + state.room - element.scrollTop - element.clientHeight <= 1
+      // Opening something taller than the space above it leaves the viewport
+      // short of the end. That was the user's choice; following the end now
+      // would drag the summary they just clicked out of view. They did not
+      // scroll away either, so hold without offering a jump.
+      const next: ScrollMode | undefined = atEnd
+        ? modeRef.current === 'free' || modeRef.current === 'reveal-hold'
+          ? 'follow-end'
+          : undefined
+        : modeRef.current === 'free'
+          ? undefined
+          : 'reveal-hold'
+      if (next === 'reveal-hold') heldHeight.current = settled
+      if (next && next !== modeRef.current) {
+        modeRef.current = next
+        setMode(next)
+      }
+      if (runwayRef.current && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        slideTranscript(runwayRef.current, shift, anchor.delta)
+      }
+      return
+    }
+
+    // A chat follows once it has been opened at its end.
+    if (openedThread.current?.threadId !== threadIdRef.current) return
+    if (!state.measured) measureFollow(element)
+    // Whatever the mode: a pinned answer grows into its room, so the scroll
+    // height holds still for someone reading above it too.
+    applyRoom()
+
+    if (modeRef.current === 'follow-end') {
+      // From the virtual total and what the last resize measured, never from
+      // layout: this runs for every streamed frame. Settled, never
+      // scrollHeight: a render during a disclosure's slide lands here while
+      // the runway or a closing reveal still extends the scrollable overflow.
+      followTo(element, endOf())
+      return
+    }
+
+    if (modeRef.current === 'reveal-hold') {
+      // Something new arrived below the details: now there is a latest to jump to.
+      if (settledHeight(element) > heldHeight.current + 1) {
+        modeRef.current = 'free'
+        setMode('free')
+        updateJump(endOf() - state.knownTop)
+      }
+      return
+    }
+
+    // Free: the end keeps moving away while the user reads above it.
+    updateJump(endOf() - state.knownTop)
+  }, [
+    applyRoom,
+    endOf,
+    followTo,
+    measureFollow,
+    settledHeight,
+    sizeRunwayNow,
+    updateJump,
+    virtualizer,
+    writeScrollTop,
+  ])
+  virtualChanged.current = () => {
+    placeRail()
+    // Scrolling changes the rows shown too; only a new total moved anything.
+    if (virtualizer.getTotalSize() !== follow.current.total) syncFollow()
+  }
+
+  // The reading position changes on purpose at two moments: when the user
+  // asks for the end of the chat they are in (sending a message, picking the
+  // open chat again), and when a turn starts. Opening another chat lands on
+  // its end by itself (FrameScrollFollower) and counts its request as done.
+  //
+  // Watch a turn's first item rather than the running boolean: a queued turn
+  // can start in the same render batch that the previous turn completes,
+  // leaving `running` true throughout. The submission id also survives the
+  // local -> durable handoff, so provider confirmation does not cause a
+  // second move.
+  //
+  // Someone following the end keeps following it, with the new prompt pinned
+  // near the top: the answer fills the screen below it without anything
+  // moving, then the follow glides after it. Before the first paint of the
+  // prompt, so the glide up starts from where the prompt appeared.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    const state = follow.current
+    const request = props.revealRequest ?? 0
+    const revealed = completedRevealRequest.current !== request
+    completedRevealRequest.current = request
+    if (revealed && modeRef.current !== 'follow-end') {
+      modeRef.current = 'follow-end'
+      setMode('follow-end')
+    }
+
+    let started = false
+    if (anchoredTurn.current.threadId !== props.threadId) {
+      anchoredTurn.current = { threadId: props.threadId, itemId: activeAnchor?.id }
+    } else if (!running) {
+      anchoredTurn.current.itemId = undefined
+    } else if (activeAnchor && anchoredTurn.current.itemId !== activeAnchor.id) {
+      started = true
+      anchoredTurn.current.itemId = activeAnchor.id
+      anchorIndex.current = activeAnchor.index
+      // The prompt is already in the runway, so a long one would put the end
+      // out of isAtBottom's reach; the mode says whether the user followed.
+      const following = modeRef.current !== 'free' || !el || isAtBottom(el)
+      const next = modeForNewTurn(following)
+      state.pinned = following
+      if (next !== modeRef.current) {
+        modeRef.current = next
+        setMode(next)
+      }
+    }
+    if (!el || !(revealed || started)) return
+    if (modeRef.current === 'follow-end') {
+      if (!state.measured) measureFollow(el)
+      applyRoom()
+      // Within a couple of screens the way there glides; from further up it
+      // lands at once, as a long glide would only blur past the chat.
+      const end = endOf()
+      if (Math.abs(end - state.knownTop) > REVEAL_GLIDE_SCREENS * state.clientHeight) {
+        writeScrollTop(el, end)
+      }
+    }
+    syncFollow()
+  }, [
+    activeAnchor,
+    applyRoom,
+    endOf,
+    measureFollow,
+    props.revealRequest,
+    props.threadId,
+    running,
+    syncFollow,
+    writeScrollTop,
+  ])
   // Find shows its own read in the find bar; a search jump's read shows here.
   const completeFailed = !finding && completeStatus === 'failed'
   const olderPill =
@@ -685,17 +1176,13 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           ref={scroller}
           onScroll={onScroll}
           // The user steering in any way ends a running jump on the spot.
-          onWheel={stopJump}
-          onPointerDown={stopJump}
-          onTouchStart={stopJump}
-          onKeyDown={stopJump}
+          onWheel={onWheel}
+          onPointerDown={onPointerDown}
+          onTouchStart={onTouchStart}
+          onKeyDown={onKeyDown}
         >
           <div className="thread__col">
-            <div
-              className="thread__runway"
-              ref={runwayRef}
-              style={{ height: virtualizer.getTotalSize() }}
-            >
+            <div className="thread__runway" ref={setRunway}>
               {rows.map((row) => {
                 const item = threadItemAt(thread.items, liveItems, row.index)
                 if (!item) return null
@@ -707,7 +1194,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                   <ThreadFrameRow
                     key={row.key}
                     index={row.index}
-                    start={row.start}
                     measureElement={virtualizer.measureElement}
                     frameStore={props.frameStore}
                     items={thread.items}
@@ -732,9 +1218,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 // replaced by the server's a few seconds in, and a key would
                 // remount the rail at exactly the moment this render position
                 // exists to survive. Before any response row exists the rail
-                // sits at the end of the runway, over the space the spacer
-                // below holds.
-                <div className="thread__rail" style={{ transform: `translateY(${railOffset}px)` }}>
+                // sits at the end of the runway, over the room the runway
+                // keeps there (railReserve).
+                <div className="thread__rail" ref={setRail}>
                   {activePresentation?.design ? (
                     <FrameWorkingRail
                       frameStore={props.frameStore}
@@ -750,10 +1236,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 </div>
               ) : null}
             </div>
-
-            {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
-              <div className="thread__rail-spacer" aria-hidden />
-            ) : null}
 
             {/* Above the plan and the diff: it is the only thing here that blocks
             the agent, so it should be the first thing the eye lands on. */}
@@ -788,6 +1270,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
               />
             ) : null}
           </div>
+          {/* Blank room below a pinned prompt's answer; see applyRoom. */}
+          <div className="thread__turn-room" ref={roomRef} aria-hidden />
         </div>
 
         {/* Mount after the scroller so its ref is set before the layout effect. */}
@@ -796,14 +1280,20 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           threadId={props.threadId}
           revealRequest={props.revealRequest ?? 0}
           completedRevealRequest={completedRevealRequest}
+          openedThread={openedThread}
           scroller={scroller}
           modeRef={modeRef}
-          anchorIndex={anchorIndex}
           pendingEndAnchor={pendingEndAnchor}
-          heldHeight={heldHeight}
-          runway={runwayRef}
-          virtualizer={virtualizer}
+          running={running}
+          follow={follow}
           writeScrollTop={writeScrollTop}
+          followTo={followTo}
+          measureFollow={measureFollow}
+          settledHeight={settledHeight}
+          applyRoom={applyRoom}
+          syncFollow={syncFollow}
+          endOf={endOf}
+          updateJump={updateJump}
           setMode={setMode}
         />
 
@@ -835,7 +1325,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
           </button>
         ) : null}
 
-        {mode === 'free' ? (
+        {mode === 'free' && jumpShown ? (
           <button className="jump" onClick={jumpToLatest}>
             <ArrowDownToLine size={13} aria-hidden />
             Jump to latest
@@ -856,33 +1346,45 @@ function FrameScrollFollower({
   threadId,
   revealRequest,
   completedRevealRequest,
+  openedThread,
   scroller,
   modeRef,
-  anchorIndex,
   pendingEndAnchor,
-  heldHeight,
-  runway,
-  virtualizer,
+  running,
+  follow,
   writeScrollTop,
+  followTo,
+  measureFollow,
+  settledHeight,
+  applyRoom,
+  syncFollow,
+  endOf,
+  updateJump,
   setMode,
 }: {
   frameStore: ThreadFrameStore
   threadId: string | undefined
   revealRequest: number
   completedRevealRequest: { current: number }
+  openedThread: { current: { threadId: string | undefined } | undefined }
   scroller: { current: HTMLDivElement | null }
   modeRef: { current: ScrollMode }
-  anchorIndex: { current: number }
   pendingEndAnchor: { current: EndAnchor | undefined }
-  heldHeight: { current: number }
-  runway: { current: HTMLDivElement | null }
-  virtualizer: Virtualizer<HTMLDivElement, Element>
+  running: boolean
+  follow: { current: FollowState }
   writeScrollTop: (element: HTMLElement, top: number) => void
+  followTo: (element: HTMLElement, end: number) => void
+  measureFollow: (element: HTMLElement, settled?: number) => void
+  settledHeight: (element: HTMLElement) => number
+  applyRoom: () => void
+  syncFollow: () => void
+  endOf: () => number
+  /** Offers or withdraws Jump to latest for the end's distance while free. */
+  updateJump: (distance: number) => void
   setMode: (mode: ScrollMode) => void
 }) {
   const getVersion = useCallback(() => frameStore.getSnapshot().itemVersion, [frameStore])
   useSyncExternalStore(frameStore.subscribe, getVersion, getVersion)
-  const openedThread = useRef(threadId)
 
   // Images and change previews can resize below the virtual list without a
   // transcript render. Keep the end pinned until the user takes over.
@@ -891,97 +1393,112 @@ function FrameScrollFollower({
     const content = element?.firstElementChild
     if (!element || !content) return
     const observer = new ResizeObserver(() => {
-      // Settled, not scrollHeight: this fires right after a disclosure
-      // commits, while its reveal and the runway are still mid-slide.
-      if (modeRef.current === 'follow-end') {
-        writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
-      }
+      // Layout is clean here, so this is where what surrounds the runway is
+      // measured. Settled, not scrollHeight: this fires right after a
+      // disclosure commits, while its reveal and the runway are still mid-slide.
+      const viewport = follow.current.clientHeight
+      measureFollow(element)
+      applyRoom()
+      if (modeRef.current === 'free') updateJump(endOf() - follow.current.knownTop)
+      if (modeRef.current !== 'follow-end') return
+      // A viewport that changed size keeps the last line where it was at
+      // once: a composer growing by a line must not cover it while a glide
+      // catches up.
+      if (follow.current.clientHeight !== viewport) writeScrollTop(element, endOf())
+      else followTo(element, endOf())
     })
     observer.observe(element)
     observer.observe(content)
     return () => observer.disconnect()
-  }, [scroller, modeRef, writeScrollTop])
+  }, [
+    scroller,
+    modeRef,
+    follow,
+    writeScrollTop,
+    followTo,
+    measureFollow,
+    applyRoom,
+    endOf,
+    updateJump,
+  ])
 
   // Follow every render before paint: replay and virtual row measurements can
   // change the scroll height without changing the live text frame version.
   useLayoutEffect(() => {
+    const state = follow.current
+    const now = performance.now()
+    // The end glides while a turn runs, and a moment after it: the reply
+    // still settles into its final form once streaming stops.
+    if (running) state.liveUntil = Number.POSITIVE_INFINITY
+    else if (state.liveUntil === Number.POSITIVE_INFINITY) state.liveUntil = now + FOLLOW_SETTLE_MS
     const element = scroller.current
     if (!element) return
 
-    // A disclosure just committed its row's new height: apply its scroll
-    // (see measureRow), whatever the mode.
-    const anchor = pendingEndAnchor.current
-    if (anchor) {
-      pendingEndAnchor.current = undefined
-      writeScrollTop(element, anchor.target)
-      // Not the scroll position read here: a shrinking runway has already
-      // clamped it by the time this effect runs, which would hide the shift.
-      const shift = element.scrollTop - anchor.from
-      const settled = settledScrollHeight(element)
-      const atEnd = settled - element.scrollTop - element.clientHeight <= 1
-      // Opening something taller than the space above it leaves the viewport
-      // short of the end. That was the user's choice; following the end now
-      // would drag the summary they just clicked out of view. They did not
-      // scroll away either, so hold without offering a jump.
-      const next: ScrollMode | undefined = atEnd
-        ? modeRef.current === 'free' || modeRef.current === 'reveal-hold'
-          ? 'follow-end'
-          : undefined
-        : modeRef.current === 'free'
-          ? undefined
-          : 'reveal-hold'
-      if (next === 'reveal-hold') heldHeight.current = settled
-      if (next && next !== modeRef.current) {
-        modeRef.current = next
-        setMode(next)
-      }
-      if (runway.current && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        slideTranscript(runway.current, shift, anchor.delta)
-      }
-      return
-    }
-
-    if (openedThread.current !== threadId || completedRevealRequest.current !== revealRequest) {
-      openedThread.current = threadId
+    if (
+      pendingEndAnchor.current === undefined &&
+      (openedThread.current === undefined || openedThread.current.threadId !== threadId)
+    ) {
+      // Opening a chat lands on its end in one step. The rows measure
+      // themselves in over the next frames; those corrections are not motion
+      // anyone should watch, so they are written at once too.
+      openedThread.current = { threadId }
+      // The chat opens at its own end; no earlier turn's room comes along.
+      state.pinned = false
+      applyRoom()
+      // Landing on the end is what a request that came with the chat asked for.
       completedRevealRequest.current = revealRequest
+      state.instantUntil = now + OPEN_SETTLE_MS
       modeRef.current = 'follow-end'
       setMode('follow-end')
-      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
+      const settled = settledHeight(element)
+      measureFollow(element, settled)
+      writeScrollTop(element, settled - element.clientHeight)
       return
     }
 
-    if (modeRef.current === 'follow-end') {
-      // Settled, not scrollHeight: any render during a disclosure's slide (a
-      // streamed delta, the virtualizer's range update) lands here while the
-      // runway or a closing reveal still extends the scrollable overflow.
-      // Following that put the viewport past the end for one frame, until
-      // the ResizeObserver pulled it back — a jump on every toggle.
-      writeScrollTop(element, settledScrollHeight(element) - element.clientHeight)
-      return
-    }
-
-    if (modeRef.current === 'reveal-hold') {
-      // Something new arrived below the details: now there is a latest to jump to.
-      if (settledScrollHeight(element) > heldHeight.current + 1) {
-        modeRef.current = 'free'
-        setMode('free')
-      }
-      return
-    }
-
-    if (modeRef.current === 'anchor-turn') {
-      const start = virtualizer.getOffsetForIndex(anchorIndex.current, 'start')?.[0]
-      if (start === undefined) return
-      const turnHeight = virtualizer.getTotalSize() - start
-      if (shouldReleaseAnchor(turnHeight, element.clientHeight)) {
-        setMode('follow-end')
-        return
-      }
-      writeScrollTop(element, start)
-    }
+    syncFollow()
   })
 
   return null
+}
+
+/** What the follow logic knows about the scroller without reading layout per frame. */
+type FollowState = {
+  /** The scroll position last written or reported by a scroll event. */
+  knownTop: number
+  /** Whether `extra` and `clientHeight` have been read yet. */
+  measured: boolean
+  /** Scroll height beyond the runway: what follows the rows, and the padding. */
+  extra: number
+  clientHeight: number
+  /** The virtual total the follow last acted on; a list change that keeps it moved nothing. */
+  total: number
+  /** Where the transcript's first row starts in the scroll: the scroller's top padding. */
+  contentTop: number
+  /**
+   * The turn at anchorIndex started while the user followed the end: its
+   * prompt holds the end near the top until its answer fills the screen.
+   */
+  pinned: boolean
+  /** Blank room written below the transcript so the pinned end can be reached. */
+  room: number
+  /** The end glides until this time; open while a turn runs. */
+  liveUntil: number
+  /** Every follow is a plain write until this time. */
+  instantUntil: number
+  /** A pointer or finger is down on the transcript. */
+  holding: boolean
+  /** The user's last wheel turn or scroll key: which way, when, and how far. */
+  intent:
+    | {
+        up: boolean
+        at: number
+        /** Where the gesture asked the scroll to go. */
+        reach: number
+        /** It asked for the end, or past it. */
+        toEnd: boolean
+      }
+    | undefined
 }
 
 /** Where the viewport stood when older rows were prepended above it. */
@@ -1009,6 +1526,59 @@ type EndAnchor = {
 const JUMP_EASE_MS = 110
 /** The slowest the jump glide moves, about 13px per frame at 60 Hz. */
 const JUMP_MIN_PX_PER_MS = 0.8
+/** Closer than this the minimum speed would dominate; the follow glide lands instead. */
+const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
+/** How long after a turn ends its last changes still glide into view. */
+const FOLLOW_SETTLE_MS = 1_200
+/** The working rail's footprint above its turn's first response: --working-rail-h in thread.css. */
+const WORKING_RAIL_PX = 42
+/** How long after a chat opens its rows are still measuring themselves in. */
+const OPEN_SETTLE_MS = 400
+/** A requested end at most this many viewports away glides there; a further one is written at once. */
+const REVEAL_GLIDE_SCREENS = 2
+/** How long a wheel turn or scroll key still explains the scroll events after it. */
+const INTENT_MS = 250
+/** Within this of the end the viewport counts as at the end. */
+const END_TOLERANCE_PX = 2
+/** A scroll heading down that lands this close to the end follows it again. */
+const REENGAGE_PX = 56
+/** Jump to latest appears past this distance from the end... */
+const JUMP_SHOW_PX = 160
+/** ...and goes once the end is closer than this again. */
+const JUMP_HIDE_PX = 96
+const POINTER_RELEASE = ['pointerup', 'pointercancel'] as const
+const TOUCH_RELEASE = ['touchend', 'touchcancel'] as const
+
+/** The browser's step for a wheel line and an arrow key. */
+const LINE_PX = 40
+
+/** How far a key scrolls the transcript, negative for up, if it scrolls at all. */
+function scrollKeyStep(
+  event: { key: string; shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean },
+  viewport: number,
+): number | undefined {
+  // Alt+Arrow moves by turn and says so itself; the others are not scrolling.
+  if (event.altKey || event.ctrlKey || event.metaKey) return undefined
+  const page = Math.max(LINE_PX, viewport * 0.875)
+  switch (event.key) {
+    case 'ArrowUp':
+      return -LINE_PX
+    case 'ArrowDown':
+      return LINE_PX
+    case 'PageUp':
+      return -page
+    case 'PageDown':
+      return page
+    case ' ':
+      return event.shiftKey ? -page : page
+    case 'Home':
+      return Number.NEGATIVE_INFINITY
+    case 'End':
+      return Number.POSITIVE_INFINITY
+    default:
+      return undefined
+  }
+}
 
 const ITEM_ENTRY_MS = 360
 const TURN_SETTLE_MS = 520
@@ -1109,7 +1679,6 @@ function useFrameLiveItemRange(
 
 const ThreadFrameRow = memo(function ThreadFrameRow({
   index,
-  start,
   measureElement,
   frameStore,
   items,
@@ -1128,7 +1697,6 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
   onRevertCheckpoint,
 }: {
   index: number
-  start: number
   measureElement: (node: Element | null) => void
   frameStore: ThreadFrameStore
   items: Item[]
@@ -1211,8 +1779,8 @@ const ThreadFrameRow = memo(function ThreadFrameRow({
     <div
       className={`thread__row${suppressed ? ' is-suppressed' : ''}${compactToNext ? ' is-compact-to-next' : ''}${entering ? ' is-entering' : ''}${settling ? ' is-settling' : ''}${railAnchor ? ' is-rail-anchor' : ''}`}
       data-index={index}
+      // The virtual list writes the row's position itself (directDomUpdates).
       ref={measureElement}
-      style={{ transform: `translateY(${start}px)` }}
     >
       {responseLead && !presentation.design && presentation.activityGroups.length === 0 ? (
         <TurnDuration elapsedMs={presentation.elapsedMs} stopped={presentation.stopped} />
@@ -2851,7 +3419,8 @@ function CopyAction({ text, label }: { text: string; label: string }) {
   )
 }
 
-function TurnDuration(
+// Memoized: the working rail renders it on every transcript render.
+const TurnDuration = memo(function TurnDuration(
   props: { startedAt: number } | { elapsedMs: number; stopped?: boolean | undefined },
 ) {
   const working = 'startedAt' in props
@@ -2859,7 +3428,9 @@ function TurnDuration(
   return (
     <div className={`activity activity--duration${working ? ' activity--working' : ''}`}>
       <div className="activity__summary">
-        {stopped ? (
+        {working ? (
+          <WorkingPulse />
+        ) : stopped ? (
           <span className="activity__glyph" aria-hidden>
             <Stop strokeWidth={1.8} />
           </span>
@@ -2875,6 +3446,19 @@ function TurnDuration(
         </span>
       </div>
     </div>
+  )
+})
+
+/**
+ * The one sign that a turn is still working, the same for every turn: a dot
+ * that breathes on the compositor (transform and opacity only), so it costs
+ * the main thread nothing per frame while a reply streams beside it.
+ */
+function WorkingPulse() {
+  return (
+    <span className="activity__glyph" aria-hidden>
+      <span className="activity__pulse" />
+    </span>
   )
 }
 
@@ -2919,13 +3503,7 @@ const WorkingRail = memo(function WorkingRail({
   return (
     <div className="activity activity--working">
       <div className="activity__summary">
-        <span className="activity__working-orb">
-          <ThinkingOrb
-            state={label === 'Searching' ? 'searching' : 'working'}
-            size={20}
-            aria-hidden
-          />
-        </span>
+        <WorkingPulse />
         <WorkingLabel label={label} startedAt={startedAt} />
       </div>
     </div>
