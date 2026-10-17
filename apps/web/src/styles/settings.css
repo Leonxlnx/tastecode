@@ -2678,221 +2678,63 @@
   opacity: 0.5;
 }
 
-/* ---------- MCP settings ---------- */
+/* ---------- MCP servers ---------- */
 
-.mcp-settings__header,
-.mcp-row__heading,
-.mcp-row__failure {
+.settings .mcp-settings__provider {
   display: flex;
   align-items: center;
-}
-
-.mcp-settings__header {
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 24px;
-  margin-bottom: 24px;
-}
-
-.mcp-settings__actions,
-.mcp-settings__provider {
-  display: flex;
-  align-items: center;
-}
-
-.mcp-settings__actions {
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.mcp-settings__provider {
-  gap: 7px;
+  gap: 8px;
   color: var(--text-3);
-  font-size: var(--t-xs);
+  font-size: var(--t-sm);
 }
 
-.mcp-settings__provider-select .app-select__trigger {
+.settings .mcp-settings__provider-select .app-select__trigger {
   min-width: 108px;
 }
 
-.mcp-settings__header .settings__title {
-  margin-bottom: 5px;
-}
-
-.mcp-settings__header p,
-.mcp-settings__empty,
-.mcp-settings__message,
-.mcp-row p,
-.mcp-row h2 {
-  margin: 0;
-}
-
-.mcp-settings__header p,
-.mcp-settings__empty,
-.mcp-row__transport,
-.mcp-row__details {
+/* The tool list is one more detail under the server, opened on request. */
+.settings .mcp-row__details {
+  margin-top: 2px;
   color: var(--text-3);
   font-size: var(--t-sm);
+  line-height: 1.45;
 }
 
-.mcp-settings__empty,
-.mcp-settings__message {
-  margin-bottom: 14px;
-  padding: 10px 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-
-.mcp-settings__empty {
-  padding: 20px;
-  background: var(--bg-rail);
-  text-align: center;
-}
-
-.mcp-settings__message.is-error,
-.mcp-row__failure {
-  color: var(--error);
-}
-
-.mcp-row {
-  align-items: flex-start;
-}
-
-.mcp-row.is-disabled {
-  opacity: 0.58;
-}
-
-.mcp-row__heading {
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.mcp-row__heading h2 {
-  color: var(--text);
-  font-size: var(--t-md);
-  font-weight: 550;
-}
-
-.mcp-row__heading span {
-  padding: 1px 6px;
-  background: var(--surface-2);
-  border-radius: var(--r-pill);
-  color: var(--text-3);
-  font-size: var(--t-xs);
-  text-transform: capitalize;
-}
-
-.mcp-row__transport {
-  overflow: hidden;
-  margin-top: 7px !important;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mcp-row__failure {
-  gap: 6px;
-  margin-top: 10px !important;
-  font-size: var(--t-xs);
-}
-
-.mcp-row__details {
-  margin-top: 10px;
-}
-
-.mcp-row__details summary {
+.settings .mcp-row__details summary {
+  width: fit-content;
+  border-radius: var(--r-xs);
   cursor: pointer;
+  transition: color var(--dur-fast) var(--ease-out);
 }
 
-.mcp-row__details ul {
-  margin: 8px 0 0;
+.settings .mcp-row__details summary:hover {
+  color: var(--text-2);
+}
+
+.settings .mcp-row__details summary:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.settings .mcp-row__details ul {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0 2px;
   padding-left: 18px;
 }
 
-.mcp-row__details li + li {
-  margin-top: 5px;
+.settings .mcp-row__details p {
+  margin: 6px 0 2px;
 }
 
-.mcp-row__actions {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 7px;
-  max-width: 230px;
-}
-
-.mcp-inherited {
-  margin-top: 28px;
-}
-
-.mcp-inherited__header {
-  margin-bottom: 12px;
-}
-
-.mcp-inherited__header h2 {
-  margin: 0 0 4px;
+.settings .mcp-row__details strong {
   color: var(--text-2);
-  font-size: var(--t-md);
-  font-weight: 520;
+  font-weight: 500;
 }
 
-.mcp-inherited__header p {
-  margin: 0;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-}
-
-.mcp-editor {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-bottom: 20px;
-  padding: 12px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-lg);
-  background: var(--bg-rail);
-}
-
-.mcp-editor label {
-  display: grid;
-  gap: 6px;
-  color: var(--text-2);
-  font-size: var(--t-sm);
-}
-
-.mcp-editor small {
-  color: var(--text-3);
-  font-size: var(--t-xs);
-}
-
-.mcp-settings__scope-note {
-  margin: 0 0 14px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.5;
-}
-
-.mcp-editor .mcp-settings__scope-note {
-  margin: 0;
-}
-
-/* Room for a transport object without scrolling. */
-.settings form.mcp-editor textarea {
+/* Room for a transport object without scrolling (outranks the shared 72px). */
+.settings textarea.set-input.mcp-editor__transport {
   min-height: 130px;
-}
-
-.mcp-editor__wide,
-.mcp-editor footer {
-  grid-column: 1 / -1;
-}
-
-.mcp-editor footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
 .shell.is-macos .settings__titlebar {

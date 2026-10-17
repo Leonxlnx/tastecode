@@ -357,6 +357,15 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).not.toMatch(/skills-settings|skill-row/)
   })
 
+  it('lists MCP servers on the same rows, with the editor on the shared form', () => {
+    // No header, empty card, message box, inherited header or editor grid of its own.
+    expect(settingsCss).not.toMatch(
+      /mcp-settings__(header|actions|empty|message|scope-note)|mcp-inherited|\.mcp-row(__heading|__actions|__transport|__failure)? \{|\.mcp-editor \{/,
+    )
+    // Only the tool list under a server is its own.
+    expect(settingsCss).toMatch(/\.settings \.mcp-row__details \{[^}]*font-size: var\(--t-sm\);/s)
+  })
+
   it('draws the provider updates line from quiet buttons at the note size', () => {
     expect(settingsCss).toMatch(
       /\.settings \.provider-updates-check \{[^}]*margin: 24px 0 0;[^}]*font-size: var\(--t-sm\);/s,
