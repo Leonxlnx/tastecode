@@ -92,7 +92,8 @@ export function spawnCursorAgent(
 /**
  * How long a short cursor-agent command may take. Each one starts node and
  * most go online: on a busy Windows machine `status` took 3.5–12.8 s and
- * `models` 9–14.5 s, so the general five-second CLI limit failed them.
+ * `models` 9–14.5 s, so the general five-second CLI limit failed them. The
+ * model listing gets longer still (CURSOR_MODELS_TIMEOUT_MS in listing.ts).
  */
 export const CURSOR_COMMAND_TIMEOUT_MS = 30_000
 

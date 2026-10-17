@@ -1,6 +1,7 @@
 import type { Account } from '@harness/contracts'
 import { killTree, type runCli } from '@harness/proc'
 import { CURSOR_COMMAND_TIMEOUT_MS, runCursorAgent, spawnCursorAgent } from './launch.js'
+import { readCursorModels } from './listing.js'
 
 /**
  * A read that runs out of time rejects, so the caller keeps the last answer
@@ -14,14 +15,13 @@ export async function cursorAccount(run: typeof runCli = runCursorAgent): Promis
   // offline machine reports as well. `models` checks the expiry locally
   // before it goes online, so in that one ambiguous case it decides: an
   // expired sign-in becomes signed out and the app offers Sign in again,
-  // while an offline machine with a valid sign-in stays signed in.
+  // while an offline machine with a valid sign-in stays signed in. The picker
+  // asks for the same listing, so a read already under way answers both.
   if (!/unable to fetch user details/i.test(status.stdout)) {
     const email = cursorEmail(status.stdout)
     return { signedIn: true, ...(email ? { email } : {}) }
   }
-  const probe = await run('cursor-agent', ['models'], CURSOR_COMMAND_TIMEOUT_MS).catch(
-    () => undefined,
-  )
+  const probe = await readCursorModels(run).catch(() => undefined)
   return { signedIn: !(probe && cursorNeedsSignIn(probe)) }
 }
 

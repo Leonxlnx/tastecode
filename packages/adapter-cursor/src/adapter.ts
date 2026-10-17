@@ -4,7 +4,8 @@ import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@ha
 import { killTree, ProtocolFrameError, readNdjson, type runCli, type spawnCli } from '@harness/proc'
 import { CURSOR_SIGN_IN_REQUIRED, cursorNeedsSignIn } from './auth.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
-import { CURSOR_COMMAND_TIMEOUT_MS, runCursorAgent, spawnCursorAgent } from './launch.js'
+import { runCursorAgent, spawnCursorAgent } from './launch.js'
+import { readCursorModels } from './listing.js'
 import {
   collapseCursorModels,
   getCursorIndex,
@@ -232,8 +233,9 @@ export class CursorAdapter extends EventEmitter<Events> {
 
   respondToApproval(): void {}
 
+  /** Shares its read with the sign-in check and any other picker (listing.ts). */
   async listModels(): Promise<Model[]> {
-    const result = await this.#run('cursor-agent', ['models'], CURSOR_COMMAND_TIMEOUT_MS)
+    const result = await readCursorModels(this.#run)
     if (cursorNeedsSignIn(result)) throw new Error(CURSOR_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Cursor model discovery failed')
     return parseCursorModels(result.stdout)

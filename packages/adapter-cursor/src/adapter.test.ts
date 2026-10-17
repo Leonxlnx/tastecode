@@ -7,6 +7,7 @@ import type { DomainEvent } from '@harness/contracts'
 import { spawnOwned } from '@harness/proc/kill'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CursorAdapter, CURSOR_CAPABILITIES } from './adapter.js'
+import { resetCursorModelsForTests } from './listing.js'
 import { resetCursorIndexForTests } from './models.js'
 
 vi.mock('@harness/proc/kill', async (original) => ({
@@ -25,6 +26,11 @@ function expiredSignIn(): { status: CapturedRun; models: CapturedRun } {
       'utf8',
     ),
   ) as { status: CapturedRun; models: CapturedRun }
+}
+
+/** `cursor-agent models` as 2026.07.23-e383d2b printed it on 2026-10-16. */
+function todayListing(): string {
+  return readFileSync(new URL('./fixtures/cursor-models-2026-10-16.txt', import.meta.url), 'utf8')
 }
 
 afterEach(() => {
@@ -206,7 +212,7 @@ describe('Cursor adapter', () => {
     const adapter = new CursorAdapter({
       run: async (command, args, timeoutMs) => {
         // `models` took 9–14.5 s on a busy machine; five seconds failed it.
-        expect([command, args, timeoutMs]).toEqual(['cursor-agent', ['models'], 30_000])
+        expect([command, args, timeoutMs]).toEqual(['cursor-agent', ['models'], 60_000])
         return {
           code: 0,
           stdout: [
@@ -238,6 +244,40 @@ describe('Cursor adapter', () => {
         serviceTiers: [],
       },
     ])
+  })
+
+  it('gives the model listing a minute to answer', async () => {
+    // cursor-agent fetches the account's models before it prints a line; a
+    // cold start took 12.6 s. Through the real runner and its time limit.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' })
+    const slow = new FakeChild()
+    const silent = new FakeChild()
+    vi.mocked(spawnOwned).mockReturnValueOnce(slow).mockReturnValueOnce(silent)
+    try {
+      const listing = new CursorAdapter().listModels()
+      await vi.advanceTimersByTimeAsync(12_000)
+      slow.stdout.end(todayListing())
+      await new Promise((resolve) => setImmediate(resolve))
+      slow.emit('close', 0)
+      await expect(listing).resolves.toHaveLength(53)
+
+      resetCursorModelsForTests()
+      let settled = false
+      const hung = new CursorAdapter().listModels()
+      hung.then(
+        () => (settled = true),
+        () => (settled = true),
+      )
+      await vi.advanceTimersByTimeAsync(59_000)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1_000)
+      await expect(hung).rejects.toThrow('CLI did not respond within the time limit')
+      expect(silent.killed).toBe(true)
+    } finally {
+      vi.useRealTimers()
+      resetCursorModelsForTests()
+    }
   })
 
   it('asks for a fresh sign-in when the CLI refuses an expired one', async () => {
