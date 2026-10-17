@@ -1,5 +1,5 @@
 import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES } from '@harness/adapter-cursor'
+import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
@@ -112,6 +112,7 @@ const PROBES: Probe[] = [
     // fails the turn, through the stream's ProtocolFrameError.
     setup: {
       installUrl: 'https://docs.cursor.com/en/cli/installation',
+      installCommand: cursorInstallCommand(),
       login: 'app',
     },
   },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
+import { cursorInstallCommand } from '@harness/adapter-cursor'
 import { grokInstallCommand } from '@harness/adapter-grok/updates'
 import {
   detectProviders,
@@ -294,6 +295,12 @@ describe('install command resolution', () => {
     const grok = find(await detectProviders(system()), 'grok')
     expect(grok.setup?.installCommand).toBe(grokInstallCommand())
     await expect(installCommandFor('grok')).resolves.toBe(grokInstallCommand())
+  })
+
+  it('installs Cursor with the installer Cursor documents', async () => {
+    const cursor = find(await detectProviders(system()), 'cursor')
+    expect(cursor.setup?.installCommand).toBe(cursorInstallCommand())
+    await expect(installCommandFor('cursor')).resolves.toBe(cursorInstallCommand())
   })
 
   it('refuses targets it cannot script instead of guessing', async () => {
