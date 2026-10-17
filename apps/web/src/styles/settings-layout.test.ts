@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
 const systemCss = readFileSync(new URL('./settings-system.css', import.meta.url), 'utf8')
 const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url), 'utf8')
+const generalCss = readFileSync(new URL('./general-settings.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
@@ -49,6 +50,22 @@ describe('settings viewport CSS', () => {
       /\.settings \.set-section \+ \.set-section,\s*\.settings \.set-row \+ \.set-section \{[^}]*margin-top: 36px;/s,
     )
   })
+
+  it('sets General in the row type, its settings the section step apart', () => {
+    expect(generalCss).toMatch(/\.general \{[^}]*gap: 36px;/s)
+    expect(generalCss).toMatch(
+      /\.general-setting__name \{[^}]*color: var\(--text-2\);[^}]*font-size: var\(--t-md\);[^}]*font-weight: 500;[^}]*line-height: 1\.35;/s,
+    )
+    expect(generalCss).toMatch(
+      /\.general-setting__note \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);[^}]*line-height: 1\.45;/s,
+    )
+    expect(generalCss).toMatch(
+      /\.general-option__label \{[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+    )
+    // Letter-spacing belongs to the title and entity roles only.
+    expect(generalCss).not.toMatch(/letter-spacing/)
+  })
+
   it('keeps narrow categories on the horizontal axis', () => {
     expect(settingsCss).toMatch(
       /@media \(max-width: 700px\) \{[\s\S]*?\.settings__nav \{[^}]*overflow-x: auto;/s,
