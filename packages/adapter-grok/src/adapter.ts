@@ -24,6 +24,7 @@ import {
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
 import { GROK_CAPABILITIES } from './capabilities.js'
+import { GrokSubagents } from './subagents.js'
 
 export { GROK_CAPABILITIES } from './capabilities.js'
 
@@ -270,6 +271,9 @@ const GrokFrameSchema = z.object({
 type GrokFrame = z.infer<typeof GrokFrameSchema>
 
 type OpenTool = {
+  /** Grok's id for the call; a subagent's snapshot is keyed by it. */
+  toolCallId: string
+  toolName: string
   itemId: string
   itemType: 'command' | 'file_change' | 'tool_call'
   label: string
@@ -484,6 +488,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
     }
     /** toolCallId -> the open item it maps to. */
     const tools = new Map<string, OpenTool>()
+    const subagents = new GrokSubagents((event) => this.emit('event', event))
     const completeTool = (
       entry: OpenTool,
       status: 'completed' | 'failed',
@@ -513,9 +518,11 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           : {}),
         createdAt: Date.now(),
       }
-      this.emit('event', { type: 'item.completed', item })
+      const subagent = subagents.sent(item, entry.toolCallId)
+      this.emit('event', { type: 'item.completed', item: subagent ? { ...item, subagent } : item })
     }
     const finishItems = (status: 'completed' | 'failed', messagePhase?: AssistantPhase) => {
+      subagents.endTurn()
       reasoning.complete(turnId, 'reasoning', this, status)
       message.complete(turnId, 'message', this, status, messagePhase)
       for (const entry of tools.values()) completeTool(entry, status)
@@ -547,6 +554,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
           reportedError = frame.message
           return
         }
+        // A subagent's own steps stay out of the transcript; its row counts them.
+        if (subagents.isChildFrame(frame, tools.keys())) return
         if (frame.type === 'thought' && frame.data !== undefined) {
           message.complete(turnId, 'message', this, 'completed', 'commentary')
           message = new StreamedItem(`${turnId}-message-${++messageCounter}`)
@@ -576,6 +585,8 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               ? JSON.stringify(frame.rawInput)
               : undefined
           const entry = {
+            toolCallId: frame.toolCallId,
+            toolName: name,
             itemId,
             itemType,
             label: grokToolLabel(name, frame.title, frame.rawInput),
@@ -592,6 +603,7 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : {}),
           } satisfies OpenTool
           tools.set(frame.toolCallId, entry)
+          subagents.spawn(frame.toolCallId, name, frame.rawInput)
           const item: Item = {
             id: itemId,
             turnId,
@@ -612,12 +624,17 @@ export class GrokAdapter extends EventEmitter<GrokAdapterEvents> {
               : {}),
             createdAt: Date.now(),
           }
-          this.emit('event', { type: 'item.started', item })
+          const subagent = subagents.sent(item, frame.toolCallId)
+          this.emit('event', {
+            type: 'item.started',
+            item: subagent ? { ...item, subagent } : item,
+          })
           return
         }
         if (frame.type === 'tool_call_update' && frame.toolCallId && frame.status) {
           const entry = tools.get(frame.toolCallId)
           if (!entry) return
+          subagents.answered(frame.toolCallId, entry.toolName, frame)
           const output = grokToolOutput(frame)
           const diff = entry.itemType === 'file_change' ? grokDiff(frame.content) : undefined
           completeTool(entry, frame.status === 'failed' ? 'failed' : 'completed', output, diff)
