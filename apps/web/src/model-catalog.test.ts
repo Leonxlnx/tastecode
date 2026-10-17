@@ -164,6 +164,20 @@ describe('model catalog', () => {
     expect(filterModelChoicesByQuery(choices, '  ')).toBe(choices)
   })
 
+  it('finds a model by the lab its source declares', () => {
+    const choices = choicesFor({ provider: 'cursor', sourceName: 'Cursor', mark: 'cursor' }, [
+      { ...model, id: 'gemini-4-argon', displayName: 'Gemini 4 Argon', lab: 'Google' },
+      { ...model, id: 'kimi-k2.7', displayName: 'Kimi K2.7', lab: 'Moonshot' },
+      { ...model, id: 'composer-2.5', displayName: 'Composer 2.5' },
+    ])
+
+    expect(filterModelChoicesByQuery(choices, 'google')).toEqual([choices[0]])
+    expect(filterModelChoicesByQuery(choices, 'moonshot kimi')).toEqual([choices[1]])
+    // A row without a lab is still found by its name, and never by a stray "undefined".
+    expect(filterModelChoicesByQuery(choices, 'composer')).toEqual([choices[2]])
+    expect(filterModelChoicesByQuery(choices, 'undefined')).toEqual([])
+  })
+
   describe('default visibility', () => {
     const named = (entries: [id: string, displayName: string][]) =>
       entries.map(([id, displayName]) => ({ ...model, id, displayName }))

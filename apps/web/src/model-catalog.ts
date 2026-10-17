@@ -37,8 +37,10 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
 
   const terms = normalizedQuery.split(MODEL_SEARCH_WHITESPACE)
   return choices.filter((choice) => {
+    // The lab a source declares finds a model whose name does not carry it:
+    // "google" finds Gemini, "moonshot" finds Kimi.
     const searchableText =
-      `${choice.sourceName} ${choice.model.displayName} ${choice.model.id}`.toLowerCase()
+      `${choice.sourceName} ${choice.model.lab ?? ''} ${choice.model.displayName} ${choice.model.id}`.toLowerCase()
     return terms.every((term) => searchableText.includes(term))
   })
 }
