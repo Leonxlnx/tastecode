@@ -161,6 +161,7 @@ import { ModelBulkActions, ModelVisibilityRow } from './ModelVisibilityControls.
 import { LARGE_MODEL_SOURCE_ROWS, ModelLabSection } from './ModelLabSection.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
+import type { PlanLimitsSource } from './usage/UsageLimits.js'
 import {
   SettingsEmpty,
   SettingsNotice,
@@ -289,6 +290,8 @@ function SettingsComponent(props: {
   projectName: string | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
+  /** Plan limits for every provider, shown on the Usage tab. */
+  usageLimits?: PlanLimitsSource | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
@@ -492,9 +495,7 @@ function SettingsComponent(props: {
       </aside>
 
       <main className="settings__main" ref={main}>
-        <div
-          className={`settings__content${section === 'usage' ? ' settings__content--usage' : ''}`}
-        >
+        <div className="settings__content">
           {section === 'profile' ? (
             <ProfileSettings
               transport={props.transport}
@@ -518,7 +519,9 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <GeneralSettings {...props} /> : null}
-          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
+          {section === 'usage' ? (
+            <UsageSettings transport={props.transport} limits={props.usageLimits} />
+          ) : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings

@@ -143,7 +143,7 @@ function LimitSource(props: {
  * hover. Values that could not be refreshed say how old they are rather than
  * raising an error; values that are merely old say when they were updated.
  */
-function sourceStatus(
+export function sourceStatus(
   state: AccountLimitsState,
   source: ProviderLimitSource | undefined,
   hasValues: boolean,
@@ -406,7 +406,7 @@ function ResetCreditExpiries(props: {
   )
 }
 
-function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
+export function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined {
   const summary = state.summary
   if (!summary) return undefined
   if (summary.limitSource) return summary.limitSource
@@ -415,7 +415,7 @@ function limitSource(state: AccountLimitsState): ProviderLimitSource | undefined
     : { provider: state.provider, status: 'unavailable' }
 }
 
-function remaining(limit: Limit): number {
+export function remaining(limit: Limit): number {
   return Math.min(100, Math.max(0, Math.round(100 - limit.usedPercent)))
 }
 
@@ -424,7 +424,7 @@ function remaining(limit: Limit): number {
  * window still ahead, in percent. Absent without a window length and reset
  * time, or when the mark would sit on the bar's rounded ends.
  */
-function evenPace(limit: Limit, now: number): number | undefined {
+export function evenPace(limit: Limit, now: number): number | undefined {
   if (limit.windowMinutes === undefined || limit.resetsAt === undefined) return undefined
   const ahead = ((limit.resetsAt - now) / (limit.windowMinutes * 60_000)) * 100
   return ahead >= 2 && ahead <= 98 ? ahead : undefined
