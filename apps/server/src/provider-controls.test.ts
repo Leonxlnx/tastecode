@@ -242,10 +242,15 @@ describe('declared provider controls', () => {
     expect(usageLimitSource).not.toHaveBeenCalled()
 
     release()
-    await expect(Promise.all([first, joined])).resolves.toEqual([
-      { provider: 'claude-code', status: 'ready', limits: [] },
-      { provider: 'claude-code', status: 'ready', limits: [] },
-    ])
+    // A read is dated when it ran, after the wait.
+    const read = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [],
+      checkedAt: 10_000,
+      origin: 'read',
+    }
+    await expect(Promise.all([first, joined])).resolves.toEqual([read, read])
     expect(usageLimitSource).toHaveBeenCalledTimes(1)
     await claude.usageLimitSource()
     expect(beforeLimitRead).toHaveBeenCalledTimes(1)
@@ -1054,6 +1059,8 @@ describe('limit read backoff and intervals', () => {
       .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
       .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
     const { registry } = setup({
+      // Every account read reaches the CLI, so the switch below is seen at once.
+      accountCacheMs: 0,
       services: { grok: { account, usageLimitSource, signOut: async () => {} } },
     })
     const grok = registry.forProvider('grok')
@@ -1430,6 +1437,8 @@ describe('last-known limits', () => {
       .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test' })
       .mockResolvedValue({ signedIn: true, email: 'second@example.test' })
     const { registry } = setup({
+      // Every account read reaches the CLI, so the switch below is seen at once.
+      accountCacheMs: 0,
       services: { grok: { account, usageLimitSource, signOut: async () => {} } },
     })
     const grok = registry.forProvider('grok')
