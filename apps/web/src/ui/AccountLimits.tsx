@@ -21,14 +21,28 @@ export type AccountLimitsState = UsageSummaryState
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Called once while the limits are on screen; returns the release for when they leave. */
+  onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
-  const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
+  const onShow = useRef(props.onShow)
+  // A source without plan limits is left out; one that could not be read yet is not.
+  const visibleStates = props.states.filter((state) => {
+    const source = limitSource(state)
+    return source?.status !== 'unavailable' || source.reason === 'failed'
+  })
 
   // The popup lands on the list itself rather than on its first Retry or Use.
   useLayoutEffect(() => panel.current?.focus(), [])
+  useLayoutEffect(() => {
+    onShow.current = props.onShow
+  })
+  // Showing the limits is what lets the server read the sources it reads only
+  // on view. Once per mount, so a new callback identity does not ask again,
+  // and before paint, so a source not read yet already reads as checking.
+  useLayoutEffect(() => onShow.current?.(), [])
 
   const retry = (provider: ProviderId) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.
@@ -70,6 +84,9 @@ function LimitSource(props: {
   const limits = source?.status === 'ready' ? source.limits : []
   const name = providerDisplayName(props.state.provider)
   const status = sourceStatus(props.state, source, limits.length > 0)
+  const retryable =
+    props.state.status === 'error' ||
+    (props.state.status === 'ready' && source?.status === 'unavailable')
   return (
     <section
       className="account-menu__source"
@@ -87,7 +104,7 @@ function LimitSource(props: {
             {status.detail ? <span className="visually-hidden">. {status.detail}</span> : null}
           </span>
         ) : null}
-        {props.state.status === 'error' ? (
+        {retryable ? (
           <button
             className="account-menu__retry"
             type="button"
@@ -123,6 +140,22 @@ function sourceStatus(
       : { label: 'Unavailable', detail: `Plan limits couldn’t be loaded. ${state.message}` }
   }
   if (!source) return { label: 'Checking…' }
+  // Only shown sources reach here unavailable: ones that could not be read yet.
+  if (source.status === 'unavailable') {
+    return state.status === 'loading'
+      ? { label: 'Checking…' }
+      : {
+          label: 'Unavailable',
+          detail: ['Plan limits couldn’t be loaded.', source.error].filter(Boolean).join(' '),
+        }
+  }
+  // The server kept these values through a failed refresh and retries on its own.
+  if (source.status === 'ready' && source.stale && hasValues) {
+    return {
+      label: 'Last known',
+      detail: ['Couldn’t refresh plan limits.', source.refreshError].filter(Boolean).join(' '),
+    }
+  }
   if (!hasValues) return { label: 'None reported', detail: 'No plan limits reported.' }
   return undefined
 }
