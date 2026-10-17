@@ -5,9 +5,16 @@ import type { Item } from '@harness/contracts'
 import { ThreadFrameStore } from '../thread-frame-store.js'
 import { emptyThread, reduceDeltas, type ThreadState } from '../thread-store.js'
 import { mockKeyboardModifierState } from '../test-keyboard.js'
+import { TURN_TOP_GAP } from './scroll-mode.js'
 import { Thread } from './Thread.js'
 
-const layout = vi.hoisted(() => ({ height: 1_200, count: 0, heightReads: 0 }))
+const layout = vi.hoisted(() => ({
+  height: 1_200,
+  count: 0,
+  heightReads: 0,
+  /** Where each row starts, for the rows a test places. */
+  starts: [] as number[],
+}))
 
 vi.mock('@tanstack/react-virtual', () => {
   // The real virtualizer keeps its identity when rows load or change size.
@@ -20,7 +27,9 @@ vi.mock('@tanstack/react-virtual', () => {
       })),
     getTotalSize: () => layout.height,
     measureElement: () => undefined,
-    measurementsCache: [],
+    get measurementsCache() {
+      return layout.starts.map((start) => ({ start }))
+    },
     getOffsetForIndex: () => [0],
     scrollToIndex: () => undefined,
   }
@@ -78,6 +87,7 @@ beforeEach(() => {
   mockKeyboardModifierState()
   layout.height = 1_200
   layout.heightReads = 0
+  layout.starts = []
   frames = []
   now = 1_000
   vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(() => {
@@ -549,6 +559,199 @@ describe('Thread scroll position', () => {
       settle(scroller)
 
       expect(scroller.scrollTop).toBe(1_039)
+    })
+  })
+
+  describe('a new turn', () => {
+    /** The room left below a pinned turn, as written. */
+    const room = (scroller: HTMLElement) =>
+      Number.parseFloat(
+        scroller.querySelector<HTMLElement>('.thread__turn-room')?.style.height ?? '',
+      ) || 0
+
+    beforeEach(() => {
+      // The browser's heights: the column holds the content, and the scroll
+      // also reaches through the room below it.
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return layout.height + room(this)
+      })
+      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+        this: Element,
+      ) {
+        const height = this.classList.contains('thread__col') ? layout.height : 0
+        return {
+          top: 0,
+          height,
+          bottom: height,
+          left: 0,
+          right: 0,
+          width: 0,
+          x: 0,
+          y: 0,
+        } as DOMRect
+      })
+    })
+
+    const finished: Item[] = [
+      { ...items[0]!, id: 'first-prompt', role: 'user', text: 'Hi', createdAt: 0 },
+      items[0]!,
+    ]
+
+    /**
+     * A finished chat open at its end. `send` starts a turn with a 60px
+     * prompt and, like the app, asks for the end in the same render.
+     */
+    function chat() {
+      layout.starts = [0, 600]
+      let state: ThreadState = { ...emptyThread, items: finished }
+      let reveal = 0
+      const store = new ThreadFrameStore(state)
+      const threadProps = props(store)
+      const view = render(<Thread {...threadProps} threadId="pinned" revealRequest={reveal} />)
+      const scroller = view.container.querySelector<HTMLElement>('.thread')!
+      expect(scroller.scrollTop).toBe(1_000)
+      now += 1_000
+      const publish = (next: ThreadState) => {
+        state = next
+        act(() => store.publish(state))
+      }
+      const send = ({ asked = true } = {}) => {
+        layout.height += 60
+        layout.starts = [0, 600, 1_200]
+        state = {
+          ...state,
+          items: [
+            ...finished,
+            {
+              id: 'prompt',
+              turnId: 'turn-2',
+              type: 'message',
+              role: 'user',
+              status: 'completed',
+              text: 'Explain it',
+              createdAt: 3,
+            },
+          ],
+          running: true,
+          activeTurn: { id: 'turn-2', startedAt: 3 },
+        }
+        if (asked) reveal += 1
+        act(() => {
+          store.publish(state)
+          view.rerender(<Thread {...threadProps} threadId="pinned" revealRequest={reveal} />)
+        })
+      }
+      /** One more streamed line of the answer. */
+      const line = () => {
+        layout.height += 20
+        layout.starts = [0, 600, 1_200, 1_260]
+        const answer: Item = {
+          id: 'answer-2',
+          turnId: 'turn-2',
+          type: 'message',
+          role: 'assistant',
+          status: 'started',
+          text: `${state.items[3]?.text ?? ''} line`,
+          createdAt: 4,
+        }
+        publish({ ...state, items: [...state.items.slice(0, 3), answer] })
+      }
+      return { view, scroller, publish, send, line, current: () => state }
+    }
+
+    it('glides the prompt up to just below the top and leaves room for the answer', () => {
+      const { scroller, send } = chat()
+
+      send()
+      // The room below makes the pinned position reachable: 1176 = 1200 - 24.
+      expect(room(scroller)).toBe(1_176 - (1_260 - 200))
+      const tops = settle(scroller)
+
+      expect(scroller.scrollTop).toBe(1_200 - TURN_TOP_GAP)
+      expect(tops.length).toBeGreaterThan(3)
+      expect(steps(1_000, tops).every((move) => move >= 0)).toBe(true)
+    })
+
+    it('lets the answer fill the screen without moving, then follows it', () => {
+      const { scroller, send, line } = chat()
+      send()
+      settle(scroller)
+      const pinned = scroller.scrollTop
+
+      // Five lines still fit between the prompt and the bottom edge.
+      for (let lines = 0; lines < 5; lines += 1) {
+        const before = room(scroller)
+        line()
+        expect(room(scroller)).toBe(before - 20)
+        expect(scroller.scrollTop).toBe(pinned)
+        settle(scroller)
+        expect(scroller.scrollTop).toBe(pinned)
+      }
+
+      // The sixth reaches past it: the room is used up and the follow takes over.
+      line()
+      settle(scroller)
+      expect(room(scroller)).toBe(0)
+      expect(scroller.scrollTop).toBe(layout.height - 200)
+    })
+
+    it('keeps the answer where it is when the turn ends', () => {
+      const { scroller, send, line, publish, current } = chat()
+      send()
+      settle(scroller)
+      line()
+      settle(scroller)
+      const pinned = scroller.scrollTop
+
+      // The finished turn changes its chrome; the room takes up the difference.
+      layout.height += 36
+      publish({ ...current(), running: false, activeTurn: undefined })
+      settle(scroller)
+
+      expect(scroller.scrollTop).toBe(pinned)
+      expect(room(scroller)).toBeGreaterThan(0)
+    })
+
+    it('neither pins nor moves a turn that starts on its own while the user reads further up', () => {
+      const { view, scroller, send } = chat()
+      fireEvent.wheel(scroller, { deltaY: -100 })
+      scroller.scrollTop = 400
+      fireEvent.scroll(scroller)
+
+      // A queued message starting: nobody asked for the end just now.
+      send({ asked: false })
+      settle(scroller)
+
+      expect(scroller.scrollTop).toBe(400)
+      expect(room(scroller)).toBe(0)
+      expect(view.getByRole('button', { name: 'Jump to latest' })).toBeTruthy()
+    })
+
+    it('lands at once on a prompt sent from further up than two screens', () => {
+      const { view, scroller, send } = chat()
+      fireEvent.wheel(scroller, { deltaY: -100 })
+      scroller.scrollTop = 400
+      fireEvent.scroll(scroller)
+
+      send()
+
+      // 776px away in a 200px viewport: no glide through the whole chat.
+      expect(scroller.scrollTop).toBe(1_200 - TURN_TOP_GAP)
+      expect(frames).toHaveLength(0)
+      expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+    })
+
+    it('opens the chat again at its own end, without the room', () => {
+      const { view, scroller, send } = chat()
+      send()
+      settle(scroller)
+      expect(room(scroller)).toBeGreaterThan(0)
+
+      view.rerender(<Thread {...props(new ThreadFrameStore(emptyThread))} threadId="other" />)
+
+      expect(room(scroller)).toBe(0)
     })
   })
 })
