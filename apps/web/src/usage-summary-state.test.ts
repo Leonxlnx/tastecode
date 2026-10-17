@@ -97,7 +97,11 @@ describe('UsageSummaryController', () => {
     const withLimits: Summary = {
       ...summary(1),
       limits: [{ label: '5h', usedPercent: 40 }],
-      limitSource: { provider: 'codex', status: 'ready', limits: [{ label: '5h', usedPercent: 40 }] },
+      limitSource: {
+        provider: 'codex',
+        status: 'ready',
+        limits: [{ label: '5h', usedPercent: 40 }],
+      },
     }
 
     state.select({ provider: 'codex', threadId: 'thread-a' })
