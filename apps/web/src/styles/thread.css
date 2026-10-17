@@ -134,8 +134,9 @@
   font-size: var(--t-md);
   /* Its own keyframes, not menu-in: that one animates transform from a value
      with no translateX, so this button visibly slid in from the left edge
-     every time it appeared — which is on every scroll-up during a stream. */
-  animation: jump-in var(--dur-slow) var(--ease-out);
+     every time it appeared — which is on every scroll-up during a stream.
+     The short delay keeps a moment of reading above the end from flashing it. */
+  animation: jump-in var(--dur-slow) var(--ease-out) 120ms both;
   transition:
     background var(--dur-fast) var(--ease-out),
     border-color var(--dur-fast) var(--ease-out),
