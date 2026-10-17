@@ -24,6 +24,14 @@
       "types": "./dist/updates.d.ts",
       "default": "./dist/updates.js"
     },
+    "./usage-archive": {
+      "types": "./dist/usage-archive.d.ts",
+      "default": "./dist/usage-archive.js"
+    },
+    "./usage-log": {
+      "types": "./dist/usage-log.d.ts",
+      "default": "./dist/usage-log.js"
+    },
     "./symlink.test-support": {
       "types": "./dist/symlink.test-support.d.ts",
       "default": "./dist/symlink.test-support.js"

@@ -1,6 +1,13 @@
-import { createReadStream } from 'node:fs'
-import readline from 'node:readline'
-import type { LocalUsageRecord } from '@harness/contracts'
+import os from 'node:os'
+import path from 'node:path'
+import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
+import { discoverJsonlArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+import {
+  readUsageLog,
+  type UsageCheckpoint,
+  type UsageLogParser,
+  type UsageLogRead,
+} from '@harness/proc/usage-log'
 
 type CodexUsage = {
   inputTokens: number
@@ -11,103 +18,215 @@ type CodexUsage = {
   totalTokens: number
 }
 
+/** Codex writes one JSONL rollout per session under `<CODEX_HOME>/sessions`. */
+export const CODEX_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
+  provider: 'codex',
+  label: 'Codex',
+  root: (home = process.env['CODEX_HOME'] ?? path.join(os.homedir(), '.codex')) =>
+    path.join(home, 'sessions'),
+  discover: (root) => discoverJsonlArchive(root, readCodexUsageHistory, resumeCodexUsageHistory),
+}
+
 /** Reads Codex JSONL without exposing its cumulative wire format to the core. */
 export async function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
-  const entries = new Map<string, LocalUsageRecord>()
-  const legacySubagentEntries = new Map<string, LocalUsageRecord>()
-  let sessionId = filePath
-  let sawSessionMeta = false
-  let replayingParentHistory = false
-  let sawLegacySubagentBoundary = false
-  let currentModel = 'Unknown model'
-  let previous: CodexUsage | undefined
-  const lines = readline.createInterface({
-    input: createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 }),
-    crlfDelay: Infinity,
-  })
+  return (await readUsageLog(filePath, CODEX_LOG_PARSER)).entries
+}
 
-  for await (const line of lines) {
-    const tokenLine = line.includes('"token_count"')
-    const contextLine =
-      !tokenLine &&
-      line.length < 2 * 1024 * 1024 &&
-      (line.includes('"turn_context"') ||
-        line.includes('"inter_agent_communication_metadata"') ||
-        line.includes('"session_meta"') ||
-        line.includes('"model"'))
-    if (!tokenLine && !contextLine) continue
+/** Reads only what a rollout gained since the checkpoint of an earlier read, when it can. */
+export function resumeCodexUsageHistory(
+  filePath: string,
+  checkpoint?: UsageCheckpoint,
+): Promise<UsageLogRead<LocalUsageRecord>> {
+  return readUsageLog(filePath, CODEX_LOG_PARSER, checkpoint)
+}
 
-    const record = parseRecord(line)
-    if (!record) continue
-    const payload = asRecord(record['payload'])
-    if (record['type'] === 'session_meta') {
-      if (!sawSessionMeta) {
-        sawSessionMeta = true
-        const id = stringValue(payload?.['id']) ?? stringValue(record['session_id'])
-        if (id) sessionId = id
-        replayingParentHistory = isSubagentSession(payload)
+/** What the rollout's lines so far leave behind for the lines after them. */
+type CodexLogState = {
+  entries: Map<string, LocalUsageRecord>
+  legacySubagentEntries: Map<string, LocalUsageRecord>
+  sessionId: string
+  sawSessionMeta: boolean
+  replayingParentHistory: boolean
+  sawLegacySubagentBoundary: boolean
+  currentModel: string
+  previous: CodexUsage | undefined
+}
+
+/** The part of the state the next read needs; the entries were already returned. */
+type SavedCodexState = {
+  version: typeof SAVED_STATE_VERSION
+  sessionId: string
+  sawSessionMeta: boolean
+  replayingParentHistory: boolean
+  sawLegacySubagentBoundary: boolean
+  currentModel: string
+  previous: CodexUsage | null
+}
+
+const SAVED_STATE_VERSION = 1
+
+const CODEX_LOG_PARSER: UsageLogParser<LocalUsageRecord, CodexLogState> = {
+  create: (filePath) => ({
+    entries: new Map(),
+    legacySubagentEntries: new Map(),
+    sessionId: filePath,
+    sawSessionMeta: false,
+    replayingParentHistory: false,
+    sawLegacySubagentBoundary: false,
+    currentModel: 'Unknown model',
+    previous: undefined,
+  }),
+  restore: (saved) => {
+    if (!isSavedCodexState(saved)) return undefined
+    return {
+      entries: new Map(),
+      legacySubagentEntries: new Map(),
+      sessionId: saved.sessionId,
+      sawSessionMeta: saved.sawSessionMeta,
+      replayingParentHistory: saved.replayingParentHistory,
+      sawLegacySubagentBoundary: saved.sawLegacySubagentBoundary,
+      currentModel: saved.currentModel,
+      previous: saved.previous ?? undefined,
+    }
+  },
+  line: parseCodexLine,
+  finish: (state) => {
+    // Buffered subagent usage counts only while no communication marker
+    // follows; a marker later in the file withdraws it, so such a read cannot
+    // be continued and the next one starts over.
+    const provisional = state.legacySubagentEntries.size > 0
+    if (state.replayingParentHistory && state.sawLegacySubagentBoundary) {
+      for (const entry of state.legacySubagentEntries.values()) {
+        mergeUsageRecord(state.entries, entry)
       }
     }
-    const model = extractModel(payload)
-    if (model) currentModel = model
-    if (replayingParentHistory && record['type'] === 'turn_context' && model) {
-      sawLegacySubagentBoundary = true
+    const saved: SavedCodexState = {
+      version: SAVED_STATE_VERSION,
+      sessionId: state.sessionId,
+      sawSessionMeta: state.sawSessionMeta,
+      replayingParentHistory: state.replayingParentHistory,
+      sawLegacySubagentBoundary: state.sawLegacySubagentBoundary,
+      currentModel: state.currentModel,
+      previous: state.previous ?? null,
     }
-    if (replayingParentHistory && record['type'] === 'inter_agent_communication_metadata') {
-      replayingParentHistory = false
-      legacySubagentEntries.clear()
-    }
-    if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') continue
+    return { entries: [...state.entries.values()], ...(provisional ? {} : { saved }) }
+  },
+}
 
-    const timestamp = dateValue(record['timestamp'])
-    const info = asRecord(payload['info'])
-    const total = normalizeUsage(asRecord(info?.['total_token_usage']))
-    const last = normalizeUsage(asRecord(info?.['last_token_usage']))
-    let delta: CodexUsage | undefined
-    if (total) {
-      delta = rolledBack(total, previous) ? (last ?? total) : subtractUsage(total, previous)
-      previous = total
-    } else if (last) {
-      delta = last
-      previous = addUsage(previous, last)
-    }
+function isSavedCodexState(value: unknown): value is SavedCodexState {
+  const saved = asRecord(value)
+  const previous = saved?.['previous']
+  return Boolean(
+    saved &&
+    saved['version'] === SAVED_STATE_VERSION &&
+    typeof saved['sessionId'] === 'string' &&
+    typeof saved['sawSessionMeta'] === 'boolean' &&
+    typeof saved['replayingParentHistory'] === 'boolean' &&
+    typeof saved['sawLegacySubagentBoundary'] === 'boolean' &&
+    typeof saved['currentModel'] === 'string' &&
+    (previous === null || isCodexUsage(previous)),
+  )
+}
 
-    if (!timestamp || !delta || delta.totalTokens <= 0) continue
+function isCodexUsage(value: unknown): value is CodexUsage {
+  const usage = asRecord(value)
+  return Boolean(
+    usage &&
+    (
+      [
+        'inputTokens',
+        'cachedInputTokens',
+        'cacheWriteInputTokens',
+        'outputTokens',
+        'reasoningTokens',
+        'totalTokens',
+      ] as const
+    ).every((field) => {
+      const count = usage[field]
+      return typeof count === 'number' && Number.isFinite(count) && count >= 0
+    }),
+  )
+}
 
-    const entry = {
-      date: localDateKey(timestamp),
-      model: model ?? currentModel,
-      sessionId,
-      longContext: delta.inputTokens > 272_000,
-      tokens: {
-        observedInputTokens: delta.inputTokens,
-        uncachedInputTokens: Math.max(
-          delta.inputTokens - delta.cachedInputTokens - delta.cacheWriteInputTokens,
-          0,
-        ),
-        cachedInputTokens: delta.cachedInputTokens,
-        cacheWrite5mInputTokens: delta.cacheWriteInputTokens,
-        cacheWrite1hInputTokens: 0,
-        outputTokens: delta.outputTokens,
-        reasoningTokens: delta.reasoningTokens,
-        processedTokens: delta.totalTokens,
-        providerReportedCostUsd: 0,
-      },
-    }
+function parseCodexLine(state: CodexLogState, line: string): void {
+  const tokenLine = line.includes('"token_count"')
+  const contextLine =
+    !tokenLine &&
+    line.length < 2 * 1024 * 1024 &&
+    (line.includes('"turn_context"') ||
+      line.includes('"inter_agent_communication_metadata"') ||
+      line.includes('"session_meta"') ||
+      line.includes('"model"'))
+  if (!tokenLine && !contextLine) return
 
-    // A spawned subagent rollout starts with a copy of its parent's cumulative
-    // snapshots. The communication metadata marks the first real child turn.
-    // Retain the old turn-context heuristic only for rollouts without that marker.
-    if (replayingParentHistory) {
-      if (sawLegacySubagentBoundary) mergeUsageRecord(legacySubagentEntries, entry)
-      continue
+  const record = parseRecord(line)
+  if (!record) return
+  const payload = asRecord(record['payload'])
+  if (record['type'] === 'session_meta') {
+    if (!state.sawSessionMeta) {
+      state.sawSessionMeta = true
+      const id = stringValue(payload?.['id']) ?? stringValue(record['session_id'])
+      if (id) state.sessionId = id
+      state.replayingParentHistory = isSubagentSession(payload)
     }
-    mergeUsageRecord(entries, entry)
   }
-  if (replayingParentHistory && sawLegacySubagentBoundary) {
-    for (const entry of legacySubagentEntries.values()) mergeUsageRecord(entries, entry)
+  const model = extractModel(payload)
+  if (model) state.currentModel = model
+  if (state.replayingParentHistory && record['type'] === 'turn_context' && model) {
+    state.sawLegacySubagentBoundary = true
   }
-  return [...entries.values()]
+  if (state.replayingParentHistory && record['type'] === 'inter_agent_communication_metadata') {
+    state.replayingParentHistory = false
+    state.legacySubagentEntries.clear()
+  }
+  if (record['type'] !== 'event_msg' || payload?.['type'] !== 'token_count') return
+
+  const timestamp = dateValue(record['timestamp'])
+  const info = asRecord(payload['info'])
+  const total = normalizeUsage(asRecord(info?.['total_token_usage']))
+  const last = normalizeUsage(asRecord(info?.['last_token_usage']))
+  let delta: CodexUsage | undefined
+  if (total) {
+    delta = rolledBack(total, state.previous)
+      ? (last ?? total)
+      : subtractUsage(total, state.previous)
+    state.previous = total
+  } else if (last) {
+    delta = last
+    state.previous = addUsage(state.previous, last)
+  }
+
+  if (!timestamp || !delta || delta.totalTokens <= 0) return
+
+  const entry = {
+    date: localDateKey(timestamp),
+    model: model ?? state.currentModel,
+    sessionId: state.sessionId,
+    longContext: delta.inputTokens > 272_000,
+    tokens: {
+      observedInputTokens: delta.inputTokens,
+      uncachedInputTokens: Math.max(
+        delta.inputTokens - delta.cachedInputTokens - delta.cacheWriteInputTokens,
+        0,
+      ),
+      cachedInputTokens: delta.cachedInputTokens,
+      cacheWrite5mInputTokens: delta.cacheWriteInputTokens,
+      cacheWrite1hInputTokens: 0,
+      outputTokens: delta.outputTokens,
+      reasoningTokens: delta.reasoningTokens,
+      processedTokens: delta.totalTokens,
+      providerReportedCostUsd: 0,
+    },
+  }
+
+  // A spawned subagent rollout starts with a copy of its parent's cumulative
+  // snapshots. The communication metadata marks the first real child turn.
+  // Retain the old turn-context heuristic only for rollouts without that marker.
+  if (state.replayingParentHistory) {
+    if (state.sawLegacySubagentBoundary) mergeUsageRecord(state.legacySubagentEntries, entry)
+    return
+  }
+  mergeUsageRecord(state.entries, entry)
 }
 
 function isSubagentSession(payload: Record<string, unknown> | undefined): boolean {

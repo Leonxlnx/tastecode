@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useCallback, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type {
   ProviderId,
   ResultOf,
@@ -20,6 +13,7 @@ import {
 } from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
+import { cacheHitRate, useUsageHistory } from '../usage-history-state.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
 const RANGE_OPTIONS = [
@@ -40,51 +34,7 @@ const money = new Intl.NumberFormat('en-US', {
 
 export function UsageSettings(props: { transport: Transport }) {
   const [range, setRange] = useState<UsageHistoryRange>('30d')
-  const [data, setData] = useState<ResultOf<'usage.history'>>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [requestVersion, setRequestVersion] = useState(0)
-  const forceRefresh = useRef(false)
-  const scanInProgress = useRef(false)
-
-  useEffect(() => {
-    let active = true
-    let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const refresh = forceRefresh.current
-    forceRefresh.current = false
-    setLoading(true)
-    setError(undefined)
-    void props.transport
-      .request('usage.history', { range, ...(refresh ? { refresh: true } : {}) })
-      .then((result) => {
-        if (!active) return
-        setData(result)
-        scanInProgress.current = result.scan.status === 'scanning'
-      })
-      .catch((requestError: unknown) => {
-        if (!active) return
-        setError(requestError instanceof Error ? requestError.message : String(requestError))
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-          if (scanInProgress.current) {
-            pollTimer = setTimeout(() => {
-              if (active) setRequestVersion((version) => version + 1)
-            }, 500)
-          }
-        }
-      })
-    return () => {
-      active = false
-      clearTimeout(pollTimer)
-    }
-  }, [props.transport, range, requestVersion])
-
-  const refresh = useCallback(() => {
-    forceRefresh.current = true
-    setRequestVersion((version) => version + 1)
-  }, [])
+  const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
 
   if (!data && loading) {
     return (
@@ -789,12 +739,6 @@ function costQuality(totals: UsageHistoryTotals) {
     modelPriced: totals.pricedTokens / denominator,
     unpriced: totals.unpricedTokens / denominator,
   }
-}
-
-function cacheHitRate(totals: UsageHistoryTotals): number | undefined {
-  const inputTokens =
-    totals.uncachedInputTokens + totals.cachedInputTokens + totals.cacheWriteInputTokens
-  return inputTokens > 0 ? totals.cachedInputTokens / inputTokens : undefined
 }
 
 function pricingLabel(
