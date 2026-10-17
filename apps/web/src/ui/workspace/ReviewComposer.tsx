@@ -1,7 +1,9 @@
-import { useEffect, useRef, type FormEvent, type KeyboardEvent } from 'react'
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 'react'
 import {
+  IconArrowRight as ArrowRight,
   IconCheck as Check,
   IconCopy as Copy,
+  IconGitPullRequest as GitPullRequest,
   IconLoader2 as LoaderCircle,
   IconSparkles as Sparkles,
 } from '@tabler/icons-react'
@@ -112,6 +114,88 @@ export function ReviewCommitBox(props: {
         >
           {props.committing ? <LoaderCircle className="spinner" size={14} aria-hidden /> : null}
           Commit {props.fileCount} {props.fileCount === 1 ? 'file' : 'files'}
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/** Title, description and draft state for a pull request from the pushed branch. */
+export function ReviewPullRequestBox(props: {
+  branch: string
+  base?: string | undefined
+  initialTitle: string
+  initialBody: string
+  creating: boolean
+  blocked?: string | undefined
+  disabled: boolean
+  onCreate: (input: { title: string; body: string; draft: boolean }) => void
+  onCancel: () => void
+}) {
+  const [title, setTitle] = useState(props.initialTitle)
+  const [body, setBody] = useState(props.initialBody)
+  const [draft, setDraft] = useState(false)
+  const field = useFocusOnOpen<HTMLInputElement>()
+  const ready = title.trim().length > 0 && !props.disabled && !props.blocked
+  const submit = () => {
+    if (ready) props.onCreate({ title: title.trim(), body, draft })
+  }
+  const keys = composerKeys(submit, props.onCancel)
+
+  return (
+    <form
+      className="workspace-review__composer"
+      aria-label="Create pull request"
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault()
+        submit()
+      }}
+    >
+      <div className="workspace-review__composer-head">
+        <GitPullRequest size={14} aria-hidden />
+        <strong title={props.branch}>{props.branch}</strong>
+        <ArrowRight size={13} aria-hidden />
+        <strong>{props.base ?? 'default branch'}</strong>
+      </div>
+      <input
+        ref={field}
+        className="workspace-review__field"
+        value={title}
+        maxLength={256}
+        placeholder="Title"
+        aria-label="Pull request title"
+        onChange={(event) => setTitle(event.target.value)}
+        onKeyDown={keys}
+      />
+      <textarea
+        className="workspace-review__field is-body"
+        value={body}
+        placeholder="Description (optional)"
+        aria-label="Pull request description"
+        onChange={(event) => setBody(event.target.value)}
+        onKeyDown={keys}
+      />
+      <div className="workspace-review__composer-actions">
+        <label className="workspace-review__check">
+          <input
+            type="checkbox"
+            checked={draft}
+            onChange={(event) => setDraft(event.target.checked)}
+          />
+          Draft
+        </label>
+        <span className="workspace-review__composer-spacer" />
+        <button type="button" className="ghost" onClick={props.onCancel}>
+          Cancel
+        </button>
+        <button
+          type="submit"
+          className="btn workspace-review__submit"
+          disabled={!ready}
+          title={props.blocked ?? `Create pull request (${SUBMIT_KEY})`}
+        >
+          {props.creating ? <LoaderCircle className="spinner" size={14} aria-hidden /> : null}
+          {draft ? 'Create draft' : 'Create pull request'}
         </button>
       </div>
     </form>

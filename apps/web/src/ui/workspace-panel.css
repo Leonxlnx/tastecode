@@ -315,6 +315,12 @@
   opacity: 0.58;
 }
 
+.workspace-review__count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 .workspace-review__notices {
   display: grid;
 }
@@ -326,6 +332,28 @@
   padding: 10px 12px;
   background: color-mix(in srgb, var(--surface-2) 76%, transparent);
   border-bottom: 1px solid var(--line);
+}
+
+.workspace-review__composer-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+}
+
+.workspace-review__composer-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-weight: 520;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-review__composer-head svg {
+  flex: none;
 }
 
 .workspace-review__field {
@@ -361,6 +389,10 @@ textarea.workspace-review__field {
 .workspace-review__field.is-mono {
   font-family: var(--font-mono);
   font-size: var(--t-xs);
+}
+
+.workspace-review__field.is-body {
+  min-height: 92px;
 }
 
 .workspace-review__composer-actions {
@@ -411,6 +443,21 @@ textarea.workspace-review__field {
   align-items: center;
   gap: 6px;
   white-space: nowrap;
+}
+
+.workspace-review__check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 4px;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: var(--t-xs);
+}
+
+.workspace-review__check input {
+  margin: 0;
+  accent-color: var(--text);
 }
 
 .workspace-review__done {

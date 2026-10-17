@@ -5907,6 +5907,7 @@ export function App() {
                       onClose={closeTerminal}
                       onWidthChange={setTerminalHeight}
                       terminalToggleRequest={bottomTerminalToggleRequest}
+                      onOpenPullRequest={openCheckoutPullRequest}
                     />
                   </Suspense>
                 </div>
@@ -5944,6 +5945,7 @@ export function App() {
                 terminalToggleRequest={workspaceTerminalToggleRequest}
                 externalToolRequest={workspaceToolRequest}
                 designPreviewRequest={workspaceDesignPreviewRequest}
+                onOpenPullRequest={openCheckoutPullRequest}
                 providerLogin={
                   providerLoginTerminal?.visible
                     ? {
