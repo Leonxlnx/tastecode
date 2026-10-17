@@ -11,6 +11,7 @@ import type {
   McpServer,
   McpServerConfig,
   Model,
+  ProviderCommand,
   ProviderContextSettings,
   ProviderId,
   StoredModelConnection,
@@ -181,6 +182,8 @@ export interface AgentSession {
   steer?(threadId: string, text: string, attachments?: string[]): Promise<void>
   interrupt(threadId: string): Promise<void>
   listMcpServers?(threadId?: string): Promise<McpServer[]>
+  /** The MCP answer still holds only configured servers; a change event follows. */
+  isMcpLoading?(threadId?: string): boolean
   reloadMcpServers?(
     threadId: string,
     servers: McpServerConfig[],
@@ -199,6 +202,10 @@ export interface AgentSession {
   onUsageChanged?(listener: () => void): void
   /** Provider MCP discovery changed; the project inventory should be refreshed. */
   onMcpChanged?(listener: () => void): (() => void) | void
+  /** Slash commands and skills the provider runs itself when a message starts with them. */
+  listCommands?(threadId?: string): Promise<ProviderCommand[]>
+  /** The provider reported a new command list for this session. */
+  onCommandsChanged?(listener: () => void): (() => void) | void
   /**
    * False when the live session negotiated no way to reload it, so releasing an
    * idle runtime would lose it. Absent means the runtime's `resume` decides.
@@ -971,6 +978,17 @@ function claudeRuntime(
     respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
     setApproval: (approval) => adapter.setApproval(approval),
     onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    listMcpServers: (threadId) => adapter.listMcpServers(threadId),
+    isMcpLoading: () => adapter.isMcpLoading(),
+    onMcpChanged: (listener) => {
+      adapter.on('mcpChanged', listener)
+      return () => adapter.off('mcpChanged', listener)
+    },
+    listCommands: (threadId) => adapter.listCommands(threadId),
+    onCommandsChanged: (listener) => {
+      adapter.on('commandsChanged', listener)
+      return () => adapter.off('commandsChanged', listener)
+    },
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
