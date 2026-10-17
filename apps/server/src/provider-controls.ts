@@ -12,6 +12,7 @@ import type {
   Skill,
   SkillCapabilities,
   SkillDiscoveryError,
+  UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
@@ -76,7 +77,10 @@ export type ProviderControl = {
   capabilities: ProviderControlCapabilities
   validateMcpServer?: (server: McpServerConfig) => void
   account(agent?: string): Promise<Account>
-  usageLimitSource(): Promise<ProviderLimitSource>
+  /** Absent intent is treated as `visible`, as the contract asks of servers. */
+  usageLimitSource(intent?: UsageReadIntent): Promise<ProviderLimitSource>
+  /** The held snapshot without reading; undefined until a read or live window arrives. */
+  heldLimitSource(): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string) => Promise<Model[]>
@@ -104,6 +108,8 @@ export type ProviderControlsOptions = {
   onLog?: (provider: ProviderId, line: string) => void
   onLogin?: (provider: ProviderId, result: ProviderLoginResult) => void
   onUsageChanged?: (provider: ProviderId) => void
+  /** A provider's held limits changed; `source` is the newest snapshot. */
+  onLimitsChanged?: (provider: ProviderId, source: ProviderLimitSource) => void
   onMcpChanged?: (provider: ProviderId, projectPath: string) => void
   onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
@@ -116,6 +122,10 @@ export type ProviderControlsOptions = {
   limitCacheMs?: number
   /** How long an account without plan limits keeps that answer through usage changes. */
   unavailableLimitCacheMs?: number
+  /** Replaces every provider's declared `limitReadIntervalMs`. */
+  limitReadIntervalMs?: number
+  /** Minimum spacing of published limit snapshots per provider. */
+  limitPublishIntervalMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
   /**
@@ -148,19 +158,138 @@ type LoginEntry = {
   earlyResults: ProviderLoginResult[]
 }
 type LimitEntry = {
-  /** Bumped by every change so a read that started earlier cannot refresh the cache. */
+  /** Bumped by every change so a read that started earlier cannot stay fresh. */
   version: number
+  /** Bumped by a change that must reach the next read, such as a redeemed reset. */
+  forcedVersion: number
   /** Bumped only when the account may have changed; usage changes leave it alone. */
   accountVersion: number
-  /** Counts cached answers, so an older read never replaces a newer one. */
+  /** Numbers reads in start order, so an older read never replaces a newer answer. */
+  reads: number
+  /** The number of the read behind `value`. */
   stored: number
   /** The last account read, which shows a sign-in or switch made outside the app. */
   account?: string | undefined
   value?: ProviderLimitSource | undefined
+  /** When the read behind `value` started. */
+  readAt: number
   freshUntil: number
   reading?: Promise<ProviderLimitSource> | undefined
+  /** The last failed read; later reads reject with it until `retryAt`. */
+  failure?: LimitFailure | undefined
   notifiedAt: number
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
+  /** Windows a live session reported, by id, so a read that started earlier cannot revert them. */
+  live?: Map<string, { limit: ProviderLimit; at: number }> | undefined
+  /** When a live session last reported windows, changed or not. */
+  liveAt: number
+  publishedAt: number
+  publishTimer?: ReturnType<typeof setTimeout> | undefined
+  /** The held read was a background one that left out details a shown view lists. */
+  detailsOmitted?: boolean | undefined
+}
+type LimitFailure = { error: unknown; count: number; timeouts: number; retryAt: number }
+type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
+
+const REFRESH_ERROR_LIMIT = 300
+const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
+const NOT_READ_YET = 'Plan limits are read when you open them.'
+
+/** A held source without the marks of an earlier failed refresh. */
+function heldValues(source: ReadyLimitSource): ReadyLimitSource {
+  const { stale: _stale, refreshError: _error, retryAt: _retryAt, ...values } = source
+  return values
+}
+
+/** Live rows carry only the fields they know; the held row keeps the rest, such as a reset time. */
+function mergeLimit(held: ProviderLimit, update: ProviderLimit): ProviderLimit {
+  return { ...held, ...update }
+}
+
+/** A merged row keeps the held row's key order, so equal values serialize alike. */
+function sameLimit(left: ProviderLimit, right: ProviderLimit): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}
+
+/** What a client shows of a source; when it was checked is not part of it. */
+function shownLimits(source: ProviderLimitSource | undefined): string {
+  return JSON.stringify(
+    source?.status === 'ready' ? [source.limits, source.stale ?? false] : (source?.status ?? null),
+  )
+}
+
+/** Overlays live windows newer than a read onto that read's rows. */
+function withLiveWindows(
+  limits: ProviderLimit[],
+  live: Map<string, { limit: ProviderLimit; at: number }> | undefined,
+  readStartedAt: number,
+): ProviderLimit[] {
+  if (!live?.size) return limits
+  let merged = limits
+  for (const [id, window] of live) {
+    // The read already saw this window or something newer.
+    if (window.at < readStartedAt) {
+      live.delete(id)
+      continue
+    }
+    const index = merged.findIndex((limit) => limit.id === id)
+    if (index === -1) continue
+    if (merged === limits) merged = [...limits]
+    merged[index] = mergeLimit(merged[index]!, window.limit)
+  }
+  return merged
+}
+
+/**
+ * The held values of a source whose newest refresh failed. They keep the
+ * time they were read, so clients can say how old they are.
+ */
+function lastKnownLimits(held: ReadyLimitSource, failure: LimitFailure): ReadyLimitSource {
+  return {
+    ...heldValues(held),
+    stale: true,
+    refreshError: refreshErrorOf(failure),
+    // A source that ran out of timeouts waits for an account change, not a time.
+    ...(Number.isFinite(failure.retryAt) ? { retryAt: failure.retryAt } : {}),
+  }
+}
+
+/** The stable, bounded text a client may show for a failed read. */
+function refreshErrorOf(failure: LimitFailure): string {
+  const message = failure.error instanceof Error ? failure.error.message.trim() : ''
+  return message ? message.slice(0, REFRESH_ERROR_LIMIT) : REFRESH_ERROR_FALLBACK
+}
+
+/** Failed reads wait 5, 10 and 20 minutes, then every 30 minutes. */
+const LIMIT_RETRY_MIN_MS = 5 * 60_000
+const LIMIT_RETRY_MAX_MS = 30 * 60_000
+
+function limitRetryDelay(failures: number): number {
+  return Math.min(LIMIT_RETRY_MIN_MS * 2 ** (failures - 1), LIMIT_RETRY_MAX_MS)
+}
+
+/** Adapters mark a missed deadline with the platform's own error name. */
+function isTimeout(error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError'
+}
+
+/** Each failure doubles the wait; reaching the timeout limit ends retries for this account. */
+function limitFailure(
+  previous: LimitFailure | undefined,
+  error: unknown,
+  timeoutLimit: number | undefined,
+): LimitFailure {
+  const count = (previous?.count ?? 0) + 1
+  const timeouts = (previous?.timeouts ?? 0) + (isTimeout(error) ? 1 : 0)
+  return {
+    error,
+    count,
+    timeouts,
+    retryAt:
+      timeoutLimit !== undefined && timeouts >= timeoutLimit
+        ? Number.POSITIVE_INFINITY
+        : Date.now() + limitRetryDelay(count),
+  }
 }
 type AccountEntry = {
   /** The last read that answered; a failed read never replaces it. */
@@ -232,7 +361,9 @@ export class ProviderControls {
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
   readonly #unavailableLimitCacheMs: number
+  readonly #limitReadIntervalMs: number | undefined
   readonly #limitChangeIntervalMs: number
+  readonly #limitPublishIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
   readonly #accountCacheMs: number
   readonly #accountFallbackMs: number
@@ -251,14 +382,20 @@ export class ProviderControls {
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
     this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
-    // Codex reports a limit change after nearly every model request, and each
-    // read starts a vendor process, so reads are cached and signals spaced.
-    this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
+    // Each read starts a vendor process, and live windows from running
+    // sessions keep held values current, so a full read answers 5 minutes.
+    this.#limitCacheMs = duration(options.limitCacheMs, 5 * 60_000, 0)
     // An account without plan limits answers the same until it changes, and
     // Claude scans its local transcripts for up to a minute to say so. Every
     // turn reports a usage change, so only a longer, bounded cache stops each
     // turn from repeating that scan.
     this.#unavailableLimitCacheMs = duration(options.unavailableLimitCacheMs, 30 * 60_000, 0)
+    this.#limitReadIntervalMs =
+      options.limitReadIntervalMs === undefined
+        ? undefined
+        : duration(options.limitReadIntervalMs, 0, 0)
+    // Codex reports its windows beside nearly every token update.
+    this.#limitPublishIntervalMs = duration(options.limitPublishIntervalMs, 1_000, 0)
     this.#limitChangeIntervalMs = duration(options.limitChangeIntervalMs, 30_000, 0)
     // An account read starts the vendor CLI, which takes seconds on a busy
     // machine. App and Settings ask at once and again on every switch, so one
@@ -289,11 +426,17 @@ export class ProviderControls {
   /**
    * Marks cached limits stale and forwards the signal at a bounded rate: the
    * first change notifies at once, a burst after it collapses into one
-   * trailing notification per interval.
+   * trailing notification per interval. An `immediate` change, such as a
+   * redeemed reset, also reaches the next limit read.
    */
   usageChanged(provider: ProviderId, immediate = false): void {
     if (this.#closed) return
-    const entry = this.#invalidateLimits(provider, false)
+    const entry = this.#invalidateLimits(provider, false, immediate)
+    this.#notifyUsageChanged(provider, entry, immediate)
+  }
+
+  /** Forwards a usage-change signal: the first at once, a burst as one trailing signal. */
+  #notifyUsageChanged(provider: ProviderId, entry: LimitEntry, immediate: boolean): void {
     const wait = immediate ? 0 : entry.notifiedAt + this.#limitChangeIntervalMs - Date.now()
     if (wait <= 0) {
       clearTimeout(entry.notifyTimer)
@@ -312,6 +455,47 @@ export class ProviderControls {
     entry.notifyTimer.unref?.()
   }
 
+  /**
+   * Folds plan-limit windows a live session reported into the held snapshot
+   * by id. A known window takes the reported fields, other windows stay, and
+   * rows without an id are left to full reads. When every row matches, the
+   * snapshot stays the same object and nothing is published.
+   */
+  applyLimitRows(provider: ProviderId, rows: readonly ProviderLimit[]): void {
+    if (this.#closed) return
+    const entry = this.#limitEntry(provider)
+    const held = entry.value
+    // An account without plan limits keeps that answer until it changes.
+    if (held?.status === 'unavailable') return
+    const limits = held?.limits ?? []
+    const now = Date.now()
+    let next: ProviderLimit[] | undefined
+    for (const row of rows) {
+      if (row.id === undefined) continue
+      // An unchanged window still confirms the held values are current.
+      entry.liveAt = now
+      const current = next ?? limits
+      const index = current.findIndex((limit) => limit.id === row.id)
+      const merged = index === -1 ? row : mergeLimit(current[index]!, row)
+      if (index !== -1 && sameLimit(current[index]!, merged)) continue
+      next ??= [...limits]
+      if (index === -1) next.push(merged)
+      else next[index] = merged
+      entry.live ??= new Map()
+      const seen = entry.live.get(row.id)
+      entry.live.set(row.id, { limit: seen ? mergeLimit(seen.limit, row) : row, at: now })
+    }
+    if (!next) return
+    // Live values are current, so they are no longer the last known ones.
+    entry.value = held
+      ? { ...heldValues(held), limits: next, checkedAt: now, origin: 'live' }
+      : { provider, status: 'ready', limits: next, checkedAt: now, origin: 'live' }
+    this.#publishLimits(provider, entry)
+    // Clients that re-pull after a usage change see the merge without a new
+    // read: the held value stays fresh, and the signal keeps its spacing.
+    this.#notifyUsageChanged(provider, entry, false)
+  }
+
   /** Failed cleanup retains ownership, so a subsequent call can retry it. */
   disposeAll(): Promise<void> {
     if (this.#disposing) return this.#disposing
@@ -322,6 +506,7 @@ export class ProviderControls {
     clearTimeout(this.#watchTimer)
     this.#skills.clear()
     this.#mcp.clear()
+    for (const entry of this.#limits.values()) clearTimeout(entry.publishTimer)
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
     this.#accounts.clear()
@@ -387,17 +572,21 @@ export class ProviderControls {
         )
         return agent === undefined ? this.#accountRead(provider, account) : account
       },
-      usageLimitSource: () =>
+      usageLimitSource: (intent) =>
         services.usageLimitSource
-          ? this.#cachedLimits(provider, () =>
-              this.#read(async () => {
-                const source = await services.usageLimitSource?.()
-                return source?.status === 'ready'
-                  ? { provider, status: 'ready', limits: source.limits }
-                  : { provider, status: 'unavailable' }
-              }),
+          ? this.#cachedLimits(
+              provider,
+              () =>
+                this.#read(async () => {
+                  const source = await services.usageLimitSource?.()
+                  return source?.status === 'ready'
+                    ? { provider, status: 'ready', limits: source.limits }
+                    : { provider, status: 'unavailable' }
+                }),
+              intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
+      heldLimitSource: () => this.#limits.get(provider)?.value,
       signOut: (agent) =>
         this.#auth(provider, async (generation) => {
           const login = this.#logins.get(provider)
@@ -456,14 +645,18 @@ export class ProviderControls {
         this.#withShared((adapter) => adapter.setSkillEnabled(skillId, enabled)),
       // A fresh process reads the account's current limits rather than the
       // snapshot a long-lived process captured at startup.
-      usageLimitSource: () =>
-        this.#cachedLimits(provider, () =>
-          this.#withFresh(async (adapter) => {
-            const source = await adapter.rateLimitSource()
-            return source.status === 'ready'
-              ? { provider, status: 'ready', limits: source.limits }
-              : { provider, status: 'unavailable' }
-          }),
+      usageLimitSource: (intent) =>
+        this.#cachedLimits(
+          provider,
+          (background, omittedDetails) =>
+            this.#withFresh(async (adapter) => {
+              const source = await adapter.rateLimitSource({ background })
+              if (source.status === 'ready' && source.detailsOmitted) omittedDetails()
+              return source.status === 'ready'
+                ? { provider, status: 'ready', limits: source.limits }
+                : { provider, status: 'unavailable' }
+            }),
+          intent,
         ),
       consumeRateLimitReset: async (idempotencyKey, creditId) => {
         const generation = this.#generation
@@ -514,61 +707,215 @@ export class ProviderControls {
     if (!entry) {
       entry = {
         version: 0,
+        forcedVersion: 0,
         accountVersion: 0,
+        reads: 0,
         stored: 0,
+        readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
+        liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
+        publishedAt: Number.NEGATIVE_INFINITY,
       }
       this.#limits.set(provider, entry)
     }
     return entry
   }
 
-  #invalidateLimits(provider: ProviderId, accountChanged: boolean): LimitEntry {
+  #limitReadInterval(provider: ProviderId): number {
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    return this.#limitReadIntervalMs ?? capabilities.limitReadIntervalMs
+  }
+
+  #invalidateLimits(provider: ProviderId, accountChanged: boolean, forced = false): LimitEntry {
     const entry = this.#limitEntry(provider)
-    if (accountChanged) entry.accountVersion += 1
+    if (accountChanged) {
+      entry.accountVersion += 1
+      // Another account starts without this one's values, failures or read times.
+      entry.value = undefined
+      entry.live = undefined
+      entry.failure = undefined
+      entry.detailsOmitted = undefined
+      entry.readAt = Number.NEGATIVE_INFINITY
+    }
     // Spending usage cannot give an account the plan limits it lacks, so only
     // an account change discards that answer.
     else if (entry.value?.status === 'unavailable' && Date.now() < entry.freshUntil) return entry
     entry.version += 1
-    entry.freshUntil = 0
-    // A read already in flight may predate the change; the next caller starts its own.
-    entry.reading = undefined
+    if (accountChanged || forced) {
+      if (forced) entry.forcedVersion += 1
+      entry.freshUntil = 0
+      // Live windows do not report what such a change did, so the next request reads.
+      entry.liveAt = Number.NEGATIVE_INFINITY
+      // A read in flight answers for the old account or predates the forced
+      // change, so the next caller starts its own.
+      entry.reading = undefined
+    } else {
+      // Usage moves during every turn. A read in flight still answers its
+      // callers instead of a second process starting beside it, and a stored
+      // answer stays until the provider's read interval has passed. A failing
+      // source keeps its retry time: spending usage does not repair it.
+      entry.freshUntil = Math.min(
+        entry.freshUntil,
+        entry.readAt + this.#limitReadInterval(provider),
+      )
+    }
     return entry
   }
 
-  /** One read serves concurrent callers, and a fresh result serves later ones. */
+  /**
+   * One read serves concurrent callers, a fresh result serves later ones, and
+   * a failed read answers them until its retry time: with the account's last
+   * known values when there are any, otherwise with its error. A passive
+   * figure is answered without a read while live windows keep arriving, and a
+   * provider that reads only while its limits are shown answers it from what
+   * it holds.
+   */
   #cachedLimits(
     provider: ProviderId,
-    read: () => Promise<ProviderLimitSource>,
+    /** `background` reads may leave out details, which they report through `omittedDetails`. */
+    read: (background: boolean, omittedDetails: () => void) => Promise<ProviderLimitSource>,
+    intent: UsageReadIntent = 'visible',
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
-    if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
-    const { version, accountVersion, stored } = entry
-    const wait = this.#options.beforeLimitRead
-    const reading = (wait ? wait().then(read) : read())
-      .then((value) => {
-        const unavailable = value.status === 'unavailable'
-        if (
-          this.#limits.get(provider) === entry &&
-          entry.accountVersion === accountVersion &&
-          // A usage change during the read leaves an unavailable answer true.
-          (entry.version === version || (unavailable && entry.stored === stored))
-        ) {
-          entry.stored += 1
-          entry.value = value
-          entry.freshUntil =
-            Date.now() + (unavailable ? this.#unavailableLimitCacheMs : this.#limitCacheMs)
-        }
-        return value
+    const startedAt = Date.now()
+    // A shown view needs the details a background read left out.
+    const missingDetails = entry.detailsOmitted === true && intent !== 'background'
+    if (entry.value && startedAt < entry.freshUntil && !missingDetails) {
+      return Promise.resolve(entry.value)
+    }
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    // A running session that keeps reporting its windows keeps a passive figure
+    // current; only a shown view needs what else a full read lists.
+    if (
+      intent === 'background' &&
+      entry.value?.status === 'ready' &&
+      startedAt < entry.liveAt + this.#limitReadInterval(provider)
+    ) {
+      return Promise.resolve(entry.value)
+    }
+    if (intent === 'background' && capabilities.limitReadsWhenShown) {
+      // Nothing known is not "no plan limits": the source has simply not been read yet.
+      return Promise.resolve(
+        entry.value ?? {
+          provider,
+          status: 'unavailable',
+          reason: 'failed',
+          error: entry.failure ? refreshErrorOf(entry.failure) : NOT_READ_YET,
+        },
+      )
+    }
+    // Someone asked again: that request reads even inside the backoff or after
+    // the timeout limit; the next automatic one waits as before.
+    if (entry.failure && startedAt < entry.failure.retryAt && intent !== 'retry') {
+      return entry.value?.status === 'ready'
+        ? Promise.resolve(entry.value)
+        : Promise.reject(entry.failure.error)
+    }
+    const { version, forcedVersion, accountVersion } = entry
+    const sequence = ++entry.reads
+    // An answer for another account, or one older than the stored answer, changes nothing.
+    const current = () =>
+      this.#limits.get(provider) === entry &&
+      entry.accountVersion === accountVersion &&
+      sequence > entry.stored
+    let detailsOmitted = false
+    // The read may wait while a turn streams, so it is dated when it starts.
+    let readStartedAt = startedAt
+    const start = () => {
+      readStartedAt = Date.now()
+      return read(intent === 'background', () => {
+        detailsOmitted = true
       })
+    }
+    const wait = this.#options.beforeLimitRead
+    const reading = (wait ? wait().then(start) : start())
+      .then(
+        (answer) => {
+          const now = Date.now()
+          // Clients label values by when they were read, not when they were asked for.
+          let value: ProviderLimitSource =
+            answer.status === 'ready' ? { ...answer, checkedAt: now, origin: 'read' } : answer
+          if (!current()) return value
+          if (value.status === 'ready' && entry.live) {
+            const limits = withLiveWindows(value.limits, entry.live, readStartedAt)
+            if (limits !== value.limits) value = { ...value, limits }
+          }
+          const interval = this.#limitReadInterval(provider)
+          const unavailable = value.status === 'unavailable'
+          const previous = entry.value
+          entry.stored = sequence
+          entry.value = value
+          entry.readAt = readStartedAt
+          entry.failure = undefined
+          entry.detailsOmitted = detailsOmitted
+          entry.freshUntil =
+            entry.forcedVersion !== forcedVersion
+              ? 0
+              : // A usage change during the read leaves an unavailable answer true.
+                unavailable
+                ? now + this.#unavailableLimitCacheMs
+                : entry.version === version
+                  ? now + Math.max(this.#limitCacheMs, interval)
+                  : readStartedAt + interval
+          this.#heldReplaced(provider, entry, previous)
+          return value
+        },
+        (error: unknown) => {
+          if (!current()) throw error
+          const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
+          entry.failure = failure
+          // One failed refresh does not make the account's known limits unknown.
+          const previous = entry.value
+          if (previous?.status !== 'ready') throw error
+          const lastKnown = lastKnownLimits(previous, failure)
+          entry.value = lastKnown
+          this.#heldReplaced(provider, entry, previous)
+          return lastKnown
+        },
+      )
       .finally(() => {
         if (entry.reading === reading) entry.reading = undefined
       })
     entry.reading = reading
     return reading
+  }
+
+  /**
+   * A read or a failed refresh replaced the held snapshot. Clients that apply
+   * pushed snapshots get it; clients that only re-pull after a usage change
+   * are told when what they show changed, which a background refresh needs.
+   */
+  #heldReplaced(provider: ProviderId, entry: LimitEntry, previous?: ProviderLimitSource): void {
+    this.#publishLimits(provider, entry)
+    if (previous && shownLimits(previous) !== shownLimits(entry.value)) {
+      this.#options.onUsageChanged?.(provider)
+    }
+  }
+
+  /**
+   * Sends the held snapshot at a bounded rate: the first change at once, a
+   * burst after it as one trailing snapshot with the newest values.
+   */
+  #publishLimits(provider: ProviderId, entry: LimitEntry): void {
+    if (!this.#options.onLimitsChanged || entry.publishTimer) return
+    const send = () => {
+      if (this.#limits.get(provider) !== entry || this.#closed || !entry.value) return
+      entry.publishedAt = Date.now()
+      this.#options.onLimitsChanged?.(provider, entry.value)
+    }
+    const wait = entry.publishedAt + this.#limitPublishIntervalMs - Date.now()
+    if (wait <= 0) {
+      send()
+      return
+    }
+    entry.publishTimer = setTimeout(() => {
+      entry.publishTimer = undefined
+      send()
+    }, wait)
+    entry.publishTimer.unref?.()
   }
 
   #authChanged(provider: ProviderId): void {
