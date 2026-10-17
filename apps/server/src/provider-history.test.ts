@@ -1193,6 +1193,39 @@ describe('provider history integration', () => {
     ])
   })
 
+  it('opens a native chat whose provider copy is gone, and reads the copy again once it changes', async () => {
+    store.addThread({
+      id: 'local',
+      provider: 'codex',
+      providerSessionId: 'native',
+      projectPath: process.cwd(),
+      title: 'Existing',
+    })
+    for (const event of transcript('native')) store.append('local', event)
+    const { history, source } = setup()
+    vi.mocked(source.read).mockResolvedValue([])
+    await history.refresh()
+
+    expect(await history.load('local')).toBe(false)
+    expect(messages('local').map((item) => item.text)).toEqual([
+      'Hello',
+      '**Bold**\n\n```ts\nconst x = 1\n```',
+    ])
+    // The same revision is not read on every open.
+    expect(await history.load('local')).toBe(false)
+    expect(source.read).toHaveBeenCalledTimes(1)
+
+    vi.mocked(source.list).mockResolvedValue([{ ...metadata(), revision: '2' }])
+    vi.mocked(source.read).mockResolvedValue([
+      ...transcript('native'),
+      ...transcript('later', 'From outside', 90000).slice(1),
+    ])
+    await history.refresh()
+    await history.load('local')
+    expect(source.read).toHaveBeenCalledTimes(2)
+    expect(messages('local').map((item) => item.text).at(-1)).toBe('From outside')
+  })
+
   it('matches local turns whose provider IDs differ using user content and native time', async () => {
     const { history, source } = setup()
     await history.refresh()

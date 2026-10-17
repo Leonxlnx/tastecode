@@ -288,7 +288,17 @@ export class ProviderHistory {
           (this.hooks.isBusy(duplicateId) || this.store.queuedTurns(duplicateId).length)
         )
           return changed
-        if (events.length === 0) throw new Error('Saved provider chat is unavailable; try again')
+        if (events.length === 0) {
+          // An imported chat has no transcript but this copy, so the reader retries.
+          if (duplicateId === threadId)
+            throw new Error('Saved provider chat is unavailable; try again')
+          // A native chat keeps its own transcript; the copy only adds turns taken
+          // outside TasteCode. A copy that is gone (Codex archived the session and
+          // its rollout was deleted) must not keep the chat from opening. This
+          // revision is not read again; a changed copy is.
+          current.loadedRevision = current.session.revision
+          break
+        }
         // A turn that finished during the read is local too; its echo must still be dropped.
         if (this.store.lastSeq(threadId) !== seq)
           local = this.store.localHistory(threadId).map(({ event }) => event)
