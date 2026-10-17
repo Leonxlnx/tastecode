@@ -2,14 +2,55 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  expireWindowsPath,
+  parseRegistryPath,
+  refreshWindowsPath,
+  resetWindowsPathForTests,
+  type RegistryExport,
+} from './desktop-path.js'
 import { applyDesktopPath, desktopPath, isInstalled, spawnCli } from './index.js'
 
 const roots: string[] = []
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
+  resetWindowsPathForTests()
 })
+
+/** An Environment key exported the way reg.exe writes it: UTF-16LE, wrapped hex. */
+function exportedKey(value: string | undefined, kind: 'expand' | 'string' = 'expand'): Buffer {
+  let pathLine = ''
+  if (value !== undefined && kind === 'string') {
+    pathLine = `"Path"="${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\r\n`
+  } else if (value !== undefined) {
+    const bytes = [...Buffer.from(`${value}\0`, 'utf16le')].map((byte) =>
+      byte.toString(16).padStart(2, '0'),
+    )
+    const rows: string[] = []
+    for (let index = 0; index < bytes.length; index += 25) {
+      rows.push(bytes.slice(index, index + 25).join(','))
+    }
+    pathLine = `"Path"=hex(2):${rows.join(',\\\r\n  ')}\r\n`
+  }
+  const text = [
+    'Windows Registry Editor Version 5.00\r\n\r\n',
+    '[HKEY_CURRENT_USER\\Environment]\r\n',
+    '"TEMP"=hex(2):25,00,54,00,25,00,00,00\r\n',
+    pathLine,
+    '"OneDrive"="C:\\\\Users\\\\tester\\\\OneDrive"\r\n\r\n',
+  ].join('')
+  return Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, 'utf16le')])
+}
+
+/** A reg.exe stand-in that exports the given Path value for each key. */
+function registry(values: { machine?: string; user?: string }) {
+  return vi.fn<RegistryExport>(async (key, file) => {
+    const value = key.startsWith('HKCU') ? values.user : values.machine
+    writeFileSync(file, exportedKey(value))
+  })
+}
 
 describe('desktopPath', () => {
   it('reads the Windows Path spelling from a copied environment', () => {
@@ -96,6 +137,16 @@ describe('desktopPath', () => {
     expect(result.split(';')).toContain(path.win32.join(local, 'agy', 'bin'))
   })
 
+  it('finds a winget-installed CLI before Windows refreshes the process PATH', () => {
+    const local = 'C:\\Users\\tester\\AppData\\Local'
+    const result = desktopPath('C:\\Windows\\System32', {
+      platform: 'win32',
+      home: 'C:\\Users\\tester',
+      env: { LOCALAPPDATA: local },
+    })
+    expect(result.split(';')).toContain(path.win32.join(local, 'Microsoft', 'WinGet', 'Links'))
+  })
+
   it('writes the desktop-safe PATH back onto the given environment', () => {
     const home = process.platform === 'win32' ? 'C:\\Users\\tester' : '/Users/tester'
     const env: NodeJS.ProcessEnv = {
@@ -106,6 +157,75 @@ describe('desktopPath', () => {
     const next = applyDesktopPath(env)
     expect(env.PATH).toBe(next)
     expect(next.split(path.delimiter)).toContain(path.join(home, '.local', 'bin'))
+  })
+})
+
+describe('registry PATH', () => {
+  const env = { LOCALAPPDATA: 'C:\\Users\\tester\\AppData\\Local' }
+  const options = { platform: 'win32', home: 'C:\\Users\\tester', env } as const
+
+  it('reads an expandable PATH that reg.exe wrapped over several lines', () => {
+    const value = '%LOCALAPPDATA%\\agy\\bin;C:\\Users\\Jürgen\\tools;C:\\Program Files\\Vendor CLI'
+    expect(parseRegistryPath(exportedKey(value))).toBe(value)
+  })
+
+  it('reads a plain string PATH and undoes its escapes', () => {
+    expect(parseRegistryPath(exportedKey('C:\\tools;D:\\a "b"', 'string'))).toBe(
+      'C:\\tools;D:\\a "b"',
+    )
+  })
+
+  it('reports a key without a Path value as having none', () => {
+    expect(parseRegistryPath(exportedKey(undefined))).toBeUndefined()
+  })
+
+  it('adds a folder an installer put on the PATH after launch, after the inherited PATH', async () => {
+    const run = registry({
+      machine: 'C:\\Windows\\System32;C:\\machine-tools',
+      user: '%LOCALAPPDATA%\\fresh-cli\\bin;%NOT_SET%\\bin',
+    })
+    await refreshWindowsPath({ platform: 'win32', env, run })
+    const entries = desktopPath('C:\\Windows\\System32', options).split(';')
+
+    expect(entries[0]).toBe('C:\\Windows\\System32')
+    expect(entries.filter((entry) => entry === 'C:\\Windows\\System32')).toHaveLength(1)
+    const machine = entries.indexOf('C:\\machine-tools')
+    const user = entries.indexOf('C:\\Users\\tester\\AppData\\Local\\fresh-cli\\bin')
+    expect(machine).toBeGreaterThan(0)
+    expect(user).toBeGreaterThan(machine)
+    expect(entries.some((entry) => entry.includes('%'))).toBe(false)
+  })
+
+  it('keeps the last answer when reg.exe fails, and never throws', async () => {
+    await refreshWindowsPath({ platform: 'win32', env, run: registry({ user: 'C:\\fresh' }) })
+    expireWindowsPath()
+    const failing = vi.fn<RegistryExport>(async () => {
+      throw new Error('reg.exe timed out')
+    })
+    await expect(refreshWindowsPath({ platform: 'win32', env, run: failing })).resolves.toBe(
+      undefined,
+    )
+    expect(failing).toHaveBeenCalledTimes(2)
+    expect(desktopPath('C:\\Windows', options).split(';')).toContain('C:\\fresh')
+  })
+
+  it('reads the registry at most once per burst of scans', async () => {
+    const run = registry({ user: 'C:\\fresh' })
+    await Promise.all([
+      refreshWindowsPath({ platform: 'win32', env, run }),
+      refreshWindowsPath({ platform: 'win32', env, run }),
+    ])
+    await refreshWindowsPath({ platform: 'win32', env, run })
+    expect(run).toHaveBeenCalledTimes(2)
+    expireWindowsPath()
+    await refreshWindowsPath({ platform: 'win32', env, run })
+    expect(run).toHaveBeenCalledTimes(4)
+  })
+
+  it('leaves other platforms alone', async () => {
+    const run = registry({ user: 'C:\\fresh' })
+    await refreshWindowsPath({ platform: 'darwin', env, run })
+    expect(run).not.toHaveBeenCalled()
   })
 })
 
@@ -134,6 +254,25 @@ describe('isInstalled', () => {
       expect(output.trim()).toBe('WINDOWS_PATH_OK')
     },
   )
+  it.skipIf(process.platform !== 'win32')(
+    'does not count a same-named shim in the working directory',
+    async () => {
+      // where.exe searched the working directory first, so detection could
+      // report a CLI that spawnCli would never launch from there.
+      const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-cwd-shim-'))
+      roots.push(workspace)
+      const command = `harness-cwd-only-${process.pid}`
+      writeFileSync(path.join(workspace, `${command}.cmd`), '@echo off\r\nexit /b 0\r\n')
+      const previous = process.cwd()
+      process.chdir(workspace)
+      try {
+        await expect(isInstalled(command)).resolves.toBe(false)
+      } finally {
+        process.chdir(previous)
+      }
+    },
+  )
+
   it('finds a user-local shim that a GUI PATH would miss', async () => {
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-desktop-path-'))
     roots.push(home)
