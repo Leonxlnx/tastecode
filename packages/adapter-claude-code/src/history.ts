@@ -161,57 +161,86 @@ async function completeEnd(handle: FileHandle, from: number, size: number): Prom
   return from
 }
 
+function parseLine(bytes: Buffer): SavedRecord | undefined {
+  return parseRecord(bytes.toString('utf8'))
+}
+
 /**
- * Lines in [from, to) that hold a metadata token, as [start, end] pairs in file order.
- * Chunks overlap by a token's length, so a token split across two reads still counts.
+ * Add the rows in [from, to) that hold a metadata token to `rows`, by line start; a line
+ * already there is not parsed again, and rows a digest ignores are kept as `undefined`.
+ * Chunks overlap by a token's length, so a token split across two reads still counts. A
+ * line inside one chunk is parsed from it; only longer lines take a read of their own.
  */
-async function tokenLines(
+async function addTokenRows(
   handle: FileHandle,
   from: number,
   to: number,
-): Promise<Array<[number, number]>> {
-  const lines: Array<[number, number]> = []
-  const buffer = Buffer.allocUnsafe(TOKEN_OVERLAP + SCAN_CHUNK_BYTES)
-  let kept = 0
+  rows: Map<number, SavedRecord | undefined>,
+): Promise<void> {
+  const add = async (start: number, end: number, bytes?: Buffer) => {
+    if (rows.has(start)) return
+    const row = parseLine(bytes ?? (await readAt(handle, start, end - start)))
+    rows.set(start, row && visible(row) ? row : undefined)
+  }
+  // Two buffers, so the next chunk is read while this one is searched. Each chunk lands
+  // after room for the bytes carried over from the one before.
+  const buffers = [0, 1].map(() => Buffer.allocUnsafe(TOKEN_OVERLAP + SCAN_CHUNK_BYTES))
+  const read = (index: number, position: number) =>
+    handle.read(
+      buffers[index % 2]!,
+      TOKEN_OVERLAP,
+      Math.min(SCAN_CHUNK_BYTES, to - position),
+      position,
+    )
+  let next = from < to ? read(0, from) : undefined
+  let window: Buffer | undefined
   // Where the line that holds the byte after the last line feed seen so far starts.
   let lineStart = from
-  // A matching line whose line feed is not read yet.
+  // Where the last matching line ends, and where one whose line feed is not read yet starts.
+  let lineEnd = from
   let pending: number | undefined
-  for (let position = from; position < to;) {
-    const length = Math.min(SCAN_CHUNK_BYTES, to - position)
-    const { bytesRead } = await handle.read(buffer, kept, length, position)
-    if (!bytesRead) break
-    const base = position - kept
-    const window = buffer.subarray(0, kept + bytesRead)
-    const pendingEnd = pending === undefined ? -1 : window.indexOf(LINE_FEED, kept)
-    if (pending !== undefined && pendingEnd !== -1) {
-      lines.push([pending, base + pendingEnd])
-      pending = undefined
+  try {
+    for (let index = 0, position = from; next; index++) {
+      const { bytesRead } = await next
+      next = undefined
+      if (!bytesRead) break
+      const buffer = buffers[index % 2]!
+      const kept = window ? Math.min(TOKEN_OVERLAP, window.length) : 0
+      window?.copy(buffer, TOKEN_OVERLAP - kept, window.length - kept)
+      if (position + bytesRead < to) next = read(index + 1, position + bytesRead)
+      const base = position - kept
+      window = buffer.subarray(TOKEN_OVERLAP - kept, TOKEN_OVERLAP + bytesRead)
+      const pendingEnd = pending === undefined ? -1 : window.indexOf(LINE_FEED, kept)
+      if (pending !== undefined && pendingEnd !== -1) {
+        lineEnd = base + pendingEnd
+        await add(pending, lineEnd)
+        pending = undefined
+      }
+      const hits: number[] = []
+      for (const token of METADATA_TOKENS)
+        for (let hit = window.indexOf(token); hit !== -1; hit = window.indexOf(token, hit + 1))
+          if (hit + token.length > kept) hits.push(hit)
+      for (const hit of hits.sort((left, right) => left - right)) {
+        // Each line is searched once, so a line with many tokens costs no more than one.
+        if (pending !== undefined || base + hit < lineEnd) continue
+        const before = window.lastIndexOf(LINE_FEED, hit)
+        const start = before === -1 ? lineStart : base + before + 1
+        const after = window.indexOf(LINE_FEED, hit)
+        if (after === -1) {
+          pending = start
+          continue
+        }
+        lineEnd = base + after
+        await add(start, lineEnd, start >= base ? window.subarray(start - base, after) : undefined)
+      }
+      const last = window.lastIndexOf(LINE_FEED)
+      if (last !== -1) lineStart = base + last + 1
+      position += bytesRead
     }
-    const hits: number[] = []
-    for (const token of METADATA_TOKENS)
-      for (let hit = window.indexOf(token); hit !== -1; hit = window.indexOf(token, hit + 1))
-        if (hit + token.length > kept) hits.push(hit)
-    for (const hit of hits.sort((left, right) => left - right)) {
-      // Each line is searched once, so a line with many tokens costs no more than one.
-      if (pending !== undefined || base + hit < (lines.at(-1)?.[1] ?? from)) continue
-      const before = window.lastIndexOf(LINE_FEED, hit)
-      const start = before === -1 ? lineStart : base + before + 1
-      const after = window.indexOf(LINE_FEED, hit)
-      if (after === -1) pending = start
-      else lines.push([start, base + after])
-    }
-    const last = window.lastIndexOf(LINE_FEED)
-    if (last !== -1) lineStart = base + last + 1
-    kept = Math.min(TOKEN_OVERLAP, window.length)
-    buffer.copyWithin(0, window.length - kept, window.length)
-    position += bytesRead
+  } finally {
+    // A failed read must not leave the read ahead running into a closed file.
+    await next?.catch(() => undefined)
   }
-  return lines
-}
-
-function parseLine(bytes: Buffer): SavedRecord | undefined {
-  return parseRecord(bytes.toString('utf8'))
 }
 
 /**
@@ -287,9 +316,7 @@ async function readTranscript(
         later.set(line.start, row && visible(row) ? row : undefined)
         if (visibleMessage(row)) break
       }
-      for (const [lineStart, end] of await tokenLines(handle, start, complete))
-        if (!later.has(lineStart))
-          later.set(lineStart, parseLine(await readAt(handle, lineStart, end - lineStart)))
+      await addTokenRows(handle, start, complete, later)
       for (const [, row] of [...later].sort(([left], [right]) => left - right))
         if (row) observe(digest, row)
     }
