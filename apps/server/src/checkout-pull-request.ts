@@ -51,15 +51,11 @@ const LOOKUP_FIELDS = [
 /** One git command's exit code and output. Never throws; a spawn failure is code -1. */
 export type GitRunner = (cwd: string, args: string[]) => Promise<{ code: number; stdout: string }>
 
+type Tracking = { defaultBranch?: string; upstream?: string; ahead?: number }
+
 type CheckoutGit =
-  | { reason: CheckoutPullRequestUnavailable; branch?: string }
-  | {
-      branch: string
-      repository: string
-      defaultBranch?: string
-      upstream?: string
-      ahead?: number
-    }
+  | ({ reason: CheckoutPullRequestUnavailable; branch?: string } & Tracking)
+  | ({ branch: string; repository: string } & Tracking)
 
 type Lookup =
   | { pullRequest?: CheckoutPullRequest; fetchedAt: number }
@@ -117,35 +113,32 @@ export class CheckoutPullRequests {
 
   async forCheckout(checkout: string, refresh = false): Promise<CheckoutPullRequestResult> {
     const git = await readCheckoutGit(checkout, this.#git)
+    // What git knows is reported even when GitHub cannot be asked, so the
+    // Review tab can still offer a push.
+    const known = {
+      ...(git.branch ? { branch: git.branch } : {}),
+      ...('repository' in git ? { repository: git.repository } : {}),
+      ...(git.defaultBranch ? { defaultBranch: git.defaultBranch } : {}),
+      ...(git.upstream ? { upstream: git.upstream } : {}),
+      ...(git.ahead === undefined ? {} : { ahead: git.ahead }),
+    }
     if ('reason' in git) {
-      return {
-        available: false,
-        reason: git.reason,
-        ...(git.branch ? { branch: git.branch } : {}),
-        fetchedAt: this.#now(),
-      }
+      return { available: false, reason: git.reason, ...known, fetchedAt: this.#now() }
     }
 
-    const { branch, repository, defaultBranch, upstream, ahead } = git
-    const found = {
-      branch,
-      repository,
-      ...(defaultBranch ? { defaultBranch } : {}),
-      ...(upstream ? { upstream } : {}),
-      ...(ahead === undefined ? {} : { ahead }),
-    }
+    const { branch, repository, defaultBranch } = git
     // The default branch never has a pull request of its own.
-    if (branch === defaultBranch) return { available: true, ...found, fetchedAt: this.#now() }
+    if (branch === defaultBranch) return { available: true, ...known, fetchedAt: this.#now() }
 
     const key = lookupKey(repository, branch)
     this.#rememberCheckout(checkout, key)
     const lookup = await this.#lookup(key, repository, branch, refresh)
     if ('reason' in lookup) {
-      return { available: false, reason: lookup.reason, branch, fetchedAt: lookup.fetchedAt }
+      return { available: false, reason: lookup.reason, ...known, fetchedAt: lookup.fetchedAt }
     }
     return {
       available: true,
-      ...found,
+      ...known,
       ...(lookup.pullRequest ? { pullRequest: lookup.pullRequest } : {}),
       fetchedAt: lookup.fetchedAt,
     }
@@ -372,19 +365,18 @@ export async function readCheckoutGit(cwd: string, git: GitRunner): Promise<Chec
   // HEAD names a branch that has no commit yet.
   if (!branchLine) return { reason: 'no_branch', branch }
 
-  const repository = remote.code === 0 ? githubRepositoryFromRemote(remote.stdout) : undefined
-  if (!repository) return { reason: 'no_remote', branch }
-
   const upstream = branchLine[1]
   const track = branchLine[2] ?? ''
   // A gone upstream was deleted on the remote; the branch needs a push again.
   const tracked = upstream && track !== 'gone' ? upstream : undefined
-  return {
-    branch,
-    repository,
+  const tracking = {
     ...(defaultBranch ? { defaultBranch } : {}),
     ...(tracked ? { upstream: tracked, ahead: Number(/\bahead (\d+)/.exec(track)?.[1] ?? 0) } : {}),
   }
+  const repository = remote.code === 0 ? githubRepositoryFromRemote(remote.stdout) : undefined
+  // A branch tracking another host can still be pushed, just not looked up on GitHub.
+  if (!repository) return { reason: 'no_remote', branch, ...tracking }
+  return { branch, repository, ...tracking }
 }
 
 /** All checks folded into one word, the way GitHub's own status icon reads. */

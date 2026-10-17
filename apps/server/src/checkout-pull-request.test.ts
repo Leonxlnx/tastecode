@@ -69,6 +69,17 @@ describe('reading a checkout with git', () => {
 
     git(root, 'remote', 'add', 'origin', 'https://gitlab.com/team/project.git')
     expect(await readCheckoutGit(root, runGit)).toEqual({ reason: 'no_remote', branch: 'main' })
+
+    // Another host's branch can still be pushed, so its tracking comes along.
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git(root, 'branch', '-q', '--set-upstream-to=origin/main')
+    commit(root, 'local')
+    expect(await readCheckoutGit(root, runGit)).toEqual({
+      reason: 'no_remote',
+      branch: 'main',
+      upstream: 'origin/main',
+      ahead: 1,
+    })
   })
 
   it('reads the branch, its upstream, how far ahead it is and the default branch', async () => {
@@ -281,10 +292,15 @@ describe('the pull request for a checkout', () => {
       },
       { account },
     )
+    // What git knows still comes back, so a push stays possible.
     expect(await lookups.forCheckout('/p')).toEqual({
       available: false,
       reason,
       branch: 'feature/pr-chip',
+      repository: 'Leonxlnx/personalharness',
+      defaultBranch: 'main',
+      upstream: 'origin/feature/pr-chip',
+      ahead: 1,
       fetchedAt: 1_000,
     })
     expect(readAccount).toHaveBeenCalledWith(true)
