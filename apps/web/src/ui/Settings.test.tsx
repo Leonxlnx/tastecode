@@ -1645,6 +1645,56 @@ describe('provider settings', () => {
     expect(screen.queryByLabelText('API key')).toBeNull()
   })
 
+  it('lists API connections on roster rows and removes one by name', async () => {
+    const onConnectionsChanged = vi.fn()
+    const transport = new TestTransport((method) => {
+      if (method === 'connections.remove') return {}
+      throw new Error('Unexpected ' + method)
+    })
+    const connection = (id: string, displayName: string, credentialConfigured: boolean) => ({
+      id,
+      displayName,
+      preset: 'openrouter' as const,
+      transport: 'openai-compatible' as const,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      enabled: true,
+      credentialConfigured,
+    })
+    render(
+      <ProviderSettings
+        provider="api"
+        account={undefined}
+        providerStatuses={[]}
+        modelConnections={[
+          connection('research', 'Research API', true),
+          connection('draft', 'Draft API', false),
+        ]}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={() => {}}
+      />,
+    )
+
+    const section = screen.getByRole('region', { name: 'API connections' })
+    // A stored key wires the row like a signed-in provider; a missing one leaves it open.
+    const research = within(section).getByText('Research API').closest<HTMLElement>('.provider-row')
+    expect(research?.dataset['link']).toBe('connected')
+    expect(research?.textContent).toContain('OpenRouter')
+    const draft = within(section).getByText('Draft API').closest<HTMLElement>('.provider-row')
+    expect(draft?.dataset['link']).toBe('open')
+    expect(draft?.textContent).toContain('Key missing')
+    expect(
+      within(section).getByRole('button', { name: 'Connect another plan or API' }),
+    ).toBeTruthy()
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Remove Draft API' }))
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
+    expect(transport.requests).toContainEqual({
+      method: 'connections.remove',
+      params: { connectionId: 'draft' },
+    })
+  })
+
   it('renders every nightly CLI provider returned by the server', async () => {
     const providers: Array<[ProviderId, string]> = [
       ['cursor', 'Cursor'],

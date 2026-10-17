@@ -1246,147 +1246,172 @@ export function ProviderSettings(props: {
           {renderAgentRow(agent)}
         </div>
       ))}
-      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
-      {(props.modelConnections ?? []).map((connection) => (
-        <SettingsRow key={connection.id} title={connection.displayName}>
-          <div className="provider-settings__actions">
-            <StateLabel
-              state={connection.credentialConfigured ? 'ready' : 'setup-needed'}
-              detail={
-                connection.credentialConfigured
-                  ? CONNECTION_PRESETS[connection.preset].label
-                  : 'Key missing'
-              }
-            />
-            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
-            <button
-              className="set-button set-button--danger"
-              type="button"
-              onClick={() => {
-                void props.transport
-                  .request('connections.remove', { connectionId: connection.id })
-                  .then(props.onConnectionsChanged)
-              }}
-            >
-              Remove
-            </button>
+      <SettingsSection title="API connections">
+        {(props.modelConnections ?? []).map((connection) => (
+          <ConnectionRow
+            key={connection.id}
+            connection={connection}
+            onRemove={() => {
+              void props.transport
+                .request('connections.remove', { connectionId: connection.id })
+                .then(props.onConnectionsChanged)
+            }}
+          />
+        ))}
+        {addingConnection ? (
+          <div className="set-form">
+            <div className="set-form__field">
+              <span>Provider</span>
+              <Menu
+                align="left"
+                drop="down"
+                label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
+                panelLabel="API provider"
+                panelClassName="provider-form__menu"
+                triggerClassName="provider-form__select set-select"
+                trigger={(open) => (
+                  <>
+                    <span className="provider-form__select-value">
+                      <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
+                      {CONNECTION_PRESETS[connectionPreset].label}
+                    </span>
+                    <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                  </>
+                )}
+              >
+                {(close) =>
+                  Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                    <MenuItem
+                      key={value}
+                      title={config.label}
+                      icon={
+                        <ProviderIcon
+                          mark={connectionMark(value as ModelConnectionPreset)}
+                          size={16}
+                        />
+                      }
+                      active={value === connectionPreset}
+                      onClick={() => {
+                        chooseConnectionPreset(value as ModelConnectionPreset)
+                        close()
+                      }}
+                    />
+                  ))
+                }
+              </Menu>
+            </div>
+            <label>
+              <span>Name</span>
+              <input
+                className="set-input"
+                value={connectionName}
+                onChange={(event) => setConnectionName(event.target.value)}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>Base URL</span>
+              <input
+                className="set-input"
+                value={connectionBaseUrl}
+                onChange={(event) => setConnectionBaseUrl(event.target.value)}
+                spellCheck={false}
+              />
+            </label>
+            <label>
+              <span>Default model</span>
+              <input
+                className="set-input"
+                value={connectionDefaultModel}
+                onChange={(event) => setConnectionDefaultModel(event.target.value)}
+                placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
+                spellCheck={false}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>API key</span>
+              <input
+                className="set-input"
+                type="password"
+                value={connectionApiKey}
+                onChange={(event) => setConnectionApiKey(event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            {connectionError ? <p className="set-form__error">{connectionError}</p> : null}
+            <div className="set-form__actions">
+              <button
+                className="set-button set-button--quiet"
+                type="button"
+                onClick={() => setAddingConnection(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="set-button set-button--primary"
+                type="button"
+                disabled={
+                  connectionSaving ||
+                  !connectionName.trim() ||
+                  !connectionBaseUrl.trim() ||
+                  !connectionApiKey.trim()
+                }
+                onClick={() => void addConnection()}
+              >
+                {connectionSaving ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
           </div>
-        </SettingsRow>
-      ))}
-      {addingConnection ? (
-        <div className="provider-form">
-          <div className="provider-form__field">
-            <span>Provider</span>
-            <Menu
-              align="left"
-              drop="down"
-              label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
-              panelLabel="API provider"
-              panelClassName="provider-form__menu"
-              triggerClassName="provider-form__select set-select"
-              trigger={(open) => (
-                <>
-                  <span className="provider-form__select-value">
-                    <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
-                    {CONNECTION_PRESETS[connectionPreset].label}
-                  </span>
-                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
-                </>
-              )}
-            >
-              {(close) =>
-                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
-                  <MenuItem
-                    key={value}
-                    title={config.label}
-                    icon={
-                      <ProviderIcon
-                        mark={connectionMark(value as ModelConnectionPreset)}
-                        size={16}
-                      />
-                    }
-                    active={value === connectionPreset}
-                    onClick={() => {
-                      chooseConnectionPreset(value as ModelConnectionPreset)
-                      close()
-                    }}
-                  />
-                ))
-              }
-            </Menu>
-          </div>
-          <label>
-            <span>Name</span>
-            <input
-              className="set-input"
-              value={connectionName}
-              onChange={(event) => setConnectionName(event.target.value)}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>Base URL</span>
-            <input
-              className="set-input"
-              value={connectionBaseUrl}
-              onChange={(event) => setConnectionBaseUrl(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <label>
-            <span>Default model</span>
-            <input
-              className="set-input"
-              value={connectionDefaultModel}
-              onChange={(event) => setConnectionDefaultModel(event.target.value)}
-              placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
-              spellCheck={false}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>API key</span>
-            <input
-              className="set-input"
-              type="password"
-              value={connectionApiKey}
-              onChange={(event) => setConnectionApiKey(event.target.value)}
-              autoComplete="off"
-            />
-          </label>
-          {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
-          <div className="provider-form__actions">
-            <button
-              className="set-button set-button--quiet"
-              type="button"
-              onClick={() => setAddingConnection(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="set-button set-button--primary"
-              type="button"
-              disabled={
-                connectionSaving ||
-                !connectionName.trim() ||
-                !connectionBaseUrl.trim() ||
-                !connectionApiKey.trim()
-              }
-              onClick={() => void addConnection()}
-            >
-              {connectionSaving ? 'Connecting…' : 'Connect'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button className="set-button" type="button" onClick={() => setAddingConnection(true)}>
-          <KeyRound size={15} aria-hidden />
-          Connect another plan or API
-        </button>
-      )}
+        ) : (
+          <button
+            className="set-button provider-connections__add"
+            type="button"
+            onClick={() => setAddingConnection(true)}
+          >
+            <KeyRound size={15} aria-hidden />
+            Connect another plan or API
+          </button>
+        )}
+      </SettingsSection>
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPage>
   )
 }
 
+/**
+ * An API connection on the roster's own row: its mark and name, the solid
+ * wire once a key is stored (the open leader while one is missing), and
+ * Remove where a provider has Sign out.
+ */
+function ConnectionRow(props: { connection: ModelConnection; onRemove: () => void }) {
+  const configured = props.connection.credentialConfigured
+  return (
+    <div className="provider-row" data-link={configured ? 'connected' : 'open'}>
+      <div className="provider-row__mark">
+        <ProviderIcon mark={connectionMark(props.connection.preset)} size={18} />
+      </div>
+      <div className="provider-row__identity">
+        <p className="set-entity__name">{props.connection.displayName}</p>
+      </div>
+      <span className="set-leader" aria-hidden />
+      <div className="provider-row__status set-entity__status">
+        <span className="provider-row__status-text">
+          {configured ? CONNECTION_PRESETS[props.connection.preset].label : 'Key missing'}
+        </span>
+      </div>
+      <div className="provider-row__secondary" />
+      <div className="provider-row__primary">
+        <button
+          className="set-button set-button--danger"
+          type="button"
+          aria-label={`Remove ${props.connection.displayName}`}
+          onClick={props.onRemove}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
@@ -2942,23 +2967,6 @@ function SettingsValueSkeleton(props: { label: string; width: number }) {
       <span className="visually-hidden">{props.label}</span>
       <Skeleton width={props.width} height={9} />
     </span>
-  )
-}
-
-function SettingsRow(props: {
-  title: ReactNode
-  note?: ReactNode
-  className?: string
-  children?: ReactNode
-}) {
-  return (
-    <div className={`settings__row${props.className ? ` ${props.className}` : ''}`}>
-      <div className="settings__row-copy">
-        <p className="settings__row-title">{props.title}</p>
-        {props.note ? <p className="settings__row-note">{props.note}</p> : null}
-      </div>
-      {props.children ? <div className="settings__row-control">{props.children}</div> : null}
-    </div>
   )
 }
 

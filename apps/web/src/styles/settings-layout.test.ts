@@ -375,6 +375,18 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(/\.settings \.mcp-row__details \{[^}]*font-size: var\(--t-sm\);/s)
   })
 
+  it('sets API connections as a roster section with the shared form', () => {
+    expect(settingsCss).toMatch(
+      /\.settings \.provider-settings__entry \+ \.set-section \{[^}]*margin-top: 36px;/s,
+    )
+    // The form is the shared one; its old grid, written twice, and the inset heading are gone.
+    expect(settingsCss).not.toMatch(
+      /\.provider-form \{|provider-form__(field|wide|actions|error)|settings__group-title--inside|provider-settings__(status|actions)/,
+    )
+    expect(settingsCss.match(/\.provider-form__select \{/g)).toHaveLength(1)
+    expect(settingsSource).not.toContain('settings__group-title')
+  })
+
   it('draws the provider updates line from quiet buttons at the note size', () => {
     expect(settingsCss).toMatch(
       /\.settings \.provider-updates-check \{[^}]*margin: 24px 0 0;[^}]*font-size: var\(--t-sm\);/s,
