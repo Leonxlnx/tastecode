@@ -1000,6 +1000,95 @@ describe('limit read backoff and intervals', () => {
   })
 })
 
+describe('read intent', () => {
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }],
+  })
+  const notReadYet = {
+    provider: 'claude-code',
+    status: 'unavailable',
+    reason: 'failed',
+    error: 'Plan limits are read when you open them.',
+  }
+
+  it('reads Claude limits only while they are shown, at most every 15 minutes', async () => {
+    expect(PROVIDER_CAPABILITIES['claude-code'].limitReadsWhenShown).toBe(true)
+    const usageLimitSource = vi.fn(async () => weekly(10))
+    const { registry } = setup({
+      limitReadIntervalMs: undefined,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    // A passive figure starts no read; nothing known is not "no plan limits".
+    await expect(claude.usageLimitSource('background')).resolves.toEqual(notReadYet)
+    expect(claude.heldLimitSource()).toBeUndefined()
+    expect(usageLimitSource).not.toHaveBeenCalled()
+    await expect(claude.usageLimitSource('visible')).resolves.toMatchObject({ origin: 'read' })
+    await vi.advanceTimersByTimeAsync(16 * 60_000)
+    // Older than the interval, but nobody is looking.
+    await expect(claude.usageLimitSource('background')).resolves.toMatchObject({
+      limits: [{ usedPercent: 10 }],
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    await claude.usageLimitSource('visible')
+    expect(usageLimitSource).toHaveBeenCalledTimes(2)
+    // Without an intent a request counts as shown, as for older clients.
+    await vi.advanceTimersByTimeAsync(15 * 60_000)
+    await claude.usageLimitSource()
+    expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+
+  it('shows live Claude windows to a passive figure without a read', async () => {
+    const session = { id: 'five_hour', label: 'Session', usedPercent: 76, windowMinutes: 300 }
+    const usageLimitSource = vi.fn(async () => ({
+      status: 'ready' as const,
+      limits: [{ ...session, usedPercent: 80 }, ...weekly(10).limits],
+    }))
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    registry.applyLimitRows('claude-code', [session])
+    await expect(claude.usageLimitSource('background')).resolves.toMatchObject({
+      origin: 'live',
+      limits: [session],
+    })
+    expect(usageLimitSource).not.toHaveBeenCalled()
+    // Once shown, a full read answers with every window, including the weekly ones.
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(claude.usageLimitSource('visible')).resolves.toMatchObject({
+      origin: 'read',
+      limits: [
+        { id: 'five_hour', usedPercent: 80 },
+        { id: 'seven_day', usedPercent: 10 },
+      ],
+    })
+  })
+
+  it('gives a passive figure the reason of a failed Claude read without reading again', async () => {
+    const usageLimitSource = vi.fn(async (): Promise<ReturnType<typeof weekly>> => {
+      throw Object.assign(new Error('fixture-timed-out'), { name: 'TimeoutError' })
+    })
+    const { registry } = setup({ services: { 'claude-code': { usageLimitSource } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource('visible')).rejects.toThrow('fixture-timed-out')
+    await expect(claude.usageLimitSource('background')).resolves.toEqual({
+      ...notReadYet,
+      error: 'fixture-timed-out',
+    })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('still reads other providers for a passive figure', async () => {
+    expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadsWhenShown')
+    const usageLimitSource = vi.fn(async () => weekly(20))
+    const { registry } = setup({ services: { grok: { usageLimitSource } } })
+    await expect(
+      registry.forProvider('grok').usageLimitSource('background'),
+    ).resolves.toMatchObject({ status: 'ready', origin: 'read' })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+})
+
 describe('last-known limits', () => {
   const weekly = (usedPercent: number) => ({
     status: 'ready' as const,

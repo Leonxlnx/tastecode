@@ -94,6 +94,7 @@ import type {
   Thread,
   ThreadInboxStatus,
   ThreadLifecycle,
+  UsageReadIntent,
 } from '@harness/contracts'
 import {
   readSessionDiff,
@@ -1400,8 +1401,11 @@ export class Orchestrator {
     return consume(idempotencyKey, creditId)
   }
 
-  async usageLimitSource(provider: ProviderId): Promise<ProviderLimitSource> {
-    return this.#controls.forProvider(provider).usageLimitSource()
+  async usageLimitSource(
+    provider: ProviderId,
+    intent?: UsageReadIntent,
+  ): Promise<ProviderLimitSource> {
+    return this.#controls.forProvider(provider).usageLimitSource(intent)
   }
 
   /** The provider's held limits, without starting a read. */

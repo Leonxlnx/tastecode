@@ -12,6 +12,7 @@ import type {
   Skill,
   SkillCapabilities,
   SkillDiscoveryError,
+  UsageReadIntent,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
@@ -74,7 +75,8 @@ export type ProviderControl = {
   capabilities: ProviderControlCapabilities
   validateMcpServer?: (server: McpServerConfig) => void
   account(agent?: string): Promise<Account>
-  usageLimitSource(): Promise<ProviderLimitSource>
+  /** Absent intent is treated as `visible`, as the contract asks of servers. */
+  usageLimitSource(intent?: UsageReadIntent): Promise<ProviderLimitSource>
   /** The held snapshot without reading; undefined until a read or live window arrives. */
   heldLimitSource(): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
@@ -176,6 +178,7 @@ type ReadyLimitSource = Extract<ProviderLimitSource, { status: 'ready' }>
 
 const REFRESH_ERROR_LIMIT = 300
 const REFRESH_ERROR_FALLBACK = 'Plan limits could not be refreshed.'
+const NOT_READ_YET = 'Plan limits are read when you open them.'
 
 /** A held source without the marks of an earlier failed refresh. */
 function heldValues(source: ReadyLimitSource): ReadyLimitSource {
@@ -521,15 +524,18 @@ export class ProviderControls {
         )
         return agent === undefined ? this.#accountRead(provider, account) : account
       },
-      usageLimitSource: () =>
+      usageLimitSource: (intent) =>
         services.usageLimitSource
-          ? this.#cachedLimits(provider, () =>
-              this.#read(async () => {
-                const source = await services.usageLimitSource?.()
-                return source?.status === 'ready'
-                  ? { provider, status: 'ready', limits: source.limits }
-                  : { provider, status: 'unavailable' }
-              }),
+          ? this.#cachedLimits(
+              provider,
+              () =>
+                this.#read(async () => {
+                  const source = await services.usageLimitSource?.()
+                  return source?.status === 'ready'
+                    ? { provider, status: 'ready', limits: source.limits }
+                    : { provider, status: 'unavailable' }
+                }),
+              intent,
             )
           : this.#read(async () => ({ provider, status: 'unavailable' })),
       heldLimitSource: () => this.#limits.get(provider)?.value,
@@ -586,14 +592,17 @@ export class ProviderControls {
         this.#withShared((adapter) => adapter.setSkillEnabled(skillId, enabled)),
       // A fresh process reads the account's current limits rather than the
       // snapshot a long-lived process captured at startup.
-      usageLimitSource: () =>
-        this.#cachedLimits(provider, () =>
-          this.#withFresh(async (adapter) => {
-            const source = await adapter.rateLimitSource()
-            return source.status === 'ready'
-              ? { provider, status: 'ready', limits: source.limits }
-              : { provider, status: 'unavailable' }
-          }),
+      usageLimitSource: (intent) =>
+        this.#cachedLimits(
+          provider,
+          () =>
+            this.#withFresh(async (adapter) => {
+              const source = await adapter.rateLimitSource()
+              return source.status === 'ready'
+                ? { provider, status: 'ready', limits: source.limits }
+                : { provider, status: 'unavailable' }
+            }),
+          intent,
         ),
       consumeRateLimitReset: async (idempotencyKey, creditId) => {
         const generation = this.#generation
@@ -699,17 +708,32 @@ export class ProviderControls {
   /**
    * One read serves concurrent callers, a fresh result serves later ones, and
    * a failed read answers them until its retry time: with the account's last
-   * known values when there are any, otherwise with its error.
+   * known values when there are any, otherwise with its error. A provider that
+   * reads only while its limits are shown answers a passive figure from what
+   * it holds and starts no read for it.
    */
   #cachedLimits(
     provider: ProviderId,
     read: () => Promise<ProviderLimitSource>,
+    intent: UsageReadIntent = 'visible',
   ): Promise<ProviderLimitSource> {
     this.#assertOpen()
     const entry = this.#limitEntry(provider)
     if (entry.reading) return entry.reading
     const startedAt = Date.now()
     if (entry.value && startedAt < entry.freshUntil) return Promise.resolve(entry.value)
+    const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    if (intent === 'background' && capabilities.limitReadsWhenShown) {
+      // Nothing known is not "no plan limits": the source has simply not been read yet.
+      return Promise.resolve(
+        entry.value ?? {
+          provider,
+          status: 'unavailable',
+          reason: 'failed',
+          error: entry.failure ? refreshErrorOf(entry.failure) : NOT_READ_YET,
+        },
+      )
+    }
     if (entry.failure && startedAt < entry.failure.retryAt) {
       return entry.value?.status === 'ready'
         ? Promise.resolve(entry.value)
@@ -755,7 +779,6 @@ export class ProviderControls {
         },
         (error: unknown) => {
           if (!current()) throw error
-          const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
           const failure = limitFailure(entry.failure, error, capabilities.limitReadTimeoutLimit)
           entry.failure = failure
           // One failed refresh does not make the account's known limits unknown.

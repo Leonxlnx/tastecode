@@ -23,6 +23,12 @@ export type ProviderControlCapabilities = Readonly<{
   limitReadIntervalMs: number
   /** Timed-out limit reads after which the server stops reading until the account changes. */
   limitReadTimeoutLimit?: number
+  /**
+   * Full reads wait for a client that shows the limits (`visible` or `retry`
+   * intent). A passive figure is answered from held values only, which live
+   * windows from running sessions keep current.
+   */
+  limitReadsWhenShown?: boolean
 }>
 
 const unsupported: ProviderControlCapabilities = {
@@ -63,6 +69,8 @@ export const PROVIDER_CAPABILITIES = {
     // A CLI that still scans its transcripts misses the read deadline every
     // time; two misses are enough to stop paying for that scan.
     limitReadTimeoutLimit: 2,
+    // Each read starts a whole CLI; rate_limit_event keeps the session window current.
+    limitReadsWhenShown: true,
   },
   codex: {
     resume: true,

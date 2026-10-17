@@ -1034,7 +1034,7 @@ export function startServer(
         return usageSummaryWithLimits(
           totals,
           provider,
-          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider),
+          (requestedProvider) => orchestrator.usageLimitSource(requestedProvider, p.intent),
           (requestedProvider) => orchestrator.heldLimitSource(requestedProvider),
         )
       }
