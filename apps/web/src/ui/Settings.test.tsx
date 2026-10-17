@@ -64,6 +64,7 @@ function renderSettings(
       models={[]}
       hiddenModels={new Set()}
       onModelVisibilityChange={() => {}}
+      onModelsVisibilityChange={() => {}}
       onConnectionsChanged={() => {}}
       projectCount={0}
       sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1155,6 +1156,7 @@ describe('model settings', () => {
       },
     ]
     const onModelVisibilityChange = vi.fn()
+    const onModelsVisibilityChange = vi.fn()
     const transport = new TestTransport()
 
     const settings = (hiddenModels: Set<string>) => (
@@ -1169,6 +1171,7 @@ describe('model settings', () => {
         models={models}
         hiddenModels={hiddenModels}
         onModelVisibilityChange={onModelVisibilityChange}
+        onModelsVisibilityChange={onModelsVisibilityChange}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1224,11 +1227,12 @@ describe('model settings', () => {
     expect(ling.getAttribute('aria-checked')).toBe('false')
     expect(qwen.getAttribute('aria-checked')).toBe('true')
 
+    // All and None change every row that differs in one call, never per row.
     fireEvent.click(allButton)
-    expect(onModelVisibilityChange).toHaveBeenCalledOnce()
-    expect(onModelVisibilityChange).toHaveBeenCalledWith('grok:ling', true)
+    expect(onModelsVisibilityChange).toHaveBeenCalledOnce()
+    expect(onModelsVisibilityChange).toHaveBeenCalledWith(['grok:ling'], true)
 
-    onModelVisibilityChange.mockClear()
+    onModelsVisibilityChange.mockClear()
     view.rerender(settings(new Set()))
     const disabledAllButton = screen.getByRole('button', {
       name: 'Show all Grok models in model picker',
@@ -1239,11 +1243,10 @@ describe('model settings', () => {
     expect((disabledAllButton as HTMLButtonElement).disabled).toBe(true)
     expect((enabledNoneButton as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(enabledNoneButton)
-    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', false)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', false)
+    expect(onModelsVisibilityChange).toHaveBeenCalledOnce()
+    expect(onModelsVisibilityChange).toHaveBeenCalledWith(['grok:ling', 'grok:qwen'], false)
 
-    onModelVisibilityChange.mockClear()
+    onModelsVisibilityChange.mockClear()
     view.rerender(settings(new Set(['grok:ling', 'grok:qwen'])))
     const enabledAllButton = screen.getByRole('button', {
       name: 'Show all Grok models in model picker',
@@ -1254,11 +1257,10 @@ describe('model settings', () => {
     expect((enabledAllButton as HTMLButtonElement).disabled).toBe(false)
     expect((disabledNoneButton as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(enabledAllButton)
-    expect(onModelVisibilityChange).toHaveBeenCalledTimes(2)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(1, 'grok:ling', true)
-    expect(onModelVisibilityChange).toHaveBeenNthCalledWith(2, 'grok:qwen', true)
+    expect(onModelsVisibilityChange).toHaveBeenCalledOnce()
+    expect(onModelsVisibilityChange).toHaveBeenCalledWith(['grok:ling', 'grok:qwen'], true)
+    expect(onModelVisibilityChange).not.toHaveBeenCalled()
 
-    onModelVisibilityChange.mockClear()
     fireEvent.click(
       screen.getByRole('switch', {
         name: 'Include Grok 4.6 Fast in model picker',
@@ -1290,6 +1292,7 @@ describe('model settings', () => {
         models={[custom]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
+        onModelsVisibilityChange={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1352,6 +1355,7 @@ describe('model settings', () => {
         models={models}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
+        onModelsVisibilityChange={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1612,6 +1616,7 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
+        onModelsVisibilityChange={() => {}}
         onConnectionsChanged={() => {}}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1725,6 +1730,7 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
+        onModelsVisibilityChange={() => {}}
         onConnectionsChanged={onChanged}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}
@@ -1881,6 +1887,7 @@ describe('provider settings', () => {
         models={[]}
         hiddenModels={new Set()}
         onModelVisibilityChange={() => {}}
+        onModelsVisibilityChange={() => {}}
         onConnectionsChanged={onConnectionsChanged}
         projectCount={0}
         sidebarSettings={{ mode: 'classic', autoSettleDays: 3 }}

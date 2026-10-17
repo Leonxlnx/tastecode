@@ -31,8 +31,8 @@ function deferredRuntime(
     async start(workspacePath, options) {
       return (await resolve()).start(workspacePath, options)
     },
-    async listModels(agent) {
-      return (await resolve()).listModels(agent)
+    async listModels(agent, read) {
+      return (await resolve()).listModels(agent, read)
     },
   }
   if (supportsResume) {

@@ -26,6 +26,7 @@ import {
   resolveCustomHarnessLaunch,
   runCustomHarness,
 } from './custom-harness-launch.js'
+import type { ModelListRead } from './model-list-cache.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { mapProviderSession, StartupCleanupError } from './provider-session.js'
 
@@ -237,7 +238,8 @@ export type ProviderRuntime = {
     workspacePath: string,
     options: StartOptions,
   ): Promise<{ thread: Thread; session: AgentSession }>
-  listModels(agent?: string): Promise<Model[]>
+  /** `read.refresh`: the caller keeps an earlier list if this read fails. */
+  listModels(agent?: string, read?: ModelListRead): Promise<Model[]>
 }
 
 export function providerRuntime(
@@ -1030,10 +1032,10 @@ function claudeRuntime(
         ),
       )
     },
-    async listModels(agent) {
+    async listModels(agent, read) {
       const adapter = await adapterFor(agent)
       try {
-        return await adapter.listModels()
+        return await adapter.listModels({ refresh: read?.refresh === true })
       } finally {
         await adapter.dispose()
       }

@@ -54,6 +54,7 @@ import {
 const BACKGROUND_MODEL_SETTING = 'background-model'
 const PROVIDER_CONTEXT_SETTING = 'provider-context'
 const FEEDBACK_LEDGER_SETTING = 'feedback-ledger'
+const MODEL_LISTS_SETTING = 'model-lists'
 const AUTOMATIC_BACKGROUND_MODEL_PREFERENCE: BackgroundModelPreference = Object.freeze({
   mode: 'automatic',
 })
@@ -2226,6 +2227,15 @@ export class Store {
 
   setFeedbackLedger(value: string): void {
     this.#writeAppSetting.run(FEEDBACK_LEDGER_SETTING, value)
+  }
+
+  /** The last good model list per source, as `ModelListCache` serialized it. */
+  modelListSnapshot(): string | undefined {
+    return sqliteRow<StringValueRow>(this.#readAppSetting, MODEL_LISTS_SETTING)?.value
+  }
+
+  setModelListSnapshot(value: string): void {
+    this.#writeAppSetting.run(MODEL_LISTS_SETTING, value)
   }
 
   #updateThread(

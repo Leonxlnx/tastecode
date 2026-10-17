@@ -396,32 +396,6 @@ const PLAN_LABELS = [
   ['edu', 'Edu'],
 ] as const
 
-/**
- * Models still in Codex's own catalog that `model/list` marks hidden. An id
- * Codex has dropped from its catalog does not belong here, or the picker would
- * keep offering a model Codex no longer ships.
- */
-const CODEX_COMPATIBILITY_MODELS: Model[] = [
-  codexCompatibilityModel('gpt-5.5', 'GPT-5.5', 'Legacy coding model.'),
-]
-
-function codexCompatibilityModel(
-  id: string,
-  displayName: string,
-  description: string,
-  defaultReasoningEffort = 'medium',
-): Model {
-  return {
-    id,
-    displayName,
-    description,
-    isDefault: false,
-    reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-    defaultReasoningEffort,
-    serviceTiers: [],
-  }
-}
-
 /** Which server requests are approval prompts, and what they are about. */
 const APPROVAL_KIND = new Map<string, ApprovalRequest['kind']>([
   ['item/commandExecution/requestApproval', 'command'],
@@ -973,15 +947,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
           : {}),
       }))
 
-    // Codex hides legacy models from model/list while still running them, so a
-    // chat saved on one would otherwise lose its model. Live rows win.
-    for (const compatibilityModel of CODEX_COMPATIBILITY_MODELS) {
-      if (!models.some((model) => model.id === compatibilityModel.id)) {
-        models.push(compatibilityModel)
-      }
-    }
     // Every listed model appears, so a release needs no change here. Untiered
-    // rows keep their model/list order, and the legacy fallback stays last.
+    // rows keep their model/list order. Nothing is added: codex-cli 0.163 lists
+    // gpt-5.5 only from its bundled catalog and drops it from the refreshed one,
+    // and neither marks it hidden-but-runnable, so a row the CLI does not list
+    // is a model it does not offer.
     return orderCodexModels(models)
   }
 

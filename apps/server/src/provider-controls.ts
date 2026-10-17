@@ -16,6 +16,7 @@ import type {
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
 import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
+import type { ModelListRead } from './model-list-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -83,7 +84,7 @@ export type ProviderControl = {
   heldLimitSource(): ProviderLimitSource | undefined
   signOut(agent?: string): Promise<void>
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
-  listModels?: (agent?: string) => Promise<Model[]>
+  listModels?: (agent?: string, read?: ModelListRead) => Promise<Model[]>
   listMcpServers?: (
     readActive?: () => Promise<McpServer[]>,
   ) => Promise<{ capabilities: McpCapabilities; servers: McpServer[] }>
@@ -104,7 +105,7 @@ export type ProviderControl = {
 
 export type ProviderControlsOptions = {
   /** Runtime injection also handles custom harness model discovery. */
-  listModels: (provider: ProviderId, agent?: string) => Promise<Model[]>
+  listModels: (provider: ProviderId, agent?: string, read?: ModelListRead) => Promise<Model[]>
   onLog?: (provider: ProviderId, line: string) => void
   onLogin?: (provider: ProviderId, result: ProviderLoginResult) => void
   onUsageChanged?: (provider: ProviderId) => void
@@ -599,7 +600,10 @@ export class ProviderControls {
       watch: (projectPath, targets) => this.#watch(provider, projectPath, targets),
       ...(services.validateMcpServer ? { validateMcpServer: services.validateMcpServer } : {}),
       ...(capabilities.nativeModels
-        ? { listModels: (agent?: string) => this.#readModels(provider, agent) }
+        ? {
+            listModels: (agent?: string, read?: ModelListRead) =>
+              this.#readModels(provider, agent, read),
+          }
         : {}),
       ...(capabilities.login && services.startLogin
         ? {
@@ -621,9 +625,9 @@ export class ProviderControls {
             this.#withShared((adapter) => adapter.account()),
           ),
         ),
-      listModels: (agent) =>
+      listModels: (agent, read) =>
         agent
-          ? this.#readModels(provider, agent)
+          ? this.#readModels(provider, agent, read)
           : this.#withShared((adapter) => adapter.listModels()),
       listMcpServers: (readActive) =>
         this.#read(async () => {
@@ -999,8 +1003,8 @@ export class ProviderControls {
     return account
   }
 
-  async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {
-    return this.#read(() => this.#options.listModels(provider, agent))
+  async #readModels(provider: ProviderId, agent?: string, read?: ModelListRead): Promise<Model[]> {
+    return this.#read(() => this.#options.listModels(provider, agent, read))
   }
 
   async #read<T>(operation: () => Promise<T>): Promise<T> {
