@@ -1,4 +1,4 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import type { ParamsOf, ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { describe, expect, it, vi } from 'vitest'
 import { UsageLimitsController } from './usage-limits-state.js'
 
@@ -140,6 +140,32 @@ describe('UsageLimitsController', () => {
     await Promise.resolve()
 
     expect(controller.snapshot().map((state) => state.provider)).toEqual(['codex'])
+  })
+
+  it('routes a pushed snapshot to its source without a request', async () => {
+    const load = vi.fn(async (params: ParamsOf<'usage.summary'>) =>
+      summary('provider' in params ? params.provider : 'codex'),
+    )
+    const controller = new UsageLimitsController(load)
+    controller.select([{ provider: 'codex' }, { provider: 'claude-code' }])
+    await vi.waitFor(() =>
+      expect(controller.snapshot().every((state) => state.status === 'ready')).toBe(true),
+    )
+    load.mockClear()
+
+    const pushed: ProviderLimitSource = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [{ id: 'five_hour', label: '5h', usedPercent: 30 }],
+    }
+    controller.applySource(pushed)
+    controller.applySource({ provider: 'grok', status: 'unavailable' })
+
+    expect(controller.snapshot().map((state) => state.summary?.limitSource)).toEqual([
+      { provider: 'codex', status: 'unavailable' },
+      pushed,
+    ])
+    expect(load).not.toHaveBeenCalled()
   })
 
   it('coalesces change bursts for only the matching source', async () => {

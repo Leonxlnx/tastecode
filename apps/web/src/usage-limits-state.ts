@@ -1,4 +1,10 @@
-import type { ParamsOf, ProviderId, ResultOf, UsageReadIntent } from '@harness/contracts'
+import type {
+  ParamsOf,
+  ProviderId,
+  ProviderLimitSource,
+  ResultOf,
+  UsageReadIntent,
+} from '@harness/contracts'
 import { UsageSummaryController, type UsageSummaryState } from './usage-summary-state.js'
 
 type Target = { provider: ProviderId; threadId?: string | undefined }
@@ -95,6 +101,12 @@ export class UsageLimitsController {
 
   changed(provider: ProviderId): void {
     this.#entries.get(provider)?.controller.changed(provider)
+  }
+
+  /** A pushed snapshot replaces that provider's limits without a request. */
+  applySource(source: ProviderLimitSource): void {
+    if (this.#disposed) return
+    this.#entries.get(source.provider)?.controller.applySource(source)
   }
 
   dispose(): void {

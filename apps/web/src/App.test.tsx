@@ -4603,6 +4603,27 @@ describe('new chats', () => {
     expect(screen.getByText('75% left')).toBeTruthy()
   })
 
+  it('shows pushed plan limits without asking again', async () => {
+    render(<App />)
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    act(() =>
+      transport.listeners.get('usage.limits')?.({
+        source: {
+          provider: 'codex',
+          status: 'ready',
+          limits: [{ id: 'codex:primary', label: '5 hours', usedPercent: 40 }],
+          checkedAt: Date.now(),
+          origin: 'live',
+        },
+      }),
+    )
+
+    expect(await screen.findByText('60% left')).toBeTruthy()
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+  })
+
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>

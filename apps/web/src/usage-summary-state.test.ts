@@ -1,4 +1,4 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import type { ParamsOf, ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UsageSummaryController } from './usage-summary-state.js'
 
@@ -114,6 +114,75 @@ describe('UsageSummaryController', () => {
     await settle()
     expect(state.snapshot()).toEqual({ status: 'ready', provider: 'codex', summary: summary(2) })
     expect(load).toHaveBeenLastCalledWith({ threadId: 'thread-b', intent: 'visible' })
+  })
+
+  it('applies pushed limits without a request and keeps them over an older answer', async () => {
+    const first = deferred<Summary>()
+    const second = deferred<Summary>()
+    const reads = [first, second]
+    const load = vi.fn(() => reads.shift()!.promise)
+    const state = new UsageSummaryController(load)
+    const source = (usedPercent: number, checkedAt: number): ProviderLimitSource => ({
+      provider: 'codex',
+      status: 'ready',
+      limits: [{ id: 'codex:primary', label: '5h', usedPercent }],
+      checkedAt,
+    })
+    const answer = (marker: number, limits: ProviderLimitSource): Summary => ({
+      ...summary(marker),
+      limits: limits.status === 'ready' ? limits.limits : [],
+      limitSource: limits,
+    })
+
+    state.select({ provider: 'codex' })
+    first.resolve(answer(1, source(10, 100)))
+    await settle()
+    state.applySource({ ...source(99, 300), provider: 'grok' })
+    state.applySource(source(30, 200))
+    expect(state.snapshot()).toEqual({
+      status: 'ready',
+      provider: 'codex',
+      summary: answer(1, source(30, 200)),
+    })
+    expect(load).toHaveBeenCalledOnce()
+
+    // A read in flight stays loading; its older answer brings only its totals.
+    state.refresh()
+    state.applySource(source(35, 250))
+    expect(state.snapshot()).toMatchObject({ status: 'loading' })
+    second.resolve(answer(2, source(20, 150)))
+    await settle()
+    expect(state.snapshot()).toEqual({
+      status: 'ready',
+      provider: 'codex',
+      summary: answer(2, source(35, 250)),
+    })
+  })
+
+  it('turns a failed read into values when a snapshot is pushed', async () => {
+    const first = deferred<Summary>()
+    const state = new UsageSummaryController(() => first.promise)
+    state.select({ provider: 'grok' })
+    first.reject(new Error('Grok billing request failed.'))
+    await settle()
+    const pushed: ProviderLimitSource = {
+      provider: 'grok',
+      status: 'ready',
+      limits: [{ id: 'weekly', label: 'Weekly', usedPercent: 12 }],
+    }
+
+    state.applySource(pushed)
+
+    expect(state.snapshot()).toEqual({
+      status: 'ready',
+      provider: 'grok',
+      summary: {
+        session: summary(0).session,
+        today: summary(0).today,
+        limits: pushed.limits,
+        limitSource: pushed,
+      },
+    })
   })
 
   it('asks with the reason its owner gives at the time of each request', async () => {

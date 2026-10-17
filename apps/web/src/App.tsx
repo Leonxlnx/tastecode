@@ -1775,6 +1775,11 @@ export function App() {
     const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
       usageController.changed(provider)
     })
+    // Live windows reach the bars as the server folds them in, not only after
+    // the spaced usage.changed signal and a new request.
+    const offUsageLimits = transport.on('usage.limits', ({ source }) => {
+      usageController.applySource(source)
+    })
     const offSequenceGap = transport.onSequenceGap(() => {
       threadController.markHistoriesForRecovery()
       resync.current()
@@ -1841,6 +1846,7 @@ export function App() {
       offPreviewCapture()
       offSidebarSettings()
       offUsageChanged()
+      offUsageLimits()
       offSequenceGap()
       offState()
       transport.close()
