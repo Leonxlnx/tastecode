@@ -1,7 +1,9 @@
 import type { Model } from '@harness/contracts'
+import { arrangeCursorModels } from './lineup.js'
 
 /**
- * Collapse cursor-agent's per-variant listing into base models.
+ * Collapse cursor-agent's per-variant listing into base models, each with its
+ * lab and lineage, in picker order (lineup.ts).
  *
  * The CLI advertises every effort/fast permutation as its own id
  * (`gpt-5.3-codex-high-fast`), which put forty-odd rows in the picker where
@@ -110,7 +112,7 @@ export function collapseCursorModels(raw: RawCursorModel[]): CollapsedCursorMode
     else groups.push({ stem: variant.stem, variants: [variant] })
   }
 
-  const models: Model[] = []
+  const models: { model: Model; stem: string }[] = []
   const index: CursorModelIndex = new Map()
 
   for (const group of groups) {
@@ -140,23 +142,26 @@ export function collapseCursorModels(raw: RawCursorModel[]): CollapsedCursorMode
     index.set(anchor.id, entry)
 
     models.push({
-      id: anchor.id,
-      displayName,
-      isDefault: group.variants.some((v) => v.isDefault),
-      reasoningEfforts: hasEffortChoice
-        ? [...efforts].sort((a, b) => effortRank(a) - effortRank(b))
-        : [],
-      ...(hasEffortChoice && entry.defaultEffort
-        ? {
-            defaultReasoningEffort: entry.defaultEffort,
-          }
-        : {}),
-      serviceTiers: hasFastTwin ? [STANDARD_TIER, FAST_TIER] : [],
-      ...(hasFastTwin ? { defaultServiceTier: STANDARD_TIER.id } : {}),
+      stem: group.stem,
+      model: {
+        id: anchor.id,
+        displayName,
+        isDefault: group.variants.some((v) => v.isDefault),
+        reasoningEfforts: hasEffortChoice
+          ? [...efforts].sort((a, b) => effortRank(a) - effortRank(b))
+          : [],
+        ...(hasEffortChoice && entry.defaultEffort
+          ? {
+              defaultReasoningEffort: entry.defaultEffort,
+            }
+          : {}),
+        serviceTiers: hasFastTwin ? [STANDARD_TIER, FAST_TIER] : [],
+        ...(hasFastTwin ? { defaultServiceTier: STANDARD_TIER.id } : {}),
+      },
     })
   }
 
-  return { models, index }
+  return { models: arrangeCursorModels(models), index }
 }
 
 /**

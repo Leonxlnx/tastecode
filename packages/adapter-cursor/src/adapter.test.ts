@@ -230,18 +230,26 @@ describe('Cursor adapter', () => {
 
     await expect(adapter.listModels()).resolves.toEqual([
       {
-        id: 'composer-2.5',
-        displayName: 'Composer 2.5 Fast',
-        isDefault: true,
-        reasoningEfforts: [],
-        serviceTiers: [],
-      },
-      {
         id: 'claude-4.6-sonnet',
         displayName: 'Claude 4.6 Sonnet',
         isDefault: false,
         reasoningEfforts: [],
         serviceTiers: [],
+        lab: 'Anthropic',
+        family: 'claude-sonnet',
+        generation: '4.6',
+        recommended: true,
+      },
+      {
+        id: 'composer-2.5',
+        displayName: 'Composer 2.5 Fast',
+        isDefault: true,
+        reasoningEfforts: [],
+        serviceTiers: [],
+        lab: 'Cursor',
+        family: 'composer',
+        generation: '2.5',
+        recommended: true,
       },
     ])
   })
