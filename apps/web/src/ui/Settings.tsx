@@ -164,7 +164,7 @@ import {
   SettingsNotice,
   SettingsPage,
   SettingsSection,
-  SettingsRow as SettingsLeaderRow,
+  SettingsRow,
 } from './settings/SettingsLayout.js'
 import {
   DEFAULT_KEYBINDINGS,
@@ -526,7 +526,7 @@ function SettingsComponent(props: {
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'debug' ? (
             <SettingsPage title="Debug">
-              <SettingsLeaderRow name="Onboarding">
+              <SettingsRow name="Onboarding">
                 <button
                   className="set-button"
                   type="button"
@@ -535,7 +535,7 @@ function SettingsComponent(props: {
                 >
                   Force onboarding
                 </button>
-              </SettingsLeaderRow>
+              </SettingsRow>
               <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
@@ -565,7 +565,7 @@ function AppUpdateSimulationRow() {
   useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
 
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
     >
@@ -587,7 +587,7 @@ function AppUpdateSimulationRow() {
       >
         Stop
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -600,7 +600,7 @@ const PROVIDER_UPDATE_SIMULATIONS = [
 function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
     >
@@ -623,7 +623,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
       >
         Stop
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -1574,7 +1574,7 @@ function ModelSourcesSkeleton() {
             </div>
           </div>
           {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
-            <SettingsLeaderRow
+            <SettingsRow
               key={row}
               className="model-visibility__model"
               name={
@@ -1586,7 +1586,7 @@ function ModelSourcesSkeleton() {
               <span className="settings__switch-skeleton">
                 <Skeleton width={30} height={18} />
               </span>
-            </SettingsLeaderRow>
+            </SettingsRow>
           ))}
         </div>
       ))}
@@ -1677,7 +1677,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
       note="Used for session titles, commit-message drafts, and other short writing."
     >
       {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
-      <SettingsLeaderRow
+      <SettingsRow
         name="Model"
         note={
           loading ? (
@@ -1737,12 +1737,9 @@ function BackgroundModelSettings(props: { transport: Transport }) {
             }}
           />
         )}
-      </SettingsLeaderRow>
+      </SettingsRow>
       {manual && selected && effortOptions.length > 0 ? (
-        <SettingsLeaderRow
-          name="Reasoning effort"
-          note="Choose the effort used for background writing."
-        >
+        <SettingsRow name="Reasoning effort" note="Choose the effort used for background writing.">
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background reasoning effort"
@@ -1757,10 +1754,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               })
             }
           />
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
       {manual && selected && fastTier ? (
-        <SettingsLeaderRow name="Speed" note="Choose the speed used for background writing.">
+        <SettingsRow name="Speed" note="Choose the speed used for background writing.">
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background speed"
@@ -1777,7 +1774,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               void update({ mode: 'manual', target: { ...manual, serviceTier } })
             }}
           />
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
     </SettingsSection>
   )
@@ -1873,7 +1870,7 @@ function ModelVisibilityGroup(props: {
       {props.choices.map((choice) => {
         const visible = !props.hiddenModels.has(choice.key)
         return (
-          <SettingsLeaderRow
+          <SettingsRow
             className="model-visibility__model"
             key={choice.key}
             name={choice.model.displayName}
@@ -1889,7 +1886,7 @@ function ModelVisibilityGroup(props: {
             >
               <span className="switch__thumb" />
             </button>
-          </SettingsLeaderRow>
+          </SettingsRow>
         )
       })}
     </SettingsSection>
@@ -1931,7 +1928,7 @@ function AppearanceSettings(props: {
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <SettingsLeaderRow name="Font smoothing">
+            <SettingsRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1942,7 +1939,7 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </SettingsLeaderRow>
+            </SettingsRow>
           ) : null}
         </SettingsSection>
       ) : null}
@@ -2018,7 +2015,7 @@ function AppearanceEditor(props: {
         )
       }
     >
-      <SettingsLeaderRow name="Accent">
+      <SettingsRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -2026,8 +2023,8 @@ function AppearanceEditor(props: {
           options={ACCENT_OPTIONS}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Background">
+      </SettingsRow>
+      <SettingsRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -2035,8 +2032,8 @@ function AppearanceEditor(props: {
           options={BACKDROP_OPTIONS}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Interface font">
+      </SettingsRow>
+      <SettingsRow name="Interface font">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Interface font"
@@ -2048,8 +2045,8 @@ function AppearanceEditor(props: {
           search={FONT_SEARCH}
           onChange={(font) => props.onChange({ font })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Sidebar translucency">
+      </SettingsRow>
+      <SettingsRow name="Sidebar translucency">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Sidebar translucency"
@@ -2058,7 +2055,7 @@ function AppearanceEditor(props: {
           options={GLASS_SELECT_OPTIONS}
           onChange={(value) => props.onChange({ glass: Number(value) })}
         />
-      </SettingsLeaderRow>
+      </SettingsRow>
     </SettingsSection>
   )
 }
@@ -2066,7 +2063,7 @@ function AppearanceEditor(props: {
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
@@ -2087,7 +2084,7 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -2209,7 +2206,7 @@ function DataSettings(props: {
   return (
     <SettingsPage title="Data & privacy">
       {isDesktop ? (
-        <SettingsLeaderRow
+        <SettingsRow
           name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
         >
@@ -2244,9 +2241,9 @@ function DataSettings(props: {
               <span className="switch__thumb" />
             </button>
           )}
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
-      <SettingsLeaderRow
+      <SettingsRow
         name="Reset app preferences"
         note={
           <>
@@ -2268,7 +2265,7 @@ function DataSettings(props: {
           <RotateCcw size={13} aria-hidden />
           <span>Reset…</span>
         </button>
-      </SettingsLeaderRow>
+      </SettingsRow>
       {confirming ? (
         <ResetConfirmation
           onCancel={() => setConfirming(false)}
@@ -2392,7 +2389,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
   }
 
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
     >
@@ -2409,7 +2406,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
         <RotateCcw size={13} aria-hidden />
         <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -2488,7 +2485,7 @@ function AboutSettings(props: { transport: Transport }) {
 
   return (
     <SettingsPage title="About">
-      <SettingsLeaderRow name="TasteCode">
+      <SettingsRow name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2496,8 +2493,8 @@ function AboutSettings(props: { transport: Transport }) {
             `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
           )}
         </SettingsMeta>
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Updates">
+      </SettingsRow>
+      <SettingsRow name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2535,8 +2532,8 @@ function AboutSettings(props: { transport: Transport }) {
                   ? 'Checking…'
                   : 'Check for updates'}
         </button>
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Source">
+      </SettingsRow>
+      <SettingsRow name="Source">
         <button
           className="set-button"
           type="button"
@@ -2546,7 +2543,7 @@ function AboutSettings(props: { transport: Transport }) {
         >
           GitHub
         </button>
-      </SettingsLeaderRow>
+      </SettingsRow>
     </SettingsPage>
   )
 }
