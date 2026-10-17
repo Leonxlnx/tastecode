@@ -6,6 +6,7 @@ import { CODEX_USAGE_HISTORY } from '@harness/adapter-codex'
 import { GROK_USAGE_HISTORY } from '@harness/adapter-grok'
 import { OPENCODE_USAGE_HISTORY } from '@harness/adapter-opencode'
 import type { UsageArchiveFile, UsageHistorySource } from '@harness/proc/usage-archive'
+import { isUsageCheckpoint, type UsageCheckpoint } from '@harness/proc/usage-log'
 import type {
   LocalUsageRecord,
   ProviderId,
@@ -32,6 +33,13 @@ const UNCOMPACTED_CACHE_VERSION = 7
  */
 const MAIN_THREAD_CACHE_BYTES = 4 * 1024 * 1024
 const PARSE_CONCURRENCY = 8
+/**
+ * How long after its last change a log keeps its read checkpoint in the saved
+ * index. Sessions that grow are recent ones; an older log that grows again is
+ * read in full once, which keeps checkpoints of thousands of finished
+ * sessions out of the index.
+ */
+const CHECKPOINT_RETENTION_MS = 2 * 24 * 60 * 60 * 1000
 const AUTO_REFRESH_INTERVAL_MS = 60_000
 const HARNESS_USAGE_CACHE_MS = 5_000
 /** Local provider archives in scan order. Each adapter owns its CLI home and file layout. */
@@ -65,6 +73,8 @@ export type CachedUsageFile = {
   mtimeMs: number
   size: number
   entries: LocalUsageRecord[]
+  /** Where the last read of an append-only log stopped, so the next one reads only what follows. */
+  checkpoint?: UsageCheckpoint
 }
 
 export type UsageCache = {
@@ -108,19 +118,28 @@ export type UsageScanProgress = {
   filesTotal: number
 }
 
-/** Which version of a file the index holds; a file that still matches is not parsed again. */
-export type UsageFileFingerprint = Pick<CachedUsageFile, 'path' | 'provider' | 'mtimeMs' | 'size'>
+/**
+ * Which version of a file the index holds; a file that still matches is not
+ * parsed again, and a grown log is read on from its checkpoint.
+ */
+export type UsageFileFingerprint = Pick<
+  CachedUsageFile,
+  'path' | 'provider' | 'mtimeMs' | 'size' | 'checkpoint'
+>
 
 export type UsageScanRequest = {
   sources: UsageSourceRoot[]
   indexed: UsageFileFingerprint[]
 }
 
+/** A file parsed in a scan. `appended` entries add to the indexed ones instead of replacing them. */
+export type ParsedUsageFile = CachedUsageFile & { appended: boolean }
+
 export type UsageScanResult = {
   /** Every archive file that exists now, in discovery order. */
   paths: string[]
   /** The files parsed in this scan. Any other path keeps the entries already indexed for it. */
-  files: CachedUsageFile[]
+  files: ParsedUsageFile[]
   sources: SourceState[]
   warnings: string[]
 }
@@ -182,7 +201,8 @@ const emptyTotals = (): UsageHistoryTotals => ({
 /**
  * Builds model-attributed usage from the provider histories already present on
  * the machine. Per-file aggregates are cached under the app data directory;
- * later loads only reparse files whose size or mtime changed.
+ * later loads only reparse files whose size or mtime changed, and a grown
+ * append-only log only from where its last read stopped.
  */
 export class UsageHistoryService {
   readonly #cacheFile: string
@@ -328,6 +348,9 @@ export class UsageHistoryService {
         provider: file.provider,
         mtimeMs: file.mtimeMs,
         size: file.size,
+        ...(file.checkpoint && keepsCheckpoint(file, generatedAt)
+          ? { checkpoint: file.checkpoint }
+          : {}),
       })),
     }
     const abort = new AbortController()
@@ -375,7 +398,13 @@ export class UsageHistoryService {
     this.#scanWarnings = cache.warnings
     if (this.#cacheSaved) return
     try {
-      await writeCache(this.#cacheFile, { ...cache, generatedAt })
+      await writeCache(this.#cacheFile, {
+        ...cache,
+        generatedAt,
+        files: cache.files.map((file) =>
+          file.checkpoint && !keepsCheckpoint(file, generatedAt) ? withoutCheckpoint(file) : file,
+        ),
+      })
       this.#cacheSaved = true
     } catch {
       this.#scanWarnings = [
@@ -616,21 +645,14 @@ export async function runUsageHistoryScan(
     )
   })
 
-  const parsed: CachedUsageFile[] = []
+  const parsed: ParsedUsageFile[] = []
   let failedFiles = 0
   let filesProcessed = files.length - changed.length
   const reportProgress = () => onProgress({ filesProcessed, filesTotal: files.length })
   reportProgress()
   await mapWithConcurrency(changed, PARSE_CONCURRENCY, async (file) => {
     try {
-      const entries = compactUsageRecords(await file.read(file.path))
-      parsed.push({
-        path: file.path,
-        provider: file.provider,
-        mtimeMs: file.mtimeMs,
-        size: file.size,
-        entries,
-      })
+      parsed.push(await parseUsageFile(file, indexed.get(file.path)))
     } catch {
       // The indexed entries, if any, stay until the file can be read again.
       failedFiles += 1
@@ -649,6 +671,34 @@ export async function runUsageHistoryScan(
   return { paths: files.map((file) => file.path), files: parsed, sources, warnings }
 }
 
+/** Reads a log on from the checkpoint the index holds for it, or a whole file otherwise. */
+async function parseUsageFile(
+  file: UsageFile,
+  prior: UsageFileFingerprint | undefined,
+): Promise<ParsedUsageFile> {
+  const fingerprint = {
+    path: file.path,
+    provider: file.provider,
+    mtimeMs: file.mtimeMs,
+    size: file.size,
+  }
+  if (!file.readFrom) {
+    return {
+      ...fingerprint,
+      entries: compactUsageRecords(await file.read(file.path)),
+      appended: false,
+    }
+  }
+  const checkpoint = prior?.provider === file.provider ? prior.checkpoint : undefined
+  const read = await file.readFrom(file.path, checkpoint)
+  return {
+    ...fingerprint,
+    entries: compactUsageRecords(read.entries),
+    appended: read.appended,
+    ...(read.checkpoint ? { checkpoint: read.checkpoint } : {}),
+  }
+}
+
 /**
  * Builds the next index from a scan, in discovery order. Returns `base` itself
  * when the scan changed no file, source or warning.
@@ -658,7 +708,10 @@ function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: numbe
   const parsed = new Map(result.files.map((file) => [file.path, file]))
   const files: CachedUsageFile[] = []
   for (const filePath of new Set(result.paths)) {
-    const file = parsed.get(filePath) ?? indexed.get(filePath)
+    const update = parsed.get(filePath)
+    const file = update
+      ? indexedFile(update, indexed.get(filePath), generatedAt)
+      : indexed.get(filePath)
     if (file) files.push(file)
   }
   const unchanged =
@@ -674,6 +727,40 @@ function mergeScan(base: UsageCache, result: UsageScanResult, generatedAt: numbe
     sources: result.sources,
     warnings: result.warnings,
   }
+}
+
+/**
+ * The index entry for a parsed file. Appended entries are added to the ones
+ * already indexed; if those are gone, the file is left out and read in full
+ * by the next scan.
+ */
+function indexedFile(
+  update: ParsedUsageFile,
+  prior: CachedUsageFile | undefined,
+  now: number,
+): CachedUsageFile | undefined {
+  const { appended, checkpoint, ...file } = update
+  if (appended) {
+    if (!prior) return undefined
+    file.entries = compactUsageRecords([...prior.entries, ...file.entries])
+  }
+  return checkpoint && keepsCheckpoint(file, now) ? { ...file, checkpoint } : file
+}
+
+function keepsCheckpoint(file: Pick<CachedUsageFile, 'mtimeMs'>, now: number): boolean {
+  return now - file.mtimeMs <= CHECKPOINT_RETENTION_MS
+}
+
+function withoutCheckpoint(file: CachedUsageFile): CachedUsageFile {
+  const { checkpoint: _checkpoint, ...rest } = file
+  return rest
+}
+
+/** A damaged checkpoint costs one full read of its file, not the whole index. */
+function withValidCheckpoint(file: CachedUsageFile): CachedUsageFile {
+  return file.checkpoint === undefined || isUsageCheckpoint(file.checkpoint)
+    ? file
+    : withoutCheckpoint(file)
 }
 
 export async function readUsageCache(filePath: string): Promise<UsageCache> {
@@ -717,7 +804,7 @@ export async function loadUsageCache(filePath: string): Promise<LoadedUsageCache
         generatedAt: typeof value.generatedAt === 'number' ? value.generatedAt : 0,
         files: uncompacted
           ? value.files.map((file) => ({ ...file, entries: compactUsageRecords(file.entries) }))
-          : value.files,
+          : value.files.map(withValidCheckpoint),
         sources: Array.isArray(value.sources)
           ? mergeSources(value.sources)
           : emptySources().map((source) => ({

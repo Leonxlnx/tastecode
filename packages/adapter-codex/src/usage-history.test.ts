@@ -1,8 +1,13 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { appendFile, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import type { LocalUsageRecord } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CODEX_USAGE_HISTORY, readCodexUsageHistory } from './usage-history.js'
+import {
+  CODEX_USAGE_HISTORY,
+  readCodexUsageHistory,
+  resumeCodexUsageHistory,
+} from './usage-history.js'
 
 const temporaryDirectories: string[] = []
 
@@ -202,6 +207,134 @@ describe('Codex usage history', () => {
   })
 })
 
+describe('continued Codex usage history', () => {
+  const plainRollout = [
+    { timestamp: '2026-06-02T10:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+    {
+      timestamp: '2026-06-02T10:00:01.000Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-sol' },
+    },
+    tokenCount('2026-06-02T10:01:00.000Z', {
+      input_tokens: 1_000,
+      cached_input_tokens: 400,
+      output_tokens: 100,
+      total_tokens: 1_100,
+    }),
+    tokenCount('2026-06-02T10:02:00.000Z', {
+      input_tokens: 1_800,
+      cached_input_tokens: 500,
+      output_tokens: 180,
+      reasoning_output_tokens: 40,
+      total_tokens: 1_980,
+    }),
+    {
+      timestamp: '2026-06-02T10:02:01.000Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-luna' },
+    },
+    // A rollback: the cumulative total drops, so the last usage counts.
+    tokenCount(
+      '2026-06-02T10:03:00.000Z',
+      { input_tokens: 300, output_tokens: 30, total_tokens: 330 },
+      { input_tokens: 300, output_tokens: 30, total_tokens: 330 },
+    ),
+    {
+      timestamp: '2026-06-02T10:03:30.000Z',
+      type: 'event_msg',
+      payload: { type: 'agent_message' },
+    },
+    tokenCount('2026-06-03T10:04:00.000Z', {
+      input_tokens: 400_000,
+      output_tokens: 50,
+      total_tokens: 400_050,
+    }),
+    tokenCount('2026-06-03T10:05:00.000Z', undefined, {
+      input_tokens: 10,
+      output_tokens: 5,
+      total_tokens: 15,
+    }),
+  ]
+  const subagentMeta = {
+    timestamp: '2026-06-02T10:00:00.000Z',
+    type: 'session_meta',
+    payload: {
+      id: 'child-session',
+      source: { subagent: { thread_spawn: { parent_thread_id: 'parent', depth: 1 } } },
+    },
+  }
+  const copiedParent = [
+    { timestamp: '2026-06-02T10:00:00.100Z', type: 'session_meta', payload: { id: 'parent' } },
+    tokenCount('2026-06-02T10:00:01.000Z', { input_tokens: 1_000, total_tokens: 1_000 }),
+    {
+      timestamp: '2026-06-02T10:00:02.000Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-sol' },
+    },
+    tokenCount('2026-06-02T10:00:03.000Z', { input_tokens: 1_100, total_tokens: 1_100 }),
+  ]
+  const markedSubagent = [
+    subagentMeta,
+    ...copiedParent,
+    {
+      timestamp: '2026-06-02T10:00:04.000Z',
+      type: 'inter_agent_communication_metadata',
+      payload: {},
+    },
+    tokenCount('2026-06-02T10:01:00.000Z', {
+      input_tokens: 1_150,
+      output_tokens: 25,
+      total_tokens: 1_175,
+    }),
+    tokenCount('2026-06-02T10:02:00.000Z', {
+      input_tokens: 1_300,
+      output_tokens: 40,
+      total_tokens: 1_340,
+    }),
+  ]
+  const legacySubagent = [
+    subagentMeta,
+    ...copiedParent,
+    tokenCount('2026-06-02T10:01:00.000Z', {
+      input_tokens: 1_150,
+      output_tokens: 25,
+      total_tokens: 1_175,
+    }),
+  ]
+
+  it('adds up to a full read wherever the rollout was cut', async () => {
+    for (const [name, records] of Object.entries({
+      plainRollout,
+      markedSubagent,
+      legacySubagent,
+    })) {
+      const full = await readCodexUsageHistory(await usageFile(records))
+      const startedOver: number[] = []
+      for (let cut = 1; cut < records.length; cut += 1) {
+        const filePath = await usageFile(records.slice(0, cut))
+        const first = await resumeCodexUsageHistory(filePath)
+        await appendFile(filePath, jsonLines(records.slice(cut)))
+        const second = await resumeCodexUsageHistory(filePath, first.checkpoint)
+        const combined = second.appended ? [...first.entries, ...second.entries] : second.entries
+        expect(summed(combined), `${name} cut after line ${cut}`).toEqual(summed(full))
+        if (!second.appended) startedOver.push(cut)
+      }
+      // Only a cut while copied parent usage is buffered makes the next read start over.
+      expect(startedOver, name).toEqual(name === 'plainRollout' ? [] : [5])
+    }
+  })
+
+  it('reads the whole rollout again when its saved state is not one it wrote', async () => {
+    const filePath = await usageFile(plainRollout.slice(0, 4))
+    const { checkpoint } = await resumeCodexUsageHistory(filePath)
+    await appendFile(filePath, jsonLines(plainRollout.slice(4)))
+    const damaged = checkpoint && { ...checkpoint, state: { version: 99 } }
+    const again = await resumeCodexUsageHistory(filePath, damaged)
+    expect(again.appended).toBe(false)
+    expect(summed(again.entries)).toEqual(summed(await readCodexUsageHistory(filePath)))
+  })
+})
+
 describe('Codex usage history source', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
@@ -221,9 +354,9 @@ describe('Codex usage history source', () => {
     temporaryDirectories.push(directory)
     await writeFile(path.join(directory, 'rollout.jsonl'), '{}\n')
     const archive = await CODEX_USAGE_HISTORY.discover(directory)
-    expect(archive.files.map((file) => [path.basename(file.path), file.read])).toEqual([
-      ['rollout.jsonl', readCodexUsageHistory],
-    ])
+    expect(
+      archive.files.map((file) => [path.basename(file.path), file.read, file.readFrom]),
+    ).toEqual([['rollout.jsonl', readCodexUsageHistory, resumeCodexUsageHistory]])
   })
 })
 
@@ -231,13 +364,34 @@ async function usageFile(records: unknown[]): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'harness-codex-usage-'))
   temporaryDirectories.push(directory)
   const filePath = path.join(directory, 'session.jsonl')
-  await writeFile(filePath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+  await writeFile(filePath, jsonLines(records))
   return filePath
+}
+
+function jsonLines(records: unknown[]): string {
+  return records.map((record) => `${JSON.stringify(record)}\n`).join('')
+}
+
+/** Token totals per day, model, session and long-context flag, the way the usage index merges them. */
+function summed(entries: readonly LocalUsageRecord[]) {
+  const totals = new Map<string, Map<string, number>>()
+  for (const entry of entries) {
+    const key = [entry.date, entry.model, entry.sessionId, entry.longContext].join('|')
+    let sums = totals.get(key)
+    if (!sums) {
+      sums = new Map()
+      totals.set(key, sums)
+    }
+    for (const [field, value] of Object.entries(entry.tokens)) {
+      if (typeof value === 'number') sums.set(field, (sums.get(field) ?? 0) + value)
+    }
+  }
+  return Object.fromEntries([...totals].map(([key, sums]) => [key, Object.fromEntries(sums)]))
 }
 
 function tokenCount(
   timestamp: string,
-  total: Record<string, unknown>,
+  total: Record<string, unknown> | undefined,
   last?: Record<string, unknown>,
 ) {
   return {
@@ -246,7 +400,7 @@ function tokenCount(
     payload: {
       type: 'token_count',
       info: {
-        total_token_usage: total,
+        ...(total ? { total_token_usage: total } : {}),
         ...(last ? { last_token_usage: last } : {}),
       },
     },

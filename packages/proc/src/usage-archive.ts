@@ -1,5 +1,6 @@
 import { readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
+import type { UsageCheckpoint, UsageLogRead } from './usage-log.js'
 
 /**
  * One local history file an adapter can parse. Size and mtime are the
@@ -10,7 +11,14 @@ export type UsageArchiveFile<Entry> = {
   mtimeMs: number
   size: number
   read: (filePath: string) => Promise<Entry[]>
+  /** For logs that are only ever appended to: reads on from an earlier read's checkpoint. */
+  readFrom?: UsageLogReader<Entry>
 }
+
+export type UsageLogReader<Entry> = (
+  filePath: string,
+  checkpoint?: UsageCheckpoint,
+) => Promise<UsageLogRead<Entry>>
 
 export type UsageArchive<Entry> = {
   available: boolean
@@ -35,19 +43,22 @@ export type UsageHistorySource<Provider extends string, Entry> = {
 export async function discoverJsonlArchive<Entry>(
   root: string,
   read: UsageArchiveFile<Entry>['read'],
+  readFrom?: UsageLogReader<Entry>,
 ): Promise<UsageArchive<Entry>> {
   const rootStat = await stat(root)
   if (!rootStat.isDirectory()) return { available: false, files: [] }
-  return { available: true, files: await listJsonlFiles(root, read) }
+  return { available: true, files: await listJsonlFiles(root, read, readFrom) }
 }
 
 /** One log file; an empty file counts as no archive. */
 export async function discoverFileArchive<Entry>(
   filePath: string,
   read: UsageArchiveFile<Entry>['read'],
+  readFrom?: UsageLogReader<Entry>,
 ): Promise<UsageArchive<Entry>> {
   const file = await usageArchiveFile(filePath, read)
-  return { available: Boolean(file), files: file ? [file] : [] }
+  if (!file) return { available: false, files: [] }
+  return { available: true, files: [readFrom ? { ...file, readFrom } : file] }
 }
 
 /**
@@ -79,6 +90,7 @@ export async function usageArchiveFile<Entry>(
 async function listJsonlFiles<Entry>(
   root: string,
   read: UsageArchiveFile<Entry>['read'],
+  readFrom: UsageLogReader<Entry> | undefined,
 ): Promise<UsageArchiveFile<Entry>[]> {
   const result: UsageArchiveFile<Entry>[] = []
   const pending = [root]
@@ -101,7 +113,7 @@ async function listJsonlFiles<Entry>(
         if (!entry.isFile() || !entry.name.endsWith('.jsonl')) return
         try {
           const file = await usageArchiveFile(fullPath, read)
-          if (file) result.push(file)
+          if (file) result.push(readFrom ? { ...file, readFrom } : file)
         } catch {
           // A session can disappear between readdir and stat during cleanup.
         }

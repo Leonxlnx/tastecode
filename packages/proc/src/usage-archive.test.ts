@@ -58,6 +58,21 @@ describe('usage archive discovery', () => {
     await expect(discoverFileArchive(path.join(root, 'missing.jsonl'), read)).rejects.toThrow()
   })
 
+  it('hands every log the reader that continues from a checkpoint, when there is one', async () => {
+    const root = temporaryDirectory()
+    mkdirSync(path.join(root, 'project'), { recursive: true })
+    writeFileSync(path.join(root, 'project', 'session.jsonl'), '{}\n')
+    const log = path.join(root, 'unified.jsonl')
+    writeFileSync(log, '{}\n')
+    const readFrom = async () => ({ entries: [], appended: false })
+
+    const sessions = await discoverJsonlArchive(root, read, readFrom)
+    expect(sessions.files.map((file) => file.readFrom)).toEqual([readFrom, readFrom])
+    expect((await discoverFileArchive(log, read, readFrom)).files[0]?.readFrom).toBe(readFrom)
+    expect((await discoverJsonlArchive(root, read)).files[0]).not.toHaveProperty('readFrom')
+    expect((await discoverFileArchive(log, read)).files[0]).not.toHaveProperty('readFrom')
+  })
+
   it('folds companion files into the fingerprint', async () => {
     const root = temporaryDirectory()
     const database = path.join(root, 'history.db')

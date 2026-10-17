@@ -1,4 +1,13 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { readClaudeUsageHistory } from '@harness/adapter-claude-code'
@@ -932,6 +941,82 @@ describe('local usage history', () => {
     expect(saved.files.map((file) => file.size)).toEqual([statSync(codexFile).size])
   })
 
+  it('reads a grown rollout on from where the last scan stopped, also after a restart', async () => {
+    const fixture = grownRolloutFixture()
+    const options = {
+      cacheFile: fixture.cacheFile,
+      sourceRoots: { codex: fixture.codexRoot, 'claude-code': fixture.missingClaude },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    }
+    const service = usageService(options)
+    expect((await settledHistory(service, 'all')).totals.processedTokens).toBe(1_100)
+    const saved = (await readUsageCache(fixture.cacheFile)).files[0]
+    expect(saved?.checkpoint?.position.offset).toBe(statSync(fixture.rollout).size)
+
+    // Bytes between the first and the last few KiB are trusted, not reread:
+    // after this edit only a full read would see 2,000 input tokens.
+    fixture.editMiddle()
+    fixture.append({ input_tokens: 1_250, output_tokens: 125 })
+    expect((await settledHistory(service, 'all', true)).totals.processedTokens).toBe(1_375)
+
+    fixture.append({ input_tokens: 1_300, output_tokens: 130 })
+    const restarted = usageService(options)
+    expect((await settledHistory(restarted, 'all')).totals.processedTokens).toBe(1_430)
+    expect((await readUsageCache(fixture.cacheFile)).files[0]?.checkpoint?.position.offset).toBe(
+      statSync(fixture.rollout).size,
+    )
+  })
+
+  it('reads a rewritten rollout and one past its checkpoint retention in full', async () => {
+    const rewritten = grownRolloutFixture()
+    const options = {
+      cacheFile: rewritten.cacheFile,
+      sourceRoots: { codex: rewritten.codexRoot, 'claude-code': rewritten.missingClaude },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    }
+    const service = usageService(options)
+    await settledHistory(service, 'all')
+    rewritten.editMiddle()
+    rewritten.editHead()
+    rewritten.append({ input_tokens: 1_250, output_tokens: 125 })
+    // Read in full: 2,000 + 100, then the drop to 1,250 + 125 counts as a rollback.
+    expect((await settledHistory(service, 'all', true)).totals.processedTokens).toBe(3_475)
+
+    const stale = grownRolloutFixture()
+    const lastChange = new Date('2026-08-05T12:00:00.000Z')
+    utimesSync(stale.rollout, lastChange, lastChange)
+    const staleService = usageService({
+      ...options,
+      cacheFile: stale.cacheFile,
+      sourceRoots: { codex: stale.codexRoot, 'claude-code': stale.missingClaude },
+    })
+    await settledHistory(staleService, 'all')
+    expect((await readUsageCache(stale.cacheFile)).files[0]).not.toHaveProperty('checkpoint')
+    stale.editMiddle()
+    stale.append({ input_tokens: 1_250, output_tokens: 125 })
+    expect((await settledHistory(staleService, 'all', true)).totals.processedTokens).toBe(3_475)
+  })
+
+  it('drops a damaged checkpoint without discarding the indexed file', async () => {
+    const fixture = grownRolloutFixture()
+    const options = {
+      cacheFile: fixture.cacheFile,
+      sourceRoots: { codex: fixture.codexRoot, 'claude-code': fixture.missingClaude },
+      now: () => new Date('2026-08-08T12:00:00.000Z'),
+    }
+    await settledHistory(usageService(options), 'all')
+    const saved = JSON.parse(readFileSync(fixture.cacheFile, 'utf8')) as {
+      files: (CachedUsageFile & { checkpoint: unknown })[]
+    }
+    for (const file of saved.files) file.checkpoint = { position: 'damaged' }
+    writeFileSync(fixture.cacheFile, JSON.stringify(saved))
+
+    const cache = await readUsageCache(fixture.cacheFile)
+    expect(cache.files).toHaveLength(1)
+    expect(cache.files[0]).not.toHaveProperty('checkpoint')
+    expect(cache.files[0]?.entries).toEqual(saved.files[0]?.entries)
+  })
+
   it('reads a large saved index with the large-index loader and falls back when it fails', async () => {
     const root = temporaryDirectory()
     const smallFile = path.join(root, 'small.json')
@@ -1152,6 +1237,52 @@ function temporaryDirectory(): string {
 
 function writeJsonLines(filePath: string, records: unknown[]): void {
   writeFileSync(filePath, `${records.map((record) => JSON.stringify(record)).join('\n')}\n`)
+}
+
+/**
+ * A Codex rollout over 8 KiB with its only token count in the middle, away from
+ * the bytes a checkpoint hashes, so a test can tell a resumed read from a full one.
+ */
+function grownRolloutFixture() {
+  const root = temporaryDirectory()
+  const codexRoot = path.join(root, 'codex')
+  mkdirSync(codexRoot, { recursive: true })
+  const rollout = path.join(codexRoot, 'session.jsonl')
+  const filler = Array.from({ length: 40 }, (_value, index) => ({
+    timestamp: '2026-08-08T09:00:30.000Z',
+    type: 'event_msg',
+    payload: { type: 'agent_message', message: `${'x'.repeat(200)} ${index}` },
+  }))
+  writeJsonLines(rollout, [
+    { timestamp: '2026-08-08T09:00:00.000Z', type: 'session_meta', payload: { id: 'session' } },
+    {
+      timestamp: '2026-08-08T09:00:01.000Z',
+      type: 'turn_context',
+      payload: { model: 'gpt-5.6-luna' },
+    },
+    ...filler,
+    codexTokenRecord('2026-08-08T09:01:00.000Z', { input_tokens: 1_000, output_tokens: 100 }),
+    ...filler,
+  ])
+  const replace = (from: string, to: string) => {
+    const content = readFileSync(rollout, 'utf8')
+    expect(content).toContain(from)
+    writeFileSync(rollout, content.replace(from, to))
+  }
+  return {
+    rollout,
+    codexRoot,
+    cacheFile: path.join(root, 'cache', 'usage.json'),
+    missingClaude: path.join(root, 'missing-claude'),
+    /** Same length, so only the token count changes. */
+    editMiddle: () => replace('"input_tokens":1000', '"input_tokens":2000'),
+    editHead: () => replace('"id":"session"', '"id":"rewrit"'),
+    append: (total: Record<string, number>) =>
+      appendFileSync(
+        rollout,
+        `${JSON.stringify(codexTokenRecord('2026-08-08T09:02:00.000Z', total))}\n`,
+      ),
+  }
 }
 
 function codexTokenRecord(timestamp: string, total: Record<string, number>) {

@@ -2,7 +2,12 @@ import os from 'node:os'
 import path from 'node:path'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
 import { discoverJsonlArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
-import { readUsageLog, type UsageLogParser } from '@harness/proc/usage-log'
+import {
+  readUsageLog,
+  type UsageCheckpoint,
+  type UsageLogParser,
+  type UsageLogRead,
+} from '@harness/proc/usage-log'
 
 type CodexUsage = {
   inputTokens: number
@@ -19,12 +24,20 @@ export const CODEX_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecor
   label: 'Codex',
   root: (home = process.env['CODEX_HOME'] ?? path.join(os.homedir(), '.codex')) =>
     path.join(home, 'sessions'),
-  discover: (root) => discoverJsonlArchive(root, readCodexUsageHistory),
+  discover: (root) => discoverJsonlArchive(root, readCodexUsageHistory, resumeCodexUsageHistory),
 }
 
 /** Reads Codex JSONL without exposing its cumulative wire format to the core. */
-export function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
-  return readUsageLog(filePath, CODEX_LOG_PARSER)
+export async function readCodexUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
+  return (await readUsageLog(filePath, CODEX_LOG_PARSER)).entries
+}
+
+/** Reads only what a rollout gained since the checkpoint of an earlier read, when it can. */
+export function resumeCodexUsageHistory(
+  filePath: string,
+  checkpoint?: UsageCheckpoint,
+): Promise<UsageLogRead<LocalUsageRecord>> {
+  return readUsageLog(filePath, CODEX_LOG_PARSER, checkpoint)
 }
 
 /** What the rollout's lines so far leave behind for the lines after them. */
@@ -39,6 +52,19 @@ type CodexLogState = {
   previous: CodexUsage | undefined
 }
 
+/** The part of the state the next read needs; the entries were already returned. */
+type SavedCodexState = {
+  version: typeof SAVED_STATE_VERSION
+  sessionId: string
+  sawSessionMeta: boolean
+  replayingParentHistory: boolean
+  sawLegacySubagentBoundary: boolean
+  currentModel: string
+  previous: CodexUsage | null
+}
+
+const SAVED_STATE_VERSION = 1
+
 const CODEX_LOG_PARSER: UsageLogParser<LocalUsageRecord, CodexLogState> = {
   create: (filePath) => ({
     entries: new Map(),
@@ -50,15 +76,76 @@ const CODEX_LOG_PARSER: UsageLogParser<LocalUsageRecord, CodexLogState> = {
     currentModel: 'Unknown model',
     previous: undefined,
   }),
+  restore: (saved) => {
+    if (!isSavedCodexState(saved)) return undefined
+    return {
+      entries: new Map(),
+      legacySubagentEntries: new Map(),
+      sessionId: saved.sessionId,
+      sawSessionMeta: saved.sawSessionMeta,
+      replayingParentHistory: saved.replayingParentHistory,
+      sawLegacySubagentBoundary: saved.sawLegacySubagentBoundary,
+      currentModel: saved.currentModel,
+      previous: saved.previous ?? undefined,
+    }
+  },
   line: parseCodexLine,
   finish: (state) => {
+    // Buffered subagent usage counts only while no communication marker
+    // follows; a marker later in the file withdraws it, so such a read cannot
+    // be continued and the next one starts over.
+    const provisional = state.legacySubagentEntries.size > 0
     if (state.replayingParentHistory && state.sawLegacySubagentBoundary) {
       for (const entry of state.legacySubagentEntries.values()) {
         mergeUsageRecord(state.entries, entry)
       }
     }
-    return [...state.entries.values()]
+    const saved: SavedCodexState = {
+      version: SAVED_STATE_VERSION,
+      sessionId: state.sessionId,
+      sawSessionMeta: state.sawSessionMeta,
+      replayingParentHistory: state.replayingParentHistory,
+      sawLegacySubagentBoundary: state.sawLegacySubagentBoundary,
+      currentModel: state.currentModel,
+      previous: state.previous ?? null,
+    }
+    return { entries: [...state.entries.values()], ...(provisional ? {} : { saved }) }
   },
+}
+
+function isSavedCodexState(value: unknown): value is SavedCodexState {
+  const saved = asRecord(value)
+  const previous = saved?.['previous']
+  return Boolean(
+    saved &&
+    saved['version'] === SAVED_STATE_VERSION &&
+    typeof saved['sessionId'] === 'string' &&
+    typeof saved['sawSessionMeta'] === 'boolean' &&
+    typeof saved['replayingParentHistory'] === 'boolean' &&
+    typeof saved['sawLegacySubagentBoundary'] === 'boolean' &&
+    typeof saved['currentModel'] === 'string' &&
+    (previous === null || isCodexUsage(previous)),
+  )
+}
+
+function isCodexUsage(value: unknown): value is CodexUsage {
+  const usage = asRecord(value)
+  return Boolean(
+    usage &&
+    (
+      [
+        'inputTokens',
+        'cachedInputTokens',
+        'cacheWriteInputTokens',
+        'outputTokens',
+        'reasoningTokens',
+        'totalTokens',
+      ] as const
+    ).every((field) => {
+      const count = usage[field]
+      return typeof count === 'number' && Number.isFinite(count) && count >= 0
+    }),
+  )
 }
 
 function parseCodexLine(state: CodexLogState, line: string): void {
