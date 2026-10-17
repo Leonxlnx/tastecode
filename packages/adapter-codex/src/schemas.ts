@@ -57,6 +57,25 @@ export const CodexRateLimitResponseSchema = z.object({
 export type CodexRateLimitSnapshot = z.infer<typeof CodexRateLimitSnapshotSchema>
 export type CodexRateLimitResponse = z.infer<typeof CodexRateLimitResponseSchema>
 
+/**
+ * A rolling `account/rateLimits/updated` snapshot. Codex 0.163 documents it as
+ * sparse: a null or missing value is unknown in this update and keeps the
+ * value of the newest read.
+ */
+export const CodexRateLimitUpdateSchema = z.object({
+  rateLimits: z.object({
+    limitId: nullableString.optional(),
+    limitName: nullableString.optional(),
+    primary: RateLimitWindowSchema.nullish(),
+    secondary: RateLimitWindowSchema.nullish(),
+    credits: CreditsSnapshotSchema.nullish(),
+  }),
+})
+export type CodexRateLimitUpdate = z.infer<typeof CodexRateLimitUpdateSchema>['rateLimits']
+
+/** The `initialize` answer names the home the app-server runs in (0.163: `codexHome`). */
+export const CodexInitializeHomeSchema = z.object({ codexHome: z.string().min(1) })
+
 export const CodexResetCreditSchema = z.object({
   id: z.string().min(1).optional(),
   status: z.literal('available'),

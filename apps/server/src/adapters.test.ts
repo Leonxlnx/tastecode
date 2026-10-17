@@ -339,6 +339,8 @@ describe('resumable provider setup', () => {
             ...(provider === 'codex' || provider === 'opencode'
               ? { mcpServers: [], mcpCredentials: {} }
               : {}),
+            // A wrapper may run another account, so its limit windows stay out of the default's.
+            ...(provider === 'codex' ? { liveLimits: false } : {}),
           })
           if (adapter instanceof FakeAcpAdapter) expect(adapter.agentId).toBe(source.id)
         }

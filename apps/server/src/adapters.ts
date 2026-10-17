@@ -13,6 +13,7 @@ import type {
   Model,
   ProviderContextSettings,
   ProviderId,
+  ProviderLimit,
   StoredModelConnection,
   Thread,
 } from '@harness/contracts'
@@ -197,6 +198,11 @@ export interface AgentSession {
   ): void
   /** Provider-owned subscription usage changed; the server should refetch. */
   onUsageChanged?(listener: () => void): void
+  /**
+   * Plan-limit windows the live session reported, each with a stable `id`.
+   * Sparse: windows it does not name keep their held values.
+   */
+  onLimitsUpdated?(listener: (limits: ProviderLimit[]) => void): void
   /** Provider MCP discovery changed; the project inventory should be refreshed. */
   onMcpChanged?(listener: () => void): (() => void) | void
   /**
@@ -837,7 +843,8 @@ function codexRuntime(
       ...(options.mcpServers ? { mcpServers: options.mcpServers } : {}),
       ...(options.mcpCredentials ? { mcpCredentials: options.mcpCredentials } : {}),
       // Codex spawns its app-server without a cwd; the wrapper resolves from the project.
-      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath) } : {}),
+      // A wrapper may run another account, whose limit windows are not the default account's.
+      ...(harness ? { spawn: customHarnessSpawn(harness, workspacePath), liveLimits: false } : {}),
     })
     adapter.on('log', onLog)
     return startedSession(adapter, async () => {
