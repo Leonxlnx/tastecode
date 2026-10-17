@@ -16,7 +16,9 @@ type Frame =
 /**
  * grok 1.0.62 `agent stdio`, initialize and session/new without a prompt, in
  * the order and at the times captured (ms after spawn). Sanitized: invented
- * server, skill and session names and paths.
+ * server, skill and session names and paths. The last command update, with
+ * the connected server's tools, came 0.4-0.9 s after mcp_initialized on
+ * other runs and is placed there.
  */
 const captured: Frame[] = readFileSync(
   new URL('./fixtures/acp-session-grok-1.0.62.jsonl', import.meta.url),
@@ -80,7 +82,9 @@ describe('Grok project discovery', () => {
       connect: () => rpc,
       onUpdate: (inventory) => updates.push(inventory),
     })
-    await vi.advanceTimersByTimeAsync(3_000)
+    await vi.advanceTimersByTimeAsync(3_700)
+    expect(rpc.disposed).toBe(false)
+    await vi.advanceTimersByTimeAsync(100)
     const inventory = await discovery
 
     expect(inventory.commands).toHaveLength(13)
@@ -89,13 +93,24 @@ describe('Grok project discovery', () => {
       description: 'Set or check an autonomous goal',
       argumentHint: '<objective> | status | clear',
     })
-    expect(inventory.servers.map(({ id, startup, auth }) => ({ id, startup, auth }))).toEqual([
+    expect(
+      inventory.servers.map(({ id, startup, auth, tools }) => ({ id, startup, auth, tools })),
+    ).toEqual([
       {
         id: 'remote-docs',
         startup: { state: 'stopped' },
         auth: { status: 'sign_in_required', method: 'oauth' },
+        tools: [],
       },
-      { id: 'design-kit', startup: { state: 'ready' }, auth: { status: 'not_required' } },
+      {
+        id: 'design-kit',
+        startup: { state: 'ready' },
+        auth: { status: 'not_required' },
+        tools: [
+          { name: 'preview', inputSchema: {} },
+          { name: 'capture', inputSchema: {} },
+        ],
+      },
     ])
     // Grok names the transport only for some servers; it is never passed on.
     expect(inventory.servers.every((server) => server.transport === undefined)).toBe(true)
@@ -152,6 +167,20 @@ describe('Grok project discovery', () => {
     expect(rpc.disposed).toBe(true)
   })
 
+  it('waits briefly for a ready server to name its tools', async () => {
+    const rpc = new ReplayRpc(captured.filter((frame) => frame.at !== 3_767))
+    const discovery = discoverGrokProject('C:\\repo', { connect: () => rpc })
+    // mcp_initialized at 2867 ms, then at most 2 s for tool names that never come.
+    await vi.advanceTimersByTimeAsync(4_866)
+    expect(rpc.disposed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    const inventory = await discovery
+    expect(inventory.servers.find((server) => server.id === 'design-kit')).toMatchObject({
+      startup: { state: 'ready' },
+      tools: [],
+    })
+  })
+
   it('does not wait for MCP when Grok has no servers to start', async () => {
     const rpc = new ReplayRpc(
       captured.filter((frame) => !('method' in frame) || !frame.method.startsWith('_x.ai/mcp')),
@@ -195,7 +224,7 @@ describe('Grok inventory mapping', () => {
         status: 'unavailable',
         reason: 'spawn_failed',
         detail: "MCP server 'docs' failed: Transport [rmcp::Worker<a::B<c>>] error: not found",
-        tools: ['search', { name: 'fetch' }, 3],
+        tools: ['search', 'fetch'],
       }),
     ).toMatchObject({
       startup: { state: 'failed', message: "MCP server 'docs' failed: Transport error: not found" },

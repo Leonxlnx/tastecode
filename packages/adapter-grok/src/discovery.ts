@@ -46,12 +46,15 @@ export type GrokProjectDiscoveryOptions = {
   quietMs?: number
   /** After Grok says MCP is initialized, how long a late status may still arrive. */
   graceMs?: number
+  /** After that, how long a ready server's tool names may take (captured: 0.4-0.9 s). */
+  toolsGraceMs?: number
 }
 
 const START_TIMEOUT_MS = 20_000
 const SETTLE_MS = 15_000
 const QUIET_MS = 1_500
 const GRACE_MS = 1_000
+const TOOLS_GRACE_MS = 2_000
 const CLOSE_TIMEOUT_MS = 2_000
 const MAX_MESSAGE = 300
 
@@ -114,11 +117,17 @@ function connectGrok(projectPath: string): GrokDiscoveryRpc {
   )
 }
 
-type McpStatus = { status?: string; reason?: string; detail?: string; tools?: unknown }
+type McpStatus = { status?: string; reason?: string; detail?: string; tools?: string[] }
 
 /** Collects the frames a fresh Grok session reports and decides when they are complete. */
 class GrokInventory {
   #commands: unknown[] | undefined
+  /**
+   * Every tool the session offers, from the command update's `_meta.tools`.
+   * MCP tools are named `<server>__<tool>` and arrive in a later update than
+   * the commands, once the servers have connected.
+   */
+  #tools: string[] = []
   /** Configured servers in Grok's order; a plugin server may first appear with its status. */
   readonly #servers: string[] = []
   readonly #statuses = new Map<string, McpStatus>()
@@ -136,6 +145,10 @@ class GrokInventory {
         const kind = update?.sessionUpdate
         if (kind !== 'available_commands_update' && kind !== 'available_commands') return
         this.#commands = Array.isArray(update!.availableCommands) ? update!.availableCommands : []
+        const tools = record(update!._meta)?.tools
+        if (Array.isArray(tools)) {
+          this.#tools = tools.filter((tool): tool is string => typeof tool === 'string')
+        }
         break
       }
       case '_x.ai/mcp/servers_updated': {
@@ -156,7 +169,6 @@ class GrokInventory {
           ...(typeof fields.status === 'string' ? { status: fields.status } : {}),
           ...(typeof fields.reason === 'string' ? { reason: fields.reason } : {}),
           ...(typeof fields.detail === 'string' ? { detail: fields.detail } : {}),
-          tools: fields.tools,
         })
         this.#mcpSignal = true
         break
@@ -180,6 +192,7 @@ class GrokInventory {
     const started = Date.now()
     const quietMs = options.quietMs ?? QUIET_MS
     const graceMs = options.graceMs ?? GRACE_MS
+    const toolsGraceMs = Math.max(graceMs, options.toolsGraceMs ?? TOOLS_GRACE_MS)
     let early = false
     let grace = false
     return new Promise<void>((resolve, reject) => {
@@ -194,15 +207,18 @@ class GrokInventory {
       const abort = () => finish(new Error('Grok project discovery was canceled'))
       const check = () => {
         const now = Date.now()
-        if (this.#initializedAt !== undefined && !grace) {
+        const initializedAt = this.#initializedAt
+        if (initializedAt !== undefined && !grace) {
           grace = true
-          timers.push(setTimeout(check, Math.max(1, this.#initializedAt + graceMs - now)))
+          timers.push(setTimeout(check, Math.max(1, initializedAt + graceMs - now)))
+          timers.push(setTimeout(check, Math.max(1, initializedAt + toolsGraceMs - now)))
         }
         if (this.#commands === undefined) return
         const complete =
-          this.#initializedAt !== undefined
-            ? this.#statuses.size >= Math.max(this.#total, this.#servers.length) ||
-              now - this.#initializedAt >= graceMs
+          initializedAt !== undefined
+            ? (this.#statuses.size >= Math.max(this.#total, this.#servers.length) ||
+                now - initializedAt >= graceMs) &&
+              (this.#readyToolsKnown() || now - initializedAt >= toolsGraceMs)
             : !this.#mcpSignal && now - started >= quietMs
         if (complete) return finish()
         if (!early && this.#mcpSignal) {
@@ -223,9 +239,25 @@ class GrokInventory {
     const commands = this.#commands ?? []
     return {
       commands: mapAcpCommands(commands),
-      servers: this.#servers.map((name) => mapGrokMcpServer(name, this.#statuses.get(name))),
+      servers: this.#servers.map((name) =>
+        mapGrokMcpServer(name, { ...this.#statuses.get(name), tools: this.#toolsOf(name) }),
+      ),
       skills: mapGrokSkills(commands),
     }
+  }
+
+  #toolsOf(server: string): string[] {
+    const prefix = `${server}__`
+    return this.#tools.flatMap((tool) =>
+      tool.startsWith(prefix) && tool.length > prefix.length ? [tool.slice(prefix.length)] : [],
+    )
+  }
+
+  /** A ready server with no tool names yet is waited for, briefly: it may simply have none. */
+  #readyToolsKnown(): boolean {
+    return this.#servers.every(
+      (name) => this.#statuses.get(name)?.status !== 'ready' || this.#toolsOf(name).length > 0,
+    )
   }
 
   #addServer(name: unknown): void {
@@ -256,12 +288,8 @@ export function mapGrokMcpServer(name: string, status: McpStatus | undefined): M
     enabled: true,
     auth: signIn ? { status: 'sign_in_required', method: 'oauth' } : { status: 'not_required' },
     startup,
-    tools: Array.isArray(status?.tools)
-      ? status.tools.flatMap((tool) => {
-          const name = typeof tool === 'string' ? tool : record(tool)?.name
-          return typeof name === 'string' && name ? [{ name, inputSchema: {} }] : []
-        })
-      : [],
+    // Grok names its tools and nothing more.
+    tools: (status?.tools ?? []).map((tool) => ({ name: tool, inputSchema: {} })),
     resources: [],
     resourceTemplates: [],
   }
