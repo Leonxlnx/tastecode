@@ -206,6 +206,52 @@ describe('account limits', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 
+  it('labels values the server kept through a failed refresh, without a Retry', () => {
+    const kept = [{ id: 'five_hour', label: 'Session', usedPercent: 42 }]
+    render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'claude-code',
+            summary: {
+              ...summary(kept),
+              limitSource: {
+                provider: 'claude-code',
+                status: 'ready',
+                limits: kept,
+                checkedAt: 1_000,
+                stale: true,
+                refreshError: 'Claude usage request timed out.',
+                retryAt: 2_000,
+              },
+            },
+          },
+          {
+            status: 'ready',
+            provider: 'grok',
+            summary: {
+              ...summary(kept),
+              limitSource: { provider: 'grok', status: 'ready', limits: kept, stale: true },
+            },
+          },
+        ]}
+        onRetry={vi.fn()}
+      />,
+    )
+
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(within(claude).getByText('58% left')).toBeTruthy()
+    expect(statusOf(claude)?.firstChild?.textContent).toBe('Last known')
+    expect(statusOf(claude)?.title).toBe(
+      'Couldn’t refresh plan limits. Claude usage request timed out.',
+    )
+    // The server already retries on its own schedule.
+    expect(within(claude).queryByRole('button', { name: 'Retry' })).toBeNull()
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    expect(statusOf(grok)?.title).toBe('Couldn’t refresh plan limits.')
+  })
+
   it('orders and calms the nightly-only providers like the shipped ones', () => {
     const onRetry = vi.fn()
     render(
