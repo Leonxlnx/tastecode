@@ -138,6 +138,23 @@ describe('runCli', () => {
     },
   )
 
+  it('names the command and the limit when a short command times out', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-cli-timeout-'))
+    try {
+      const command = writeFakeCli(directory, 'setInterval(() => {}, 1000)')
+      await expect(runCli(command, ['status'], 1_000)).rejects.toThrow(
+        'fake-agent did not answer within 1 second.',
+      )
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('says which limit an unnamed capture missed', async () => {
+    const child = spawnCli(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    await expect(captureCli(child, 50)).rejects.toThrow('The CLI did not answer within 50 ms.')
+  })
+
   it('counts UTF-8 bytes across both pipes before retaining output', async () => {
     const child = spawnCli(process.execPath, [
       '-e',
