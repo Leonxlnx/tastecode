@@ -303,6 +303,49 @@ describe('LiveMarkdownParser', () => {
     expect(batched.complete()).toEqual(incremental.complete())
   })
 
+  it('keeps ordered and nested lists and rules equal across chunkings', () => {
+    const source =
+      'Steps:\n\n3. first `a`\n4. second\n   - detail **b**\n     continued\n   - more\n5. third\n\n---\n\n- x\n  1. y\n- z\n***\n2024 was long\n'
+    const batched = new LiveMarkdownParser()
+    const incremental = new LiveMarkdownParser()
+    const batchedOperations = batched.append(source).operations
+    const incrementalOperations = Array.from(source).flatMap(
+      (character) => incremental.append(character).operations,
+    )
+
+    expect(normalizeLeafAppends(batchedOperations)).toEqual(
+      normalizeLeafAppends(incrementalOperations),
+    )
+    expect(nodes(batchedOperations)).toEqual([
+      'paragraph',
+      'ordered-list',
+      'list-item',
+      'inline-code',
+      'list-item',
+      'list',
+      'list-item',
+      'strong',
+      'list-item',
+      'list-item',
+      'thematic-break',
+      'list',
+      'list-item',
+      'ordered-list',
+      'list-item',
+      'list-item',
+      'thematic-break',
+      'paragraph',
+    ])
+    expect(batchedOperations).toContainEqual({ type: 'node.open', node: 'ordered-list', start: 3 })
+    // Every opened node is closed again, in order.
+    const open: string[] = []
+    for (const operation of batchedOperations) {
+      if (operation.type === 'node.open') open.push(operation.node)
+      else if (operation.type === 'node.close') expect(operation.node).toBe(open.pop())
+    }
+    expect(open).toEqual(['paragraph'])
+  })
+
   it('keeps the work of completing a table row independent of the rows before it', () => {
     const parser = new LiveMarkdownParser()
     parser.append('| id | name | state |\n| --- | --- | --- |\n')

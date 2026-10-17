@@ -15,7 +15,9 @@ export type LiveMarkdownNode =
   | `heading-${HeadingLevel}`
   | 'blockquote'
   | 'list'
+  | 'ordered-list'
   | 'list-item'
+  | 'thematic-break'
   | 'strong'
   | 'emphasis'
   | 'inline-code'
@@ -38,6 +40,8 @@ export type LiveMarkdownOperation =
       language?: string
       align?: LiveMarkdownAlign
       href?: string
+      /** An ordered list's first number, when it is not 1. */
+      start?: number
     }
   | { type: 'node.close'; node: LiveMarkdownNode }
   | { type: 'task'; checked: boolean }
@@ -73,6 +77,34 @@ const HEADING_NODES = [
   'heading-6',
 ] as const
 const TASK_MARKERS = ['[ ] ', '[x] ', '[X] '] as const
+/** A list item's marker and the space after it: a bullet, or a number and its delimiter. */
+const LIST_MARKER = /^(?:([-+*])|(\d{1,9})([.)])) $/
+/** The start of a line that may still become a list marker. */
+const LIST_MARKER_PENDING = /^(?:[-+*]|\d{1,9}[.)]?)$/
+/** A line of three or more `-`, `*` or `_`: a thematic break, once the line ends. */
+const THEMATIC_BREAK = /^(?:-{3,}|\*{3,}|_{3,})$/
+const THEMATIC_BREAK_PENDING = /^(?:-+|\*+|_+)$/
+
+/**
+ * A list the parser is inside. Its current item stays open past the item's
+ * line, so a nested list or a continuation line can still go into it.
+ */
+type OpenList = {
+  /** The bullet character, or an ordered list's delimiter. */
+  marker: string
+  ordered: boolean
+  /** The column of the marker. */
+  indent: number
+  /** The column the item's text starts at; a nested item is indented at least this far. */
+  content: number
+  itemOpen: boolean
+}
+
+function leadingSpaces(text: string): number {
+  let count = 0
+  while (text.charCodeAt(count) === 32) count += 1
+  return count
+}
 const FLOW_SPECIAL_CHARACTER = /[\n`*_[]/g
 const INLINE_CODE_SPECIAL_CHARACTER = /[\n`]/g
 const TABLE_DELIMITER_CELL = /^(:?)-+(:?)$/
@@ -161,7 +193,8 @@ export class LiveMarkdownParser {
   private operations: LiveMarkdownOperation[] = []
   private block: LiveMarkdownNode | undefined
   private inline: LiveMarkdownNode[] = []
-  private listOpen = false
+  /** Open lists, outermost first. */
+  private lists: OpenList[] = []
   private mode: 'flow' | 'fence-info' | 'code' | 'table-line' = 'flow'
   private atLineStart = true
   private prefix = ''
@@ -279,7 +312,7 @@ export class LiveMarkdownParser {
     this.sourceLength = 0
     this.block = undefined
     this.inline = []
-    this.listOpen = false
+    this.lists = []
     this.mode = 'flow'
     this.atLineStart = true
     this.prefix = ''
@@ -465,7 +498,12 @@ export class LiveMarkdownParser {
     }
     if (character === '\n') {
       this.flushPendingStar()
+      const rule = this.block === undefined && THEMATIC_BREAK.test(this.prefix)
       this.closeBlock()
+      if (rule) {
+        this.operations.push({ type: 'node.open', node: 'thematic-break' })
+        this.closeNode('thematic-break')
+      }
       this.prefix = ''
       return
     }
@@ -489,21 +527,37 @@ export class LiveMarkdownParser {
       this.finishPrefix()
       return
     }
-    if (this.prefix === '- ' || this.prefix === '* ') {
-      this.openListItem()
-      this.finishPrefix()
-      this.task = ''
-      return
-    }
     if (this.prefix === '> ') {
       this.openBlock('blockquote')
       this.finishPrefix()
       return
     }
-    if (this.prefix === '-' || this.prefix === '*' || this.prefix === '>') return
-    this.ensureParagraph()
+    if (this.prefix === '>') return
+    // List items may be indented: nested under an open item, or by up to
+    // three spaces at the top. Only spaces so far: wait for what follows.
+    const indent = leadingSpaces(this.prefix)
+    const listable = indent <= 3 || this.lists.length > 0
+    const marker = this.prefix.slice(indent)
+    if (marker === '' && listable) return
+    const item = listable ? LIST_MARKER.exec(marker) : null
+    // A numbered line interrupts a paragraph only when it starts a list at 1.
+    if (item && (item[1] || this.block !== 'paragraph' || item[2] === '1')) {
+      this.openListItem(indent, item[1] ?? item[3]!, item[1] ? undefined : Number(item[2]))
+      this.finishPrefix()
+      this.task = ''
+      return
+    }
+    if (listable && LIST_MARKER_PENDING.test(marker)) return
+    // A line of dashes, stars or underscores is a rule once it ends, unless
+    // it underlines a paragraph.
+    if (indent === 0 && this.block === undefined && THEMATIC_BREAK_PENDING.test(marker)) return
     const buffered = this.prefix
     this.finishPrefix()
+    if (this.continueListItem()) {
+      this.consumeInline(buffered.slice(indent))
+      return
+    }
+    this.ensureParagraph()
     this.consumeInline(buffered)
   }
 
@@ -773,7 +827,7 @@ export class LiveMarkdownParser {
   }
 
   private openBlock(node: LiveMarkdownNode, language?: string): void {
-    if (this.block || this.listOpen) this.closeBlock()
+    if (this.block || this.lists.length > 0) this.closeBlock()
     this.operations.push({
       type: 'node.open',
       node,
@@ -782,18 +836,61 @@ export class LiveMarkdownParser {
     this.block = node
   }
 
-  private openListItem(): void {
-    if (this.block) this.closeBlock()
-    if (!this.listOpen) {
-      this.operations.push({ type: 'node.open', node: 'list' })
-      this.listOpen = true
+  /**
+   * A list item whose marker is `indent` spaces in: an item of an open list
+   * at that depth, the first item of a list nested in the open item it is
+   * indented into, or the first item of a new list. `start` is an ordered
+   * item's number. A different bullet or delimiter starts a new list.
+   */
+  private openListItem(indent: number, marker: string, start: number | undefined): void {
+    if (this.block) this.closeBlock(true)
+    while (this.lists.length > 0 && indent < this.lists.at(-1)!.indent) {
+      this.closeLists(this.lists.length - 1)
+    }
+    const ordered = start !== undefined
+    let list = this.lists.at(-1)
+    if (list && indent < list.content) {
+      if (list.itemOpen) this.closeNode('list-item')
+      list.itemOpen = false
+      if (list.marker !== marker || list.ordered !== ordered) {
+        this.closeLists(this.lists.length - 1)
+        list = undefined
+      }
+    } else list = undefined
+    if (!list) {
+      this.operations.push({
+        type: 'node.open',
+        node: ordered ? 'ordered-list' : 'list',
+        ...(ordered && start !== 1 ? { start } : {}),
+      })
+      const width = ordered ? String(start).length + 1 : 1
+      list = { marker, ordered, indent, content: indent + width + 1, itemOpen: false }
+      this.lists.push(list)
     }
     this.operations.push({ type: 'node.open', node: 'list-item' })
+    list.itemOpen = true
     this.block = 'list-item'
   }
 
+  /** A text line right after a list item's line continues that item's text. */
+  private continueListItem(): boolean {
+    if (this.block || !this.lists.at(-1)?.itemOpen) return false
+    this.block = 'list-item'
+    this.write('\n')
+    return true
+  }
+
+  /** Closes the open lists deeper than `depth`, with their open items. */
+  private closeLists(depth: number): void {
+    while (this.lists.length > depth) {
+      const list = this.lists.pop()!
+      if (list.itemOpen) this.closeNode('list-item')
+      this.closeNode(list.ordered ? 'ordered-list' : 'list')
+    }
+  }
+
   private openCode(language: string): void {
-    if (this.block || this.listOpen) this.closeBlock()
+    if (this.block || this.lists.length > 0) this.closeBlock()
     this.operations.push({
       type: 'node.open',
       node: 'code-block',
@@ -802,6 +899,11 @@ export class LiveMarkdownParser {
     this.block = 'code-block'
   }
 
+  /**
+   * Ends the current block. A list item's line ends without closing the
+   * item, which stays open for a nested list or a continuation line; the
+   * lists end too unless `keepList` is set.
+   */
   private closeBlock(keepList = false): void {
     this.settleInline()
     this.flushPendingStar()
@@ -809,12 +911,9 @@ export class LiveMarkdownParser {
     this.sealLeaf()
     if (this.block === 'table' && this.tableBodyOpen) this.closeNode('table-body')
     this.tableBodyOpen = false
-    if (this.block) this.closeNode(this.block)
+    if (this.block && this.block !== 'list-item') this.closeNode(this.block)
     this.block = undefined
-    if (this.listOpen && !keepList) {
-      this.closeNode('list')
-      this.listOpen = false
-    }
+    if (!keepList) this.closeLists(0)
   }
 
   private toggleInline(node: 'strong' | 'emphasis' | 'inline-code', marker: string): void {

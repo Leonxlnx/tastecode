@@ -142,7 +142,9 @@ const LIVE_NODE_TAG = {
   'heading-6': 'h6',
   blockquote: 'blockquote',
   list: 'ul',
+  'ordered-list': 'ol',
   'list-item': 'li',
+  'thematic-break': 'hr',
   strong: 'strong',
   emphasis: 'em',
   'inline-code': 'code',
@@ -220,6 +222,9 @@ function openLiveMarkdownNode(
   const part = liveTablePart(operation.node)
   if (part) element.dataset.streamdown = part
   if (operation.align) element.style.textAlign = operation.align
+  if (operation.start !== undefined && element instanceof HTMLOListElement) {
+    element.start = operation.start
+  }
   if (operation.node === 'link' && operation.href && element instanceof HTMLAnchorElement) {
     element.href = operation.href
     element.target = '_blank'
