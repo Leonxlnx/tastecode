@@ -829,7 +829,7 @@ describe('idle thread runtime retention', () => {
     store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'T' })
     const { orchestrator, sessions, resumedIds } = harness(undefined, store, 8, 1_000)
     try {
-      await orchestrator.setThreadApproval('thread-1', 'never')
+      await orchestrator.setThreadApproval('thread-1', 'full')
 
       expect(resumedIds).toEqual(['thread-1'])
       expect(sessions[0]?.disposed).toBe(false)
@@ -7251,7 +7251,7 @@ describe('sidebar inbox lifecycle', () => {
   it('prioritizes approvals and questions over an active turn and its queue', async () => {
     const { orchestrator, sessions } = harness()
     const thread = await orchestrator.startThread('codex', '/repo')
-    sessions[0]!.emit(turnStarted(thread.id))
+    sessions[0]!.emit(turnStarted(thread.id, 'turn-1'))
     await orchestrator.submitTurn(thread.id, 'queued')
     sessions[0]!.emit({
       type: 'user_input.requested',
