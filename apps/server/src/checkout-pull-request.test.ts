@@ -210,7 +210,7 @@ describe('the pull request for a checkout', () => {
         '--json',
         'number,title,url,state,isDraft,reviewDecision,statusCheckRollup,headRefName,baseRefName,isCrossRepository',
       ],
-      { timeoutMs: 15_000 },
+      { timeoutMs: 30_000 },
     )
   })
 
@@ -320,6 +320,33 @@ describe('the pull request for a checkout', () => {
     now += 61_000
     await lookups.forCheckout('/a')
     expect(run).toHaveBeenCalledTimes(3)
+  })
+
+  it('tries a failed lookup again after 15 seconds, a missing gh only after a minute', async () => {
+    let now = 1_000
+    const failing = service(
+      async () => {
+        throw new Error('GitHub did not respond in time')
+      },
+      { now: () => now },
+    )
+    const missing = service(
+      async () => {
+        throw new Error('spawn gh ENOENT')
+      },
+      { now: () => now, account: { available: false, authenticated: false } },
+    )
+    await failing.lookups.forCheckout('/a')
+    await missing.lookups.forCheckout('/a')
+
+    now += 14_000
+    await failing.lookups.forCheckout('/a')
+    expect(failing.run).toHaveBeenCalledTimes(1)
+    now += 2_000
+    await failing.lookups.forCheckout('/a')
+    await missing.lookups.forCheckout('/a')
+    expect(failing.run).toHaveBeenCalledTimes(2)
+    expect(missing.run).toHaveBeenCalledTimes(1)
   })
 
   it('looks again after a turn in that checkout or an action in that repository', async () => {

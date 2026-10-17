@@ -19,10 +19,14 @@ import {
 } from './pull-requests.js'
 
 const LOOKUP_TTL_MS = 60_000
+/** A lookup that timed out or broke is retried sooner than an answer is refreshed. */
+const FAILED_TTL_MS = 15_000
 const LOOKUP_CACHE_LIMIT = 64
 const CHECKOUT_LIMIT = 256
 const GIT_TIMEOUT_MS = 5_000
-const GH_TIMEOUT_MS = 15_000
+// The first gh process on a busy Windows machine took over 15 s; the pull
+// request list allows the same 30 s.
+const GH_TIMEOUT_MS = 30_000
 const HEADS = 'refs/heads/'
 const ORIGIN_HEAD = 'refs/remotes/origin/HEAD'
 const ORIGIN_BRANCHES = 'refs/remotes/origin/'
@@ -178,8 +182,9 @@ export class CheckoutPullRequests {
       .then((value) => {
         if (this.#inFlight.get(key) === pending) {
           const settledAt = this.#now()
+          const ttl = 'reason' in value && value.reason === 'failed' ? FAILED_TTL_MS : LOOKUP_TTL_MS
           this.#lookups.delete(key)
-          this.#lookups.set(key, { value, expiresAt: settledAt + LOOKUP_TTL_MS })
+          this.#lookups.set(key, { value, expiresAt: settledAt + ttl })
           for (const [cachedKey, entry] of this.#lookups) {
             if (entry.expiresAt <= settledAt) this.#lookups.delete(cachedKey)
           }
