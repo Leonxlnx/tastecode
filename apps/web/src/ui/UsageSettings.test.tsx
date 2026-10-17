@@ -225,6 +225,16 @@ describe('usage settings', () => {
     expect(screen.getByText('At current public model rates')).toBeTruthy()
   })
 
+  it('marks a model priced by estimate as approximate', async () => {
+    const result = historyResult('30d')
+    result.models = result.models.map((model) => ({ ...model, pricing: 'family' as const }))
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<UsageSettings transport={transport} />)
+
+    const badge = await screen.findByText('approximate', { selector: '.usage-breakdown__name em' })
+    expect(badge.closest('tr')?.textContent).toContain('gpt-5.6-sol')
+  })
+
   it('uses the product names for every provider', async () => {
     const providers: Array<{ id: ProviderId; label: string }> = [
       { id: 'codex', label: 'Codex' },

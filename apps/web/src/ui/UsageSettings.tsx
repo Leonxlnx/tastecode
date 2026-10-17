@@ -772,7 +772,7 @@ function pricingLabel(
   ) {
     return 'provider cost'
   }
-  if (pricing === 'family') return 'family price'
+  if (pricing === 'family') return 'approximate'
   if (pricing === 'unpriced') return 'unpriced'
   return undefined
 }
