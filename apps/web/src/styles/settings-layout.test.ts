@@ -244,6 +244,22 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).not.toMatch(/\.avatar-lab__field input/)
   })
 
+  it('draws every settings form as one card of labelled fields', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-form \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[^}]*padding: 16px;[^}]*background: var\(--bg-rail\);[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--r-lg\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-form label, \.set-form__field\) \{[^}]*display: grid;[^}]*color: var\(--text-2\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-form__actions \{[^}]*display: flex;[^}]*justify-content: flex-end;/s,
+    )
+    // One column where the leaders step aside.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{\s*\.settings \.set-form \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s,
+    )
+  })
+
   it('has two select looks: boxed for headers and forms, inline for leader rows', () => {
     expect(systemCss).toMatch(
       /\.settings \.app-select__trigger \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*font-size: var\(--t-sm\);/s,

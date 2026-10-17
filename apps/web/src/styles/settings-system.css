@@ -522,6 +522,76 @@
   cursor: default;
 }
 
+/* Forms: the one card Settings draws outside its dashboards. Two columns of
+   labelled fields on the rail tint; a wide field, a note, an error and the
+   actions take the whole width, and one column is left when the pane is
+   narrow. */
+
+.settings .set-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0 0 24px;
+  padding: 16px;
+  background: var(--bg-rail);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+/* After the rows it adds to, the form keeps a step away from the last one. */
+.settings :is(.set-entity, .provider-row, .set-empty) + .set-form {
+  margin-top: 12px;
+}
+
+.settings :is(.set-form label, .set-form__field) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.settings :is(.set-form__wide, .set-form__note, .set-form__error, .set-form__actions) {
+  grid-column: 1 / -1;
+}
+
+.settings .set-form__note {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-form__hint {
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.settings .set-form__error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .set-form__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+@container settings-content (max-width: 560px) {
+  .settings .set-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 /* Selects: two looks. Boxed, for page headers and forms: every AppSelect in
    Settings, and a menu trigger that takes .set-select. Inline, for leader
    rows: the value and a chevron at the row's own type, with no box open or
