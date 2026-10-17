@@ -16,7 +16,6 @@ import {
   Block,
   CodeBlock,
   CodeBlockContainer,
-  CodeBlockCopyButton,
   CodeBlockDownloadButton,
   CodeBlockHeader,
   StreamdownContext,
@@ -26,6 +25,7 @@ import {
   type StreamdownContextType,
 } from 'streamdown'
 import { readCodeWrap, subscribeCodeWrap, writeCodeWrap } from '../code-wrap.js'
+import { CopyButton } from './CopyButton.js'
 import { shikiPlugin } from './highlighter.js'
 import type { HighlightResult } from './highlighter-protocol.js'
 
@@ -65,6 +65,18 @@ export function CodeWrapButton() {
   )
 }
 
+const DOWNLOAD_LABEL = 'Download file'
+
+/**
+ * Copies a block the way reply copy does: through the app clipboard, with a
+ * Copied state and a failure that says so. Streamdown's own button wrote to
+ * the browser clipboard API directly, which the desktop session denies, and
+ * it failed without a word. The copied text is the raw fence, as before.
+ */
+function CodeCopyButton({ code }: { code: string }) {
+  return <CopyButton text={code} label="Copy code" title="Copy code" copiedLabel="Copied" />
+}
+
 type MarkdownCodeProps = ComponentPropsWithoutRef<'code'> & {
   node?: { properties?: Record<string, unknown> } | undefined
 }
@@ -81,7 +93,8 @@ function fenceText(children: ReactNode): string {
 
 /**
  * Streamdown's block code renderer with the Wrap toggle beside its download
- * and copy buttons; Streamdown takes no extra code block actions. This keeps
+ * button and the app's copy button; Streamdown takes no extra code block
+ * actions. This keeps
  * its language, `startLine` and `noLineNumbers` handling. The app registers no
  * Mermaid or custom renderers, so those branches of the original never apply.
  * Inline code never arrives here: Streamdown routes it to `inlineCode`.
@@ -109,8 +122,14 @@ export const MarkdownCode = memo(
         {showControls ? (
           <>
             <CodeWrapButton />
-            {shown.download ? <CodeBlockDownloadButton code={code} language={language} /> : null}
-            {shown.copy ? <CodeBlockCopyButton /> : null}
+            {shown.download ? (
+              <CodeBlockDownloadButton
+                code={code}
+                language={language}
+                aria-label={DOWNLOAD_LABEL}
+              />
+            ) : null}
+            {shown.copy ? <CodeCopyButton code={code} /> : null}
           </>
         ) : null}
       </CodeBlock>
@@ -314,8 +333,14 @@ function LargeCodeBlock({ code, language }: { code: string; language: string }) 
         <div>
           <div data-streamdown="code-block-actions">
             <CodeWrapButton />
-            {showDownload ? <CodeBlockDownloadButton code={code} language={language} /> : null}
-            {showCopy ? <CodeBlockCopyButton code={code} /> : null}
+            {showDownload ? (
+              <CodeBlockDownloadButton
+                code={code}
+                language={language}
+                aria-label={DOWNLOAD_LABEL}
+              />
+            ) : null}
+            {showCopy ? <CodeCopyButton code={code} /> : null}
           </div>
         </div>
       ) : null}
