@@ -26,6 +26,8 @@ const state = vi.hoisted(() => ({
   historyReads: [] as number[],
   historyRefresh: Promise.resolve() as Promise<void>,
   historyChanged: new Set<string>(),
+  prewarmed: 0,
+  recovered: 0,
 }))
 const temporary: string[] = []
 
@@ -67,7 +69,9 @@ vi.mock('./orchestrator.js', () => ({
     }
     async protectStoredCheckpoints() {}
     refreshLifecycle() {}
-    async recoverWorktrees() {}
+    async recoverWorktrees() {
+      state.recovered += 1
+    }
     async closeAllTerminals() {
       state.shutdown.push('terminals')
     }
@@ -97,7 +101,11 @@ vi.mock('./orchestrator.js', () => ({
     }
   },
 }))
-vi.mock('./providers.js', () => ({ prewarmProviders: () => undefined }))
+vi.mock('./providers.js', () => ({
+  prewarmProviders: () => {
+    state.prewarmed += 1
+  },
+}))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
     constructor(_store: unknown, sources: Array<{ provider: string }>) {
@@ -160,6 +168,8 @@ afterEach(async () => {
   state.historyReads.length = 0
   state.historyRefresh = Promise.resolve()
   state.historyChanged.clear()
+  state.prewarmed = 0
+  state.recovered = 0
   vi.unstubAllEnvs()
   await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
 })
@@ -171,6 +181,20 @@ async function listen(accessToken?: string) {
   const address = listener.address()
   if (!address || typeof address === 'string') throw new Error('Missing listener address')
   return { listener, port: address.port }
+}
+
+/** The renderer's first request; background startup work waits for its answer. */
+async function askForProjects(port: number) {
+  const client = new WebSocket(`ws://127.0.0.1:${port}`)
+  try {
+    await once(client, 'message')
+    const reply = once(client, 'message')
+    client.send(JSON.stringify({ id: 'projects', method: 'projects.list', params: {} }))
+    await reply
+  } finally {
+    client.terminate()
+  }
+  await new Promise((resolve) => setImmediate(resolve))
 }
 
 describe('rejected websocket connections', () => {
@@ -430,7 +454,7 @@ describe('server shutdown', () => {
     state.historyClosed = new Promise<void>((resolve) => {
       finishHistory = resolve
     })
-    await listen()
+    await askForProjects((await listen()).port)
     const closed = running!.close()
     running = undefined
     await new Promise((resolve) => setImmediate(resolve))
@@ -662,6 +686,7 @@ describe('chat history during the first provider scan', () => {
   it('imports before reading once the scan is done, as before', async () => {
     state.historyPage.mockResolvedValue(opened)
     const { port } = await listen()
+    await askForProjects(port)
     const reader = await connect(port)
     try {
       // Let the already-resolved scan settle.
@@ -680,6 +705,63 @@ describe('chat history during the first provider scan', () => {
     } finally {
       reader.client.terminate()
     }
+  })
+})
+
+describe('background startup work', () => {
+  it('waits until the first client has its project list', async () => {
+    const { port } = await listen()
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(state.historySources).toEqual([])
+    expect([state.prewarmed, state.recovered]).toEqual([0, 0])
+
+    await askForProjects(port)
+    await vi.waitFor(() => expect(state.historySources).toHaveLength(1))
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+
+    // Later clients do not start it again.
+    await askForProjects(port)
+    expect(state.historySources).toHaveLength(1)
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+  })
+
+  it('starts shortly after listening when no client asks', async () => {
+    await listen()
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+    expect(state.historySources).toEqual([])
+    await vi.waitFor(() => expect(state.historySources).toHaveLength(1), { timeout: 2_000 })
+    expect([state.prewarmed, state.recovered]).toEqual([1, 1])
+  })
+
+  it('starts at once for an imported chat, which needs the scan', async () => {
+    state.historyPage.mockResolvedValue({ events: [], page: { olderCursor: null, snapshotSeq: 0 } })
+    const { port } = await listen()
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(
+        JSON.stringify({
+          id: 'imported',
+          method: 'thread.history',
+          params: { threadId: 'external:codex:s', page: {} },
+        }),
+      )
+      await reply
+    } finally {
+      client.terminate()
+    }
+    expect(state.historySources).toHaveLength(1)
+    expect(state.historyLoads).toEqual(['external:codex:s'])
+  })
+
+  it('never starts once the server closed', async () => {
+    await listen()
+    await running!.close()
+    running = undefined
+    await new Promise((resolve) => setTimeout(resolve, 1_700))
+    expect(state.historySources).toEqual([])
+    expect([state.prewarmed, state.recovered]).toEqual([0, 0])
   })
 })
 
