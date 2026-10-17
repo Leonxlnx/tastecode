@@ -1,5 +1,30 @@
+import { readdir, stat } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import type { LocalUsageRecord } from '@harness/contracts'
+import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
+import {
+  usageArchiveFile,
+  type UsageArchive,
+  type UsageHistorySource,
+} from '@harness/proc/usage-archive'
+
+/**
+ * OpenCode keeps its message databases in its data directory: OPENCODE_DATA_DIR,
+ * else `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`.
+ */
+export const OPENCODE_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
+  provider: 'opencode',
+  label: 'OpenCode',
+  root: (home) =>
+    home ??
+    process.env['OPENCODE_DATA_DIR'] ??
+    path.join(
+      process.env['XDG_DATA_HOME'] ?? path.join(os.homedir(), '.local', 'share'),
+      'opencode',
+    ),
+  discover: discoverOpenCodeDatabases,
+}
 
 type UsageRow = {
   session_id: string
@@ -79,6 +104,27 @@ export async function readOpenCodeUsageHistory(filePath: string): Promise<LocalU
   } finally {
     database.close()
   }
+}
+
+async function discoverOpenCodeDatabases(root: string): Promise<UsageArchive<LocalUsageRecord>> {
+  const rootStat = await stat(root)
+  if (!rootStat.isDirectory()) return { available: false, files: [] }
+  const entries = await readdir(root, { withFileTypes: true })
+  const files = await Promise.all(
+    entries
+      .filter(
+        (entry) =>
+          entry.isFile() && entry.name.startsWith('opencode') && entry.name.endsWith('.db'),
+      )
+      .map((entry) => {
+        const filePath = path.join(root, entry.name)
+        // SQLite can append only to the WAL for long stretches. Folding the
+        // sidecar into the fingerprint catches new messages without reparsing
+        // an unchanged database on every refresh.
+        return usageArchiveFile(filePath, readOpenCodeUsageHistory, [`${filePath}-wal`], true)
+      }),
+  )
+  return { available: true, files: files.filter((file) => file !== undefined) }
 }
 
 function mergeUsageRecord(entries: Map<string, LocalUsageRecord>, entry: LocalUsageRecord): void {

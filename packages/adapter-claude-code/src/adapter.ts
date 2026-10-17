@@ -46,6 +46,7 @@ import {
   type ClaudeQueryRuntime,
   type ClaudeSpawn,
 } from './sdk-runtime.js'
+import { mapClaudeRateLimitEvent, type ProviderLimit } from './limits.js'
 
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
@@ -214,7 +215,8 @@ const PERMISSION_MODE = {
 export type ClaudeAdapterEvents = {
   event: [DomainEvent]
   log: [string]
-  usageChanged: []
+  /** Plan-limit windows a rate_limit_event reported, by stable row id. */
+  limitsUpdated: [ProviderLimit[]]
   disconnected: []
 }
 
@@ -1098,7 +1100,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           `rate limit at ${Math.round((message.rate_limit_info.utilization ?? 0) * 100)}%`,
         )
       }
-      this.emit('usageChanged')
+      // The event carries the windows' values, so nothing has to be read again.
+      const rows = mapClaudeRateLimitEvent(message.rate_limit_info)
+      if (rows.length) this.emit('limitsUpdated', rows)
       return
     }
 

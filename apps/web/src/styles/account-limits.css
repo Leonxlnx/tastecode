@@ -223,6 +223,26 @@
   background: var(--error);
 }
 
+/* Even pace: where the fill would end if the window were spent evenly. One
+   hairline tick, a little taller than the bar, so it reads on the fill and on
+   the empty track alike without becoming a second bar. */
+.account-menu__limit-bar:has(> .account-menu__limit-pace) {
+  position: relative;
+  overflow: visible;
+}
+
+.account-menu__limit-bar > .account-menu__limit-pace {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  height: auto;
+  border-radius: 0.5px;
+  background: color-mix(in srgb, var(--text) 62%, transparent);
+  translate: -0.5px 0;
+  pointer-events: none;
+}
+
 .account-menu__limit-reset {
   color: var(--text-3);
   font-size: var(--t-xs);
