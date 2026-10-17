@@ -157,6 +157,29 @@ describe('detectProviders', () => {
     expect(find(providers, 'codex').version).toBeUndefined()
   })
 
+  it('finds Antigravity without starting agy', async () => {
+    const asked: string[] = []
+    const providers = await detectProviders(
+      system({
+        isInstalled: async () => true,
+        version: async (command) => {
+          asked.push(command)
+          return '1.4.0'
+        },
+      }),
+    )
+
+    // Starting agy launches its language server and self-updater; a scan only
+    // needs to find the binary.
+    const antigravity = find(providers, 'antigravity')
+    expect(antigravity.installed).toBe(true)
+    expect(antigravity.version).toBeUndefined()
+    expect(antigravity.problem).toBeUndefined()
+    expect(antigravity.capabilities).toBeDefined()
+    expect(asked).not.toContain('agy')
+    expect(asked).toContain('codex')
+  })
+
   it('never claims to know whether someone is signed in', async () => {
     const providers = await detectProviders(system({ isInstalled: async () => true }))
 

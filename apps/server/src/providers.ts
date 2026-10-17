@@ -42,6 +42,11 @@ type Probe = {
    * decides later.
    */
   auth?: () => Promise<ProviderStatus['auth']>
+  /**
+   * False when the scan must never start the CLI to ask its version: finding
+   * the binary is enough to call it installed, and the version stays unknown.
+   */
+  readsVersion?: false
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
 }
@@ -131,8 +136,14 @@ const PROBES: Probe[] = [
       login: 'provider',
     },
     // First interactive run signs in with the user's Google account; there is
-    // no separate login subcommand as of agy 1.1.10.
+    // no separate login subcommand as of agy 1.4.0.
     loginCommand: 'agy',
+    // Every agy start launches its language server and may launch its
+    // self-updater, which replaces agy.exe in place. A scan that started it
+    // for `--version` (12.8 s cold, minutes right after an update) and killed
+    // it at the time limit could stop that updater mid-swap and leave no
+    // binary behind. Finding agy is all the scan needs.
+    readsVersion: false,
   },
   {
     id: 'pi',
@@ -314,7 +325,10 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
+  const [version, auth] = await Promise.all([
+    entry.readsVersion === false ? undefined : system.version(entry.command),
+    system.auth(entry.id),
+  ])
   return {
     id: entry.id,
     displayName: entry.displayName,
