@@ -1,25 +1,36 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { CodeView, type CodeViewHandle, type CodeViewReactOptions } from '@pierre/diffs/react'
 import { useVirtualizer } from '@tanstack/react-virtual'
-import type { DiffFile, SessionDiff } from '@harness/contracts'
+import type {
+  CheckoutPullRequest,
+  CheckoutPullRequestResult,
+  DiffFile,
+  PullRequestTarget,
+  SessionDiff,
+} from '@harness/contracts'
 import {
+  IconArrowUp as ArrowUp,
   IconCheck as Check,
   IconChevronDown as ChevronDown,
   IconChevronRight as ChevronRight,
-  IconCopy as Copy,
   IconFolder as Folder,
   IconGitBranch as GitBranch,
+  IconGitCommit as GitCommit,
+  IconGitPullRequest as GitPullRequest,
   IconLoader2 as LoaderCircle,
   IconRefresh as RefreshCw,
   IconSearch as Search,
-  IconSparkles as Sparkles,
 } from '@tabler/icons-react'
 import { writeClipboardText } from '../../bridge.js'
 import type { Transport } from '../../transport.js'
 import { FileTypeIcon } from '../FileTypeIcon.js'
 import { IconMorph } from '../IconMorph.js'
 import { SkeletonCode, SkeletonStatus } from '../Skeleton.js'
+import { StagePullRequestChip } from '../StagePullRequestChip.js'
+import { publishCheckoutPullRequest } from '../pull-requests/useCheckoutPullRequest.js'
+import { ReviewCommitBox, ReviewPullRequestBox } from './ReviewComposer.js'
 import { WorkspaceEmptyState } from './WorkspaceEmptyState.js'
+import { pullRequestFromCommit, reviewGitState } from './review-git.js'
 import {
   buildReviewTree,
   flattenReviewTree,
@@ -108,38 +119,88 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
   threadId?: string | undefined
   branch?: string | undefined
   theme: 'light' | 'dark'
+  /** The chat's turn is running; commits and pushes wait for it. */
+  turnRunning?: boolean | undefined
+  /** On screen: follows a running turn's edits. Hidden, it reads nothing until shown. */
+  visible?: boolean | undefined
+  onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
 }) {
   // The server does not know a chat's provisional id while its first message
   // creates it; stay in the project checkout until the real id arrives.
   const threadId = props.threadId?.startsWith('pending:') ? undefined : props.threadId
   const [diff, setDiff] = useState<SessionDiff>()
+  const [checkout, setCheckout] = useState<CheckoutPullRequestResult>()
   const [filter, setFilter] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
-  const [commitMessage, setCommitMessage] = useState<string>()
-  const [commitError, setCommitError] = useState<string>()
+  const [composer, setComposer] = useState<'commit' | 'pull-request'>()
+  const [commitMessage, setCommitMessage] = useState('')
+  const [lastCommitMessage, setLastCommitMessage] = useState<string>()
+  const [actionError, setActionError] = useState<string>()
+  const [actionDone, setActionDone] = useState<string>()
+  const [busy, setBusy] = useState<'commit' | 'push' | 'create'>()
   const [generatingCommit, setGeneratingCommit] = useState(false)
   const [copiedCommit, setCopiedCommit] = useState(false)
   const generation = useRef(0)
+  const checkoutGeneration = useRef(0)
   const draftGeneration = useRef(0)
+  const actionGeneration = useRef(0)
+  /** The message is a generated draft nobody edited, so other changes make it stale. */
+  const untouchedDraft = useRef(false)
   const diffVersion = useRef<string>(undefined)
   const codeViewRef = useRef<CodeViewHandle<undefined>>(null)
 
-  const clearCommitDraft = useCallback(() => {
+  const dropStaleDraft = useCallback(() => {
     draftGeneration.current += 1
-    setCommitMessage(undefined)
-    setCommitError(undefined)
     setGeneratingCommit(false)
     setCopiedCommit(false)
+    if (!untouchedDraft.current) return
+    untouchedDraft.current = false
+    setCommitMessage('')
   }, [])
 
-  const refresh = useCallback(
-    async (keepDraft = false) => {
+  const resetActions = useCallback(() => {
+    actionGeneration.current += 1
+    untouchedDraft.current = false
+    dropStaleDraft()
+    setComposer(undefined)
+    setCommitMessage('')
+    setLastCommitMessage(undefined)
+    setActionError(undefined)
+    setActionDone(undefined)
+    setBusy(undefined)
+  }, [dropStaleDraft])
+
+  /** Branch, upstream and pull request, shared with the header chip. */
+  const readCheckout = useCallback(
+    async (refresh: boolean) => {
+      const projectPath = props.projectPath
+      if (!projectPath) return
+      const mine = ++checkoutGeneration.current
+      try {
+        const result = await props.transport.request('pullRequests.forCheckout', {
+          projectPath,
+          ...(threadId ? { threadId } : {}),
+          ...(refresh ? { refresh } : {}),
+        })
+        if (checkoutGeneration.current !== mine) return
+        setCheckout(result)
+        publishCheckoutPullRequest(projectPath, threadId, result)
+      } catch {
+        // A server without the lookup still commits; it just offers no push.
+        if (checkoutGeneration.current === mine) setCheckout(undefined)
+      }
+    },
+    [props.projectPath, threadId, props.transport],
+  )
+
+  /** The checkout's uncommitted changes. A quiet read, during a turn, shows no spinner. */
+  const readDiff = useCallback(
+    async (quiet = false) => {
       if (!props.projectPath) return
       const mine = ++generation.current
-      setLoading(true)
+      if (!quiet) setLoading(true)
       setError(undefined)
-      if (!keepDraft) clearCommitDraft()
       try {
         const result = await props.transport.request('workspace.diff', {
           projectPath: props.projectPath,
@@ -147,37 +208,44 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
         })
         if (generation.current === mine) {
           // The version names the changes, so a draft survives a refresh that found the same ones.
-          if (result.version !== diffVersion.current) clearCommitDraft()
+          if (result.version !== diffVersion.current) dropStaleDraft()
           diffVersion.current = result.version
           setDiff(result)
         }
       } catch (cause) {
-        if (generation.current === mine) {
-          setError(cause instanceof Error ? cause.message : String(cause))
-        }
+        if (generation.current === mine) setError(messageOf(cause))
       } finally {
         if (generation.current === mine) setLoading(false)
       }
     },
-    [clearCommitDraft, props.projectPath, threadId, props.transport],
+    [dropStaleDraft, props.projectPath, threadId, props.transport],
+  )
+
+  const refresh = useCallback(
+    async (refreshPullRequest = false) => {
+      if (!props.projectPath) return
+      void readCheckout(refreshPullRequest)
+      await readDiff()
+    },
+    [readCheckout, readDiff, props.projectPath],
   )
 
   const generateCommitMessage = useCallback(async () => {
     if (!props.projectPath) return
     const mine = draftGeneration.current
     setGeneratingCommit(true)
-    setCommitError(undefined)
+    setActionError(undefined)
     setCopiedCommit(false)
     try {
       const result = await props.transport.request('backgroundModel.generateCommitMessage', {
         projectPath: props.projectPath,
         ...(threadId ? { threadId } : {}),
       })
-      if (draftGeneration.current === mine) setCommitMessage(result.message)
+      if (draftGeneration.current !== mine) return
+      untouchedDraft.current = true
+      setCommitMessage(result.message)
     } catch (cause) {
-      if (draftGeneration.current === mine) {
-        setCommitError(cause instanceof Error ? cause.message : String(cause))
-      }
+      if (draftGeneration.current === mine) setActionError(messageOf(cause))
     } finally {
       if (draftGeneration.current === mine) setGeneratingCommit(false)
     }
@@ -189,23 +257,157 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
       await writeClipboardText(commitMessage)
       setCopiedCommit(true)
     } catch {
-      setCommitError('Could not copy the commit message.')
+      setActionError('Could not copy the commit message.')
     }
   }, [commitMessage])
 
+  /** One git write at a time; a reply for another checkout is dropped. */
+  const runAction = useCallback(
+    async (kind: 'commit' | 'push' | 'create', action: () => Promise<string>) => {
+      const mine = actionGeneration.current
+      setBusy(kind)
+      setActionError(undefined)
+      setActionDone(undefined)
+      try {
+        const done = await action()
+        if (actionGeneration.current === mine) setActionDone(done)
+      } catch (cause) {
+        if (actionGeneration.current === mine) setActionError(messageOf(cause))
+      } finally {
+        if (actionGeneration.current === mine) setBusy(undefined)
+      }
+    },
+    [],
+  )
+
+  const checkoutParams = useMemo(
+    () =>
+      props.projectPath
+        ? { projectPath: props.projectPath, ...(threadId ? { threadId } : {}) }
+        : undefined,
+    [props.projectPath, threadId],
+  )
+
+  const commit = useCallback(() => {
+    const message = commitMessage
+    if (!checkoutParams || !message.trim()) return
+    const mine = actionGeneration.current
+    void runAction('commit', async () => {
+      // Review shows untracked files, so committing what it shows includes them.
+      const result = await props.transport.request('workspace.commit', {
+        ...checkoutParams,
+        message,
+        includeUntracked: true,
+      })
+      if (actionGeneration.current === mine) {
+        // Known without asking: one more commit for the upstream. The lookup confirms it.
+        setCheckout((current) =>
+          current?.upstream ? { ...current, ahead: (current.ahead ?? 0) + 1 } : current,
+        )
+        // The box closes onto the new diff, never onto the changes just committed.
+        await refresh()
+      }
+      if (actionGeneration.current === mine) {
+        untouchedDraft.current = false
+        setCommitMessage('')
+        setLastCommitMessage(message)
+        setComposer(undefined)
+      }
+      return `Committed ${result.commit.slice(0, 7)}${result.branch ? ` to ${result.branch}` : ''}`
+    })
+  }, [checkoutParams, commitMessage, props.transport, refresh, runAction])
+
+  const push = useCallback(() => {
+    if (!checkoutParams) return
+    const mine = actionGeneration.current
+    void runAction('push', async () => {
+      try {
+        const result = await props.transport.request('workspace.push', checkoutParams)
+        if (actionGeneration.current === mine) {
+          // The push tracked the same-named branch and left nothing ahead of it.
+          setCheckout(
+            (current) =>
+              current && { ...current, upstream: `${result.remote}/${result.branch}`, ahead: 0 },
+          )
+        }
+        return `Pushed ${result.branch} to ${result.remote}`
+      } finally {
+        // Even a refused push may have set the upstream or moved the remote branch.
+        void readCheckout(true)
+      }
+    })
+  }, [checkoutParams, props.transport, readCheckout, runAction])
+
+  const createPullRequest = useCallback(
+    (input: { title: string; body: string; draft: boolean }) => {
+      if (!checkoutParams || !checkout?.branch) return
+      const mine = actionGeneration.current
+      const before = checkout
+      const branch = checkout.branch
+      void runAction('create', async () => {
+        try {
+          const result = await props.transport.request('pullRequests.create', {
+            ...checkoutParams,
+            ...input,
+          })
+          if (actionGeneration.current === mine) {
+            setComposer(undefined)
+            // Show the chip now; the lookup adds its checks.
+            const opened = withPullRequest(before, {
+              ...result,
+              title: input.title,
+              state: 'OPEN',
+              isDraft: input.draft,
+              headRefName: branch,
+            })
+            setCheckout(opened)
+            publishCheckoutPullRequest(checkoutParams.projectPath, threadId, opened)
+          }
+          return `Opened pull request #${result.number}`
+        } finally {
+          void readCheckout(true)
+        }
+      })
+    },
+    [checkout, checkoutParams, props.transport, readCheckout, runAction, threadId],
+  )
+
   useEffect(() => {
     setDiff(undefined)
+    setCheckout(undefined)
     diffVersion.current = undefined
-    clearCommitDraft()
+    resetActions()
     if (props.projectPath) void refresh()
     return () => {
       generation.current += 1
+      checkoutGeneration.current += 1
       draftGeneration.current += 1
+      actionGeneration.current += 1
     }
-  }, [clearCommitDraft, props.projectPath, threadId, refresh])
+  }, [resetActions, props.projectPath, threadId, refresh])
 
-  const refreshAfterChange = useCallback(() => void refresh(true), [refresh])
-  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange)
+  const refreshAfterChange = useCallback(() => void refresh(), [refresh])
+  const followTurn = useCallback(() => readDiff(true), [readDiff])
+  useWorkspaceRefresh(props.transport, threadId, refreshAfterChange, {
+    visible: props.visible ?? true,
+    onLiveChange: followTurn,
+  })
+
+  const fileCount = diff?.files.length ?? 0
+  const git = useMemo(() => reviewGitState(checkout), [checkout])
+  const pullRequestDraft = useMemo(
+    () => pullRequestFromCommit(lastCommitMessage),
+    [lastCommitMessage],
+  )
+  const waitReason = props.turnRunning ? 'Wait until the chat finishes its turn.' : undefined
+  const pushTitle = git.push?.upstream
+    ? `Push ${git.push.ahead} ${git.push.ahead === 1 ? 'commit' : 'commits'} to ${git.push.upstream}`
+    : `Publish ${checkout?.branch ?? 'this branch'} to origin`
+  const toggleComposer = (next: 'commit' | 'pull-request') => {
+    setActionError(undefined)
+    setActionDone(undefined)
+    setComposer((current) => (current === next ? undefined : next))
+  }
 
   const stats = useMemo(() => diffStats(diff), [diff])
   const matchingFiles = useMemo(() => {
@@ -290,61 +492,123 @@ export const WorkspaceReview = memo(function WorkspaceReview(props: {
           <span className="is-delete">−{stats.removed.toLocaleString()}</span>
         </span>
         <span className="workspace-review__file-count">
-          {diff?.files.length ?? 0} file{diff?.files.length === 1 ? '' : 's'}
+          {fileCount} file{fileCount === 1 ? '' : 's'}
         </span>
         <button
           type="button"
-          className="workspace-review__generate-commit"
-          title="Draft commit message"
-          aria-label="Draft commit message"
-          disabled={loading || generatingCommit || !diff || diff.files.length === 0}
-          onClick={() => void generateCommitMessage()}
+          className={`workspace-review__action${composer === 'commit' ? ' is-open' : ''}`}
+          title="Commit changes"
+          aria-label="Commit changes"
+          aria-expanded={composer === 'commit'}
+          disabled={fileCount === 0}
+          onClick={() => toggleComposer('commit')}
         >
-          <IconMorph active={generatingCommit ? 1 : 0}>
-            <Sparkles size={14} aria-hidden />
-            <LoaderCircle className="spinner" size={14} aria-hidden />
-          </IconMorph>
-          <span className="workspace-review__generate-label">Commit message</span>
+          <GitCommit size={14} aria-hidden />
+          <span className="workspace-review__action-label">Commit</span>
         </button>
+        {git.push ? (
+          <button
+            type="button"
+            className="workspace-review__action"
+            title={waitReason ?? pushTitle}
+            aria-label={pushTitle}
+            disabled={busy !== undefined || props.turnRunning}
+            onClick={push}
+          >
+            <IconMorph active={busy === 'push' ? 1 : 0}>
+              <ArrowUp size={14} aria-hidden />
+              <LoaderCircle className="spinner" size={14} aria-hidden />
+            </IconMorph>
+            <span className="workspace-review__action-label">
+              {git.push.upstream ? 'Push' : 'Publish'}
+            </span>
+            {git.push.ahead > 0 ? (
+              <span className="workspace-review__count">{git.push.ahead}</span>
+            ) : null}
+          </button>
+        ) : null}
+        {git.createPullRequest ? (
+          <button
+            type="button"
+            className={`workspace-review__action${composer === 'pull-request' ? ' is-open' : ''}`}
+            title="Create pull request"
+            aria-label="Create pull request"
+            aria-expanded={composer === 'pull-request'}
+            onClick={() => toggleComposer('pull-request')}
+          >
+            <GitPullRequest size={14} aria-hidden />
+            <span className="workspace-review__action-label">Create PR</span>
+          </button>
+        ) : null}
+        {git.pullRequest && props.onOpenPullRequest ? (
+          <StagePullRequestChip pullRequest={git.pullRequest} onOpen={props.onOpenPullRequest} />
+        ) : null}
         <button
           type="button"
           className="icon-btn"
           title="Refresh diff"
+          aria-label="Refresh diff"
           disabled={loading}
-          onClick={() => void refresh()}
+          onClick={() => void refresh(true)}
         >
           <RefreshCw className={loading ? 'spinner' : undefined} size={14} aria-hidden />
         </button>
       </header>
 
-      <div className="workspace-review__notices" aria-live="polite">
-        {error ? (
-          <div className="workspace-review__message" role="alert">
-            {error}
-          </div>
+      <div className="workspace-review__notices">
+        {composer === 'commit' && fileCount > 0 ? (
+          <ReviewCommitBox
+            message={commitMessage}
+            fileCount={fileCount}
+            generating={generatingCommit}
+            copied={copiedCommit}
+            committing={busy === 'commit'}
+            blocked={waitReason}
+            disabled={busy !== undefined || loading}
+            onMessageChange={(message) => {
+              untouchedDraft.current = false
+              setCopiedCommit(false)
+              setCommitMessage(message)
+            }}
+            onGenerate={() => void generateCommitMessage()}
+            onCopy={() => void copyCommitMessage()}
+            onCommit={commit}
+            onCancel={() => setComposer(undefined)}
+          />
         ) : null}
 
-        {commitError ? (
-          <div className="workspace-review__message" role="alert">
-            {commitError}
-          </div>
+        {composer === 'pull-request' && git.createPullRequest ? (
+          <ReviewPullRequestBox
+            branch={git.createPullRequest.branch}
+            base={git.createPullRequest.base}
+            initialTitle={pullRequestDraft.title}
+            initialBody={pullRequestDraft.body}
+            creating={busy === 'create'}
+            blocked={waitReason}
+            disabled={busy !== undefined}
+            onCreate={createPullRequest}
+            onCancel={() => setComposer(undefined)}
+          />
         ) : null}
 
-        {commitMessage ? (
-          <div className="workspace-review__commit-draft" role="status">
-            <pre>{commitMessage}</pre>
-            <button
-              type="button"
-              aria-label="Copy commit message"
-              onClick={() => void copyCommitMessage()}
-            >
-              <IconMorph active={copiedCommit ? 1 : 0}>
-                <Copy size={14} aria-hidden />
-                <Check size={14} aria-hidden />
-              </IconMorph>
-            </button>
-          </div>
-        ) : null}
+        <div className="workspace-review__status" aria-live="polite">
+          {error ? (
+            <div className="workspace-review__message" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {actionError ? (
+            <div className="workspace-review__message is-action" role="alert">
+              {actionError}
+            </div>
+          ) : null}
+          {actionDone ? (
+            <div className="workspace-review__done" role="status">
+              <Check size={14} aria-hidden />
+              {actionDone}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {!diff && loading ? (
@@ -646,4 +910,17 @@ function reviewFileId(path: string): string {
 
 function statusLetter(status: DiffFile['status']): string {
   return status === 'added' ? 'A' : status === 'deleted' ? 'D' : status === 'renamed' ? 'R' : 'M'
+}
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+/** The lookup as it reads once the checkout's branch has this pull request. */
+function withPullRequest(
+  checkout: CheckoutPullRequestResult,
+  pullRequest: CheckoutPullRequest,
+): CheckoutPullRequestResult {
+  const { reason: _unavailable, ...known } = checkout
+  return { ...known, available: true, pullRequest }
 }
