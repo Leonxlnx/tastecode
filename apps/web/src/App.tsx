@@ -4958,6 +4958,10 @@ export function App() {
     openSettings('providers')
   }, [refreshCatalog, openSettings])
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
+  const forceOnboarding = useCallback(() => {
+    setSettingsOpen(false)
+    setOnboardingPreview(true)
+  }, [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
     localStorage.clear()
@@ -5047,14 +5051,22 @@ export function App() {
   const openProviderLoginTerminal = useCallback(
     (target: ProviderLoginTerminalTarget) => {
       setWorkspacePanelHasMounted(true)
-      setProviderLoginTerminal({
-        ...target,
-        id: nextProviderLoginTerminalId.current++,
-        visible: true,
-        restorePanelOpen: workspacePanelOpen,
-        restorePanelExpanded: workspacePanelExpanded,
-        restoreSettings: settingsOpen,
-      })
+      const id = nextProviderLoginTerminalId.current++
+      // Asking again for the terminal that is already open (Show terminal from
+      // Settings opened on top of it) keeps its one tab and where closing it
+      // returns to, instead of attaching a second tab to the same terminal.
+      setProviderLoginTerminal((current) =>
+        current?.visible && current.installKey === target.installKey
+          ? current
+          : {
+              ...target,
+              id,
+              visible: true,
+              restorePanelOpen: workspacePanelOpen,
+              restorePanelExpanded: workspacePanelExpanded,
+              restoreSettings: settingsOpen,
+            },
+      )
       setSettingsOpen(false)
       setWorkspacePanelOpen(true)
       setWorkspacePanelExpanded(true)
@@ -5968,6 +5980,8 @@ export function App() {
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}
+              modelErrors={modelErrors}
+              pendingModelSources={pendingModelSources}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
               providerDefaults={providerDefaultsControls}
@@ -5993,10 +6007,7 @@ export function App() {
               authRefreshRevision={providerAuthRefreshRevision}
               onProviderLoginTerminalOpen={openProviderLoginTerminal}
               onReset={resetSettings}
-              onForceOnboarding={() => {
-                setSettingsOpen(false)
-                setOnboardingPreview(true)
-              }}
+              onForceOnboarding={forceOnboarding}
               onClose={closeSettings}
             />
           </SurfaceErrorBoundary>

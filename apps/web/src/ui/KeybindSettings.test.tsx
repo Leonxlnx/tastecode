@@ -135,6 +135,23 @@ describe('keybind settings', () => {
     expect(within(row).getByRole('alert').textContent).toContain('Add Command')
   })
 
+  it('tones the shared leader by the row state', () => {
+    render(<StatefulKeybindSettings />)
+    const row = (label: string) => screen.getByText(label).closest<HTMLElement>('.keybind-row')!
+    expect(row('Command palette').getAttribute('data-tone')).toBeNull()
+    expect(row('Pin or unpin chat').getAttribute('data-tone')).toBe('muted')
+
+    const recorder = within(row('New chat')).getByRole('button', {
+      name: 'Change New chat keybind',
+    })
+    fireEvent.click(recorder)
+    expect(row('New chat').getAttribute('data-tone')).toBe('active')
+    fireEvent.keyDown(recorder, { key: 'k', metaKey: true })
+    expect(row('New chat').getAttribute('data-tone')).toBe('error')
+    fireEvent.keyDown(recorder, { key: 'Escape' })
+    expect(row('New chat').getAttribute('data-tone')).toBeNull()
+  })
+
   it('restores every default from one reset action', () => {
     const onReset = vi.fn()
     render(<StatefulKeybindSettings onReset={onReset} />)
