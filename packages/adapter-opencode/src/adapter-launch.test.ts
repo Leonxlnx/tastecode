@@ -52,4 +52,17 @@ describe('OpenCode server launch', () => {
     await expect(starting).rejects.toThrow('stopped while it was starting')
     expect(child.kill).toHaveBeenCalled()
   })
+
+  it('starts no serve when disposed while it looked for the executable', async () => {
+    let found!: (target: string | undefined) => void
+    vi.mocked(nativeShimTarget).mockReturnValue(new Promise((resolve) => (found = resolve)))
+    const adapter = new OpenCodeAdapter()
+    const starting = adapter.start()
+    await vi.waitFor(() => expect(nativeShimTarget).toHaveBeenCalledTimes(1))
+    const disposed = adapter.dispose()
+    found(EXECUTABLE)
+    await disposed
+    await expect(starting).rejects.toThrow('stopped while it was starting')
+    expect(spawnCli).not.toHaveBeenCalled()
+  })
 })

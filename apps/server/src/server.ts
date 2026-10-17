@@ -13,6 +13,7 @@ import {
 } from '@harness/contracts'
 import { applyDesktopPath } from '@harness/proc/desktop-path'
 import { cliProbe, invalidateCliProbes } from './cli-probe.js'
+import { stopModelListings } from './runtime-loader.js'
 import { readWorkspaceDiff, StaleDiffSnapshotError } from './diff-review.js'
 import { Orchestrator, resolveWorkspacePath, type LifecycleScheduleHint } from './orchestrator.js'
 import { checkForUpdates } from './update-check.js'
@@ -1329,6 +1330,7 @@ export function startServer(
       for (const socket of wss.clients) socket.terminate()
       const results = await Promise.allSettled([
         orchestratorClosed,
+        stopModelListings(),
         checkpointProtection,
         new Promise<void>((resolve) => wss.close(() => resolve())),
       ])
