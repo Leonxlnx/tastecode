@@ -2613,6 +2613,72 @@ describe('web client', () => {
     expect(rpcCount('models.list')).toBe(2)
   })
 
+  describe('when the server announces a changed model list', () => {
+    const row = (id: string, displayName: string, isDefault = false): Model => ({
+      id,
+      displayName,
+      isDefault,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const announce = (payload: { provider: string; agent?: string }) =>
+      act(() => transport.listeners.get('models.changed')?.(payload))
+    const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+
+    it('lists that source again on its own', async () => {
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'models.list' ? Promise.resolve({ models: lineup }) : request(method, params),
+      )
+
+      render(<App />)
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+      lineup = [...lineup, row('gpt-6.1-sol', 'GPT-6.1-Sol')]
+      announce({ provider: 'codex' })
+
+      await waitFor(() =>
+        expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol']),
+      )
+      expect(rpcCount('models.list')).toBe(2)
+      // Only that list, not the whole catalog.
+      expect(rpcCount('providers.list')).toBe(1)
+
+      // A source this catalog does not list is not requested.
+      announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+    })
+
+    it('lists once more after the listing a change arrived during', async () => {
+      const answers: Array<() => void> = []
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'models.list'
+          ? new Promise((resolve) => {
+              const listed = lineup
+              answers.push(() => resolve({ models: listed }))
+            })
+          : request(method, params),
+      )
+
+      render(<App />)
+      await waitFor(() => expect(answers).toHaveLength(1))
+      lineup = [...lineup, row('gpt-6-luna', 'GPT-6-Luna')]
+      announce({ provider: 'codex' })
+      announce({ provider: 'codex' })
+      act(() => answers[0]!())
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+
+      await waitFor(() => expect(answers).toHaveLength(2))
+      act(() => answers[1]!())
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6-Luna']))
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+    })
+  })
+
   it('explains project loading failures and recovers after reconnect', async () => {
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')

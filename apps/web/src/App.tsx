@@ -725,6 +725,8 @@ export function App() {
   const [catalogRequest, setCatalogRequest] = useState(0)
   /** When the catalog was last listed, however that started. */
   const catalogRequestedAt = useRef(Date.now())
+  /** Lists one source of the current catalog run again, when the server says it changed. */
+  const relistCatalogSource = useRef<((source: string) => void) | undefined>(undefined)
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
@@ -1894,6 +1896,9 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     catalogRequestedAt.current = Date.now()
+    let relistSource: ((source: string) => void) | undefined
+    const relistFromPush = (source: string) => relistSource?.(source)
+    relistCatalogSource.current = relistFromPush
     // Sources settle one by one, and a large catalog costs a full serialize
     // per write, so their snapshots are coalesced into one trailing write
     // that the final catalog write replaces.
@@ -2008,6 +2013,38 @@ export function App() {
         }
         return result
       }
+      // One run per source at a time: a change announced while that source is
+      // still listing lists it once more afterwards.
+      type SourceRun = { discover: () => Promise<unknown>; running: boolean; again: boolean }
+      const sourceRuns = new Map<string, SourceRun>()
+      const finishRun = (source: string, run: SourceRun, done: Promise<unknown>) => {
+        void done
+          .catch(() => undefined)
+          .then(() => {
+            run.running = false
+            if (!run.again) return
+            run.again = false
+            relistSource?.(source)
+          })
+      }
+      const trackSource = <T,>(source: string, discover: () => Promise<T>): Promise<T> => {
+        const run: SourceRun = { discover, running: true, again: false }
+        sourceRuns.set(source, run)
+        const done = discover()
+        finishRun(source, run, done)
+        return done
+      }
+      relistSource = (source) => {
+        const run = sourceRuns.get(source)
+        if (cancelled || !run) return
+        if (run.running) {
+          run.again = true
+          return
+        }
+        run.running = true
+        delete discoveryErrors[source]
+        finishRun(source, run, run.discover())
+      }
       const discoverProvider = async (entry: ProviderStatus) => {
         const preserveCatalog = () => {
           const source = sourceKey({ provider: entry.id })
@@ -2048,7 +2085,9 @@ export function App() {
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
-          .map(discoverProvider),
+          .map((entry) =>
+            trackSource(sourceKey({ provider: entry.id }), () => discoverProvider(entry)),
+          ),
       )
       const discoverAgent = async (agent: ResultOf<'acp.agents'>['agents'][number]) => {
         const source = sourceKey({ provider: 'acp', agentId: agent.id })
@@ -2103,7 +2142,15 @@ export function App() {
                 .map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
             ]),
         )
-        return Promise.all(agents.filter((agent) => agent.installed).map(discoverAgent))
+        return Promise.all(
+          agents
+            .filter((agent) => agent.installed)
+            .map((agent) =>
+              trackSource(sourceKey({ provider: 'acp', agentId: agent.id }), () =>
+                discoverAgent(agent),
+              ),
+            ),
+        )
       })
       const apiPromise = connectionsCatalog.then(async (result) => {
         if (cancelled) return []
@@ -2215,7 +2262,13 @@ export function App() {
           return settleSource(source, { source, discovered: false, models: fallback })
         }
       }
-      const customSourcesPromise = Promise.all(harnesses.map(discoverHarness))
+      const customSourcesPromise = Promise.all(
+        harnesses.map((harness) =>
+          trackSource(sourceKey({ provider: harness.provider, agentId: harness.id }), () =>
+            discoverHarness(harness),
+          ),
+        ),
+      )
       const [direct, acp, api, customSources] = await Promise.all([
         directPromise,
         acpPromise,
@@ -2370,10 +2423,22 @@ export function App() {
     })
     return () => {
       cancelled = true
+      if (relistCatalogSource.current === relistFromPush) relistCatalogSource.current = undefined
       // Sources this run validated stay cached for the next run to start from.
       takePendingCacheWrite()?.()
     }
   }, [transport, catalogRequest])
+
+  // The server answers model lists from what it knew and reads them again in
+  // the background; a list that changed is announced so it appears without a
+  // restart.
+  useEffect(
+    () =>
+      transport.on('models.changed', ({ provider, agent }) => {
+        relistCatalogSource.current?.(sourceKey({ provider, agentId: agent }))
+      }),
+    [transport],
+  )
 
   // A window left open for hours lists its models again when it comes back,
   // so a CLI updated outside the app brings its new releases (and retires the
