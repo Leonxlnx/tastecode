@@ -608,8 +608,9 @@ export const Markdown = memo(function Markdown({
   const RichMarkdown = useCompletedMarkdown(rich)
   const [aheadShown, setAheadShown] = useState<string | undefined>(undefined)
   const aheadRendered = useRef((shown: string) => startTransition(() => setAheadShown(shown)))
-  // Once it has taken over, a later change of the text stays on it.
-  const [tookOver, setTookOver] = useState(false)
+  // Once it has taken over, a later change of the text stays on it. History
+  // starts there, so mounting it costs no second render.
+  const [tookOver, setTookOver] = useState(!streaming)
   if (streaming && tookOver) setTookOver(false)
   const waiting =
     !tookOver && finished && aheadWanted && RichMarkdown !== undefined && aheadShown !== text
