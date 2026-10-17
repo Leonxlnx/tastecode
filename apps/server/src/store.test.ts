@@ -369,7 +369,7 @@ describe('durable queued turns', () => {
 
   it('restores rejected claims and permanently completes accepted ones', () => {
     store.addProject('/repo')
-    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'api', title: 'Queue' })
+    store.addThread({ id: 'thread-1', projectPath: '/repo', provider: 'codex', title: 'Queue' })
     store.enqueueQueuedTurn(queued('submission-1', 'Try this.'))
     expect(store.queuedThreadIds()).toEqual(new Set(['thread-1']))
 

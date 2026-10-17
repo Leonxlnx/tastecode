@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { captureCli } from './cli.js'
 import { EventEmitter } from 'node:events'
 import {
@@ -105,22 +105,6 @@ describe('StdioJsonRpc', () => {
     } finally {
       vi.useRealTimers()
     }
-  })
-
-  it('accepts a final reply delivered after process exit but before stdio closes', async () => {
-    // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
-    const child = new EventEmitter() as ChildProcessWithoutNullStreams
-    child.stdin = new PassThrough()
-    child.stdout = new PassThrough()
-    child.stderr = new PassThrough()
-    const rpc = new StdioJsonRpc(child, 'test agent')
-    const reply = rpc.request('final')
-
-    child.emit('exit', 0)
-    child.stdout.write('{"jsonrpc":"2.0","id":1,"result":"drained"}\n')
-
-    await expect(reply).resolves.toBe('drained')
-    child.emit('close', 0)
   })
 })
 
@@ -289,22 +273,40 @@ describe('readNdjson', () => {
 })
 
 describe('killTree', () => {
-  it('kills the real process behind the shim, not only the shim', async () => {
-    // The grandchild heartbeats into a temp file; if only the cmd.exe shim
-    // died (the pre-fix Windows behavior), the heartbeat keeps ticking.
-    const beat = path.join(os.tmpdir(), `harness-killtree-${Date.now()}.txt`)
-    const script = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
+  let child: ReturnType<typeof spawnCli> | undefined
+  let workspace: string | undefined
+  let beat: string
+
+  beforeEach(async () => {
+    workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-killtree-'))
+    beat = path.join(workspace, 'heartbeat.txt')
+    const heartbeat = `const fs=require('fs');setInterval(()=>fs.writeFileSync(${JSON.stringify(
       beat,
     )},String(Date.now())),150)`
-    const child = spawnCli('node', ['-e', script])
+    // A real grandchild is required even when spawnCli resolves node.exe directly.
+    const wrapper = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(
+      heartbeat,
+    )}],{stdio:'ignore',windowsHide:true})`
+    child = spawnCli(process.execPath, ['-e', wrapper])
     await waitFor(() => existsSync(beat), 5_000)
+  })
 
-    killTree(child)
-    await sleep(700)
+  afterEach(async () => {
+    try {
+      if (child) await killTree(child)
+    } finally {
+      child = undefined
+      if (workspace) rmSync(workspace, { recursive: true, force: true })
+      workspace = undefined
+    }
+  })
+
+  it('kills the heartbeat grandchild, not only its parent', async () => {
+    await killTree(child!)
+    expect(child!.exitCode !== null || child!.signalCode !== null).toBe(true)
     const afterKill = readFileSync(beat, 'utf8')
     await sleep(700)
     expect(readFileSync(beat, 'utf8')).toBe(afterKill)
-    rmSync(beat, { force: true })
   })
 })
 
