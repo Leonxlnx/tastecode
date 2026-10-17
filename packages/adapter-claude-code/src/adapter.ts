@@ -701,35 +701,41 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       this.#log(`Claude model discovery fell back to known values: ${reason}`)
       return CLAUDE_MODELS
     }
+    // Settled outside the try, so a refresh that rejects is not caught as a
+    // discovery failure of its own.
+    let failure: string
     try {
       const models = await withTimeout(
         query.supportedModels(),
         30_000,
         'Claude model discovery timed out',
       )
-      if (models.length === 0) return fallback('the runtime listed no models')
-      const ultracodeAvailable = await withTimeout(
-        readClaudeAppliedSettings(query),
-        10_000,
-        'Claude settings discovery timed out',
-      ).then(
-        (applied) => applied?.ultracodeAvailable === true,
-        (error: unknown) => {
-          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
-          return false
-        },
-      )
-      const discovered = mergeClaudeModels(models).map((model) =>
-        withUltracode(model, ultracodeAvailable),
-      )
-      lastDiscoveredClaudeModels.set(discoveryKey, discovered)
-      return discovered
+      if (models.length > 0) {
+        const ultracodeAvailable = await withTimeout(
+          readClaudeAppliedSettings(query),
+          10_000,
+          'Claude settings discovery timed out',
+        ).then(
+          (applied) => applied?.ultracodeAvailable === true,
+          (error: unknown) => {
+            this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+            return false
+          },
+        )
+        const discovered = mergeClaudeModels(models).map((model) =>
+          withUltracode(model, ultracodeAvailable),
+        )
+        lastDiscoveredClaudeModels.set(discoveryKey, discovered)
+        return discovered
+      }
+      failure = 'the runtime listed no models'
     } catch (error) {
-      return fallback(String(error))
+      failure = String(error)
     } finally {
       abort.abort()
       query.close()
     }
+    return fallback(failure)
   }
 
   dispose(): Promise<void> {

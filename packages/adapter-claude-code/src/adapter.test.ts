@@ -1952,6 +1952,11 @@ describe('Claude Agent SDK session', () => {
         'Claude model discovery did not answer: Error: Claude model discovery timed out',
       )
       cold.adapter.dispose()
+      const empty = adapterFor(environment, async () => [])
+      await expect(empty.adapter.listModels({ refresh: true })).rejects.toThrow(
+        /^Claude model discovery did not answer: the runtime listed no models$/,
+      )
+      empty.adapter.dispose()
 
       const live = adapterFor(environment, async () => aliases)
       const listed = await live.adapter.listModels({ refresh: true })
