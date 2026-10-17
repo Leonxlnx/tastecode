@@ -85,6 +85,12 @@ function freezeBackgroundModelPreference(
  * — and everything goes through this file, so replacing it is one file's work.
  */
 
+/** One transcript's listing as its history source reported it; `null` lists no session. */
+export type ProviderHistoryListing = {
+  revision: string
+  session: ProviderHistorySession | null
+}
+
 export type StoredProject = {
   path: string
   name: string
@@ -360,6 +366,17 @@ CREATE TABLE IF NOT EXISTS provider_history_events (
   PRIMARY KEY (thread_id, event_seq)
 );
 CREATE INDEX IF NOT EXISTS provider_history_event_seq ON provider_history_events (event_seq);
+
+-- What a history source last listed for one saved transcript, so a restart does
+-- not read every transcript again. Locator and revision are opaque source keys;
+-- a NULL session means the transcript lists no session.
+CREATE TABLE IF NOT EXISTS provider_history_metadata (
+  provider TEXT NOT NULL,
+  locator  TEXT NOT NULL,
+  revision TEXT NOT NULL,
+  session  TEXT,
+  PRIMARY KEY (provider, locator)
+) WITHOUT ROWID;
 
 INSERT OR IGNORE INTO sidebar_settings (id, mode, auto_settle_days) VALUES (1, 'classic', 3);
 
@@ -1793,6 +1810,47 @@ export class Store {
         )
         .run(threadId, provider, session.id)
       this.saveProviderHistory(provider, threadId, session)
+    })
+  }
+
+  /** What `provider`'s history source last listed per transcript; see ProviderHistoryListOptions. */
+  providerHistoryMetadata(provider: ProviderId): Map<string, ProviderHistoryListing> {
+    const listings = new Map<string, ProviderHistoryListing>()
+    for (const row of sqliteRows<{ locator: string; revision: string; session: string | null }>(
+      this.#db.prepare(
+        'SELECT locator, revision, session FROM provider_history_metadata WHERE provider = ?',
+      ),
+      provider,
+    )) {
+      try {
+        const session =
+          row.session === null ? null : (JSON.parse(row.session) as ProviderHistorySession)
+        listings.set(row.locator, { revision: row.revision, session })
+      } catch {
+        // A damaged row only costs one read of its transcript.
+      }
+    }
+    return listings
+  }
+
+  /** Records new listings and drops those of transcripts a full listing no longer named. */
+  saveProviderHistoryMetadata(
+    provider: ProviderId,
+    remembered: ReadonlyMap<string, ProviderHistoryListing>,
+    forgotten: Iterable<string>,
+  ): void {
+    this.#transaction(() => {
+      const save = this.#db.prepare(
+        `INSERT INTO provider_history_metadata (provider, locator, revision, session)
+         VALUES (?, ?, ?, ?) ON CONFLICT (provider, locator) DO UPDATE SET
+           revision = excluded.revision, session = excluded.session`,
+      )
+      for (const [locator, { revision, session }] of remembered)
+        save.run(provider, locator, revision, session === null ? null : JSON.stringify(session))
+      const forget = this.#db.prepare(
+        'DELETE FROM provider_history_metadata WHERE provider = ? AND locator = ?',
+      )
+      for (const locator of forgotten) forget.run(provider, locator)
     })
   }
 

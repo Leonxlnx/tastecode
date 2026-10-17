@@ -1,10 +1,11 @@
 import { ChildProcess } from 'node:child_process'
 import { once } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { killTree, spawnCli, spawnOwned } from './index.js'
+import { setTaskkillLauncherForTests } from './kill.js'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -46,6 +47,28 @@ describe('owned process tree termination', () => {
         clearInterval(ticker)
         expect(child.exitCode !== null || child.signalCode !== null).toBe(true)
         expect(worstGap).toBeLessThan(Math.max(150, elapsed / 2))
+      } finally {
+        await killTree(child)
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'stops the CLI behind a cmd shim, not only the shim',
+    async () => {
+      const directory = mkdtempSync(path.join(tmpdir(), 'harness-shim-tree-'))
+      const file = path.join(directory, 'leaf')
+      writeFileSync(path.join(directory, 'serve.cjs'), heartbeat(file))
+      const shimFile = path.join(directory, 'fake-serve.cmd')
+      writeFileSync(shimFile, `@echo off\r\n"${process.execPath}" "%~dp0serve.cjs" %*\r\n`)
+      const child = spawnCli(shimFile, ['serve'])
+      try {
+        await waitForFile(file)
+        await killTree(child)
+        const stopped = readFileSync(file, 'utf8')
+        await sleep(300)
+        expect(readFileSync(file, 'utf8')).toBe(stopped)
       } finally {
         await killTree(child)
         rmSync(directory, { recursive: true, force: true })
@@ -138,17 +161,19 @@ describe('owned process tree termination', () => {
 
   it('rejects an unregistered child that never confirms exit', async () => {
     vi.useFakeTimers()
+    // On Windows both taskkill runs fail before the child itself is signalled.
+    setTaskkillLauncherForTests(() => ({ exit: Promise.resolve(128), release: () => undefined }))
     const kill = vi.fn(() => true)
     const child = { pid: 1, exitCode: null as number | null, signalCode: null, kill }
     try {
       const stopped = expect(killTree(child)).rejects.toThrow('did not exit')
-      // On Windows the asynchronous taskkill attempt is bounded by 1.5 s first.
       await vi.advanceTimersByTimeAsync(3100)
       await stopped
       expect(kill.mock.calls).toHaveLength(2)
       child.exitCode = 0
       await expect(killTree(child)).resolves.toBeUndefined()
     } finally {
+      setTaskkillLauncherForTests()
       vi.useRealTimers()
     }
   })
@@ -164,5 +189,121 @@ describe('owned process tree termination', () => {
     const child = { pid: undefined, exitCode: null, signalCode: null, kill }
     await killTree(child)
     expect(kill).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Windows tree termination', () => {
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!
+
+  beforeEach(() => {
+    Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    setTaskkillLauncherForTests()
+    vi.useRealTimers()
+    Object.defineProperty(process, 'platform', platform)
+  })
+
+  /** A cmd.exe shim that only exits when taskkill, or its own kill(), stops it. */
+  function shim() {
+    const child = {
+      pid: 4242,
+      exitCode: null as number | null,
+      signalCode: null,
+      kill: vi.fn((): boolean => {
+        child.exitCode = 1
+        return true
+      }),
+    }
+    return child
+  }
+
+  /** taskkill runs that exit after the given delay with the given code, or never. */
+  function taskkill(child: ReturnType<typeof shim>, plan: Array<[number, number] | 'never'>) {
+    const released: boolean[] = []
+    const launch = vi.fn((_pid: number) => {
+      const index = launch.mock.calls.length - 1
+      const step = plan[index] ?? 'never'
+      released[index] = false
+      const exit =
+        step === 'never'
+          ? new Promise<number | null>(() => undefined)
+          : new Promise<number | null>((resolve) =>
+              setTimeout(() => {
+                if (step[1] === 0) child.exitCode = 1
+                resolve(step[1])
+              }, step[0]),
+            )
+      return { exit, release: () => (released[index] = true) }
+    })
+    setTaskkillLauncherForTests(launch)
+    return { launch, released }
+  }
+
+  it('stops the tree with one taskkill when it answers in time', async () => {
+    const child = shim()
+    const { launch } = taskkill(child, [[400, 0]])
+    const stopped = killTree(child)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(launch).toHaveBeenCalledTimes(1)
+    expect(launch).toHaveBeenCalledWith(4242)
+    expect(child.kill).not.toHaveBeenCalled()
+  })
+
+  it('never kills the shim while a slow taskkill still walks the tree', async () => {
+    const child = shim()
+    const { launch, released } = taskkill(child, [[8_000, 0], 'never'])
+    const stopped = killTree(child)
+    await vi.advanceTimersByTimeAsync(4_999)
+    expect(launch).toHaveBeenCalledTimes(1)
+    // The first run is slow, not dead: a second one joins it instead of replacing it.
+    await vi.advanceTimersByTimeAsync(1)
+    expect(launch).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(child.kill).not.toHaveBeenCalled()
+    expect(released).toEqual([false, false])
+  })
+
+  it('kills the shim itself only after every taskkill run failed', async () => {
+    const child = shim()
+    const { launch } = taskkill(child, [
+      [100, 1],
+      [100, 128],
+    ])
+    const stopped = killTree(child)
+    await vi.advanceTimersByTimeAsync(150)
+    expect(launch).toHaveBeenCalledTimes(2)
+    expect(child.kill).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(100)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(child.kill).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves a stuck taskkill to finish instead of orphaning the tree', async () => {
+    const child = shim()
+    const { released } = taskkill(child, ['never', 'never'])
+    const stopped = killTree(child)
+    await vi.advanceTimersByTimeAsync(15_000)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(child.kill).not.toHaveBeenCalled()
+    expect(released).toEqual([true, true])
+  })
+
+  it('kills the shim once runs that outlived the budget have all failed', async () => {
+    const child = shim()
+    taskkill(child, [
+      [20_000, 1],
+      [21_000, 1],
+    ])
+    const stopped = killTree(child)
+    await vi.advanceTimersByTimeAsync(15_000)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(child.kill).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect(child.kill).toHaveBeenCalledTimes(1)
   })
 })
