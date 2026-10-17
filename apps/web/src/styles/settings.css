@@ -1908,6 +1908,24 @@
   border-radius: var(--r-lg);
 }
 
+/* xterm fits its rows to the frame's whole height and subtracts only its own
+   padding, so an inset on the frame overflowed it by a row and focusing the
+   terminal scrolled the first line under the top edge. Once the terminal is
+   open, the inset is the terminal's own. */
+.install-terminal:has(> .xterm) {
+  padding: 0;
+}
+
+.install-terminal > .xterm {
+  padding: 12px;
+}
+
+/* xterm paints its viewport layer black under that padding; the frame's
+   background shows through instead. */
+.install-terminal > .xterm > .xterm-viewport {
+  background-color: transparent;
+}
+
 /* The provider roster is open type, not a card. Each provider is an entity
    row wired to its account, and the wire is the status: the shared settings
    leader while the provider waits for an account, a solid line between two
