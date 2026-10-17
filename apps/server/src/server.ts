@@ -422,6 +422,10 @@ export function startServer(
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message, error.detail)
         return
       }
+      if (error instanceof UnknownMethodError) {
+        respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
+        return
+      }
       if (error instanceof InvalidHistoryCursorError) {
         respondError(socket, id, ErrorCode.BAD_REQUEST, error.message)
         return
@@ -1212,6 +1216,12 @@ export function startServer(
         lifecycleScheduler.refreshNow()
         return settings
       }
+
+      default:
+        // The contract can declare a method before this server routes it (a
+        // newer client, or a contract that landed ahead of its handler). Say
+        // so instead of replying with an empty result the client would trust.
+        throw new UnknownMethodError(method)
     }
   }
 
@@ -1342,6 +1352,13 @@ class InvalidParamsError extends Error {
     readonly detail?: string,
   ) {
     super(`invalid params for ${method}`)
+  }
+}
+
+/** A declared method that `route` has no case for yet. */
+class UnknownMethodError extends Error {
+  constructor(method: string) {
+    super(`unknown method: ${method}`)
   }
 }
 
