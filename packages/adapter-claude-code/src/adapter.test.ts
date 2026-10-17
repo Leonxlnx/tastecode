@@ -329,9 +329,65 @@ describe('Claude Agent SDK session', () => {
         return query
       },
     })
-    await expect(adapter.startThread('/repo')).rejects.toThrow('startup timed out')
+    await expect(adapter.startThread('/repo')).rejects.toThrow(
+      'Claude Code did not start within 1 second. It may be updating, or the computer is busy.',
+    )
     expect(fake.queries[0]!.closed).toBe(true)
     await adapter.dispose()
+  })
+
+  it('does not blame project MCP servers when Claude Code itself has not answered', async () => {
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      startupTimeoutMs: 20,
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    try {
+      await expect(
+        adapter.startThread('/repo', {
+          mcpServers: [
+            {
+              id: 'remote',
+              enabled: true,
+              transport: { type: 'http', url: 'https://example.test/mcp' },
+            },
+          ],
+        }),
+      ).rejects.toThrow('Claude Code did not start within 1 second.')
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
+  it('gives a slow Claude Code a minute to start', async () => {
+    vi.useFakeTimers()
+    const fake = harness()
+    const adapter = new ClaudeCodeAdapter({
+      createQuery: (input) => {
+        const query = fake.createQuery(input) as FakeQuery
+        vi.spyOn(query, 'initializationResult').mockImplementation(() => new Promise(() => {}))
+        return query
+      },
+    })
+    try {
+      let settled = false
+      const starting = adapter.startThread('/repo').finally(() => {
+        settled = true
+      })
+      const failed = expect(starting).rejects.toThrow('Claude Code did not start within a minute.')
+      // Measured starts took up to 44 s on a busy machine; 15 s failed them.
+      await vi.advanceTimersByTimeAsync(59_999)
+      expect(settled).toBe(false)
+      await vi.advanceTimersByTimeAsync(1)
+      await failed
+    } finally {
+      vi.useRealTimers()
+      await adapter.dispose()
+    }
   })
 
   it('cancels a pending open immediately when disposed', async () => {
@@ -376,7 +432,9 @@ describe('Claude Agent SDK session', () => {
               },
             ],
           }),
-        ).rejects.toThrow('startup timed out')
+        ).rejects.toThrow(
+          'Claude Code started, but the project MCP servers did not connect within 1 second.',
+        )
         expect(fake.queries[0]!.closed).toBe(true)
         expect(
           (await vi.mocked(createClaudeMcpBootstrap).mock.results.at(-1)!.value).close,

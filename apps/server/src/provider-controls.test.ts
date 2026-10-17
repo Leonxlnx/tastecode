@@ -481,6 +481,124 @@ describe('reset and late operations', () => {
   })
 })
 
+describe('cached account reads', () => {
+  const signedIn = { signedIn: true, email: 'person@example.test', plan: 'Pro' }
+
+  it('shares one read between concurrent callers and reuses a sign-in for a minute', async () => {
+    const answer = deferred<typeof signedIn>()
+    const account = vi.fn().mockReturnValueOnce(answer.promise).mockResolvedValue(signedIn)
+    const { registry } = setup({ services: { grok: { account } } })
+    const grok = registry.forProvider('grok')
+    const reads = Promise.all([grok.account(), grok.account()])
+    await flush()
+    answer.resolve(signedIn)
+    await expect(reads).resolves.toEqual([signedIn, signedIn])
+    await vi.advanceTimersByTimeAsync(59_999)
+    await expect(grok.account()).resolves.toEqual(signedIn)
+    expect(account).toHaveBeenCalledOnce()
+    await vi.advanceTimersByTimeAsync(1)
+    await grok.account()
+    expect(account).toHaveBeenCalledTimes(2)
+  })
+
+  it('reads a signed-out account again so a CLI sign-in shows at once', async () => {
+    const account = vi.fn().mockResolvedValueOnce({ signedIn: false }).mockResolvedValue(signedIn)
+    const { registry } = setup({ services: { 'claude-code': { account } } })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.account()).resolves.toEqual({ signedIn: false })
+    await expect(claude.account()).resolves.toEqual(signedIn)
+    expect(account).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the last sign-in when a later read fails, for a bounded time', async () => {
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn)
+      .mockRejectedValue(new Error('CLI did not respond within the time limit'))
+    const { registry, hooks } = setup({
+      accountFallbackMs: 120_000,
+      services: { cursor: { account } },
+    })
+    const cursor = registry.forProvider('cursor')
+    await cursor.account()
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(cursor.account()).resolves.toEqual(signedIn)
+    expect(hooks.onLog).toHaveBeenCalledWith(
+      'cursor',
+      expect.stringContaining('using the last known sign-in'),
+    )
+    await vi.advanceTimersByTimeAsync(60_000)
+    await expect(cursor.account()).rejects.toThrow('did not respond')
+    expect(account).toHaveBeenCalledTimes(3)
+  })
+
+  it('rejects a failed read when no sign-in was ever confirmed', async () => {
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce({ signedIn: false })
+      .mockRejectedValue(new Error('fixture-account-failed'))
+    const { registry } = setup({ services: { grok: { account } } })
+    const grok = registry.forProvider('grok')
+    await expect(grok.account()).resolves.toEqual({ signedIn: false })
+    await expect(grok.account()).rejects.toThrow('fixture-account-failed')
+    await expect(grok.account()).rejects.toThrow('fixture-account-failed')
+    expect(account).toHaveBeenCalledTimes(3)
+  })
+
+  it('forgets the account on sign-out, and a read from before it cannot answer later', async () => {
+    const stale = deferred<typeof signedIn>()
+    const account = vi
+      .fn()
+      .mockResolvedValueOnce(signedIn)
+      .mockReturnValueOnce(stale.promise)
+      .mockResolvedValue({ signedIn: false })
+    const signOut = vi.fn(async () => {})
+    const { registry } = setup({ accountCacheMs: 0, services: { grok: { account, signOut } } })
+    const grok = registry.forProvider('grok')
+    await grok.account()
+    const before = grok.account()
+    await flush()
+    await grok.signOut()
+    // A new caller does not join the read that began before the sign-out.
+    await expect(grok.account()).resolves.toEqual({ signedIn: false })
+    stale.resolve(signedIn)
+    await expect(before).resolves.toEqual(signedIn)
+    account.mockRejectedValue(new Error('fixture-account-failed'))
+    // Neither the old sign-in nor the stale read survives as a fallback.
+    await expect(grok.account()).rejects.toThrow('fixture-account-failed')
+  })
+
+  it('forgets the account after a sign-in completes and after a reset', async () => {
+    const { startLogin, callbacks } = externalLogin()
+    const account = vi.fn(async () => signedIn)
+    const { registry } = setup({ services: { 'claude-code': { account, startLogin } } })
+    let claude = registry.forProvider('claude-code')
+    await claude.account()
+    await claude.startLogin!()
+    callbacks[0]!({ loginId: 'external-1', success: true, error: null })
+    await flush()
+    await claude.account()
+    expect(account).toHaveBeenCalledTimes(2)
+    await registry.disposeAll()
+    claude = registry.forProvider('claude-code')
+    await claude.account()
+    expect(account).toHaveBeenCalledTimes(3)
+  })
+
+  it('caches each agent separately and the Codex control process read too', async () => {
+    const account = vi.fn(async (agent?: string) => ({ signedIn: true, email: `${agent}@x.test` }))
+    const { registry, codex, adapters } = setup({ services: { acp: { account } } })
+    const acp = registry.forProvider('acp')
+    await acp.account('gemini')
+    await acp.account('kimi')
+    await acp.account('gemini')
+    expect(account.mock.calls).toEqual([['gemini'], ['kimi']])
+    await Promise.all([codex.account(), codex.account()])
+    await codex.account()
+    expect(adapters[0]!.account).toHaveBeenCalledOnce()
+  })
+})
+
 describe('fresh usage controls', () => {
   it.each(['reset', 'nothingToReset', 'noCredit', 'alreadyRedeemed'] as const)(
     'preserves the %s outcome and the supplied idempotency key, then closes its process',
@@ -638,7 +756,10 @@ describe('cached usage limits', () => {
       .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
       .mockResolvedValueOnce({ signedIn: true, email: 'first@example.test', plan: 'pro' })
       .mockResolvedValue({ signedIn: true, email: 'second@example.test', plan: 'pro' })
-    const { registry } = setup({ services: { grok: { account, usageLimitSource } } })
+    const { registry } = setup({
+      accountCacheMs: 0,
+      services: { grok: { account, usageLimitSource } },
+    })
     const grok = registry.forProvider('grok')
     await grok.account()
     await grok.usageLimitSource()

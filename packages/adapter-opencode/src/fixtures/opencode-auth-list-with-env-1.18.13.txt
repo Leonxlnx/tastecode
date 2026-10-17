@@ -1,0 +1,14 @@
+T  Credentials [90m~\.local\share\opencode\auth.json
+|
+•  MiniMax Token Plan (minimax.io) [90mapi
+|
+—  1 credentials
+
+T  Environment
+|
+•  DeepSeek [90mDEEPSEEK_API_KEY
+|
+•  OpenAI [90mOPENAI_API_KEY
+|
+—  2 environment variables
+

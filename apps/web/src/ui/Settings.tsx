@@ -160,6 +160,7 @@ import { KeybindSettings } from './KeybindSettings.js'
 import { GeneralSettings } from './GeneralSettings.js'
 import { ProviderUpdateCheck } from './ProviderUpdates.js'
 import { useProviderUpdates, type ProviderUpdateSimulation } from '../provider-updates.js'
+import { useInstallCheck } from '../provider-recheck.js'
 
 const InstallTerminal = lazy(() =>
   import('./InstallTerminal.js')
@@ -703,7 +704,8 @@ export function ProviderSettings(props: {
 }) {
   type AuthReadState =
     | { phase: 'loading' }
-    | { phase: 'ready'; account: Account }
+    // refreshError: a background re-check failed; the account shown is the last one read.
+    | { phase: 'ready'; account: Account; refreshError?: string }
     | { phase: 'error'; message: string }
   type AuthOperation = {
     id: number
@@ -797,13 +799,19 @@ export function ProviderSettings(props: {
           currentTransport.current !== request.transport
         )
           return
-        setAuthStates((current) => ({
-          ...current,
-          [provider]: {
-            phase: 'error',
-            message: cause instanceof Error ? cause.message : String(cause),
-          },
-        }))
+        const message = cause instanceof Error ? cause.message : String(cause)
+        // A slow CLI must not turn a known sign-in into "Account unavailable":
+        // a background re-check keeps the account and only marks the row.
+        setAuthStates((current) => {
+          const known = current[provider]
+          return {
+            ...current,
+            [provider]:
+              !forceLoading && known?.phase === 'ready'
+                ? { phase: 'ready', account: known.account, refreshError: message }
+                : { phase: 'error', message },
+          }
+        })
       }
     },
     [props.transport, props.onAccountChange],
@@ -1053,6 +1061,7 @@ export function ProviderSettings(props: {
     )
     const operation = authOperations[status.id]
     const authError = authErrors[status.id]
+    const refreshError = authState.refreshError
     const operationStatus =
       operation?.kind === 'sign-in'
         ? 'Signing in…'
@@ -1074,7 +1083,9 @@ export function ProviderSettings(props: {
               }
             : status.problem
               ? { message: status.problem }
-              : undefined
+              : refreshError
+                ? { message: `Could not refresh this account. ${refreshError}` }
+                : undefined
         }
         primary={
           account?.signedIn
@@ -2467,6 +2478,8 @@ function InstallableRow(props: {
   const [showTerminal, setShowTerminal] = useState(false)
   const [startError, setStartError] = useState<string>()
   const { onInstalled } = props
+  // Someone may install it outside the app; this looks again on request.
+  const recheck = useInstallCheck(props.transport, props.target, onInstalled)
 
   // Latched: the succeeded state persists across renders (see the unmount
   // cleanup below), and onInstalled may get a new identity from any parent
@@ -2520,7 +2533,9 @@ function InstallableRow(props: {
         ? 'Installed · refreshing…'
         : install?.phase === 'failed' || startError
           ? 'Install failed'
-          : 'Not installed'
+          : recheck.checking
+            ? 'Checking…'
+            : 'Not installed'
   const issue =
     install?.phase === 'failed'
       ? {
@@ -2534,7 +2549,7 @@ function InstallableRow(props: {
           }
         : undefined
   const setup = props.provider.setup
-  const details: ProviderAction | undefined =
+  const secondary: ProviderAction | undefined =
     install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
@@ -2542,7 +2557,7 @@ function InstallableRow(props: {
           controls: detailsId,
           onClick: () => setShowTerminal((visible) => !visible),
         }
-      : undefined
+      : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
       ? { label: 'Open setup guide', href: setup.installUrl }
@@ -2562,10 +2577,10 @@ function InstallableRow(props: {
         provider={props.provider}
         status={status}
         link="none"
-        live={install?.phase === 'running' || install?.phase === 'succeeded'}
+        live={install?.phase === 'running' || install?.phase === 'succeeded' || recheck.checking}
         issue={issue}
         primary={primary}
-        secondary={details}
+        secondary={secondary}
       />
       {install ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
