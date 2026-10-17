@@ -302,6 +302,29 @@ describe('profile settings', () => {
     expect(screen.queryByText('Grok')).toBeNull()
   })
 
+  it('sets the name beside the coin, with quiet actions and the guide in the page corner', () => {
+    renderProfile({ identity: { displayName: 'Leon' } })
+    const heading = screen.getByRole('heading', { level: 1, name: 'Profile' })
+    expect(heading.closest('.set-page')).toBeTruthy()
+    const stage = document.querySelector('.profile__stage')!
+    expect(stage.querySelector('.profile__coin + .profile__identity')).toBeTruthy()
+    for (const name of ['Turn over for a photo', 'Strike from a word']) {
+      expect(action(name).className).toBe('set-button set-button--quiet')
+    }
+    expect(stage.hasAttribute('data-trying')).toBe(false)
+
+    fireEvent.click(action('Strike from a word'))
+    // Trying words reads the seal, so the coin comes up to its reading size.
+    expect(stage.hasAttribute('data-trying')).toBe(true)
+    expect(action('Keep this seal').className).toBe('set-button')
+    expect(action('Cancel').className).toBe('set-button set-button--quiet')
+    const help = screen.getByRole('button', { name: 'How a seal is struck' })
+    expect(help.closest('.set-page__actions')).toBeTruthy()
+    fireEvent.click(help)
+    const notes = document.getElementById(help.getAttribute('aria-controls')!)!
+    expect(notes.closest('.profile__stage')).toBeNull()
+  })
+
   it('writes the name in place and strikes the seal again once typing pauses', async () => {
     const onIdentityChange = vi.fn()
     const view = renderProfile({ identity: { displayName: 'Leon' }, onIdentityChange })

@@ -28,6 +28,7 @@ import {
 import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
+import { SettingsPage } from './settings/SettingsLayout.js'
 import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import '../styles/profile-settings.css'
 
@@ -229,9 +230,8 @@ export function ProfileSettings(props: {
   ) : null
 
   return (
-    <section
-      className="settings__panel profile"
-      aria-labelledby="settings-profile"
+    <div
+      className="profile"
       onDragEnter={(event) => {
         if (!hasFiles(event)) return
         event.preventDefault()
@@ -258,145 +258,151 @@ export function ProfileSettings(props: {
         void chooseImage(event.dataTransfer.files[0])
       }}
     >
-      <h1 className="settings__title" id="settings-profile">
-        Profile
-      </h1>
-      {trying ? (
-        <SealGuideToggle
-          open={guideOpen}
-          pinned={guidePinned}
-          notesId={notesId}
-          onHover={setGuideHovered}
-          onPin={setGuidePinned}
-        />
-      ) : null}
-      <div className="profile__stage">
-        <div className="profile__coin">
-          <ProfileCoin
-            name={struck}
-            // A photo turned away from stays on its face, so it is still there
-            // while the coin turns back and when it turns over again.
-            photo={photo ?? setAside}
-            side={side}
-            dropping={dropping}
-            explain={guideOpen}
-            label={side === 'seal' ? 'Turn over for a photo' : 'Turn back to the seal'}
-            onTurn={side === 'seal' ? turnOver : turnBack}
-          />
-          {guideOpen ? <SealNotes id={notesId} word={struck} /> : null}
-        </div>
-        <input
-          className="profile__name"
-          type="text"
-          maxLength={64}
-          spellCheck={false}
-          autoComplete="off"
-          aria-label="Display name"
-          value={props.identity?.displayName ?? ''}
-          placeholder={FALLBACK_PROFILE_NAME}
-          onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
-        />
-        {trying ? (
-          <p className="profile__facts profile__facts--trying">
-            <label htmlFor={trialId}>Struck from</label>
+      <SettingsPage
+        title="Profile"
+        actions={
+          trying ? (
+            <SealGuideToggle
+              open={guideOpen}
+              pinned={guidePinned}
+              notesId={notesId}
+              onHover={setGuideHovered}
+              onPin={setGuidePinned}
+            />
+          ) : undefined
+        }
+      >
+        <div className="profile__stage" data-trying={trying || undefined}>
+          <div className="profile__coin">
+            <ProfileCoin
+              name={struck}
+              // A photo turned away from stays on its face, so it is still there
+              // while the coin turns back and when it turns over again.
+              photo={photo ?? setAside}
+              side={side}
+              dropping={dropping}
+              explain={guideOpen}
+              label={side === 'seal' ? 'Turn over for a photo' : 'Turn back to the seal'}
+              onTurn={side === 'seal' ? turnOver : turnBack}
+            />
+          </div>
+          <div className="profile__identity">
             <input
-              id={trialId}
-              className="profile__word"
+              className="profile__name"
               type="text"
               maxLength={64}
               spellCheck={false}
               autoComplete="off"
-              autoFocus
-              value={trial}
-              placeholder={name}
-              onChange={(event) => setTrial(event.target.value)}
-              onKeyDown={onTrialKey}
+              aria-label="Display name"
+              value={props.identity?.displayName ?? ''}
+              placeholder={FALLBACK_PROFILE_NAME}
+              onChange={(event) => props.onIdentityChange?.({ displayName: event.target.value })}
             />
-            <button
-              className="profile__roll"
-              type="button"
-              aria-label="Another word"
-              title="Another word"
-              onClick={(event) => {
-                setTrial(rollWord(trial))
-                // The die tumbles a half turn with each roll.
-                event.currentTarget
-                  .querySelector('svg')
-                  ?.animate?.([{ rotate: '0deg' }, { rotate: '180deg' }], {
-                    duration: 360,
-                    easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
-                  })
-              }}
-            >
-              <Dice size={15} stroke={1.6} aria-hidden />
-            </button>
-          </p>
-        ) : (
-          <p className="profile__facts">
-            {imageError ? (
-              <span className="profile__error" role="alert">
-                {imageError}
-              </span>
-            ) : (
-              <span>{dropping ? 'Drop to use this photo' : facts}</span>
-            )}
-            {plan ? <span aria-hidden>·</span> : null}
-            {plan}
-          </p>
-        )}
-        <p className="profile__actions">
-          {trying ? (
-            <>
-              <button className="profile__keep" type="button" onClick={keepTrial}>
-                Keep this seal
-              </button>
-              <button type="button" onClick={() => setTrial(undefined)}>
-                Cancel
-              </button>
-            </>
-          ) : side === 'seal' ? (
-            <>
-              <button type="button" onClick={turnOver}>
-                {setAside ? 'Turn over to your photo' : 'Turn over for a photo'}
-              </button>
-              <button type="button" onClick={() => setTrial(seed ?? '')}>
-                Strike from a word
-              </button>
-              {seed ? (
+            {trying ? (
+              <p className="profile__facts profile__facts--trying">
+                <label htmlFor={trialId}>Struck from</label>
+                <input
+                  id={trialId}
+                  className="profile__word"
+                  type="text"
+                  maxLength={64}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoFocus
+                  value={trial}
+                  placeholder={name}
+                  onChange={(event) => setTrial(event.target.value)}
+                  onKeyDown={onTrialKey}
+                />
                 <button
+                  className="profile__roll"
                   type="button"
-                  onClick={() => props.onIdentityChange?.({ avatarSeed: undefined })}
+                  aria-label="Another word"
+                  title="Another word"
+                  onClick={(event) => {
+                    setTrial(rollWord(trial))
+                    // The die tumbles a half turn with each roll.
+                    event.currentTarget
+                      .querySelector('svg')
+                      ?.animate?.([{ rotate: '0deg' }, { rotate: '180deg' }], {
+                        duration: 360,
+                        easing: 'cubic-bezier(0.3, 0, 0.2, 1)',
+                      })
+                  }}
                 >
-                  Back to your name
+                  <Dice size={15} stroke={1.6} aria-hidden />
                 </button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <button type="button" onClick={() => fileInput.current?.click()}>
-                {photo ? 'Replace' : 'Choose a photo'}
-              </button>
-              <button type="button" onClick={turnBack}>
-                Turn back
-              </button>
-            </>
-          )}
-        </p>
-      </div>
-      <input
-        ref={fileInput}
-        className="visually-hidden"
-        type="file"
-        tabIndex={-1}
-        aria-hidden
-        accept={PROFILE_IMAGE_ACCEPT}
-        onChange={(event) => {
-          void chooseImage(event.target.files?.[0])
-          event.target.value = ''
-        }}
-      />
-      <ProfileHistory transport={props.transport} />
-    </section>
+              </p>
+            ) : (
+              <p className="profile__facts">
+                {imageError ? (
+                  <span className="profile__error" role="alert">
+                    {imageError}
+                  </span>
+                ) : (
+                  <span>{dropping ? 'Drop to use this photo' : facts}</span>
+                )}
+                {plan ? <span aria-hidden>·</span> : null}
+                {plan}
+              </p>
+            )}
+            <p className="profile__actions">
+              {trying ? (
+                <>
+                  <button className="set-button" type="button" onClick={keepTrial}>
+                    Keep this seal
+                  </button>
+                  <QuietAction onClick={() => setTrial(undefined)}>Cancel</QuietAction>
+                </>
+              ) : side === 'seal' ? (
+                <>
+                  <QuietAction onClick={turnOver}>
+                    {setAside ? 'Turn over to your photo' : 'Turn over for a photo'}
+                  </QuietAction>
+                  <QuietAction onClick={() => setTrial(seed ?? '')}>Strike from a word</QuietAction>
+                  {seed ? (
+                    <QuietAction
+                      onClick={() => props.onIdentityChange?.({ avatarSeed: undefined })}
+                    >
+                      Back to your name
+                    </QuietAction>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <QuietAction onClick={() => fileInput.current?.click()}>
+                    {photo ? 'Replace' : 'Choose a photo'}
+                  </QuietAction>
+                  <QuietAction onClick={turnBack}>Turn back</QuietAction>
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+        {guideOpen ? <SealNotes id={notesId} word={struck} /> : null}
+        <input
+          ref={fileInput}
+          className="visually-hidden"
+          type="file"
+          tabIndex={-1}
+          aria-hidden
+          accept={PROFILE_IMAGE_ACCEPT}
+          onChange={(event) => {
+            void chooseImage(event.target.files?.[0])
+            event.target.value = ''
+          }}
+        />
+        <ProfileHistory transport={props.transport} />
+      </SettingsPage>
+    </div>
+  )
+}
+
+function QuietAction(props: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button className="set-button set-button--quiet" type="button" onClick={props.onClick}>
+      {props.children}
+    </button>
   )
 }
 

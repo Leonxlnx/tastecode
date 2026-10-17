@@ -15,17 +15,8 @@ const SYMMETRY_CASES = [
   { symmetry: 'triple', counts: '5, 8, 11' },
 ] as const
 
-/** The coin's radius out to its rim, in px: the 160px face and 10px of beads. */
-const RIM = 90
-
-type NoteStyle = CSSProperties & { '--dy': string; '--reach': string }
 type AtStyle = CSSProperties & { '--at': number }
 type InkStyle = CSSProperties & { '--ink': string }
-
-/** A note level with a point `dy` px above or below the centre; its line ends on the rim. */
-function placed(dy: number): NoteStyle {
-  return { '--dy': `${dy}px`, '--reach': `${Math.sqrt(RIM * RIM - dy * dy).toFixed(1)}px` }
-}
 
 function at(letter: string): AtStyle {
   return { '--at': ALPHABET.indexOf(letter) / (ALPHABET.length - 1) }
@@ -101,16 +92,16 @@ export function SealGuideToggle(props: {
 }
 
 /**
- * Four notes around the coin, tied to its rim by hairlines, that read the
- * struck word: what picked the colour, the ground and the symmetry, and how
- * the letters lay the tiles, which the coin itself shows letter by letter.
+ * Four notes under the coin that read the struck word: what picked the
+ * colour, the ground and the symmetry, and how the letters lay the tiles,
+ * which the coin itself shows letter by letter.
  */
 export function SealNotes(props: { id: string; word: string }) {
   const reading = readSeal(props.word)
   if (!reading) {
     return (
       <div className="seal-notes" id={props.id}>
-        <p className="seal-note" data-side="right" style={placed(-12)}>
+        <p className="seal-note">
           No letters to read, so this seal is hashed. The same word always gives the same seal.
         </p>
       </div>
@@ -119,7 +110,7 @@ export function SealNotes(props: { id: string; word: string }) {
   const { avatar } = reading
   return (
     <div className="seal-notes" id={props.id}>
-      <div className="seal-note" data-side="left" style={placed(-52)}>
+      <div className="seal-note">
         <p>
           <span className="seal-note__value">{reading.colourLetter}</span> picks the colour
         </p>
@@ -133,7 +124,7 @@ export function SealNotes(props: { id: string; word: string }) {
           ))}
         </span>
       </div>
-      <div className="seal-note" data-side="left" style={placed(34)}>
+      <div className="seal-note">
         <p>
           ends in <span className="seal-note__value">{reading.groundLetter}</span>, so{' '}
           {avatar.dark ? 'dark' : 'light'}
@@ -142,7 +133,7 @@ export function SealNotes(props: { id: string; word: string }) {
           {avatar.dark ? 'end on a vowel for a light one' : 'end on any other letter for dark'}
         </p>
       </div>
-      <div className="seal-note" data-side="right" style={placed(-52)}>
+      <div className="seal-note">
         <p>
           <span className="seal-note__value">{reading.letters}</span> letters,{' '}
           {SYMMETRY_TEXT[avatar.symmetry]}
@@ -155,7 +146,7 @@ export function SealNotes(props: { id: string; word: string }) {
           ))}
         </p>
       </div>
-      <div className="seal-note" data-side="right" style={placed(34)}>
+      <div className="seal-note">
         <p>each letter lays a tile, from the top, outside in</p>
         <p className="seal-note__rule seal-note__key">
           <span>
