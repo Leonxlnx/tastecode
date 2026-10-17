@@ -1,3 +1,5 @@
+import { readFile, stat } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import path from 'node:path'
 import { acpCommandName, acpCommandSkillPath, mapAcpCommands } from '@harness/adapter-acp/commands'
 import type {
@@ -46,15 +48,16 @@ export type GrokProjectDiscoveryOptions = {
   quietMs?: number
   /** After Grok says MCP is initialized, how long a late status may still arrive. */
   graceMs?: number
-  /** After that, how long a ready server's tool names may take (captured: 0.4-0.9 s). */
-  toolsGraceMs?: number
+  /** Grok's home, where it logs each session's server connections. */
+  grokHome?: string
 }
 
 const START_TIMEOUT_MS = 20_000
 const SETTLE_MS = 15_000
 const QUIET_MS = 1_500
 const GRACE_MS = 1_000
-const TOOLS_GRACE_MS = 2_000
+/** A probe session's event log is a few KB; anything far larger is not read. */
+const MAX_EVENT_LOG_BYTES = 1024 * 1024
 const CLOSE_TIMEOUT_MS = 2_000
 const MAX_MESSAGE = 300
 
@@ -98,7 +101,16 @@ export async function discoverGrokProject(
     sessionId = id
     await inventory.settle(options)
     options.signal?.throwIfAborted()
-    return inventory.result()
+    const result = inventory.result()
+    const tools = await sessionTools(options.grokHome, projectPath, id)
+    return {
+      ...result,
+      servers: result.servers.map((server) =>
+        server.tools.length || !tools.get(server.id)?.length
+          ? server
+          : { ...server, tools: tools.get(server.id)!.map((name) => ({ name, inputSchema: {} })) },
+      ),
+    }
   } finally {
     // Closing takes the empty session out of Grok's session list.
     if (sessionId) {
@@ -108,6 +120,50 @@ export async function discoverGrokProject(
     }
     await rpc.dispose()
   }
+}
+
+/**
+ * The status frames name no tools. Grok logs every server it connects, with
+ * its tool names, to the session's events.jsonl (grok 1.0.62:
+ * `{"type":"mcp_server_connected","server_name":…,"tools":[…]}`), the same
+ * session folder the history source reads. Only this probe's own session is read.
+ */
+async function sessionTools(
+  home: string | undefined,
+  projectPath: string,
+  sessionId: string,
+): Promise<Map<string, string[]>> {
+  const tools = new Map<string, string[]>()
+  if (!/^[\w-]+$/.test(sessionId)) return tools
+  const root = home ?? process.env.GROK_HOME ?? path.join(homedir(), '.grok')
+  const file = path.join(
+    root,
+    'sessions',
+    encodeURIComponent(projectPath),
+    sessionId,
+    'events.jsonl',
+  )
+  try {
+    if ((await stat(file)).size > MAX_EVENT_LOG_BYTES) return tools
+    for (const line of (await readFile(file, 'utf8')).split('\n')) {
+      if (!line.includes('mcp_server_connected')) continue
+      try {
+        const event = record(JSON.parse(line))
+        if (event?.type !== 'mcp_server_connected' || typeof event.server_name !== 'string')
+          continue
+        if (!Array.isArray(event.tools)) continue
+        tools.set(
+          event.server_name,
+          event.tools.filter((tool): tool is string => typeof tool === 'string' && tool !== ''),
+        )
+      } catch {
+        // A line Grok was still writing.
+      }
+    }
+  } catch {
+    // No log: the servers keep the names the session itself reported.
+  }
+  return tools
 }
 
 function connectGrok(projectPath: string): GrokDiscoveryRpc {
@@ -124,8 +180,9 @@ class GrokInventory {
   #commands: unknown[] | undefined
   /**
    * Every tool the session offers, from the command update's `_meta.tools`.
-   * MCP tools are named `<server>__<tool>` and arrive in a later update than
-   * the commands, once the servers have connected.
+   * MCP tools are named `<server>__<tool>`; an update after the servers
+   * connect sometimes lists them (captured 0.4-0.9 s after mcp_initialized,
+   * on other runs not within 6 s), so this is not waited for.
    */
   #tools: string[] = []
   /** Configured servers in Grok's order; a plugin server may first appear with its status. */
@@ -192,7 +249,6 @@ class GrokInventory {
     const started = Date.now()
     const quietMs = options.quietMs ?? QUIET_MS
     const graceMs = options.graceMs ?? GRACE_MS
-    const toolsGraceMs = Math.max(graceMs, options.toolsGraceMs ?? TOOLS_GRACE_MS)
     let early = false
     let grace = false
     return new Promise<void>((resolve, reject) => {
@@ -211,14 +267,12 @@ class GrokInventory {
         if (initializedAt !== undefined && !grace) {
           grace = true
           timers.push(setTimeout(check, Math.max(1, initializedAt + graceMs - now)))
-          timers.push(setTimeout(check, Math.max(1, initializedAt + toolsGraceMs - now)))
         }
         if (this.#commands === undefined) return
         const complete =
           initializedAt !== undefined
-            ? (this.#statuses.size >= Math.max(this.#total, this.#servers.length) ||
-                now - initializedAt >= graceMs) &&
-              (this.#readyToolsKnown() || now - initializedAt >= toolsGraceMs)
+            ? this.#statuses.size >= Math.max(this.#total, this.#servers.length) ||
+              now - initializedAt >= graceMs
             : !this.#mcpSignal && now - started >= quietMs
         if (complete) return finish()
         if (!early && this.#mcpSignal) {
@@ -250,13 +304,6 @@ class GrokInventory {
     const prefix = `${server}__`
     return this.#tools.flatMap((tool) =>
       tool.startsWith(prefix) && tool.length > prefix.length ? [tool.slice(prefix.length)] : [],
-    )
-  }
-
-  /** A ready server with no tool names yet is waited for, briefly: it may simply have none. */
-  #readyToolsKnown(): boolean {
-    return this.#servers.every(
-      (name) => this.#statuses.get(name)?.status !== 'ready' || this.#toolsOf(name).length > 0,
     )
   }
 
