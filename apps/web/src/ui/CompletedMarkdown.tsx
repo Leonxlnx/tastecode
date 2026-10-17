@@ -6,12 +6,7 @@ import {
   useState,
   type ComponentPropsWithoutRef,
 } from 'react'
-import {
-  Streamdown,
-  defaultRehypePlugins,
-  parseMarkdownIntoBlocks,
-  type Components,
-} from 'streamdown'
+import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown'
 import 'streamdown/styles.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import {
@@ -26,6 +21,7 @@ import { shikiPlugin } from './highlighter.js'
 import { STREAMDOWN_ICONS } from './streamdown-icons.js'
 import { MarkdownImage, MarkdownImageContext } from './MarkdownImage.js'
 import { MarkdownBlock, MarkdownCode, MarkdownPre } from './LargeCodeBlock.js'
+import { createBlockSplitter } from './markdown-blocks.js'
 
 type InlineCodeProps = ComponentPropsWithoutRef<'code'> & { node?: unknown }
 
@@ -181,15 +177,6 @@ function normalizeImageSources(normalize: (source: string) => string) {
   }
 }
 
-const REFERENCE_DEFINITION = /^[ \t]{0,3}(?:>[ \t]*)*\[[^\]\r\n]+\]:/m
-
-// Each block is parsed on its own, so `[text][ref]` would never see a `[ref]: url`
-// in another block. Like Streamdown's own footnote handling, such a text stays one
-// block; everything else keeps per-block rendering and the large-fence fast path.
-function completedBlocks(markdown: string): string[] {
-  return REFERENCE_DEFINITION.test(markdown) ? [markdown] : parseMarkdownIntoBlocks(markdown)
-}
-
 function preserveRelativeLinks() {
   return (tree: ImageTreeNode) => {
     const pending = [tree]
@@ -223,6 +210,8 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   projectPath?: string | undefined
 }) {
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
+  // Per renderer: a text that grows is split again only from its open tail.
+  const [splitBlocks] = useState(createBlockSplitter)
   const imageSource = useContext(MarkdownImageContext)
   const rehypePlugins = useMemo(() => {
     const plugins = Object.values(defaultRehypePlugins)
@@ -242,7 +231,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
         isAnimating={false}
         animated={STREAM_ANIMATION}
         parseIncompleteMarkdown={false}
-        parseMarkdownIntoBlocksFn={completedBlocks}
+        parseMarkdownIntoBlocksFn={splitBlocks}
         plugins={STREAMDOWN_PLUGINS}
         controls={STREAMDOWN_CONTROLS}
         icons={STREAMDOWN_ICONS}
