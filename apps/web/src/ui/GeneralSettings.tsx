@@ -21,6 +21,7 @@ import {
   writeTerminalPlacement,
   type TerminalPlacement,
 } from '../terminal-placement.js'
+import { SettingsPage } from './settings/SettingsLayout.js'
 import '../styles/general-settings.css'
 
 type SidebarMode = SidebarSettings['mode']
@@ -73,10 +74,7 @@ export function GeneralSettings(props: {
   const inbox = mode === 'inbox'
 
   return (
-    <section className="settings__panel" aria-labelledby="settings-general">
-      <h1 className="settings__title" id="settings-general">
-        General
-      </h1>
+    <SettingsPage title="General">
       <div className="general">
         <Setting
           name="Sidebar"
@@ -125,7 +123,7 @@ export function GeneralSettings(props: {
           picture={(value) => <MiniWindow focus="picker" mode={mode} days={days} picker={value} />}
         />
       </div>
-    </section>
+    </SettingsPage>
   )
 }
 

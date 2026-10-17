@@ -93,7 +93,7 @@ export function InboxRailSkeleton(props: { pullRequests: boolean }) {
   )
 }
 
-const SETTINGS_NAV: readonly number[] = [52, 44, 72, 58, 62, 48, 32, 40, 92, 40]
+const SETTINGS_NAV: readonly number[] = [52, 44, 72, 58, 62, 48, 76, 40, 92, 40]
 const SETTINGS_ROWS: readonly { title: number; note: number; control: string }[] = [
   { title: 104, note: 0, control: 'segmented' },
   { title: 148, note: 232, control: 'switch' },
