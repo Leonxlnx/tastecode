@@ -12,6 +12,10 @@ export type OpenCodeCatalogEntry = {
   status?: string | undefined
   /** models.dev's release day, an ISO date. */
   releaseDate?: string | undefined
+  /** Whether the model calls tools, which an OpenCode agent turn needs. */
+  toolCall?: boolean | undefined
+  /** Whether the model answers in text; an image or video model does not. */
+  textOutput?: boolean | undefined
   isDefault: boolean
   reasoningEfforts: string[]
   defaultReasoningEffort?: string | undefined
@@ -142,12 +146,158 @@ function familyOf(entry: OpenCodeCatalogEntry, lineage: NameLineage): string {
   return `${entry.providerID}/${lineage.skeleton}${stage}`
 }
 
+/** Labs whose best model starts visible, in the order they get a slot. */
+const LAB_PRIORITY = [
+  'DeepSeek',
+  'Anthropic',
+  'OpenAI',
+  'Google',
+  'xAI',
+  'Moonshot',
+  'Z.ai',
+  'MiniMax',
+  'Qwen',
+  'Xiaomi',
+]
+/** Labs that also start with their best model of the other tier: DeepSeek's Pro and Flash. */
+const TWO_TIER_LABS: ReadonlySet<string> = new Set(['DeepSeek'])
+const MAX_RECOMMENDED = 4
+/** Name words of a release that is not yet the stable one. */
+const PREVIEW_WORDS: ReadonlySet<string> = new Set([
+  'preview',
+  'alpha',
+  'beta',
+  'exp',
+  'experimental',
+])
+/**
+ * Name words of a lighter tier or a faster serving of a model. Such a model
+ * starts visible only when its lab offers nothing else, so Claude Haiku waits
+ * behind Sonnet and GPT Sol Fast behind Sol.
+ */
+const LIGHT_TIER_WORDS: ReadonlySet<string> = new Set([
+  'haiku',
+  'mini',
+  'nano',
+  'lite',
+  'flash',
+  'flashx',
+  'air',
+  'small',
+  'tiny',
+  'micro',
+  'fast',
+  'ultrafast',
+  'highspeed',
+  'ultraspeed',
+  'lightning',
+  'turbo',
+])
+/** The name word of an alias that follows a line, which yields to a versioned model. */
+const ALIAS_WORD = 'latest'
+/** The name word of OpenCode's free tier, which yields to a provider the user connected. */
+const FREE_WORD = 'free'
+
+function nameWords(text: string): string[] {
+  return nameKey(text)
+    .split(NAME_SEPARATOR)
+    .filter((word) => word !== '')
+}
+
+function isPreview(entry: OpenCodeCatalogEntry): boolean {
+  if (entry.status && PREVIEW_STATUSES.has(entry.status)) return true
+  return nameWords(`${entry.name} ${entry.modelID}`).some((word) => PREVIEW_WORDS.has(word))
+}
+
+function compareGenerations(left: string, right: string): number {
+  const a = left.split('.').map(Number)
+  const b = right.split('.').map(Number)
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const difference = (a[index] ?? 0) - (b[index] ?? 0)
+    if (difference !== 0) return difference
+  }
+  return 0
+}
+
+type DescribedModel = { entry: OpenCodeCatalogEntry; model: Model }
+
+/**
+ * Whether a model may start visible: a stable release that runs an agent
+ * turn (tools, text out) and is the newest generation of its family.
+ */
+function canStartVisible(
+  { entry, model }: DescribedModel,
+  newest: ReadonlyMap<string, string>,
+): boolean {
+  if (isPreview(entry) || entry.toolCall === false || entry.textOutput === false) return false
+  const newestGeneration = model.family ? newest.get(model.family) : undefined
+  return !(
+    model.generation &&
+    newestGeneration &&
+    compareGenerations(model.generation, newestGeneration) < 0
+  )
+}
+
+type Candidate = { index: number; light: boolean; rank: number }
+
+/**
+ * A model's place within its lab, lowest first: a full tier before a lighter
+ * one, a versioned model before an alias, and a provider the user connected
+ * before OpenCode's free tier. Equal places keep the newest first.
+ */
+function candidate({ entry }: DescribedModel, index: number): Candidate {
+  const words = nameWords(entry.name)
+  const light = words.some((word) => LIGHT_TIER_WORDS.has(word))
+  const rank =
+    (light ? 4 : 0) + (words.includes(ALIAS_WORD) ? 2 : 0) + (words.includes(FREE_WORD) ? 1 : 0)
+  return { index, light, rank }
+}
+
+/**
+ * The models that start visible: the agent's default, then the best model of
+ * each lab in priority order, at most four in all. DeepSeek also starts with
+ * its best model of the other tier, as V4 Pro and V4.1 Flash. Labs outside
+ * the priority list wait for the user to pick.
+ */
+function recommendedModels(rows: readonly DescribedModel[]): Set<number> {
+  const newest = new Map<string, string>()
+  for (const { model } of rows) {
+    if (!model.family || !model.generation) continue
+    const current = newest.get(model.family)
+    if (current === undefined || compareGenerations(model.generation, current) > 0) {
+      newest.set(model.family, model.generation)
+    }
+  }
+  const picks = new Set<number>()
+  rows.forEach(({ entry }, index) => {
+    if (entry.isDefault && picks.size < MAX_RECOMMENDED) picks.add(index)
+  })
+  for (const lab of LAB_PRIORITY) {
+    if (picks.size >= MAX_RECOMMENDED) break
+    // Rows come newest first and the sort is stable.
+    const candidates = rows
+      .flatMap((row, index) =>
+        row.model.lab === lab && canStartVisible(row, newest) ? [candidate(row, index)] : [],
+      )
+      .sort((left, right) => left.rank - right.rank)
+    const best = candidates[0]
+    if (!best) continue
+    picks.add(best.index)
+    if (!TWO_TIER_LABS.has(lab) || picks.size >= MAX_RECOMMENDED) continue
+    const other = candidates.find((option) => option.light !== best.light)
+    if (other) picks.add(other.index)
+  }
+  return picks
+}
+
 /**
  * The models of every connected provider, newest first. Each is named as
  * its provider names it; the provider's name follows only when another
  * connected provider offers a model of the same name. Each declares its lab,
  * its lineage within its provider and its release day, so a newer
- * generation replaces an older one without parsing a display name.
+ * generation replaces an older one without parsing a display name, and up
+ * to four are recommended so a large account does not start with every
+ * model switched on.
  */
 export function openCodeModels(entries: readonly OpenCodeCatalogEntry[]): Model[] {
   // An ISO date sorts as text. The sort is stable, so models of the same day
@@ -162,13 +312,13 @@ export function openCodeModels(entries: readonly OpenCodeCatalogEntry[]): Model[
     if (providers) providers.add(entry.providerID)
     else providersByName.set(key, new Set([entry.providerID]))
   }
-  return ordered.map((entry) => {
+  const described = ordered.map((entry): DescribedModel => {
     const shared = (providersByName.get(nameKey(entry.name))?.size ?? 0) > 1
     const lab = modelLab(entry)
     const lineage = nameLineage(entry.name)
     const family = lineage ? familyOf(entry, lineage) : undefined
     const released = isoDay(entry.releaseDate)
-    return {
+    const model: Model = {
       id: `${entry.providerID}/${entry.modelID}`,
       displayName: shared ? `${entry.name} · ${entry.providerName}` : entry.name,
       isDefault: entry.isDefault,
@@ -186,5 +336,10 @@ export function openCodeModels(entries: readonly OpenCodeCatalogEntry[]): Model[
         : {}),
       ...(released ? { released } : {}),
     }
+    return { entry, model }
   })
+  const recommended = recommendedModels(described)
+  return described.map(({ model }, index) =>
+    recommended.has(index) ? { ...model, recommended: true } : model,
+  )
 }

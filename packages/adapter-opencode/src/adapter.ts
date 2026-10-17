@@ -170,6 +170,12 @@ const ConnectedModelSchema = z.object({
   id: z.string(),
   name: z.string(),
   family: z.string().optional(),
+  capabilities: z
+    .object({
+      toolcall: z.boolean().optional(),
+      output: z.object({ text: z.boolean().optional() }).optional(),
+    })
+    .optional(),
   status: z.string().optional(),
   release_date: z.string().optional(),
   variants: JsonRpcValueSchema.optional(),
@@ -562,6 +568,8 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
               family: model.family,
               status: model.status,
               releaseDate: model.release_date,
+              toolCall: model.capabilities?.toolcall,
+              textOutput: model.capabilities?.output?.text,
               isDefault: v2
                 ? v2.defaultModel === id
                 : connected.default?.[provider.id] === model.id,

@@ -17,6 +17,11 @@ const CAPTURED = z
             id: z.string(),
             name: z.string(),
             family: z.string().optional(),
+            capabilities: z.object({
+              toolcall: z.boolean(),
+              output: z.object({ text: z.boolean() }),
+            }),
+            status: z.string(),
             release_date: z.string(),
           }),
         ),
@@ -40,7 +45,10 @@ function capturedEntries(): OpenCodeCatalogEntry[] {
       modelID: model.id,
       name: model.name,
       family: model.family,
+      status: model.status,
       releaseDate: model.release_date,
+      toolCall: model.capabilities.toolcall,
+      textOutput: model.capabilities.output.text,
       isDefault: false,
       reasoningEfforts: [],
     })),
@@ -67,6 +75,31 @@ function entry(
 
 function byId(models: Model[]): Map<string, Model> {
   return new Map(models.map((model) => [model.id, model]))
+}
+
+function recommendedIds(models: Model[]): string[] {
+  return models
+    .filter((model) => model.recommended === true)
+    .map((model) => model.id)
+    .sort()
+}
+
+/** A model released on `day`, as models.dev lists a stable chat model. */
+function released(
+  providerID: string,
+  providerName: string,
+  modelID: string,
+  name: string,
+  day: string,
+  more: Partial<OpenCodeCatalogEntry> = {},
+): OpenCodeCatalogEntry {
+  return entry(providerID, providerName, modelID, name, {
+    status: 'active',
+    releaseDate: day,
+    toolCall: true,
+    textOutput: true,
+    ...more,
+  })
 }
 
 describe('openCodeModels', () => {
@@ -188,6 +221,128 @@ describe('openCodeModels', () => {
       generation: '4.1',
     })
     expect(listed.get('tinfoil/deepseek-v5-flash')?.family).toBe('tinfoil/deepseek v# flash alpha')
+  })
+
+  it('recommends the newest stable model of each priority lab, four at most', () => {
+    const models = openCodeModels(capturedEntries())
+    // NVIDIA, LongCat and OpenCode's own models are not on the priority list,
+    // MiniMax M3 replaces M2.x and its M3.1 Flash is a preview.
+    expect(recommendedIds(models)).toEqual(
+      [
+        'minimax-coding-plan/MiniMax-M3',
+        'opencode/deepseek-v4.1-flash-free',
+        'opencode/glm-5.3-flash-free',
+        'opencode/mimo-v2.6-flash-free',
+      ].sort(),
+    )
+  })
+
+  it("counts the agent's default among the four", () => {
+    const entries = capturedEntries().map((captured) =>
+      captured.modelID === 'big-pickle' ? { ...captured, isDefault: true } : captured,
+    )
+    expect(recommendedIds(openCodeModels(entries))).toEqual(
+      [
+        'minimax-coding-plan/MiniMax-M3',
+        'opencode/big-pickle',
+        'opencode/deepseek-v4.1-flash-free',
+        'opencode/glm-5.3-flash-free',
+      ].sort(),
+    )
+  })
+
+  it("gives DeepSeek's Pro and Flash a slot each before the next lab", () => {
+    const models = openCodeModels([
+      released('google', 'Google', 'gemini-4-argon', 'Gemini 4 Argon', '2026-10-13'),
+      released('openai', 'OpenAI', 'gpt-6.1-sol', 'GPT-6.1 Sol', '2026-09-29'),
+      released(
+        'opencode',
+        'OpenCode',
+        'deepseek-v4.1-flash-free',
+        'DeepSeek V4.1 Flash Free',
+        '2026-09-10',
+      ),
+      released('deepseek', 'DeepSeek', 'deepseek-flash', 'DeepSeek V4.1 Flash', '2026-09-10'),
+      released('deepseek', 'DeepSeek', 'deepseek-v4-pro', 'DeepSeek V4 Pro', '2026-08-12'),
+      released('deepseek', 'DeepSeek', 'deepseek-v4-flash', 'DeepSeek V4 Flash', '2026-04-24'),
+      released('deepseek', 'DeepSeek', 'deepseek-chat', 'DeepSeek Chat', '2025-12-01'),
+      released(
+        'openrouter',
+        'OpenRouter',
+        '~deepseek/deepseek-flash-latest',
+        'DeepSeek Flash Latest',
+        '2026-09-14',
+        {
+          family: 'deepseek-flash',
+        },
+      ),
+      released('anthropic', 'Anthropic', 'claude-sonnet-5-5', 'Claude Sonnet 5.5', '2026-09-28'),
+    ])
+    // The second DeepSeek slot goes to the other tier, not to the older Chat.
+    // The connected DeepSeek's Flash goes before OpenCode's free one and an
+    // alias of it, and V4 Flash is an older generation.
+    expect(recommendedIds(models)).toEqual(
+      [
+        'anthropic/claude-sonnet-5-5',
+        'deepseek/deepseek-flash',
+        'deepseek/deepseek-v4-pro',
+        'openai/gpt-6.1-sol',
+      ].sort(),
+    )
+  })
+
+  it('starts a lighter tier visible only when its lab offers nothing else', () => {
+    const models = openCodeModels([
+      released('anthropic', 'Anthropic', 'claude-haiku-5-5', 'Claude Haiku 5.5', '2026-10-07'),
+      released('anthropic', 'Anthropic', 'claude-sonnet-5-5', 'Claude Sonnet 5.5', '2026-09-28'),
+      released('openai', 'OpenAI', 'gpt-6.1-sol-fast', 'GPT-6.1 Sol Fast', '2026-09-29'),
+      released('openai', 'OpenAI', 'gpt-6.1-sol', 'GPT-6.1 Sol', '2026-09-29'),
+      released('google', 'Google', 'gemini-3.8-flash', 'Gemini 3.8 Flash', '2026-09-02'),
+    ])
+    expect(recommendedIds(models)).toEqual(
+      ['anthropic/claude-sonnet-5-5', 'google/gemini-3.8-flash', 'openai/gpt-6.1-sol'].sort(),
+    )
+  })
+
+  it('never starts with a preview or a model that cannot run an agent turn', () => {
+    const models = openCodeModels([
+      released(
+        'xai',
+        'xAI',
+        'grok-imagine-video-1.5-lite',
+        'Grok Imagine Video 1.5 Lite',
+        '2026-10-01',
+        {
+          toolCall: false,
+          textOutput: false,
+        },
+      ),
+      released('xai', 'xAI', 'grok-4.20-multi-agent-0309', 'Grok 4.20 Multi-Agent', '2026-09-30', {
+        toolCall: false,
+      }),
+      released('xai', 'xAI', 'grok-4.7', 'Grok 4.7', '2026-09-21'),
+      released(
+        'anthropic',
+        'Anthropic',
+        'claude-fable-6-preview',
+        'Claude Fable 6 (Preview)',
+        '2026-10-01',
+      ),
+      released('anthropic', 'Anthropic', 'claude-opus-6', 'Claude Opus 6', '2026-09-30', {
+        status: 'beta',
+      }),
+      released('anthropic', 'Anthropic', 'claude-opus-5-5', 'Claude Opus 5.5', '2026-09-22'),
+    ])
+    expect(recommendedIds(models)).toEqual(['anthropic/claude-opus-5-5', 'xai/grok-4.7'])
+  })
+
+  it('recommends nothing when no lab on the priority list is connected', () => {
+    const models = openCodeModels(
+      capturedEntries().filter(
+        (captured) => captured.modelID === 'big-pickle' || captured.modelID.startsWith('nemotron'),
+      ),
+    )
+    expect(recommendedIds(models)).toEqual([])
   })
 
   it('leaves out a release day that is not a calendar day', () => {

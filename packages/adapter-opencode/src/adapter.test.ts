@@ -738,6 +738,19 @@ describe('OpenCode adapter', () => {
       const days = ids.map((id) => released.get(id) ?? '')
       expect(days).toEqual([...days].sort().reverse())
       expect(ids[0]).toBe('opencode/nemotron-3.5-super-vl-free')
+      expect(
+        models
+          .filter((model) => model.recommended)
+          .map((model) => model.id)
+          .sort(),
+      ).toEqual(
+        [
+          'minimax-coding-plan/MiniMax-M3',
+          'opencode/deepseek-v4.1-flash-free',
+          'opencode/glm-5.3-flash-free',
+          'opencode/mimo-v2.6-flash-free',
+        ].sort(),
+      )
       // No agent names a model and the v2 catalog lists no variants.
       expect(models.filter((model) => model.isDefault)).toEqual([])
       expect(models.filter((model) => model.reasoningEfforts.length > 0)).toEqual([])
