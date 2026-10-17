@@ -153,7 +153,7 @@ describe('tool-call disclosure motion', () => {
   it('keeps completed work close to its summary and neighboring items', () => {
     expect(rule('.activity__body')).toContain('gap: 2px')
     expect(rule('.activity__body')).toContain('margin: 4px 0')
-    expect(rule('.activity__body .aux__out')).toContain('margin: 3px 0 6px 21px')
+    expect(rule('.activity__body .aux__out')).toContain('margin: 3px 0 6px var(--tool-label-x)')
     expect(rule('.reply > .activity')).toContain('margin-bottom: 8px')
   })
 })
