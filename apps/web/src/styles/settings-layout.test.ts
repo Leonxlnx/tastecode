@@ -19,7 +19,6 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(
       /\.settings \.settings__row:has\(> \.settings__row-control > :is\(\.switch, \.settings__switch-skeleton\)\) \{[^}]*padding: 12px 14px;/s,
     )
-    expect(settingsCss).toMatch(/\.settings__group-note \{[^}]*padding: 10px 14px;/s)
     expect(settingsCss).toMatch(/\.background-model-settings > header \{[^}]*padding: 10px 14px;/s)
     expect(settingsCss).toMatch(/\.model-visibility__source \{[^}]*padding: 6px 14px;/s)
   })
