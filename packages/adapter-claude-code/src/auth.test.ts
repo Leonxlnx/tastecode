@@ -64,7 +64,19 @@ describe('Claude Code authentication', () => {
     const run = vi.fn<typeof runCli>().mockResolvedValue({ code: 1, stdout: '{"loggedIn":false}' })
     await expect(claudeAccount({ run })).resolves.toEqual({ signedIn: false })
     expect(run).toHaveBeenCalledOnce()
-    expect(run).toHaveBeenCalledWith('claude', ['auth', 'status'])
+    expect(run).toHaveBeenCalledWith('claude', ['auth', 'status'], 20_000)
+  })
+
+  it('gives a slow status command time to answer instead of the generic five seconds', async () => {
+    // Measured: 11.5 s for `claude auth status` on a real profile under load.
+    const run = vi.fn<typeof runCli>(async (_command, _args, timeoutMs = 5_000) => {
+      if (timeoutMs < 11_500) throw new Error('CLI did not respond within the time limit')
+      return { code: 0, stdout: '{"loggedIn":true,"email":"dev@example.test"}' }
+    })
+    await expect(claudeAccount({ run })).resolves.toEqual({
+      signedIn: true,
+      email: 'dev@example.test',
+    })
   })
 
   it('maps the CLI status without retaining vendor-only account fields', () => {
@@ -93,7 +105,7 @@ describe('Claude Code authentication', () => {
       email: 'dev@example.test',
     })
     expect(run).toHaveBeenCalledOnce()
-    expect(run).toHaveBeenCalledWith('claude', ['auth', 'status'])
+    expect(run).toHaveBeenCalledWith('claude', ['auth', 'status'], 20_000)
   })
 })
 

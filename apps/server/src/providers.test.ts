@@ -1,8 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { antigravityInstallCommand } from '@harness/adapter-antigravity'
+import { claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
+import { cursorInstallCommand } from '@harness/adapter-cursor'
+import { grokInstallCommand } from '@harness/adapter-grok/updates'
 import {
   detectProviders,
   installCommandFor,
+  installTimeAuth,
   launchCommandFor,
   prewarmProviders,
   type SystemProbe,
@@ -132,19 +137,22 @@ describe('detectProviders', () => {
     )
     expect(find(providers, 'grok').setup?.installUrl).toBe('https://x.ai/cli')
     expect(find(providers, 'cursor').setup?.installUrl).toBe(
-      'https://docs.cursor.com/en/cli/installation',
+      'https://cursor.com/docs/cli/installation',
     )
     expect(find(providers, 'opencode').setup?.installUrl).toBe('https://opencode.ai/en/docs')
   })
 
-  it('reports when the installed Cursor wire version is unsupported', async () => {
-    const providers = await detectProviders(
-      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
-    )
+  it('keeps Cursor usable after it updates itself to a newer build', async () => {
+    for (const version of ['2026.10.02-abc1234', '2025.12.1']) {
+      const providers = await detectProviders(
+        system({ isInstalled: async () => true, version: async () => version }),
+      )
 
-    const cursor = find(providers, 'cursor')
-    expect(cursor.installed).toBe(true)
-    expect(cursor.problem).toContain('supports 2026.07')
+      const cursor = find(providers, 'cursor')
+      expect(cursor.installed).toBe(true)
+      expect(cursor.version).toBe(version)
+      expect(cursor.problem).toBeUndefined()
+    }
   })
 
   it('omits the version when the binary would not say', async () => {
@@ -155,6 +163,29 @@ describe('detectProviders', () => {
     // Reporting an empty string would render as a blank version chip, which
     // reads as a broken install rather than a quiet one.
     expect(find(providers, 'codex').version).toBeUndefined()
+  })
+
+  it('finds Antigravity without starting agy', async () => {
+    const asked: string[] = []
+    const providers = await detectProviders(
+      system({
+        isInstalled: async () => true,
+        version: async (command) => {
+          asked.push(command)
+          return '1.4.0'
+        },
+      }),
+    )
+
+    // Starting agy launches its language server and self-updater; a scan only
+    // needs to find the binary.
+    const antigravity = find(providers, 'antigravity')
+    expect(antigravity.installed).toBe(true)
+    expect(antigravity.version).toBeUndefined()
+    expect(antigravity.problem).toBeUndefined()
+    expect(antigravity.capabilities).toBeDefined()
+    expect(asked).not.toContain('agy')
+    expect(asked).toContain('codex')
   })
 
   it('never claims to know whether someone is signed in', async () => {
@@ -174,6 +205,22 @@ describe('detectProviders', () => {
 
     expect(find(providers, 'codex').auth).toBe('authenticated')
     expect(find(providers, 'claude-code').auth).toBe('unknown')
+  })
+
+  it('reports unknown for a provider whose probe declares no sign-in check', async () => {
+    // Nothing is started for these: the account read answers them later.
+    const unchecked = [
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+      'acp',
+    ] as const
+    for (const provider of unchecked) {
+      await expect(installTimeAuth(provider)).resolves.toBe('unknown')
+    }
   })
 
   it('reports every provider we know about, installed or not', async () => {
@@ -253,10 +300,11 @@ describe('install command resolution', () => {
     await expect(installCommandFor('codex')).resolves.toBe(codex.setup?.installCommand)
   })
 
-  it('resolves install commands from the server-side tables only', async () => {
-    await expect(installCommandFor('claude-code')).resolves.toBe(
-      'npm install -g @anthropic-ai/claude-code',
-    )
+  it('installs Claude Code with the native installer, not npm', async () => {
+    const claude = find(await detectProviders(system()), 'claude-code')
+    expect(claude.setup?.installCommand).toBe(claudeInstallCommand())
+    await expect(installCommandFor('claude-code')).resolves.toBe(claudeInstallCommand())
+    expect(claudeInstallCommand()).not.toMatch(/npm/)
   })
 
   it('resolves nightly CLI and ACP installs from trusted tables', async () => {
@@ -271,9 +319,27 @@ describe('install command resolution', () => {
     await expect(installCommandFor('acp')).rejects.toThrow(/unknown install target/)
   })
 
+  it('installs Grok with the installer xAI documents', async () => {
+    const grok = find(await detectProviders(system()), 'grok')
+    expect(grok.setup?.installCommand).toBe(grokInstallCommand())
+    await expect(installCommandFor('grok')).resolves.toBe(grokInstallCommand())
+  })
+
+  it('installs Cursor with the installer Cursor documents', async () => {
+    const cursor = find(await detectProviders(system()), 'cursor')
+    expect(cursor.setup?.installCommand).toBe(cursorInstallCommand())
+    await expect(installCommandFor('cursor')).resolves.toBe(cursorInstallCommand())
+  })
+
+  it('installs Antigravity with the installer Google documents', async () => {
+    const antigravity = find(await detectProviders(system()), 'antigravity')
+    expect(antigravity.setup?.installCommand).toBe(antigravityInstallCommand())
+    await expect(installCommandFor('antigravity')).resolves.toBe(antigravityInstallCommand())
+  })
+
   it('refuses targets it cannot script instead of guessing', async () => {
-    // Grok ships its own installer; there is no command worth running blind.
-    await expect(installCommandFor('grok')).rejects.toThrow(/no scripted install/)
+    // Pi's entry names no install command, so its row links the setup page.
+    await expect(installCommandFor('pi')).rejects.toThrow(/no scripted install/)
     await expect(installCommandFor('unlisted-cli' as never)).rejects.toThrow(
       /unknown install target/,
     )

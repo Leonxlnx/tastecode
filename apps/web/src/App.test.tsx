@@ -12,7 +12,7 @@ import {
 } from '@harness/contracts'
 import { StrictMode, type ComponentProps } from 'react'
 import { z } from 'zod'
-import { App, resolveSendAvailability } from './App.js'
+import { ACCOUNT_CHECK_SEND_GRACE_MS, App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
 import { serializeModelCatalogCache } from './model-catalog-cache.js'
@@ -1177,6 +1177,44 @@ describe('web client', () => {
         accountCheck: { provider: 'codex', state: 'ready', account: { signedIn } },
       }),
     ).toBe(signedIn ? 'ready' : 'setup-required')
+  })
+
+  it('keeps Send available when the account could not be confirmed', () => {
+    type SendInput = Parameters<typeof resolveSendAvailability>[0]
+    const resolve = (
+      status: Partial<SendInput['providerStatuses'][number]>,
+      accountCheck: SendInput['accountCheck'],
+    ) =>
+      resolveSendAvailability({
+        catalog: 'ready',
+        activeProvider: 'codex',
+        serverBoundSession: false,
+        connections: [],
+        providerStatuses: contractValidServerProviders().map((entry) => ({
+          ...entry,
+          auth: 'unknown' as const,
+          ...(entry.id === 'codex' ? status : {}),
+        })),
+        accountCheck,
+      })
+    const failed: SendInput['accountCheck'] = {
+      provider: 'codex',
+      state: 'failed',
+      error: { id: 'account:codex:1', message: 'CLI did not respond within the time limit' },
+    }
+    expect(resolve({}, failed)).toBe('ready')
+    // A confirmed sign-out still asks for setup, and a provider problem still blocks.
+    expect(resolve({}, { provider: 'codex', state: 'ready', account: { signedIn: false } })).toBe(
+      'setup-required',
+    )
+    expect(resolve({ problem: 'Codex needs an update.' }, failed)).toBe('unavailable')
+    expect(resolve({ auth: 'unauthenticated' }, failed)).toBe('setup-required')
+    // A read still running waits only through the grace period.
+    expect(resolve({}, { provider: 'codex', state: 'loading' })).toBe('loading')
+    expect(resolve({}, { provider: 'codex', state: 'loading', slow: true })).toBe('ready')
+    expect(
+      resolve({ auth: 'unauthenticated' }, { provider: 'codex', state: 'loading', slow: true }),
+    ).toBe('setup-required')
   })
 
   it.each([false, true])(
@@ -4310,6 +4348,82 @@ describe('web client', () => {
     act(() => window.dispatchEvent(new Event('focus')))
 
     expect(transport.ensureHealthy).toHaveBeenCalledTimes(1)
+  })
+
+  describe('provider re-check on focus', () => {
+    const calls = (name: string) =>
+      transport.request.mock.calls.filter(([method]) => method === name).length
+    const focusLater = (ms: number) => {
+      vi.setSystemTime(Date.now() + ms)
+      act(() => window.dispatchEvent(new Event('focus')))
+    }
+    const missingCursor: TestServerProvider = {
+      id: 'cursor',
+      displayName: 'Cursor',
+      installed: false,
+      auth: 'unknown',
+      problem: 'cursor-agent is not on PATH',
+    }
+
+    afterEach(() => vi.useRealTimers())
+
+    it('scans once per 30 seconds while a provider is missing and keeps the catalog', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = [...serverProviders, missingCursor]
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      focusLater(10_000)
+      expect(calls('providers.list')).toBe(1)
+      focusLater(20_000)
+      focusLater(1_000)
+      await waitFor(() => expect(calls('providers.list')).toBe(2))
+      expect(calls('models.list')).toBe(1)
+    })
+
+    it('reloads the catalog when the scan finds the missing provider', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = [...serverProviders, missingCursor]
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      serverProviders = serverProviders.map((entry) =>
+        entry.id === 'cursor' ? { id: 'cursor', displayName: 'Cursor', capabilities: {} } : entry,
+      )
+      focusLater(30_000)
+
+      await waitFor(() => expect(calls('providers.list')).toBe(3))
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'cursor' }),
+      )
+    })
+
+    it('asks again on focus for an account that could not be confirmed', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      serverProviders = serverProviders.map((entry) => ({ ...entry, auth: 'unknown' }))
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'auth.status' ? Promise.reject(new Error('timed out')) : request(method, params),
+      )
+      render(<App />)
+      expect(await screen.findByText(/Could not confirm this account/)).toBeTruthy()
+
+      focusLater(30_000)
+
+      await waitFor(() => expect(calls('auth.status')).toBe(2))
+      expect(calls('providers.list')).toBe(1)
+    })
+
+    it('leaves providers alone on focus when everything is ready', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      render(<App />)
+      await waitFor(() => expect(calls('models.list')).toBe(1))
+
+      focusLater(60_000)
+
+      expect(calls('providers.list')).toBe(1)
+      expect(calls('auth.status')).toBe(1)
+    })
   })
 
   it('does not expose or initialize desktop dictation', async () => {
@@ -12429,18 +12543,24 @@ describe('connection recovery regressions', () => {
     render(<App />)
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: 'Send after reconnect' } })
-    await screen.findByText('Could not check this account. Connection lost')
-    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+    await screen.findByText(
+      'Could not confirm this account, but you can still send. Connection lost',
+    )
+    // An account that could not be confirmed does not lock the composer.
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
     online = true
     act(() => {
       setConnectionState('reconnecting')
       setConnectionState('open')
     })
     await waitFor(() =>
-      expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(
-        false,
-      ),
+      expect(
+        screen.queryByText(
+          'Could not confirm this account, but you can still send. Connection lost',
+        ),
+      ).toBeNull(),
     )
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: 'Send' }))
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith(
@@ -12448,6 +12568,74 @@ describe('connection recovery regressions', () => {
         expect.objectContaining({ text: 'Send after reconnect' }),
       ),
     )
+  })
+
+  it('asks again from the account notice without opening Settings or locking Send', async () => {
+    serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+    const request = transport.request.getMockImplementation()!
+    let reads = 0
+    let answerRetry!: (account: { signedIn: boolean }) => void
+    transport.request.mockImplementation((method, params) => {
+      if (method === 'auth.status') {
+        reads += 1
+        return reads === 1
+          ? Promise.reject(new Error('CLI did not respond within the time limit'))
+          : new Promise((resolve) => {
+              answerRetry = resolve
+            })
+      }
+      return request(method, params)
+    })
+    render(<App />)
+    fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+      target: { value: 'Send while unconfirmed' },
+    })
+    const notice =
+      'Could not confirm this account, but you can still send. CLI did not respond within the time limit'
+    await screen.findByText(notice)
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    await waitFor(() => expect(reads).toBe(2))
+    // The retry is still reading; Send stays available meanwhile.
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByRole('dialog', { name: /settings/i })).toBeNull()
+    await act(async () => answerRetry({ signedIn: true }))
+    await waitFor(() => expect(screen.queryByText(notice)).toBeNull())
+    expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('opens Send while a slow account check is still reading, and the answer still decides', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true })
+    try {
+      serverProviders = [{ ...serverProviders[0]!, auth: 'unknown' }]
+      const request = transport.request.getMockImplementation()!
+      let answer: ((account: { signedIn: boolean }) => void) | undefined
+      transport.request.mockImplementation((method, params) =>
+        method === 'auth.status'
+          ? new Promise((resolve) => {
+              answer = resolve
+            })
+          : request(method, params),
+      )
+      render(<App />)
+      fireEvent.change(screen.getByPlaceholderText('Do anything'), {
+        target: { value: 'Send while reading' },
+      })
+      const send = () => screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement
+      await waitFor(() => expect(answer).toBeTypeOf('function'))
+      expect(send().disabled).toBe(true)
+
+      await act(async () => {
+        vi.advanceTimersByTime(ACCOUNT_CHECK_SEND_GRACE_MS)
+      })
+      expect(send().disabled).toBe(false)
+      expect(screen.queryByText(/Could not confirm this account/)).toBeNull()
+
+      // A signed-out answer that arrives later still asks for setup.
+      await act(async () => answer!({ signedIn: false }))
+      await waitFor(() => expect(send().disabled).toBe(true))
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('ignores an old failed account reply after the reconnect check succeeds', async () => {

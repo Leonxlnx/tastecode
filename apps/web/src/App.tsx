@@ -166,6 +166,7 @@ import {
   subscribeInstalls,
   type ProviderLoginTerminalTarget,
 } from './provider-install.js'
+import { providerScanChanged, useRecheckOnFocus } from './provider-recheck.js'
 import {
   pinnedModelChoice,
   readProviderDefaults,
@@ -361,7 +362,17 @@ type AccountCheck = {
   state: CatalogAvailability
   account?: Account
   error?: ComposerError
+  /** Set on a read that is still running after ACCOUNT_CHECK_SEND_GRACE_MS. */
+  slow?: true
 }
+
+/**
+ * How long a running account read keeps Send waiting. Some CLIs need far
+ * longer to answer on a busy machine (cursor-agent `status` took up to 13 s),
+ * and their reads may now run that long; past this point the composer treats
+ * the read like one that could not answer and lets the user send.
+ */
+export const ACCOUNT_CHECK_SEND_GRACE_MS = 5_000
 
 /** The counter makes a repeated request for the open section navigate again. */
 type SettingsSectionRequest = { section: SettingsSection; request: number }
@@ -455,10 +466,12 @@ export function resolveSendAvailability(input: {
   }
   if (status.auth === 'unauthenticated') return 'setup-required'
   if (status.auth === 'authenticated') return 'ready'
-  if (input.accountCheck.provider !== provider || input.accountCheck.state === 'loading') {
-    return 'loading'
-  }
-  if (input.accountCheck.state === 'failed') return 'unavailable'
+  if (input.accountCheck.provider !== provider) return 'loading'
+  // A check that could not answer in time, or still has not after the grace
+  // period, confirms nothing either way. Send stays available: a CLI that
+  // really is signed out says so in the turn.
+  if (input.accountCheck.state === 'loading') return input.accountCheck.slow ? 'ready' : 'loading'
+  if (input.accountCheck.state === 'failed') return 'ready'
   return input.accountCheck.account?.signedIn ? 'ready' : 'setup-required'
 }
 
@@ -2534,7 +2547,21 @@ export function App() {
         cancelled = true
       }
     }
-    setAccountCheck({ provider, state: 'loading' })
+    // Retrying a check that could not answer keeps Send available until the
+    // new answer arrives; it would otherwise lock the composer for the read.
+    setAccountCheck((current) =>
+      current.provider === provider && current.state === 'failed'
+        ? current
+        : { provider, state: 'loading' },
+    )
+    const grace = setTimeout(() => {
+      if (cancelled || revision !== accountRequestRevision.current) return
+      setAccountCheck((current) =>
+        current.provider === provider && current.state === 'loading'
+          ? { ...current, slow: true }
+          : current,
+      )
+    }, ACCOUNT_CHECK_SEND_GRACE_MS)
     void transport
       .request('auth.status', {
         provider,
@@ -2542,6 +2569,7 @@ export function App() {
           ? { agent: selectedModelChoice?.agent?.id ?? sourceAgent }
           : {}),
       })
+      .finally(() => clearTimeout(grace))
       .then((nextAccount) => {
         if (cancelled || revision !== accountRequestRevision.current) return
         setAccount(nextAccount)
@@ -2553,14 +2581,17 @@ export function App() {
         setAccountCheck({
           provider,
           state: 'failed',
+          // Send stays available, so this informs rather than interrupts.
           error: {
             id: `account:${provider}:${revision}`,
-            message: `Could not check this account. ${cause instanceof Error ? cause.message : String(cause)}`,
+            role: 'status',
+            message: `Could not confirm this account, but you can still send. ${cause instanceof Error ? cause.message : String(cause)}`,
           },
         })
       })
     return () => {
       cancelled = true
+      clearTimeout(grace)
     }
   }, [
     transport,
@@ -5015,6 +5046,27 @@ export function App() {
     refreshCatalog()
     openSettings('providers')
   }, [refreshCatalog, openSettings])
+  // Settings would run the same read that just failed; asking again is the fix.
+  const retryAccountCheck = useCallback(() => setAuthStatusRequest((current) => current + 1), [])
+  // A CLI installed or signed in outside the app shows up when the window gets
+  // focus back. A scan that finds nothing new leaves the model catalog alone.
+  const accountUnconfirmed = accountCheck.provider === provider && accountCheck.state === 'failed'
+  const providerMissing = providerStatuses.some((status) => !status.installed)
+  useRecheckOnFocus(
+    catalogAvailability === 'failed' || providerMissing || accountUnconfirmed,
+    () => {
+      if (accountUnconfirmed) retryAccountCheck()
+      if (catalogAvailability === 'failed') refreshCatalog()
+      if (catalogAvailability !== 'ready' || !providerMissing) return
+      const known = providerStatuses
+      void transport.request('providers.list', {}).then(
+        ({ providers }) => {
+          if (providerScanChanged(known, providers)) refreshCatalog()
+        },
+        () => undefined,
+      )
+    },
+  )
   const closeSettings = useCallback(() => setSettingsOpen(false), [])
   const resetSettings = useCallback(() => {
     cancelWorkspacePanelWidthPersistence()
@@ -5613,7 +5665,7 @@ export function App() {
   const composerProviderError = catalogError
     ? { ...catalogError, action: { label: 'Retry', run: refreshCatalog } }
     : accountCheck.provider === provider && accountCheck.error
-      ? { ...accountCheck.error, action: { label: 'Check setup', run: openProviderSetup } }
+      ? { ...accountCheck.error, action: { label: 'Retry', run: retryAccountCheck } }
       : providerSignInState?.phase === 'failed'
         ? {
             id: `sign-in:${providerSignInState.terminalId}`,

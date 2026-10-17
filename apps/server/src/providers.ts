@@ -1,5 +1,5 @@
-import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
-import { CURSOR_CAPABILITIES, CURSOR_SUPPORTED_VERSION } from '@harness/adapter-cursor'
+import { ANTIGRAVITY_CAPABILITIES, antigravityInstallCommand } from '@harness/adapter-antigravity'
+import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
 import { codexLoginStatus } from '@harness/adapter-codex/auth'
@@ -7,8 +7,8 @@ import { CLAUDE_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
-import { CLAUDE_UPDATES } from '@harness/adapter-claude-code/updates'
-import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import { CLAUDE_UPDATES, claudeInstallCommand } from '@harness/adapter-claude-code/updates'
+import { GROK_UPDATES, grokInstallCommand } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderSourceShape, ProviderStatus } from '@harness/contracts'
 import { refreshWindowsPath } from '@harness/proc/desktop-path'
@@ -20,8 +20,8 @@ import { cliProbe } from './cli-probe.js'
  * Detection is by looking for the binary and asking it its version. We never
  * inspect a credential file to decide whether someone is signed in — that is
  * the line in rules/security.md, and it is why `auth` is mostly `unknown` here.
- * The one provider that can tell us is Codex, which answers over its own
- * protocol, and that answer is fetched on demand rather than on every listing.
+ * A probe may declare a short sign-in check that reads its CLI's public output
+ * (Codex does); every other provider is answered later by its account read.
  *
  * A provider we have not built stays in the list with a `problem` explaining
  * why. Silently omitting it would leave the user unable to tell "not supported"
@@ -35,9 +35,19 @@ type Probe = {
   capabilities?: ProviderStatus['capabilities']
   setup: ProviderSetup
   updater?: CliUpdateSource
-  supportedVersion?: string
   /** Interactive sign-in command, for providers whose login lives in their own CLI. */
   loginCommand?: string
+  /**
+   * A short sign-in check the scan runs for an installed CLI, from that CLI's
+   * public output. Without one the scan reports `unknown` and the account read
+   * decides later.
+   */
+  auth?: () => Promise<ProviderStatus['auth']>
+  /**
+   * False when the scan must never start the CLI to ask its version: finding
+   * the binary is enough to call it installed, and the version stays unknown.
+   */
+  readsVersion?: false
   /** Set when the adapter does not exist yet, in words we can show the user. */
   unbuilt?: string
   /** What its chat sources must name. Absent means `DIRECT_SOURCE`. */
@@ -64,7 +74,7 @@ const PROBES: Probe[] = [
     capabilities: CLAUDE_CAPABILITIES,
     setup: {
       installUrl: 'https://code.claude.com/docs/en/getting-started',
-      installCommand: 'npm install -g @anthropic-ai/claude-code',
+      installCommand: claudeInstallCommand(),
       login: 'provider',
       loginOpensBrowser: true,
     },
@@ -83,6 +93,7 @@ const PROBES: Probe[] = [
       loginOpensBrowser: true,
     },
     loginCommand: 'codex login',
+    auth: () => codexLoginStatus(),
   },
   {
     id: 'grok',
@@ -92,6 +103,7 @@ const PROBES: Probe[] = [
     capabilities: GROK_CAPABILITIES,
     setup: {
       installUrl: 'https://x.ai/cli',
+      installCommand: grokInstallCommand(),
       login: 'provider',
       loginOpensBrowser: false,
     },
@@ -103,9 +115,12 @@ const PROBES: Probe[] = [
     displayName: 'Cursor',
     command: 'cursor-agent',
     capabilities: CURSOR_CAPABILITIES,
-    supportedVersion: CURSOR_SUPPORTED_VERSION,
+    // No version gate: cursor-agent updates itself to a new date-stamped build
+    // every month, and a gate blocked each working one. A changed wire still
+    // fails the turn, through the stream's ProtocolFrameError.
     setup: {
-      installUrl: 'https://docs.cursor.com/en/cli/installation',
+      installUrl: 'https://cursor.com/docs/cli/installation',
+      installCommand: cursorInstallCommand(),
       login: 'app',
     },
   },
@@ -128,11 +143,18 @@ const PROBES: Probe[] = [
     capabilities: ANTIGRAVITY_CAPABILITIES,
     setup: {
       installUrl: 'https://antigravity.google/docs/cli',
+      installCommand: antigravityInstallCommand(),
       login: 'provider',
     },
-    // First interactive run signs in with the user's Google account; there is
-    // no separate login subcommand as of agy 1.1.10.
+    // The installer does not sign in. agy's first interactive run asks for
+    // the Google account; there is no login subcommand as of agy 1.4.0.
     loginCommand: 'agy',
+    // Every agy start launches its language server and may launch its
+    // self-updater, which replaces agy.exe in place. A scan that started it
+    // for `--version` (12.8 s cold, minutes right after an update) and killed
+    // it at the time limit could stop that updater mid-swap and leave no
+    // binary behind. Finding agy is all the scan needs.
+    readsVersion: false,
   },
   {
     id: 'pi',
@@ -177,8 +199,12 @@ const REAL_SYSTEM: SystemProbe = {
   version: (command) => cliProbe.version(command, { waitMs: LISTING_VERSION_WAIT_MS }),
   acpAgents: async () => (await import('@harness/adapter-acp/agents')).detectAgents(),
   refreshPath: () => refreshWindowsPath(),
-  auth: (provider) =>
-    provider === 'codex' ? codexLoginStatus() : Promise.resolve<ProviderStatus['auth']>('unknown'),
+  auth: (provider) => installTimeAuth(provider),
+}
+
+/** The sign-in check a provider's probe declares, or `unknown` when it has none. */
+export function installTimeAuth(provider: ProviderStatus['id']): Promise<ProviderStatus['auth']> {
+  return PROBES.find((entry) => entry.id === provider)?.auth?.() ?? Promise.resolve('unknown')
 }
 
 export function providerUpdateSources() {
@@ -308,8 +334,10 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     }
   }
 
-  const [version, auth] = await Promise.all([system.version(entry.command), system.auth(entry.id)])
-  const unsupported = version && entry.supportedVersion && !version.includes(entry.supportedVersion)
+  const [version, auth] = await Promise.all([
+    entry.readsVersion === false ? undefined : system.version(entry.command),
+    system.auth(entry.id),
+  ])
   return {
     id: entry.id,
     displayName: entry.displayName,
@@ -319,11 +347,6 @@ async function probe(entry: Probe, system: SystemProbe): Promise<ProviderStatus>
     source,
     ...(version ? { version } : {}),
     ...(entry.capabilities ? { capabilities: entry.capabilities } : {}),
-    ...(unsupported
-      ? {
-          problem: `Adapter supports ${entry.supportedVersion}.x; installed version is ${version}`,
-        }
-      : {}),
   }
 }
 

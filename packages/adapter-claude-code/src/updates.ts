@@ -5,8 +5,21 @@ import {
   cliPath,
   latestBrewVersion,
   latestNpmVersion,
+  vendorInstallCommand,
   type CliUpdateSource,
 } from '@harness/proc/updates'
+
+/**
+ * Anthropic's native installer, as https://code.claude.com/docs/en/setup runs
+ * it. It needs no Node or npm, and it puts `claude` in ~/.local/bin, which the
+ * desktop PATH already searches. `claude update` then updates that install.
+ */
+export function claudeInstallCommand(platform: NodeJS.Platform = process.platform): string {
+  return vendorInstallCommand(
+    { windows: 'https://claude.ai/install.ps1', posix: 'https://claude.ai/install.sh' },
+    platform,
+  )
+}
 
 async function releaseChannel(): Promise<'stable' | 'latest'> {
   try {
