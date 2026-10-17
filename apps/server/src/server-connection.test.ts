@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -170,7 +171,9 @@ afterEach(async () => {
   state.historyRefresh = Promise.resolve()
   state.historyChanged.clear()
   vi.unstubAllEnvs()
-  await Promise.all(temporary.splice(0).map((directory) => rm(directory, { recursive: true })))
+  await Promise.all(
+    temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
+  )
 })
 
 async function listen(accessToken?: string) {
@@ -463,6 +466,62 @@ describe('methods without a route', () => {
     })
   })
 })
+
+describe('the pull request for a chat checkout', () => {
+  function git(cwd: string, ...args: string[]): void {
+    execFileSync('git', args, { cwd, windowsHide: true, stdio: 'ignore' })
+  }
+
+  async function forCheckout(port: number, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'pr', method: 'pullRequests.forCheckout', params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('reads the chat worktree, not the project folder, without asking GitHub', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'harness-checkout-pr-rpc-'))
+    temporary.push(root)
+    // Never discover a repository above the temporary folder.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', root)
+    const projectPath = path.join(root, 'project')
+    const worktreePath = path.join(root, 'isolated')
+    await mkdir(projectPath)
+    await mkdir(worktreePath)
+    git(worktreePath, 'init', '-q', '-b', 'chat/one')
+    git(
+      worktreePath,
+      '-c',
+      'user.email=test@example.com',
+      '-c',
+      'user.name=Test',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'first',
+    )
+    state.projects.push({ path: projectPath })
+    state.threads.set('isolated-thread', { projectPath, worktreePath })
+    const { port } = await listen()
+
+    expect(await forCheckout(port, { projectPath })).toMatchObject({
+      result: { available: false, reason: 'not_git' },
+    })
+    expect(
+      await forCheckout(port, { projectPath, threadId: 'isolated-thread', refresh: true }),
+    ).toMatchObject({
+      result: { available: false, reason: 'no_remote', branch: 'chat/one' },
+    })
+  })
+  // Every step spawns git, which takes a while on a busy Windows machine.
+}, 30_000)
 
 describe('server shutdown', () => {
   it('starts closing terminals before it waits on provider history', async () => {

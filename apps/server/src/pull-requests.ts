@@ -519,6 +519,11 @@ export class PullRequestService {
     return pending
   }
 
+  /** The signed-in GitHub account, from the same short cache the list uses. */
+  account(refresh = false): Promise<PullRequestAccount> {
+    return this.#account(refresh)
+  }
+
   async metadataOptions(repository: string, refresh = false): Promise<PullRequestMetadataOptions> {
     const key = repository.toLowerCase()
     const cached = refresh ? undefined : readCache(this.#metadataOptionsCache, key, this.#now())
