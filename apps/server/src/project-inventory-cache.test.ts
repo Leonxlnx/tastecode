@@ -244,6 +244,34 @@ describe('project inventory cache', () => {
     expect(probes).toHaveLength(2)
   })
 
+  it('keeps an expired answer through a failed refresh and waits before the next', async () => {
+    const { cache, probes, errors } = setup()
+    await cache.listCommands('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    probes[0]!.resolve(full)
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    await cache.listCommands('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    probes[1]!.reject(new Error('Claude Code did not start in time'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(errors).toHaveLength(1)
+
+    // Readers keep the last answer, and do not start a probe on every read.
+    for (let read = 0; read < 3; read += 1) {
+      await expect(cache.listCommands('/repo')).resolves.toEqual({
+        commands: full.commands,
+        loading: false,
+      })
+      await vi.advanceTimersByTimeAsync(1_000)
+    }
+    expect(probes).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(27_000)
+    await cache.listMcpServers('/repo')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probes).toHaveLength(3)
+  })
+
   it('stops a probe that runs past its time limit', async () => {
     const { cache, probes, changes } = setup()
     await cache.listCommands('/repo')
