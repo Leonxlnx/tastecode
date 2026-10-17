@@ -114,6 +114,39 @@ describe('account limits', () => {
     expect(release).toHaveBeenCalledOnce()
   })
 
+  it('keeps a source that was not read yet in view, as checking while it loads', () => {
+    const onRetry = vi.fn()
+    const notRead: AccountLimitsState = {
+      status: 'ready',
+      provider: 'claude-code',
+      summary: {
+        ...summary(),
+        limitSource: {
+          provider: 'claude-code',
+          status: 'unavailable',
+          reason: 'failed',
+          error: 'Plan limits are read when you open them.',
+        },
+      },
+    }
+    const view = render(
+      <AccountLimits states={[{ ...notRead, status: 'loading' }]} onRetry={onRetry} />,
+    )
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(statusOf(claude)?.textContent).toBe('Checking…')
+    expect(within(claude).queryByRole('button', { name: 'Retry' })).toBeNull()
+
+    // An answer that still has no values says why and can be asked again.
+    view.rerender(<AccountLimits states={[notRead]} onRetry={onRetry} />)
+    const status = statusOf(screen.getByRole('region', { name: 'Claude Code' }))!
+    expect(status.firstChild?.textContent).toBe('Unavailable')
+    expect(status.title).toBe(
+      'Plan limits couldn’t be loaded. Plan limits are read when you open them.',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledWith('claude-code')
+  })
+
   it('keeps ordered provider states and hides sources without limits', () => {
     render(
       <AccountLimits
