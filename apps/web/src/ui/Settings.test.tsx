@@ -645,18 +645,35 @@ describe('settings loading values', () => {
     expect(screen.getByRole('status', { name: 'Ready · Up to date' })).toBeTruthy()
   })
 
-  it('passes the account loading state to the profile plan slot', () => {
+  it("passes the provider in use and its account to Profile's accounts", () => {
     const { rerenderSettings } = renderSettings({
-      overrides: { initialSection: 'profile', accountLoading: true },
+      overrides: {
+        initialSection: 'profile',
+        accountLoading: true,
+        providerStatuses: [
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://developers.openai.com/codex/cli', login: 'provider' },
+          },
+        ],
+      },
     })
-    expect(screen.getByText('Loading account plan…').closest('.profile__plan')).toBeTruthy()
+    expect(screen.getByText('Checking Codex…')).toBeTruthy()
     rerenderSettings({
       initialSection: 'profile',
       accountLoading: false,
       account: { signedIn: true, plan: 'Pro' },
     })
-    expect(screen.queryByText('Loading account plan…')).toBeNull()
-    expect(screen.getByText('Pro plan')).toBeTruthy()
+    expect(screen.queryByText('Checking Codex…')).toBeNull()
+    expect(screen.getByText('Pro')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }))
+    expect(screen.getByRole('button', { name: 'Providers' }).getAttribute('aria-current')).toBe(
+      'page',
+    )
   })
 
   it.each([true, false])(

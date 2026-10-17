@@ -479,11 +479,14 @@ function SettingsComponent(props: {
           {section === 'profile' ? (
             <ProfileSettings
               transport={props.transport}
+              provider={props.provider}
               account={props.account}
               accountLoading={props.accountLoading}
               providerName={props.providerName}
+              providers={props.providersLoading ? undefined : props.providerStatuses}
               identity={props.profileIdentity}
               onIdentityChange={props.onProfileIdentityChange}
+              onManageAccounts={() => setSection('providers')}
               onOpenUsage={() => setSection('usage')}
             />
           ) : null}

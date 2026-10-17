@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import type { ComponentProps } from 'react'
-import type { ResultOf, UsageHistoryTotals } from '@harness/contracts'
+import type { ProviderId, ProviderStatus, ResultOf, UsageHistoryTotals } from '@harness/contracts'
 import type { Transport } from '../transport.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CELL, generatedAvatar } from '../generated-avatar.js'
@@ -72,6 +72,27 @@ function fileInput(): HTMLInputElement {
   return document.querySelector<HTMLInputElement>('input[type="file"]')!
 }
 
+function provider(id: ProviderId, displayName: string): ProviderStatus {
+  return {
+    id,
+    displayName,
+    installed: true,
+    auth: 'unknown',
+    setup: { installUrl: 'https://example.com/install', login: 'provider' },
+  }
+}
+
+const PROVIDERS: ProviderStatus[] = [
+  provider('claude-code', 'Claude Code'),
+  provider('codex', 'Codex'),
+  { ...provider('grok', 'Grok'), installed: false },
+  { id: 'acp', displayName: 'ACP agents', installed: true, auth: 'unknown' },
+]
+
+function rowNames(section: HTMLElement): Array<string | null> {
+  return Array.from(section.querySelectorAll('.set-row__name'), (name) => name.textContent)
+}
+
 function coin(): HTMLElement {
   return document.querySelector<HTMLElement>('.profile-coin')!
 }
@@ -126,7 +147,6 @@ describe('profile settings', () => {
     await minted()
     expect(renderedFace()).toEqual(expectedFace('Local profile'))
     expect(screen.queryByText('@blue.emi')).toBeNull()
-    expect(screen.getByText('Pro plan')).toBeTruthy()
     expect(
       await screen.findByRole('img', { name: '4 active days in the last 12 months' }),
     ).toBeTruthy()
@@ -222,8 +242,10 @@ describe('profile settings', () => {
 
   it('holds the heatmap place while the first answer loads, without a usage link to nowhere', () => {
     renderProfile()
-    const loading = screen.getByRole('status', { name: '' })
-    expect(loading.textContent).toBe('Reading the local activity index…')
+    const loading = screen
+      .getByText('Reading the local activity index…')
+      .closest<HTMLElement>('[role="status"]')!
+    expect(loading.getAttribute('aria-busy')).toBe('true')
     expect(loading.querySelector('.profile-activity__skeleton-grid')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Open Usage' })).toBeNull()
     expect(
@@ -272,38 +294,106 @@ describe('profile settings', () => {
     expect(screen.queryByText(/Indexing local activity/)).toBeNull()
   })
 
-  it('reserves the plan in the facts while the account loads and fills the same slot', () => {
-    const view = renderProfile({ accountLoading: true })
-    const loading = screen.getByText('Loading account plan…').closest('[role="status"]')!
-    expect(loading.getAttribute('aria-busy')).toBe('true')
-    expect(loading.classList.contains('profile__plan')).toBe(true)
-    expect(screen.getByText('Loading account plan…').className).toBe('visually-hidden')
-    expect(loading.querySelector('.skeleton')?.getAttribute('style')).toContain('height: 9px')
-    const editor = screen.getByRole('textbox', { name: 'Display name' })
+  it('lists each installed provider that signs in with its plan, asking each one once', async () => {
+    const request = vi.fn((method: string, params: { provider?: string }) =>
+      method === 'auth.status' && params.provider === 'claude-code'
+        ? Promise.resolve({ signedIn: true, email: 'blue.emi@example.com', plan: 'Max' })
+        : new Promise(() => {}),
+    )
+    const transport = { request } as unknown as Transport
+    const view = renderProfile({
+      transport,
+      provider: 'codex',
+      account: { signedIn: true, email: 'blue.emi@example.com', plan: 'Pro' },
+      providers: PROVIDERS,
+    })
 
-    view.rerenderProfile({ accountLoading: false, account: { signedIn: true, plan: 'Pro' } })
-    expect(screen.queryByText('Loading account plan…')).toBeNull()
-    expect(screen.getByText('Pro plan').classList.contains('profile__plan')).toBe(true)
-    expect(screen.getByRole('textbox', { name: 'Display name' })).toBe(editor)
+    const accounts = screen.getByRole('region', { name: 'Accounts' })
+    await waitFor(() => expect(within(accounts).getByText('Max')).toBeTruthy())
+    expect(rowNames(accounts)).toEqual(['Claude Code', 'Codex'])
+    expect(within(accounts).getByText('Pro')).toBeTruthy()
+    expect(screen.queryByText(/blue\.emi/u)).toBeNull()
+    // The provider in use comes from the app's own read; Grok is not installed
+    // and ACP agents have no account of their own.
+    const reads = () => request.mock.calls.filter(([method]) => method === 'auth.status')
+    expect(reads()).toEqual([['auth.status', { provider: 'claude-code' }]])
+
+    view.rerenderProfile({ transport, providers: [...PROVIDERS] })
+    expect(reads()).toHaveLength(1)
   })
 
-  it('leaves the plan out without an account or a request for one', () => {
-    const view = renderProfile()
-    expect(view.container.querySelector('.profile__plan')).toBeNull()
-    view.rerenderProfile({ account: { signedIn: false } })
-    expect(view.container.querySelector('.profile__plan')).toBeNull()
+  it('shows a provider being checked, signed out or unreadable without guessing', async () => {
+    // Claude Code never answers, Codex is signed out, Cursor's check fails.
+    const answer = (provider: string): Promise<unknown> =>
+      provider === 'codex'
+        ? Promise.resolve({ signedIn: false })
+        : provider === 'cursor'
+          ? Promise.reject(new Error('cursor-agent status timed out'))
+          : new Promise(() => {})
+    const request = vi.fn((method: string, params: { provider: string }) =>
+      method === 'auth.status' ? answer(params.provider) : new Promise(() => {}),
+    )
+    renderProfile({
+      transport: { request } as unknown as Transport,
+      providers: [...PROVIDERS, provider('cursor', 'Cursor')],
+    })
+
+    const accounts = screen.getByRole('region', { name: 'Accounts' })
+    expect(await within(accounts).findByText('Signed out')).toBeTruthy()
+    expect(within(accounts).getByText('Checking Claude Code…').className).toBe('visually-hidden')
+    const unavailable = await within(accounts).findByText('Unavailable')
+    expect(unavailable.getAttribute('title')).toBe('cursor-agent status timed out')
+    expect(unavailable.closest('.set-row')?.getAttribute('data-tone')).toBe('muted')
   })
 
-  it('keeps an already known plan visible during account refresh', () => {
-    renderProfile({ account: { signedIn: true, plan: 'Pro' }, accountLoading: true })
-    expect(screen.getByText('Pro plan')).toBeTruthy()
-    expect(screen.queryByText('Loading account plan…')).toBeNull()
+  it('waits for the app to read the provider in use and asks only if the app has nothing', async () => {
+    const request = vi.fn((method: string) =>
+      method === 'auth.status'
+        ? Promise.resolve({ signedIn: true, plan: 'Plus' })
+        : new Promise(() => {}),
+    )
+    const transport = { request } as unknown as Transport
+    const view = renderProfile({
+      transport,
+      provider: 'codex',
+      accountLoading: true,
+      providers: [provider('codex', 'Codex')],
+    })
+    expect(screen.getByText('Checking Codex…')).toBeTruthy()
+    expect(request).not.toHaveBeenCalledWith('auth.status', expect.anything())
+
+    view.rerenderProfile({
+      transport,
+      accountLoading: false,
+      account: { signedIn: true, plan: 'Pro' },
+    })
+    expect(screen.getByText('Pro')).toBeTruthy()
+
+    view.rerenderProfile({ transport, accountLoading: false, account: undefined })
+    expect(await screen.findByText('Plus')).toBeTruthy()
+    expect(request).toHaveBeenCalledWith('auth.status', { provider: 'codex' })
+  })
+
+  it('holds the accounts place until providers arrive and opens Providers to manage them', () => {
+    const onManageAccounts = vi.fn()
+    const view = renderProfile({ onManageAccounts })
+    const accounts = screen.getByRole('region', { name: 'Accounts' })
+    expect(within(accounts).getByText('Loading accounts…')).toBeTruthy()
+    fireEvent.click(within(accounts).getByRole('button', { name: 'Manage' }))
+    expect(onManageAccounts).toHaveBeenCalledOnce()
+
+    view.rerenderProfile({
+      providers: [{ id: 'acp', displayName: 'ACP agents', installed: true, auth: 'unknown' }],
+    })
+    expect(within(accounts).getByText('No provider is set up yet')).toBeTruthy()
   })
 
   it('shows the local identity without the account email or provider', async () => {
     renderProfile({
+      provider: 'grok',
       account: { signedIn: true, email: 'blue.emi@example.com', plan: 'Pro' },
       providerName: 'Grok',
+      providers: [provider('grok', 'Grok')],
     })
     expect(screen.getByRole('heading', { name: 'Profile' })).toBeTruthy()
     const name = screen.getByRole('textbox', { name: 'Display name' })
@@ -312,7 +402,9 @@ describe('profile settings', () => {
     await minted()
     expect(renderedFace()).toEqual(expectedFace('Local profile'))
     expect(screen.queryByText(/blue\.emi/u)).toBeNull()
-    expect(screen.queryByText('Grok')).toBeNull()
+    const identity = document.querySelector('.profile__identity')!
+    expect(identity.textContent).not.toContain('Grok')
+    expect(identity.textContent).not.toContain('Pro')
   })
 
   it('sets the name beside the coin, with quiet actions and the guide in the page corner', () => {

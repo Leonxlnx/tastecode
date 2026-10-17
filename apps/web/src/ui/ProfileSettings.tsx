@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { Account, UsageHistoryDay } from '@harness/contracts'
+import type { Account, ProviderId, ProviderStatus, UsageHistoryDay } from '@harness/contracts'
 import { IconDice5 as Dice, IconRefresh as RefreshCw } from '@tabler/icons-react'
 import type { Transport } from '../transport.js'
 import { useUsageHistory } from '../usage-history-state.js'
@@ -21,6 +21,7 @@ import {
   readProfileImage,
   type ProfileIdentityPreferences,
 } from '../profile-preferences.js'
+import { ProfileAccounts } from './ProfileAccounts.js'
 import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
@@ -118,9 +119,15 @@ function hasFiles(event: DragEvent): boolean {
  */
 export function ProfileSettings(props: {
   transport: Transport
+  /** The provider in use, whose account the app already reads. */
+  provider?: ProviderId | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
   providerName: string
+  /** Every provider the server reported; undefined until the list arrives. */
+  providers?: ProviderStatus[] | undefined
+  /** Shows the Providers tab, where sign-ins are managed. */
+  onManageAccounts?: (() => void) | undefined
   identity?: ProfileIdentityPreferences | undefined
   onIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   /** Shows the Usage tab, where the numbers behind the activity heatmap live. */
@@ -219,13 +226,6 @@ export function ProfileSettings(props: {
       : photo
         ? `Your photo · ${photoFacts(photo)}`
         : 'PNG, JPEG or WebP up to 1 MB'
-  const plan = props.account?.plan ? (
-    <span className="profile__plan">{props.account.plan} plan</span>
-  ) : props.accountLoading && !props.account ? (
-    <SkeletonStatus label="Loading account plan…" className="profile__plan">
-      <Skeleton width={52} height={9} />
-    </SkeletonStatus>
-  ) : null
 
   return (
     <div
@@ -340,8 +340,6 @@ export function ProfileSettings(props: {
                 ) : (
                   <span>{dropping ? 'Drop to use this photo' : facts}</span>
                 )}
-                {plan ? <span aria-hidden>·</span> : null}
-                {plan}
               </p>
             )}
             <p className="profile__actions">
@@ -389,6 +387,20 @@ export function ProfileSettings(props: {
             void chooseImage(event.target.files?.[0])
             event.target.value = ''
           }}
+        />
+        <ProfileAccounts
+          transport={props.transport}
+          providers={props.providers}
+          current={
+            props.provider
+              ? {
+                  provider: props.provider,
+                  account: props.account,
+                  loading: props.accountLoading ?? false,
+                }
+              : undefined
+          }
+          onManage={props.onManageAccounts}
         />
         <ProfileActivity transport={props.transport} onOpenUsage={props.onOpenUsage} />
       </SettingsPage>

@@ -635,6 +635,35 @@ p.seal-note {
   animation: spin 0.9s linear infinite;
 }
 
+/* Accounts: leader rows, the provider's mark beside its name and the plan at
+   the far edge, as the Usage page lists providers. */
+.profile-accounts__provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-accounts__provider svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.profile-accounts__state {
+  color: var(--text-3);
+}
+
+/* A check in flight keeps the row's height; the bar sits where the plan will. */
+.profile-accounts__checking {
+  display: flex;
+  align-items: center;
+  min-height: 18px;
+}
+
+.profile-accounts__loading .skeleton-row {
+  min-height: 40px;
+  padding: 0;
+}
+
 /* While the first answer loads: the heatmap's footprint, month row included. */
 .profile-activity__skeleton {
   display: block;
