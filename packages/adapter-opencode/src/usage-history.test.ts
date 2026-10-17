@@ -1,9 +1,59 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { describe, expect, it } from 'vitest'
-import { readOpenCodeUsageHistory } from './usage-history.js'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { OPENCODE_USAGE_HISTORY, readOpenCodeUsageHistory } from './usage-history.js'
+
+describe('OpenCode usage history source', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('uses the given data directory, then OPENCODE_DATA_DIR, then the XDG data home', () => {
+    const account = path.join(os.tmpdir(), 'opencode-account')
+    vi.stubEnv('OPENCODE_DATA_DIR', path.join(os.tmpdir(), 'opencode-data'))
+    vi.stubEnv('XDG_DATA_HOME', path.join(os.tmpdir(), 'xdg'))
+    expect(OPENCODE_USAGE_HISTORY.root(account)).toBe(account)
+    expect(OPENCODE_USAGE_HISTORY.root()).toBe(path.join(os.tmpdir(), 'opencode-data'))
+
+    vi.stubEnv('OPENCODE_DATA_DIR', undefined)
+    expect(OPENCODE_USAGE_HISTORY.root()).toBe(path.join(os.tmpdir(), 'xdg', 'opencode'))
+
+    vi.stubEnv('XDG_DATA_HOME', undefined)
+    expect(OPENCODE_USAGE_HISTORY.root()).toBe(
+      path.join(os.homedir(), '.local', 'share', 'opencode'),
+    )
+  })
+
+  it('lists only OpenCode databases and folds the WAL into their fingerprint', async () => {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'harness-opencode-data-'))
+    try {
+      writeFileSync(path.join(directory, 'opencode.db'), '')
+      writeFileSync(path.join(directory, 'opencode.db-wal'), 'appended')
+      writeFileSync(path.join(directory, 'opencode-dev.db'), 'db')
+      writeFileSync(path.join(directory, 'other.db'), 'db')
+      writeFileSync(path.join(directory, 'opencode.txt'), 'text')
+      mkdirSync(path.join(directory, 'opencode-folder.db'))
+
+      const archive = await OPENCODE_USAGE_HISTORY.discover(directory)
+      expect(archive.available).toBe(true)
+      expect(
+        archive.files
+          .map((file) => [path.basename(file.path), file.size, file.read])
+          .sort(([left], [right]) => String(left).localeCompare(String(right))),
+      ).toEqual([
+        ['opencode-dev.db', 2, readOpenCodeUsageHistory],
+        ['opencode.db', 8, readOpenCodeUsageHistory],
+      ])
+      await expect(
+        OPENCODE_USAGE_HISTORY.discover(path.join(directory, 'missing')),
+      ).rejects.toThrow()
+    } finally {
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+})
 
 describe('OpenCode local usage history', () => {
   it('reads only assistant accounting fields and groups messages by session and model', async () => {
