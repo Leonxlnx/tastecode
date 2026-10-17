@@ -188,6 +188,8 @@ const ThreadIdentitySchema = z.object({
   id: z.string(),
   createdAt: z.number().optional(),
   cwd: z.string().nullish(),
+  /** Set only on a thread a subagent runs in (generated/v2/Thread.ts). */
+  parentThreadId: z.string().nullish(),
 })
 
 export const ThreadStartResponseSchema = z.object({

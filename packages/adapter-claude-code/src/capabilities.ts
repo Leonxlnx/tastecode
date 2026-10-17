@@ -30,6 +30,8 @@ export const CLAUDE_CAPABILITIES: Capabilities = {
   userInput: true,
   autoReview: true,
   images: true,
+  // task_progress messages count each agent's tool calls and tokens while it runs.
+  subagents: 'progress',
   // Claude Code compacts about 13K tokens short of a 200K window by default,
   // and ignores an override later than that. 1M applies only where the model
   // offers it.
