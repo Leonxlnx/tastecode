@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
+import type { CheckoutPullRequest, PullRequestTarget } from '@harness/contracts'
 import {
   IconTrash as Trash,
   IconCommand as Command,
@@ -31,6 +32,7 @@ import {
 } from '../shortcuts.js'
 import { IconMorph } from './IconMorph.js'
 import { Menu, MenuItem } from './Menu.js'
+import { StagePullRequestChip } from './StagePullRequestChip.js'
 
 type StageHeaderMenuActions = Pick<
   Record<KeybindingId, () => void>,
@@ -130,6 +132,9 @@ function StageHeaderComponent(props: {
   projectPath: string | undefined
   checkpointCount: number
   worktreeBranch: string | undefined
+  /** The pull request whose head is this chat's checkout branch. */
+  pullRequest?: CheckoutPullRequest | undefined
+  onOpenPullRequest?: ((target: PullRequestTarget) => void) | undefined
   keybindings?: Keybindings | undefined
   menuActions: StageHeaderMenuActions
   onOpenRollback: () => void
@@ -361,6 +366,9 @@ function StageHeaderComponent(props: {
           )}
         </Menu>
       </div>
+      {props.pullRequest && props.onOpenPullRequest ? (
+        <StagePullRequestChip pullRequest={props.pullRequest} onOpen={props.onOpenPullRequest} />
+      ) : null}
     </header>
   )
 }
