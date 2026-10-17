@@ -164,6 +164,19 @@
   box-shadow: none;
 }
 
+/* xterm fits its rows to the frame and subtracts only its own padding. */
+.workspace-provider-login > .install-terminal:has(> .xterm) {
+  padding: 0;
+}
+
+.workspace-provider-login > .install-terminal > .xterm {
+  padding: 12px;
+}
+
+.workspace-provider-login > .install-terminal > .xterm > .xterm-viewport {
+  background-color: transparent;
+}
+
 .workspace-provider-login__actions {
   display: flex;
   align-items: center;

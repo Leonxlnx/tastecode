@@ -247,6 +247,19 @@
   border-radius: 0;
 }
 
+/* xterm fits its rows to the frame and subtracts only its own padding. */
+.update-slip__terminal .install-terminal:has(> .xterm) {
+  padding: 0;
+}
+
+.update-slip__terminal .install-terminal > .xterm {
+  padding: 8px;
+}
+
+.update-slip__terminal .install-terminal > .xterm > .xterm-viewport {
+  background-color: transparent;
+}
+
 .update-slip__terminal .xterm .xterm-scrollable-element > .scrollbar > .slider {
   box-sizing: border-box;
   border: 1px solid transparent;
