@@ -8,7 +8,7 @@ import { CODEX_CAPABILITIES } from '@harness/adapter-codex/capabilities'
 import { GROK_CAPABILITIES } from '@harness/adapter-grok/capabilities'
 import { CODEX_UPDATES, codexInstallCommand } from '@harness/adapter-codex/updates'
 import { CLAUDE_UPDATES, claudeInstallCommand } from '@harness/adapter-claude-code/updates'
-import { GROK_UPDATES } from '@harness/adapter-grok/updates'
+import { GROK_UPDATES, grokInstallCommand } from '@harness/adapter-grok/updates'
 import type { CliUpdateSource } from '@harness/proc/updates'
 import type { ProviderSetup, ProviderStatus } from '@harness/contracts'
 import { commandVersion, isInstalled } from '@harness/proc/cli'
@@ -95,6 +95,7 @@ const PROBES: Probe[] = [
     capabilities: GROK_CAPABILITIES,
     setup: {
       installUrl: 'https://x.ai/cli',
+      installCommand: grokInstallCommand(),
       login: 'provider',
       loginOpensBrowser: false,
     },

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
+import { grokInstallCommand } from '@harness/adapter-grok/updates'
 import {
   detectProviders,
   installCommandFor,
@@ -289,9 +290,15 @@ describe('install command resolution', () => {
     await expect(installCommandFor('acp')).rejects.toThrow(/unknown install target/)
   })
 
+  it('installs Grok with the installer xAI documents', async () => {
+    const grok = find(await detectProviders(system()), 'grok')
+    expect(grok.setup?.installCommand).toBe(grokInstallCommand())
+    await expect(installCommandFor('grok')).resolves.toBe(grokInstallCommand())
+  })
+
   it('refuses targets it cannot script instead of guessing', async () => {
-    // Grok ships its own installer; there is no command worth running blind.
-    await expect(installCommandFor('grok')).rejects.toThrow(/no scripted install/)
+    // Pi's entry names no install command, so its row links the setup page.
+    await expect(installCommandFor('pi')).rejects.toThrow(/no scripted install/)
     await expect(installCommandFor('unlisted-cli' as never)).rejects.toThrow(
       /unknown install target/,
     )
