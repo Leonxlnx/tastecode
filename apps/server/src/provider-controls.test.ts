@@ -69,8 +69,10 @@ function setup(options: Partial<ProviderControlsOptions> = {}) {
     controlIdleMs: 10,
     watchTtlMs: 100,
     loginTtlMs: 200,
-    // Tests of the declared read intervals pass `limitReadIntervalMs: undefined`.
+    // Tests of the declared read intervals pass `limitReadIntervalMs: undefined`,
+    // tests of the default cache `limitCacheMs: undefined`.
     limitReadIntervalMs: 0,
+    limitCacheMs: 60_000,
     ...options,
   })
   registries.push(registry)
@@ -938,16 +940,22 @@ describe('limit read backoff and intervals', () => {
     expect(usageLimitSource).toHaveBeenCalledTimes(2)
   })
 
-  it('spaces Codex reads by 30 seconds, and a redeemed reset reaches the next read', async () => {
-    expect(PROVIDER_CAPABILITIES.codex.limitReadIntervalMs).toBe(30_000)
-    expect(PROVIDER_CAPABILITIES.grok.limitReadIntervalMs).toBe(30_000)
-    const { registry, codex, createCodex } = setup({ limitReadIntervalMs: undefined })
+  it('spaces Codex reads by 5 minutes, and a redeemed reset reaches the next read', async () => {
+    expect(PROVIDER_CAPABILITIES.codex.limitReadIntervalMs).toBe(5 * 60_000)
+    expect(PROVIDER_CAPABILITIES.grok.limitReadIntervalMs).toBe(5 * 60_000)
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
     await codex.usageLimitSource()
-    await vi.advanceTimersByTimeAsync(10_000)
-    registry.usageChanged('codex')
-    await codex.usageLimitSource()
+    // Live windows and usage changes during turns are no reason for another process.
+    for (let minute = 1; minute < 5; minute += 1) {
+      await vi.advanceTimersByTimeAsync(60_000)
+      registry.usageChanged('codex')
+      await codex.usageLimitSource()
+    }
     expect(createCodex).toHaveBeenCalledOnce()
-    await vi.advanceTimersByTimeAsync(20_000)
+    await vi.advanceTimersByTimeAsync(60_000)
     await codex.usageLimitSource()
     expect(createCodex).toHaveBeenCalledTimes(2)
     // The reset runs in its own process; the read after it does not wait.

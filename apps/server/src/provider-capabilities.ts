@@ -48,8 +48,12 @@ const unsupported: ProviderControlCapabilities = {
   limitReadIntervalMs: 0,
 }
 
-/** Codex and Grok start a short-lived process per read and report changes during turns. */
-const LIVE_LIMIT_READ_INTERVAL_MS = 30_000
+/**
+ * Codex and Grok start a short-lived process per read. Codex's running
+ * sessions report their windows live; Grok's do not, so its values can be
+ * this old while a turn runs.
+ */
+const PROCESS_LIMIT_READ_INTERVAL_MS = 5 * 60_000
 
 export const PROVIDER_CAPABILITIES = {
   acp: { ...unsupported, resume: true, nativeModels: true, account: true, signOut: true },
@@ -86,7 +90,7 @@ export const PROVIDER_CAPABILITIES = {
     signOut: true,
     usageLimits: true,
     rateLimitReset: true,
-    limitReadIntervalMs: LIVE_LIMIT_READ_INTERVAL_MS,
+    limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
   },
   cursor: {
     ...unsupported,
@@ -104,7 +108,7 @@ export const PROVIDER_CAPABILITIES = {
     account: true,
     signOut: true,
     usageLimits: true,
-    limitReadIntervalMs: LIVE_LIMIT_READ_INTERVAL_MS,
+    limitReadIntervalMs: PROCESS_LIMIT_READ_INTERVAL_MS,
   },
   opencode: { ...unsupported, resume: true, managedMcp: true, nativeModels: true },
   pi: { ...unsupported, nativeModels: true },

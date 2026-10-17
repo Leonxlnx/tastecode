@@ -343,9 +343,9 @@ export class ProviderControls {
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
     this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
-    // Codex reports a limit change after nearly every model request, and each
-    // read starts a vendor process, so reads are cached and signals spaced.
-    this.#limitCacheMs = duration(options.limitCacheMs, 60_000, 0)
+    // Each read starts a vendor process, and live windows from running
+    // sessions keep held values current, so a full read answers 5 minutes.
+    this.#limitCacheMs = duration(options.limitCacheMs, 5 * 60_000, 0)
     // An account without plan limits answers the same until it changes, and
     // Claude scans its local transcripts for up to a minute to say so. Every
     // turn reports a usage change, so only a longer, bounded cache stops each
