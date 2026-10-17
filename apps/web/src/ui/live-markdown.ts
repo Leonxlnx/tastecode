@@ -84,6 +84,10 @@ const LIST_MARKER_PENDING = /^(?:[-+*]|\d{1,9}[.)]?)$/
 /** A line of three or more `-`, `*` or `_`: a thematic break, once the line ends. */
 const THEMATIC_BREAK = /^(?:-{3,}|\*{3,}|_{3,})$/
 const THEMATIC_BREAK_PENDING = /^(?:-+|\*+|_+)$/
+/** A whole line that waited to become a list marker or a rule, but is text. */
+const PENDING_TEXT_LINE = /^(?:\d{1,9}|--|\*\*|__?)$/
+/** An empty list item, which cannot interrupt a paragraph: there it is text. */
+const EMPTY_ITEM_IN_PARAGRAPH = /^(?:\d{1,9}[.)]|[+*])$/
 
 /**
  * A list the parser is inside. Its current item stays open past the item's
@@ -497,6 +501,22 @@ export class LiveMarkdownParser {
       }
     }
     if (character === '\n') {
+      // A line that ends while it could still have become a list marker or a
+      // rule (`42`, `--`) is text, as in the finished renderer. Its markers
+      // stand alone on their line, so they open no emphasis: literal text.
+      const marker = this.prefix.slice(leadingSpaces(this.prefix))
+      if (
+        PENDING_TEXT_LINE.test(marker) ||
+        (this.block === 'paragraph' && EMPTY_ITEM_IN_PARAGRAPH.test(marker))
+      ) {
+        const buffered = this.prefix
+        this.finishPrefix()
+        const line = this.continueListItem() ? marker : buffered
+        this.write(line)
+        this.previous = line.at(-1) ?? this.previous
+        this.consume(character)
+        return
+      }
       this.flushPendingStar()
       const rule = this.block === undefined && THEMATIC_BREAK.test(this.prefix)
       this.closeBlock()

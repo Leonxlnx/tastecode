@@ -58,7 +58,8 @@ function shape(root: Element): string[] {
       // The finished quote wraps its text in a paragraph whose margins sit
       // inside the quote; both lay out at the same height.
       blocks.push(`blockquote "${words(child.textContent)}"`)
-    } else if (/^(?:p|h[1-6]|hr)$/.test(tag)) blocks.push(tag)
+    } else if (tag === 'p') blocks.push(`p "${words(child.textContent)}"`)
+    else if (/^(?:h[1-6]|hr)$/.test(tag)) blocks.push(tag)
     else blocks.push(`?${tag}`)
   }
   return blocks
@@ -108,6 +109,10 @@ const LISTS = [
   ['three levels', '- one\n  - two\n    - three\n  - two b\n- one b\n'],
   ['tasks in an ordered list', '1. [x] done\n2. [ ] next\n'],
   ['nesting under a wide number', '10. ten\n    - in ten\n007. seven\n   - beside seven\n'],
+  ['a line of digits', 'Total:\n42\nitems\n\n2026\n\nEnd'],
+  ['short runs of dashes, stars and underscores', 'a\n\n--\n\n**\n\n__\n\nc'],
+  ['empty items inside a paragraph', 'Count\n1.\nmore\n+\nend'],
+  ['a line of digits in a list item', '- total\n  42\n- next\n'],
 ] as const
 
 describe('the live renderer lays a reply out like the finished one', () => {
@@ -118,7 +123,7 @@ describe('the live renderer lays a reply out like the finished one', () => {
   it('keeps a line of dashes under a paragraph as text, not a rule', () => {
     // The finished renderer makes it a heading underline, which the live
     // parser does not take back into the paragraph above.
-    expect(liveShape('Title\n---\n\nText')).toEqual(['p', 'p'])
+    expect(liveShape('Title\n---\n\nText')).toEqual(['p "Title ---"', 'p "Text"'])
   })
 
   it('for the streamed answer, delta by delta', () => {

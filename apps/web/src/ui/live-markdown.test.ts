@@ -346,6 +346,32 @@ describe('LiveMarkdownParser', () => {
     expect(open).toEqual(['paragraph'])
   })
 
+  it('keeps a line that could have become a marker or a rule as text', () => {
+    const source = 'Total:\n42\nitems\n\n--\n\n- a\n  7\n- b\n\nCount\n1.\nmore\n'
+    const batched = new LiveMarkdownParser()
+    const incremental = new LiveMarkdownParser()
+    const batchedOperations = batched.append(source).operations
+    const incrementalOperations = Array.from(source).flatMap(
+      (character) => incremental.append(character).operations,
+    )
+
+    expect(normalizeLeafAppends(batchedOperations)).toEqual(
+      normalizeLeafAppends(incrementalOperations),
+    )
+    expect(nodes(batchedOperations)).toEqual([
+      'paragraph',
+      'paragraph',
+      'list',
+      'list-item',
+      'list-item',
+      'paragraph',
+    ])
+    const text = batchedOperations
+      .flatMap((operation) => (operation.type === 'leaf.append' ? [operation.text] : []))
+      .join('')
+    expect(text).toBe('Total:\n42\nitems\n--\na\n7bCount\n1.\nmore\n')
+  })
+
   it('keeps the work of completing a table row independent of the rows before it', () => {
     const parser = new LiveMarkdownParser()
     parser.append('| id | name | state |\n| --- | --- | --- |\n')
