@@ -343,13 +343,26 @@ describe('project inventory cache', () => {
     probes[0]!.resolve(full)
     await vi.advanceTimersByTimeAsync(0)
     expect(changes).toEqual([['/repo', ['commands', 'mcp']]])
+    // Nobody has to read again: the next probe starts on its own.
+    expect(probes).toHaveLength(2)
     await expect(cache.listCommands('/repo')).resolves.toEqual({
       commands: full.commands,
       loading: false,
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(probes).toHaveLength(2)
+
+    // The change it was started for shows up in its answer and is reported.
+    probes[1]!.resolve({ ...full, commands: [...full.commands, command('added')] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(changes).toEqual([
+      ['/repo', ['commands', 'mcp']],
+      ['/repo', ['commands']],
+    ])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probes).toHaveLength(2)
   })
+
   it('stops probes and stays quiet once cleared or forgotten', async () => {
     const { cache, probes, changes } = setup()
     await cache.listCommands('/a')

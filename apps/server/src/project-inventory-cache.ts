@@ -312,18 +312,23 @@ export class ProjectInventoryCache {
     entry.partial = false
     const changed = new Set<ProjectInventoryPart>(entry.awaited)
     entry.awaited.clear()
+    // A change during the probe may not be in its answer. Its readers already
+    // re-read when the change was reported, so nobody would ask again: probe
+    // once more now and report what that finds.
+    const again = inventory !== undefined && entry.dirty
     if (inventory) {
       entry.failedAt = undefined
-      // A change during the probe may not be in its answer; the next read refreshes.
       for (const part of this.#apply(
         entry,
         inventory,
-        entry.dirty ? Number.NEGATIVE_INFINITY : Date.now(),
+        again ? Number.NEGATIVE_INFINITY : Date.now(),
       ))
         changed.add(part)
     } else entry.failedAt = Date.now()
     entry.dirty = false
     if (changed.size) this.#options.onChanged(projectPath, [...changed])
+    if (again && this.#entries.get(projectPath) === entry && entry.state === 'idle')
+      this.#enqueue(projectPath, entry)
   }
 
   /** Stores a probe answer; a live chat's answer that arrived during the probe wins. */
