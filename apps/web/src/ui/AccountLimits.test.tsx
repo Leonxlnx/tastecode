@@ -264,6 +264,7 @@ describe('account limits', () => {
   })
 
   it('labels values the server kept through a failed refresh, without a Retry', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000 + 2 * 3_600_000 })
     const kept = [{ id: 'five_hour', label: 'Session', usedPercent: 42 }]
     render(
       <AccountLimits
@@ -299,14 +300,101 @@ describe('account limits', () => {
 
     const claude = screen.getByRole('region', { name: 'Claude Code' })
     expect(within(claude).getByText('58% left')).toBeTruthy()
-    expect(statusOf(claude)?.firstChild?.textContent).toBe('Last known')
+    // It says how old the values are instead of raising an error.
+    expect(statusOf(claude)?.firstChild?.textContent).toBe('Last known · 2h ago')
     expect(statusOf(claude)?.title).toBe(
       'Couldn’t refresh plan limits. Claude usage request timed out.',
     )
     // The server already retries on its own schedule.
     expect(within(claude).queryByRole('button', { name: 'Retry' })).toBeNull()
     const grok = screen.getByRole('region', { name: 'Grok' })
+    // Without a read time it cannot say how old.
+    expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
     expect(statusOf(grok)?.title).toBe('Couldn’t refresh plan limits.')
+  })
+
+  it('says when values were updated once they are older than ten minutes', () => {
+    const now = 50 * 60_000
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    const row = [{ id: 'five_hour', label: 'Session', usedPercent: 42 }]
+    const state = (
+      provider: AccountLimitsState['provider'],
+      checkedAt: number,
+      origin: 'live' | 'read',
+    ): AccountLimitsState => ({
+      status: 'ready',
+      provider,
+      summary: {
+        ...summary(row),
+        limitSource: { provider, status: 'ready', limits: row, checkedAt, origin },
+      },
+    })
+    const view = render(
+      <AccountLimits
+        states={[
+          state('codex', now - 9 * 60_000, 'live'),
+          state('claude-code', now - 12 * 60_000, 'live'),
+          state('grok', now - 47 * 60_000, 'read'),
+        ]}
+        onRetry={vi.fn()}
+      />,
+    )
+
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
+    expect(statusOf(screen.getByRole('region', { name: 'Claude Code' }))?.textContent).toBe(
+      'Updated 12m ago',
+    )
+    expect(statusOf(screen.getByRole('region', { name: 'Grok' }))?.textContent).toBe(
+      'Updated 47m ago',
+    )
+    expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('says how old last known values are when a refresh request failed', () => {
+    const now = 3 * 86_400_000
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    const row = [{ id: 'weekly', label: 'Weekly', usedPercent: 20 }]
+    render(
+      limits({
+        status: 'error',
+        provider: 'grok',
+        message: 'Grok billing request failed.',
+        summary: {
+          ...summary(row),
+          limitSource: {
+            provider: 'grok',
+            status: 'ready',
+            limits: row,
+            checkedAt: now - 30_000,
+          },
+        },
+      }),
+    )
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    // Under a minute old, the age would only be noise.
+    expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
+    expect(within(grok).getByText('80% left')).toBeTruthy()
+
+    cleanup()
+    render(
+      limits({
+        status: 'error',
+        provider: 'grok',
+        message: 'Grok billing request failed.',
+        summary: {
+          ...summary(row),
+          limitSource: {
+            provider: 'grok',
+            status: 'ready',
+            limits: row,
+            checkedAt: now - 2 * 86_400_000,
+          },
+        },
+      }),
+    )
+    expect(statusOf(screen.getByRole('region', { name: 'Grok' }))?.firstChild?.textContent).toBe(
+      'Last known · 2d ago',
+    )
   })
 
   it('orders and calms the nightly-only providers like the shipped ones', () => {
