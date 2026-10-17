@@ -24,13 +24,45 @@ describe('model prices', () => {
 
   it('looks up exact list prices and the price in force on the record day', () => {
     expect(modelRate('gpt-5.6-terra', '2026-08-08')).toMatchObject({
-      input: 2.5,
-      cachedInput: 0.25,
-      output: 15,
+      input: 2,
+      cachedInput: 0.2,
+      output: 12,
       pricing: 'exact',
     })
-    expect(modelRate('claude-sonnet-5', '2026-08-31')).toMatchObject({ input: 2, output: 10 })
-    expect(modelRate('claude-sonnet-5', '2026-09-01')).toMatchObject({ input: 3, output: 15 })
+    expect(modelRate('claude-sonnet-5', '2026-09-01')).toMatchObject({ input: 2, output: 10 })
+    expect(modelRate('gemini-3.6-flash-high', '2026-12-31')).toMatchObject({ input: 0.75 })
+    expect(modelRate('gemini-3.6-flash-high', '2027-01-01')).toMatchObject({ input: 1.5 })
+  })
+
+  it('prices every model in current local histories exactly', () => {
+    const current = [
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-sonnet-5-5',
+      'claude-fable-5-1',
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'gpt-6-astra',
+      'gpt-6.1-sol',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-luna',
+      'grok-4.7',
+      'grok-4.6',
+      'gemini-3.6-flash-high',
+      'gemini-3.1-pro-high',
+    ]
+    const unpriced = current.filter((model) => modelRate(model, '2026-10-17')?.pricing !== 'exact')
+    expect(unpriced).toEqual([])
+  })
+
+  it('marks a price the records cannot match exactly as an estimate', () => {
+    const haiku = modelRate('claude-haiku-5-5', '2026-10-17')!
+    expect(haiku.pricing).toBe('family')
+    const usage = tokens({ uncachedInputTokens: 1_000_000, outputTokens: 1_000_000 })
+    expect(priceEntry(haiku, usage, false).estimatedCostUsd).toBeCloseTo(0.6, 8)
+    expect(priceEntry(haiku, usage, true).estimatedCostUsd).toBeCloseTo(3, 8)
   })
 
   it('estimates a named variant at its model price but never guesses a new version', () => {
@@ -40,13 +72,15 @@ describe('model prices', () => {
     })
     expect(modelRate('claude-opus-4-9', '2026-08-08')).toBeUndefined()
     expect(modelRate('private-model', '2026-08-08')).toBeUndefined()
+    // No public page prices Codex's auto-review model.
+    expect(modelRate('codex-auto-review', '2026-10-17')).toBeUndefined()
   })
 
   it('applies long-context rates and charges cache writes from the input rate', () => {
     const rate = modelRate('gpt-5.6-sol', '2026-08-08')!
     const usage = tokens({ uncachedInputTokens: 1_000_000, outputTokens: 1_000_000 })
-    expect(priceEntry(rate, usage, false).estimatedCostUsd).toBeCloseTo(35, 8)
-    expect(priceEntry(rate, usage, true).estimatedCostUsd).toBeCloseTo(55, 8)
+    expect(priceEntry(rate, usage, false).estimatedCostUsd).toBeCloseTo(24, 8)
+    expect(priceEntry(rate, usage, true).estimatedCostUsd).toBeCloseTo(38, 8)
 
     const writes = tokens({
       cacheWrite5mInputTokens: 1_000_000,

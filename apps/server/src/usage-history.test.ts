@@ -133,8 +133,8 @@ describe('local usage history', () => {
       pricedTokens: 2_745,
       unpricedTokens: 15,
     })
-    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.0103625, 8)
-    expect(history.totals.cacheSavingsUsd).toBeCloseTo(0.002025, 8)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.008215, 8)
+    expect(history.totals.cacheSavingsUsd).toBeCloseTo(0.00171, 8)
     expect(history.providers.map((provider) => provider.provider)).toEqual(['codex', 'claude-code'])
     expect(history.models.map((model) => [model.model, model.pricing])).toEqual([
       ['gpt-5.6-terra', 'exact'],
@@ -327,7 +327,7 @@ describe('local usage history', () => {
     })
 
     const history = await settledHistory(service, '7d')
-    expect(history.totals.estimatedCostUsd).toBeCloseTo(3.00451, 8)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(2.403008, 8)
   })
 
   it('falls back to persisted Harness events for every provider without rich local history', async () => {
@@ -415,7 +415,7 @@ describe('local usage history', () => {
       pricedTokens: 1_375,
       unpricedTokens: 0,
     })
-    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.04155, 8)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(0.04031, 8)
     expect(history.providers.map((provider) => provider.provider)).toEqual([
       'opencode',
       'api',
@@ -519,7 +519,7 @@ describe('local usage history', () => {
     })
 
     const history = await settledHistory(service, '7d')
-    expect(history.totals.estimatedCostUsd).toBeCloseTo(4.01, 8)
+    expect(history.totals.estimatedCostUsd).toBeCloseTo(3.02, 8)
     expect(history.models.every((model) => model.pricing === 'exact')).toBe(true)
   })
 
