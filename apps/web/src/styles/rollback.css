@@ -78,6 +78,7 @@
   min-height: 0;
   max-height: calc(7.5 * (var(--rollback-row) + var(--rollback-gap)));
   overflow-y: auto;
+  scrollbar-width: none;
   /* The first layer keeps the cut at full ink while it sits in a fade. */
   mask:
     linear-gradient(#000 0 0) 0
