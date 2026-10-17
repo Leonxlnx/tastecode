@@ -289,9 +289,16 @@ describe('shared model lists', () => {
 
     control.account = { signedIn: true, email: 'two@example.test' }
     control.models = [row('gpt-6-luna')]
-    await orchestrator.account('codex')
-    await orchestrator.listModels('codex')
-    await vi.waitFor(() => expect(onModelsChanged).toHaveBeenCalledOnce())
+    // A signed-in account read answers for a minute; the first read after that sees the switch.
+    const realNow = Date.now.bind(Date)
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + 61_000)
+    try {
+      await orchestrator.account('codex')
+      await orchestrator.listModels('codex')
+      await vi.waitFor(() => expect(onModelsChanged).toHaveBeenCalledOnce())
+    } finally {
+      clock.mockRestore()
+    }
     expect(control.listed).toBe(2)
     await orchestrator.disposeAll()
   })
