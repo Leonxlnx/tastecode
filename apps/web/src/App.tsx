@@ -530,6 +530,11 @@ export function App() {
     (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
     [usageController],
   )
+  const retryUsage = useCallback(
+    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    [usageController],
+  )
+  const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
     async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
       try {
@@ -5653,7 +5658,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
-          onRetryUsage={refreshUsage}
+          onShowUsage={showUsage}
+          onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
