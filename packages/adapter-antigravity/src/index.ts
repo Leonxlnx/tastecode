@@ -2,11 +2,12 @@ export {
   AntigravityAdapter,
   ANTIGRAVITY_CAPABILITIES,
   ANTIGRAVITY_SUPPORTED_VERSION,
-  antigravityCommand,
   antigravityTurnArgs,
   parseAntigravityModels,
   type AntigravityStartOptions,
 } from './adapter.js'
+export { antigravityCommand } from './command.js'
+export { antigravityAccount, ANTIGRAVITY_SIGN_IN_REQUIRED } from './sign-in.js'
 export {
   antigravityDisplayName,
   collapseAntigravityModels,

@@ -4,9 +4,12 @@ import { CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
 /**
- * The `model/list` result codex-cli 0.163.0's app-server answered, captured
- * verbatim from an isolated CODEX_HOME. `codex debug models` lists the same
- * rows with visibility `list`, and adds the hidden ones Codex filters out.
+ * The `model/list` result codex-cli 0.163.0's app-server answered on
+ * 2026-10-17 for a signed-in ChatGPT account, captured verbatim with
+ * `includeHidden: true`. The adapter asks without it and gets the same rows
+ * minus the two hidden ones (`gpt-reserve`, `codex-auto-review`).
+ * `codex debug models` shows the same refreshed catalog; only its `--bundled`
+ * catalog still lists gpt-5.5 and `upgrade` targets.
  */
 const modelList163 = JSON.parse(
   readFileSync(new URL('./fixtures/model-list-codex-0.163.json', import.meta.url), 'utf8'),
@@ -61,8 +64,6 @@ describe('Codex models', () => {
       'gpt-6-sol',
       'gpt-5.6-sol',
       'gpt-5.6-luna',
-      // Untiered rows keep Codex's order.
-      'gpt-5.5',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6.1-sol')
   })
@@ -83,7 +84,6 @@ describe('Codex models', () => {
       'gpt-5.6-terra',
       'gpt-5.6-luna',
       // A tier Codex adds later follows the known ones in Codex's order.
-      'gpt-5.5',
       'gpt-7-nova',
     ])
   })
@@ -101,49 +101,36 @@ describe('Codex models', () => {
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
-      'gpt-5.5',
     ])
     expect(models.find((model) => model.isDefault)?.id).toBe('gpt-6-astra')
   })
 
-  it('keeps a newly advertised model after the known lineup and before the legacy row', async () => {
+  it('keeps a newly advertised model after the known lineup', async () => {
     const models = await listedModels([
       { ...providerModel, id: 'gpt-6-nova', displayName: 'GPT-6-Nova', isDefault: false },
       providerModel,
       { ...providerModel, id: 'gpt-6-astra', displayName: 'GPT-6-Astra', isDefault: false },
     ])
-    expect(models.map((model) => model.id)).toEqual([
-      'gpt-6-astra',
-      'gpt-5.6-sol',
-      'gpt-6-nova',
-      'gpt-5.5',
-    ])
+    expect(models.map((model) => model.id)).toEqual(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-6-nova'])
   })
 
-  it('keeps the hidden legacy GPT-5.5 selectable and drops models Codex no longer ships', async () => {
-    const models = await listedModels()
-    // codex-cli 0.154 still runs gpt-5.5 but hides it from model/list; it no
-    // longer has gpt-5.4, gpt-5.4-mini or gpt-5.3-codex-spark at all.
-    expect(models.map((model) => model.id)).toEqual(['gpt-5.6-sol', 'gpt-5.5'])
-    expect(models.at(-1)).toEqual({
-      id: 'gpt-5.5',
-      displayName: 'GPT-5.5',
-      description: 'Legacy coding model.',
-      isDefault: false,
-      reasoningEfforts: ['low', 'medium', 'high', 'xhigh'],
-      defaultReasoningEffort: 'medium',
-      serviceTiers: [],
-    })
+  it('offers only the models Codex lists, with nothing added', async () => {
+    expect((await listedModels()).map((model) => model.id)).toEqual(['gpt-5.6-sol'])
+    // The refreshed 0.163 catalog has no gpt-5.5 and no row it hides is offered.
+    const live = await listedModels(modelList163.data)
+    expect(live.some((model) => model.id === 'gpt-5.5')).toBe(false)
+    expect(live.some((model) => model.id === 'gpt-reserve')).toBe(false)
+    expect(live.some((model) => model.id === 'codex-auto-review')).toBe(false)
   })
 
-  it('lets a live GPT-5.5 row win over the legacy fallback without duplicating it', async () => {
+  it('still offers GPT-5.5 when Codex lists it from its bundled catalog', async () => {
     const models = await listedModels([
       providerModel,
-      { ...providerModel, id: 'gpt-5.5', displayName: 'GPT-5.5 live', isDefault: false },
+      { ...providerModel, id: 'gpt-5.5', displayName: 'GPT-5.5', isDefault: false },
     ])
 
     expect(models.filter((model) => model.id === 'gpt-5.5')).toEqual([
-      expect.objectContaining({ displayName: 'GPT-5.5 live' }),
+      expect.objectContaining({ displayName: 'GPT-5.5' }),
     ])
   })
 

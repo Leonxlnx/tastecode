@@ -3,6 +3,8 @@ import { choicesFor } from './model-catalog.js'
 import {
   freshModelCatalogChoices,
   isModelCatalogSourceFresh,
+  MAX_CACHE_CHARACTERS,
+  MAX_CACHED_MODELS,
   MODEL_CATALOG_CACHE_FRESH_MS,
   parseModelCatalogCache,
   serializeModelCatalogCache,
@@ -98,8 +100,40 @@ describe('model catalog cache', () => {
     ).toBeUndefined()
   })
 
+  it('never serializes a snapshot the reader would reject', () => {
+    const codexRows = (count: number, description = '') =>
+      choicesFor(
+        { provider: 'codex', sourceName: 'Codex', mark: 'openai' },
+        Array.from({ length: count }, (_, index) => ({
+          ...model,
+          id: `gpt-model-${index}`,
+          description,
+          isDefault: index === 0,
+        })),
+      )
+
+    const largest = serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS))
+    expect(parseModelCatalogCache(largest)?.models).toHaveLength(MAX_CACHED_MODELS)
+    expect(serializeModelCatalogCache(codexRows(MAX_CACHED_MODELS + 1))).toBeUndefined()
+    // Few rows, but each one carries a long description.
+    const wordy = codexRows(3, 'x'.repeat(Math.ceil(MAX_CACHE_CHARACTERS / 3)))
+    expect(serializeModelCatalogCache(wordy)).toBeUndefined()
+    expect(serializeModelCatalogCache(catalog, { validatedAt: Number.NaN })).toBeUndefined()
+  })
+
+  it('leaves out a validated source that has no rows', () => {
+    // A connection that listed nothing used to make the whole snapshot unreadable.
+    const cache = parseModelCatalogCache(
+      serializeModelCatalogCache([catalog[0]!], {
+        validatedSources: ['codex', 'api:empty-connection'],
+        validatedAt: 1_000,
+      }),
+    )
+    expect(cache?.validatedSources).toEqual(new Map([['codex', 1_000]]))
+  })
+
   it('keeps schema defaults and rejects invalid nested model data', () => {
-    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])) as {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
       models: Array<{ model: Record<string, unknown> }>
     }
     delete cached.models[0]!.model['serviceTiers']
@@ -109,5 +143,50 @@ describe('model catalog cache', () => {
 
     cached.models[0]!.model['reasoningEfforts'] = ['high', 1]
     expect(parseModelCatalogCache(JSON.stringify(cached))).toBeUndefined()
+  })
+
+  it('keeps the lineage and curation an adapter declared', () => {
+    const declared = choicesFor(
+      { provider: 'opencode', sourceName: 'OpenCode', mark: 'opencode' },
+      [
+        {
+          ...model,
+          id: 'deepseek/deepseek-v4.1-flash',
+          lab: 'DeepSeek',
+          family: 'deepseek-flash',
+          generation: '4.1',
+          released: '2026-09-30',
+          recommended: true,
+          deprecated: false,
+        },
+        { ...model, id: 'minimax/MiniMax-M2.5', isDefault: false, deprecated: true },
+      ],
+    )
+    expect(parseModelCatalogCache(serializeModelCatalogCache(declared))?.models).toEqual(declared)
+    // A snapshot written before the fields existed reads as before.
+    expect(parseModelCatalogCache(serializeModelCatalogCache([catalog[0]!]))?.models).toEqual([
+      catalog[0],
+    ])
+  })
+
+  it('drops only the declared fields the protocol would not accept', () => {
+    const cached = JSON.parse(serializeModelCatalogCache([catalog[0]!])!) as {
+      models: Array<{ model: Record<string, unknown> }>
+    }
+    Object.assign(cached.models[0]!.model, {
+      lab: '',
+      family: 'x'.repeat(121),
+      generation: 6,
+      released: '2026-9-30',
+      recommended: 'yes',
+      deprecated: 1,
+    })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models).toEqual([catalog[0]])
+    Object.assign(cached.models[0]!.model, { family: 'gpt-sol', generation: '5.6' })
+    expect(parseModelCatalogCache(JSON.stringify(cached))?.models[0]?.model).toEqual({
+      ...model,
+      family: 'gpt-sol',
+      generation: '5.6',
+    })
   })
 })
