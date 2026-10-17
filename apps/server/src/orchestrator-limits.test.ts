@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { ProviderIdSchema, type ProviderId } from '@harness/contracts'
+import {
+  ProviderIdSchema,
+  type ProviderId,
+  type ProviderLimit,
+  type ProviderLimitSource,
+} from '@harness/contracts'
 import type { AgentSession } from './adapters.js'
 import { Store } from './store.js'
 
@@ -81,6 +86,8 @@ describe('provider limit sources', () => {
       provider,
       status: 'ready',
       limits: [{ label: 'Weekly', usedPercent: 25 }],
+      checkedAt: expect.any(Number),
+      origin: 'read',
     })
     if (provider === 'codex') expect(sources.disposed).toEqual([1])
     await instance.disposeAll()
@@ -174,6 +181,65 @@ describe('provider limit sources', () => {
       })
     }
     expect(signals[0]).toBe('claude-code')
+    expect(sources.claude).toHaveBeenCalledOnce()
+    await instance.disposeAll()
+  })
+
+  it('merges the live windows of the attached session and pushes the snapshot', async () => {
+    const week = { id: 'seven_day', label: 'Weekly', usedPercent: 20 }
+    sources.claude.mockResolvedValue({
+      status: 'ready',
+      limits: [{ id: 'five_hour', label: '5-hour', usedPercent: 10 }, week],
+    })
+    let report: (limits: ProviderLimit[]) => void = () => {}
+    const session: AgentSession = {
+      capabilities: {
+        steer: false,
+        fork: false,
+        interrupt: true,
+        reasoningItems: false,
+        approvals: false,
+        images: false,
+      },
+      sendTurn: async () => 'turn',
+      interrupt: async () => {},
+      respondToApproval: () => {},
+      dispose: () => {},
+      on: () => {},
+      onLimitsUpdated: (listener) => {
+        report = listener
+      },
+    }
+    const pushed: ProviderLimitSource[] = []
+    const instance = new Orchestrator(new Store(':memory:'), {
+      onEvent: () => {},
+      onLog: () => {},
+      onLogin: () => {},
+      onLimitsChanged: (source) => pushed.push(source),
+      runtimeFor: (provider) => ({
+        start: async (workspacePath) => ({
+          thread: { id: 'claude-thread', provider, workspacePath, createdAt: Date.now() },
+          session,
+        }),
+        listModels: async () => [],
+      }),
+    })
+    await instance.startThread('claude-code', process.cwd())
+    await instance.usageLimitSource('claude-code')
+
+    report([{ id: 'five_hour', label: '5-hour', usedPercent: 12 }])
+
+    const merged = {
+      provider: 'claude-code',
+      status: 'ready',
+      limits: [{ id: 'five_hour', label: '5-hour', usedPercent: 12 }, week],
+      checkedAt: expect.any(Number),
+      origin: 'live',
+    }
+    // The read's own snapshot, then the merged one, spaced by the publish interval.
+    await vi.waitFor(() => expect(pushed).toHaveLength(2), { timeout: 5_000 })
+    expect(pushed[1]).toEqual(merged)
+    await expect(instance.usageLimitSource('claude-code')).resolves.toEqual(merged)
     expect(sources.claude).toHaveBeenCalledOnce()
     await instance.disposeAll()
   })

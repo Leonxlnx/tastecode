@@ -167,6 +167,10 @@ describe('provider defaults at a glance', () => {
       'Claude Code default access: Auto-review',
       'Claude Code context: Compacts at 93%',
     ])
+    // Each value is the settings inline select, not a box of its own.
+    for (const button of within(defaults).getAllByRole('button')) {
+      expect(button.classList.contains('set-select--inline')).toBe(true)
+    }
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(screen.queryByRole('menu')).toBeNull()
     expect(screen.queryByRole('slider')).toBeNull()

@@ -1,0 +1,105 @@
+/* ---------- Usage page: models ----------
+   A quiet table by tokens; the share column is a short comb of the same
+   rungs as the plan limits, in the provider's color. */
+
+.settings .usage-models__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-md);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .usage-models__table th,
+.settings .usage-models__table td {
+  padding: 8px 0;
+  font-weight: 400;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.settings .usage-models__table :is(th, td) + :is(th, td) {
+  padding-left: 20px;
+}
+
+.settings .usage-models__table thead th {
+  padding-top: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-weight: 500;
+}
+
+.settings .usage-models__table :is(thead th, tbody th):first-child {
+  width: 100%;
+  max-width: 0;
+  text-align: left;
+}
+
+.settings .usage-models__table td {
+  color: var(--text-2);
+}
+
+.settings .usage-models__table td:last-child {
+  min-width: 88px;
+  color: var(--text);
+}
+
+.settings .usage-models__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+}
+
+.settings .usage-models__name svg {
+  flex: none;
+  color: var(--text-2);
+}
+
+.settings .usage-models__model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings .usage-models__name em {
+  flex: none;
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-xs);
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-style: normal;
+  line-height: 1.3;
+}
+
+.settings .usage-models__share {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings .usage-models__track {
+  position: relative;
+  width: 60px;
+  height: 8px;
+  background: var(--usage-rung-off);
+  mask: repeating-linear-gradient(to right, #000 0 3px, transparent 3px 5px);
+}
+
+.settings .usage-models__track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--usage-provider-color, var(--usage-rung-on));
+}
+
+.settings .usage-models__more {
+  margin: 4px 0 0 -10px;
+}
+
+@container settings-content (max-width: 600px) {
+  .settings .usage-models__table :is(th, td):nth-child(3) {
+    display: none;
+  }
+}

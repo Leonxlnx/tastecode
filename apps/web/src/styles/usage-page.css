@@ -1,0 +1,127 @@
+/* ---------- Usage page ----------
+   The Settings column and page header, with dashboard sections under them.
+   Its own mark is the rung: plan limits and the activity chart are measured
+   in 3 px rungs on the 5 px rhythm of the leader dots every Settings row
+   draws, so the numbers read like the rest of Settings, only denser. */
+
+.settings .usage-page {
+  --usage-rung-on: var(--text-2);
+  --usage-rung-off: color-mix(in srgb, var(--text) 9%, transparent);
+  --usage-rung-low: var(--error);
+}
+
+.settings .usage-page .set-page__head {
+  flex-wrap: wrap;
+}
+
+.settings .usage-page.is-refreshing .usage-page__refresh svg {
+  animation: spin 0.9s linear infinite;
+}
+
+/* Sections: a 15 px title, then the section's own content. */
+
+.settings .usage-section {
+  min-width: 0;
+}
+
+.settings .usage-section + .usage-section {
+  margin-top: 40px;
+}
+
+.settings .usage-section__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 0 0 12px;
+}
+
+.settings .usage-section__title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--t-lg);
+  font-weight: 550;
+  line-height: 1.3;
+}
+
+.settings .usage-section__note {
+  max-width: 90ch;
+  margin: -6px 0 8px;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+}
+
+.settings .usage-section__empty {
+  margin: 0;
+  padding-block: 8px;
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+/* While the first answer loads: outlines where the sections will be. */
+
+.settings .usage-skeleton {
+  display: grid;
+  gap: 14px;
+  margin-top: 40px;
+}
+
+.settings .usage-skeleton > .skeleton {
+  display: block;
+  border-radius: var(--r-sm);
+}
+
+.settings .usage-skeleton__title {
+  width: 96px;
+  height: 16px;
+}
+
+.settings .usage-skeleton__stats {
+  width: 100%;
+  height: 48px;
+}
+
+.settings .usage-skeleton__chart {
+  width: 100%;
+  height: 140px;
+}
+
+/* Where the numbers come from. */
+
+.settings .usage-footer {
+  margin-top: 40px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+}
+
+.settings .usage-footer p {
+  margin: 0;
+}
+
+.settings .usage-footer .usage-footer__facts {
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .usage-footer .usage-footer__warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.settings .usage-footer__warning svg {
+  flex: none;
+  margin-top: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .usage-page.is-refreshing .usage-page__refresh svg {
+    animation: none;
+  }
+}

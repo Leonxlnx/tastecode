@@ -1,0 +1,243 @@
+/* ---------- Usage page: activity ----------
+   Four figures, then a ladder per day: rungs of 3 px under 2 px gaps, stacked
+   by provider from the floor, today at full strength. */
+
+.settings .usage-activity {
+  --usage-average-line: color-mix(in srgb, var(--text-3) 70%, transparent);
+}
+
+.settings .usage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  list-style: none;
+}
+
+.settings .usage-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings .usage-legend__swatch {
+  width: 10px;
+  height: 3px;
+  background: var(--usage-provider-color, var(--text-2));
+  border-radius: var(--r-xs);
+}
+
+/* The average is the chart's dashed line, so its key is a dash too. */
+.settings .usage-legend__average .usage-legend__swatch {
+  height: 0;
+  background: none;
+  border-top: 1px dashed var(--usage-average-line);
+  border-radius: 0;
+}
+
+.settings .usage-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px 24px;
+  margin: 0 0 22px;
+}
+
+.settings .usage-stats > div {
+  min-width: 0;
+}
+
+.settings .usage-stats dt {
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.4;
+}
+
+.settings .usage-stats dd {
+  margin: 4px 0 0;
+  color: var(--text);
+  font-size: var(--t-xl);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.settings .usage-stats__of {
+  color: var(--text-3);
+  font-size: var(--t-md);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.settings .usage-stats p {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chart */
+
+.settings .usage-ladder {
+  position: relative;
+  border-radius: var(--r-sm);
+}
+
+.settings .usage-ladder:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 6px;
+}
+
+.settings .usage-ladder__plot {
+  position: relative;
+  display: grid;
+  align-items: end;
+  height: var(--usage-ladder-height);
+  border-bottom: 1px solid var(--line);
+}
+
+.settings .usage-ladder__column {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  height: 100%;
+  padding-bottom: 3px;
+  border-radius: var(--r-xs);
+}
+
+.settings .usage-ladder__column[data-active] {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.settings .usage-ladder__bar {
+  display: flex;
+  width: clamp(3px, 62%, 18px);
+  flex-direction: column-reverse;
+  opacity: 0.72;
+  mask: repeating-linear-gradient(to top, #000 0 3px, transparent 3px 5px);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.settings .usage-ladder__column:is([data-today], [data-active]) .usage-ladder__bar {
+  opacity: 1;
+}
+
+.settings .usage-ladder__bar > span {
+  flex: none;
+  background: var(--usage-provider-color, var(--text-2));
+}
+
+.settings .usage-ladder__average {
+  position: absolute;
+  right: 0;
+  left: 0;
+  /* Measured from the floor the rungs stand on. */
+  translate: 0 -3px;
+  border-top: 1px dashed var(--usage-average-line);
+  pointer-events: none;
+}
+
+.settings .usage-ladder__axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 8px;
+  color: var(--text-3);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings .usage-ladder__empty {
+  position: absolute;
+  inset: 0 0 auto;
+  display: grid;
+  height: var(--usage-ladder-height);
+  margin: 0;
+  place-items: center;
+  color: var(--text-3);
+  font-size: var(--t-md);
+}
+
+.settings .usage-ladder__tooltip {
+  position: absolute;
+  z-index: 2;
+  top: 4px;
+  min-width: 168px;
+  padding: 8px 10px;
+  background: var(--bg-prompt);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+  color: var(--text-2);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.settings .usage-ladder__tooltip[data-side='right'] {
+  translate: 14px 0;
+}
+
+.settings .usage-ladder__tooltip[data-side='left'] {
+  translate: calc(-100% - 14px) 0;
+}
+
+.settings .usage-ladder__tooltip p {
+  margin: 0;
+}
+
+.settings .usage-ladder__tooltip .usage-ladder__tooltip-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.settings .usage-ladder__tooltip .usage-ladder__tooltip-total {
+  margin-top: 2px;
+  color: var(--text-3);
+}
+
+.settings .usage-ladder__tooltip ul {
+  display: grid;
+  gap: 4px;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.settings .usage-ladder__tooltip li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings .usage-ladder__tooltip li svg {
+  flex: none;
+  color: var(--usage-provider-color, var(--text-2));
+}
+
+.settings .usage-ladder__tooltip li b {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--text);
+  font-weight: 500;
+}
+
+@container settings-content (max-width: 600px) {
+  .settings .usage-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings .usage-ladder__bar {
+    transition: none;
+  }
+}
