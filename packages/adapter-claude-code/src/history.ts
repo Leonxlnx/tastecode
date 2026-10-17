@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, type Stats } from 'node:fs'
 import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
@@ -40,6 +40,7 @@ const TOKEN_OVERLAP = Math.max(...METADATA_TOKENS.map((token) => token.length)) 
 // await, so no synchronous multi-megabyte stretch remains.
 const LINE_CHUNK_BYTES = 64 * 1024
 const SCAN_CHUNK_BYTES = 1024 * 1024
+const STAT_BATCH = 32
 
 function timestamp(value: unknown): number | undefined {
   const at = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN
@@ -511,18 +512,32 @@ export function createClaudeHistorySource(
           /* The index is optional and can be stale. Scan transcript files as well. */
         }
         const byId = new Map(entries.map((entry) => [string(entry.sessionId), entry]))
-        for (const file of files) {
-          if (!file.isFile() || !SESSION_FILE.test(file.name)) continue
-          const locator = path.join(project, file.name)
+        const transcripts = files.flatMap((file) =>
+          file.isFile() && SESSION_FILE.test(file.name) ? [path.join(project, file.name)] : [],
+        )
+        // Stat a folder's transcripts together; one at a time, every refresh waited on
+        // each file in turn before it could skip the unchanged ones.
+        const infos: Array<Stats | undefined> = []
+        for (let index = 0; index < transcripts.length; index += STAT_BATCH)
+          infos.push(
+            ...(await Promise.all(
+              transcripts
+                .slice(index, index + STAT_BATCH)
+                .map((locator) => stat(locator).catch(() => undefined)),
+            )),
+          )
+        for (const [index, locator] of transcripts.entries()) {
           present.add(locator)
+          const info = infos[index]
+          // A transcript removed since the folder was read is simply not listed.
+          if (!info) continue
           try {
-            const info = await stat(locator)
             // Reimport saved transcripts that previously exposed machine notifications
             // or Stop markers.
             const revision = `3:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
-              const id = file.name.slice(0, -6)
+              const id = path.basename(locator).slice(0, -6)
               const digest = await transcriptDigest(locator, info.size)
               cached = {
                 revision,
