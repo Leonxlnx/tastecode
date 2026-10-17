@@ -1144,6 +1144,52 @@ describe('read intent', () => {
     expect(createCodex).toHaveBeenCalledTimes(2)
   })
 
+  it('keeps a passive Codex figure on live windows without a read until they stop', async () => {
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
+    await codex.usageLimitSource('visible')
+    expect(createCodex).toHaveBeenCalledOnce()
+    // A 20-minute session: Codex reports its window beside every model request,
+    // and the sidebar figure re-pulls after each spaced usage change.
+    for (let second = 30; second <= 20 * 60; second += 30) {
+      await vi.advanceTimersByTimeAsync(30_000)
+      registry.applyLimitRows('codex', [
+        { id: 'codex:primary', label: 'Weekly', usedPercent: second / 60 },
+      ])
+      await codex.usageLimitSource('background')
+    }
+    expect(createCodex).toHaveBeenCalledOnce()
+    expect(codex.heldLimitSource()).toMatchObject({
+      origin: 'live',
+      limits: [{ id: 'codex:primary', usedPercent: 20 }],
+    })
+    // A shown view still gets a full read once the last one is 5 minutes old.
+    await codex.usageLimitSource('visible')
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    // Once the windows stop, a passive figure reads at most every 5 minutes again.
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1)
+    await codex.usageLimitSource('background')
+    expect(createCodex).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await codex.usageLimitSource('background')
+    expect(createCodex).toHaveBeenCalledTimes(3)
+  })
+
+  it('reads for a passive figure after a redeemed reset, even while live windows arrive', async () => {
+    const { registry, codex, createCodex } = setup({
+      limitReadIntervalMs: undefined,
+      limitCacheMs: undefined,
+    })
+    await codex.usageLimitSource('visible')
+    registry.applyLimitRows('codex', [{ id: 'codex:primary', label: 'Weekly', usedPercent: 90 }])
+    await codex.consumeRateLimitReset!('fixture-idempotency-key')
+    await codex.usageLimitSource('background')
+    // The first read, the reset's own process, and the read after it.
+    expect(createCodex).toHaveBeenCalledTimes(3)
+  })
+
   it('still reads other providers for a passive figure', async () => {
     expect(PROVIDER_CAPABILITIES.grok).not.toHaveProperty('limitReadsWhenShown')
     const usageLimitSource = vi.fn(async () => weekly(20))

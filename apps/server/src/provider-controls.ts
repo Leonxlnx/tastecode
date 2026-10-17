@@ -170,6 +170,8 @@ type LimitEntry = {
   notifyTimer?: ReturnType<typeof setTimeout> | undefined
   /** Windows a live session reported, by id, so a read that started earlier cannot revert them. */
   live?: Map<string, { limit: ProviderLimit; at: number }> | undefined
+  /** When a live session last reported windows, changed or not. */
+  liveAt: number
   publishedAt: number
   publishTimer?: ReturnType<typeof setTimeout> | undefined
   /** The held read was a background one that left out details a shown view lists. */
@@ -429,6 +431,8 @@ export class ProviderControls {
     let next: ProviderLimit[] | undefined
     for (const row of rows) {
       if (row.id === undefined) continue
+      // An unchanged window still confirms the held values are current.
+      entry.liveAt = now
       const current = next ?? limits
       const index = current.findIndex((limit) => limit.id === row.id)
       const merged = index === -1 ? row : mergeLimit(current[index]!, row)
@@ -662,6 +666,7 @@ export class ProviderControls {
         stored: 0,
         readAt: Number.NEGATIVE_INFINITY,
         freshUntil: 0,
+        liveAt: Number.NEGATIVE_INFINITY,
         notifiedAt: Number.NEGATIVE_INFINITY,
         publishedAt: Number.NEGATIVE_INFINITY,
       }
@@ -693,6 +698,8 @@ export class ProviderControls {
     if (accountChanged || forced) {
       if (forced) entry.forcedVersion += 1
       entry.freshUntil = 0
+      // Live windows do not report what such a change did, so the next request reads.
+      entry.liveAt = Number.NEGATIVE_INFINITY
       // A read in flight answers for the old account or predates the forced
       // change, so the next caller starts its own.
       entry.reading = undefined
@@ -712,9 +719,10 @@ export class ProviderControls {
   /**
    * One read serves concurrent callers, a fresh result serves later ones, and
    * a failed read answers them until its retry time: with the account's last
-   * known values when there are any, otherwise with its error. A provider that
-   * reads only while its limits are shown answers a passive figure from what
-   * it holds and starts no read for it.
+   * known values when there are any, otherwise with its error. A passive
+   * figure is answered without a read while live windows keep arriving, and a
+   * provider that reads only while its limits are shown answers it from what
+   * it holds.
    */
   #cachedLimits(
     provider: ProviderId,
@@ -732,6 +740,15 @@ export class ProviderControls {
       return Promise.resolve(entry.value)
     }
     const capabilities: ProviderControlCapabilities = PROVIDER_CAPABILITIES[provider]
+    // A running session that keeps reporting its windows keeps a passive figure
+    // current; only a shown view needs what else a full read lists.
+    if (
+      intent === 'background' &&
+      entry.value?.status === 'ready' &&
+      startedAt < entry.liveAt + this.#limitReadInterval(provider)
+    ) {
+      return Promise.resolve(entry.value)
+    }
     if (intent === 'background' && capabilities.limitReadsWhenShown) {
       // Nothing known is not "no plan limits": the source has simply not been read yet.
       return Promise.resolve(
