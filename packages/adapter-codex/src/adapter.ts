@@ -36,10 +36,11 @@ import type { McpServerElicitationAction } from './generated/v2/McpServerElicita
 import type { RequestId } from './generated/RequestId.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
+  configuredMcpInventory,
+  type ConfiguredMcpServer,
   mapMcpServerStatus,
   mapMcpStartupStatus,
   mcpShellEnvironmentConfig,
-  mcpStartupInventory,
   prepareMcpConfig,
 } from './mcp.js'
 import { mapSkillList } from './skills.js'
@@ -49,6 +50,7 @@ import {
   ApprovalParamsSchema,
   CodexRateLimitResponseSchema,
   CodexResetCreditSchema,
+  ConfiguredMcpServersSchema,
   ConsumeRateLimitResetResponseSchema,
   CommandOutputDeltaNotificationSchema,
   ErrorNotificationSchema,
@@ -613,7 +615,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #startupGeneration = 0
   #mcpStartup = new Map<string, McpStartupStatus>()
   #mcpInventory = new Map<string, McpServer[]>()
-  #mcpInventoryLoads = new Map<string, Promise<void>>()
+  /** Resolves true once the status list landed, false when it failed or was replaced. */
+  #mcpInventoryLoads = new Map<string, Promise<boolean>>()
+  /** Configured server names, read once per status load. */
+  #mcpConfigured = new Map<string, Promise<ConfiguredMcpServer[]>>()
   #threadModels = new Map<string, string>()
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
@@ -762,6 +767,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
+    this.#mcpConfigured.clear()
     this.#mcpLogins.clear()
     const turns = [...this.#activeTurns]
     this.#activeTurns.clear()
@@ -947,25 +953,77 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const cached = this.#mcpInventory.get(key)
     if (cached) return cached
     if (!this.#mcpInventoryLoads.has(key)) {
-      const loading = this.#loadMcpServers(threadId)
+      const loading: Promise<boolean> = this.#loadMcpServers(threadId)
         .then((servers) => {
-          if (this.#mcpInventoryLoads.get(key) !== loading) return
+          if (this.#mcpInventoryLoads.get(key) !== loading) return false
           this.#mcpInventory.set(key, servers)
+          this.#mcpConfigured.delete(key)
           this.emit('mcpChanged', threadId ? { threadId } : {})
+          return true
         })
         .catch((cause) => {
-          if (this.#mcpInventoryLoads.get(key) !== loading) return
+          if (this.#mcpInventoryLoads.get(key) !== loading) return false
           this.emit(
             'log',
             `MCP inventory refresh failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           )
+          return false
         })
         .finally(() => {
           if (this.#mcpInventoryLoads.get(key) === loading) this.#mcpInventoryLoads.delete(key)
         })
       this.#mcpInventoryLoads.set(key, loading)
     }
-    return mcpStartupInventory(this.#mcpStartup, threadId)
+    const configured = await this.#configuredMcpServers(key, threadId)
+    // The status list may have landed while the config was read.
+    return (
+      this.#mcpInventory.get(key) ?? configuredMcpInventory(configured, this.#mcpStartup, threadId)
+    )
+  }
+
+  /** True while the status list is still loading and the answer holds only configured servers. */
+  isMcpLoading(threadId?: string): boolean {
+    const key = threadId ?? ''
+    return !this.#mcpInventory.has(key) && this.#mcpInventoryLoads.has(key)
+  }
+
+  /** Settles with the status list in flight: true when it landed, false otherwise. */
+  whenMcpServersListed(threadId?: string): Promise<boolean> {
+    const key = threadId ?? ''
+    if (this.#mcpInventory.has(key)) return Promise.resolve(true)
+    return this.#mcpInventoryLoads.get(key) ?? Promise.resolve(false)
+  }
+
+  /** A failed read leaves only the startup states Codex already reported. */
+  #configuredMcpServers(key: string, threadId?: string): Promise<ConfiguredMcpServer[]> {
+    let reading = this.#mcpConfigured.get(key)
+    if (!reading) {
+      const cwd =
+        threadId !== undefined && this.#sessionThread?.id === threadId
+          ? this.#sessionThread.workspacePath
+          : undefined
+      reading = this.#callParsed(
+        'config/read',
+        { includeLayers: false, ...(cwd ? { cwd } : {}) },
+        ConfiguredMcpServersSchema,
+        CONTROL_READ_TIMEOUT_MS,
+      ).then(
+        (response) =>
+          Object.entries(response.config.mcp_servers ?? {}).map(([id, server]) => ({
+            id,
+            enabled: server.enabled !== false,
+          })),
+        (cause: unknown) => {
+          this.emit(
+            'log',
+            `Could not read configured MCP servers: ${cause instanceof Error ? cause.message : String(cause)}`,
+          )
+          return []
+        },
+      )
+      this.#mcpConfigured.set(key, reading)
+    }
+    return reading
   }
 
   async #loadMcpServers(threadId?: string): Promise<McpServer[]> {
@@ -1286,6 +1344,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
+    this.#mcpConfigured.clear()
     this.#threadModels.clear()
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
