@@ -242,9 +242,7 @@ describe('settings viewport CSS', () => {
     expect(systemCss).toMatch(
       /\.settings \.set-input \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
     )
-    expect(systemCss).toMatch(
-      /\.settings textarea\.set-input \{[^}]*min-height: 72px;/s,
-    )
+    expect(systemCss).toMatch(/\.settings textarea\.set-input \{[^}]*min-height: 72px;/s)
     expect(systemCss).toMatch(
       /\.settings \.set-input:focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
     )
