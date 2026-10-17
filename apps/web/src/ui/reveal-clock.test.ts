@@ -394,6 +394,30 @@ describe('reveal clock leading edge', () => {
     expect(fake.time - shownAt!).toBeLessThanOrEqual(110 + 16)
   })
 
+  it('keeps the fading edge compact while text catches up quickly', () => {
+    const fake = fakeEnvironment()
+    const { root, text } = liveRoot()
+    const cursor = createRevealClock(fake.env).attach(root)
+    const widths: number[] = []
+    for (let frame = 0; frame < 80; frame += 1) {
+      // 40 characters a frame: the edge runs at more than 2 characters a millisecond.
+      text.appendData(prose(40))
+      cursor.appended(40)
+      fake.frame(16)
+      if (frame < 20) continue
+      const [veil] = fake.ranges()
+      const farthest = fake.ranges(REVEAL_FRESH[2])[0]
+      if (!veil || !farthest) continue
+      widths.push(
+        offsetOf(root, veil.startContainer, veil.startOffset) -
+          offsetOf(root, farthest.startContainer, farthest.startOffset),
+      )
+    }
+    expect(widths.length).toBeGreaterThan(40)
+    expect(Math.min(...widths)).toBeGreaterThanOrEqual(12)
+    expect(Math.max(...widths)).toBeLessThanOrEqual(18)
+  })
+
   it('draws no bands where nothing is veiled', () => {
     const fake = fakeEnvironment()
     fake.setMotion(false)

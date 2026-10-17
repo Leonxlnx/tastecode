@@ -81,6 +81,11 @@ const RAMP_CHARACTERS = 12
 const RAMP_MIN_MS = 30
 const RAMP_MAX_MS = 110
 const RAMP_RETIME_MS = 250
+/**
+ * And never wider than this, so text that catches up quickly (after a
+ * stalled frame) still fades in at a compact edge instead of a long wash.
+ */
+const RAMP_MAX_CHARACTERS = 18
 
 export const REVEAL_VEIL = 'md-veil'
 /** The fade bands behind the edge, nearest first. */
@@ -515,9 +520,13 @@ class Cursor implements RevealCursor {
     }
     let limit = this.edge.count
     this.trail.forEach((position, index) => {
+      const share = (index + 1) / 3
       const target = Math.min(
         limit,
-        Math.floor(this.countAt(now - ((index + 1) * this.rampMs) / 3)),
+        Math.max(
+          Math.floor(this.countAt(now - share * this.rampMs)),
+          this.edge.count - Math.round(share * RAMP_MAX_CHARACTERS),
+        ),
       )
       position.seek(target)
       limit = position.count
