@@ -215,6 +215,30 @@ describe('declared provider controls', () => {
     expect(createCodex).not.toHaveBeenCalled()
   })
 
+  it('holds an uncached limit read until the server allows it, never a cached answer', async () => {
+    let release!: () => void
+    const beforeLimitRead = vi.fn(() => new Promise<void>((resolve) => (release = resolve)))
+    const usageLimitSource = vi.fn(async () => ({ status: 'ready' as const, limits: [] }))
+    const { registry } = setup({
+      beforeLimitRead,
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    const first = claude.usageLimitSource()
+    const joined = claude.usageLimitSource()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(usageLimitSource).not.toHaveBeenCalled()
+
+    release()
+    await expect(Promise.all([first, joined])).resolves.toEqual([
+      { provider: 'claude-code', status: 'ready', limits: [] },
+      { provider: 'claude-code', status: 'ready', limits: [] },
+    ])
+    expect(usageLimitSource).toHaveBeenCalledTimes(1)
+    await claude.usageLimitSource()
+    expect(beforeLimitRead).toHaveBeenCalledTimes(1)
+  })
+
   it('reuses active MCP inventory and returns adapter capabilities without a second process', async () => {
     const { codex, createCodex } = setup()
     const readActive = vi.fn(async () => [])

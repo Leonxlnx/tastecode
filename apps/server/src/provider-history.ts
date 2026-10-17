@@ -24,7 +24,7 @@ type Imported = {
 export class ProviderHistory {
   #entries = new Map<string, Imported>()
   #byThread = new Map<string, Imported>()
-  #refreshing: Promise<void> | undefined
+  #refreshing: Promise<boolean> | undefined
   #reading = new Map<string, Promise<boolean>>()
   /** Internal sessions are never imported, so one absent copy stays absent. */
   #internalWithoutCopy = new Set<string>()
@@ -50,14 +50,16 @@ export class ProviderHistory {
     this.#byThread.set(entry.threadId, entry)
   }
 
-  refresh(): Promise<void> {
-    if (this.#closed) return Promise.resolve()
+  /** Resolves whether any chat changed, so a caller can poll less while nothing does. */
+  refresh(): Promise<boolean> {
+    if (this.#closed) return Promise.resolve(false)
     return (this.#refreshing ??= this.#refresh().finally(() => {
       this.#refreshing = undefined
     }))
   }
 
-  async #refresh(): Promise<void> {
+  async #refresh(): Promise<boolean> {
+    let anyChanged = false
     await Promise.all(
       this.sources.map(async ({ provider, history }) => {
         try {
@@ -215,7 +217,10 @@ export class ProviderHistory {
             }
           })
           for (const entry of imported) this.#remember(entry)
-          if (changed.length) this.hooks.changed(changed)
+          if (changed.length) {
+            anyChanged = true
+            this.hooks.changed(changed)
+          }
           for (const threadId of repair) await this.load(threadId)
         } catch {
           // Never log source content or paths from a malformed provider record.
@@ -223,6 +228,7 @@ export class ProviderHistory {
         }
       }),
     )
+    return anyChanged
   }
 
   async load(threadId: string): Promise<boolean> {
