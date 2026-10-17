@@ -185,10 +185,10 @@ describe('declared provider controls', () => {
       (id) => id !== 'api' && id !== 'codex',
     )) {
       await registry.forProvider(provider).listModels?.('custom-agent')
-      expect(listModels).toHaveBeenCalledWith(provider, 'custom-agent')
+      expect(listModels).toHaveBeenCalledWith(provider, 'custom-agent', undefined)
     }
     await codex.listModels?.('custom-codex')
-    expect(listModels).toHaveBeenCalledWith('codex', 'custom-codex')
+    expect(listModels).toHaveBeenCalledWith('codex', 'custom-codex', undefined)
     expect(createCodex).not.toHaveBeenCalled()
   })
 
