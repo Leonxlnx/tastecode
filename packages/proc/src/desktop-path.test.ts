@@ -75,6 +75,17 @@ describe('desktopPath', () => {
     )
   })
 
+  it('finds a fresh Cursor install before Windows refreshes the process PATH', () => {
+    const local = 'C:\\Users\\tester\\AppData\\Local'
+    const result = desktopPath('C:\\Windows\\System32', {
+      platform: 'win32',
+      home: 'C:\\Users\\tester',
+      env: { LOCALAPPDATA: local },
+    })
+    // Where the installer puts cursor-agent.cmd, and where launch.ts finds its node.exe.
+    expect(result.split(';')).toContain(path.win32.join(local, 'cursor-agent'))
+  })
+
   it.each([
     ['darwin', '/usr/bin', '/Users/tester', path.posix],
     ['win32', 'C:\\Windows\\System32', 'C:\\Users\\tester', path.win32],

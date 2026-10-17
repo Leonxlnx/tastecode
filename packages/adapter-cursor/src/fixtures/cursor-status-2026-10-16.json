@@ -1,0 +1,9 @@
+{
+  "version": "2026.07.23-e383d2b",
+  "note": "Captured on Windows through the bundled node.exe with a valid sign-in; the address is replaced with a placeholder.",
+  "status": {
+    "code": 0,
+    "stdout": "✓ Logged in as developer@example.com\n",
+    "stderr": ""
+  }
+}

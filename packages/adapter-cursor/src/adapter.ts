@@ -1,10 +1,10 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
-import { killTree, ProtocolFrameError, readNdjson, runCli, spawnCli } from '@harness/proc'
+import { killTree, ProtocolFrameError, readNdjson, type runCli, type spawnCli } from '@harness/proc'
 import { CURSOR_SIGN_IN_REQUIRED, cursorNeedsSignIn } from './auth.js'
 import { CursorEventMapper, CursorEventSchema, type CursorEvent } from './events.js'
-import { spawnCursorAgent } from './launch.js'
+import { CURSOR_COMMAND_TIMEOUT_MS, runCursorAgent, spawnCursorAgent } from './launch.js'
 import {
   collapseCursorModels,
   getCursorIndex,
@@ -13,6 +13,11 @@ import {
   type RawCursorModel,
 } from './models.js'
 
+/**
+ * The cursor-agent build line this adapter's frames were captured from. It
+ * documents the wire and gates nothing: the CLI updates itself every month,
+ * and a frame that no longer matches fails its turn with ProtocolFrameError.
+ */
 export const CURSOR_SUPPORTED_VERSION = '2026.07'
 
 export const CURSOR_CAPABILITIES: Capabilities = {
@@ -65,7 +70,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   constructor(options: { spawn?: Spawn; run?: Run } = {}) {
     super()
     this.#spawn = options.spawn ?? spawnCursorAgent
-    this.#run = options.run ?? runCli
+    this.#run = options.run ?? runCursorAgent
   }
 
   get capabilities(): Capabilities {
@@ -228,7 +233,7 @@ export class CursorAdapter extends EventEmitter<Events> {
   respondToApproval(): void {}
 
   async listModels(): Promise<Model[]> {
-    const result = await this.#run('cursor-agent', ['models'])
+    const result = await this.#run('cursor-agent', ['models'], CURSOR_COMMAND_TIMEOUT_MS)
     if (cursorNeedsSignIn(result)) throw new Error(CURSOR_SIGN_IN_REQUIRED)
     if (result.code !== 0) throw new Error('Cursor model discovery failed')
     return parseCursorModels(result.stdout)

@@ -77,6 +77,8 @@ function extraDirectories(
       env.APPDATA ? join(env.APPDATA, 'npm') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Microsoft', 'WindowsApps') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'pnpm') : undefined,
+      // Cursor's installer, whose PATH change a running shell never sees.
+      env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'cursor-agent') : undefined,
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'Programs', 'OpenAI', 'Codex', 'bin') : undefined,
       // Antigravity's installer, whose PATH change a running shell never sees.
       env.LOCALAPPDATA ? join(env.LOCALAPPDATA, 'agy', 'bin') : undefined,

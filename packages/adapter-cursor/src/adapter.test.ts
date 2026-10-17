@@ -204,8 +204,9 @@ describe('Cursor adapter', () => {
 
   it('lists concrete account models without the automatic route', async () => {
     const adapter = new CursorAdapter({
-      run: async (command, args) => {
-        expect([command, args]).toEqual(['cursor-agent', ['models']])
+      run: async (command, args, timeoutMs) => {
+        // `models` took 9–14.5 s on a busy machine; five seconds failed it.
+        expect([command, args, timeoutMs]).toEqual(['cursor-agent', ['models'], 30_000])
         return {
           code: 0,
           stdout: [
