@@ -489,6 +489,8 @@
   color: var(--text);
   font: inherit;
   font-size: var(--t-sm);
+  /* What is typed reads at the regular weight inside a 500 label. */
+  font-weight: 400;
   outline: none;
   transition:
     border-color var(--dur-fast) var(--ease-out),
