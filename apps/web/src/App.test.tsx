@@ -1310,7 +1310,7 @@ describe('web client', () => {
     async function restoreAndOfferUndo() {
       await openNewSession()
       await openCheckpointHistory()
-      fireEvent.click(screen.getByRole('button', { name: 'Restore checkpoint' }))
+      fireEvent.click(screen.getByRole('button', { name: /^Restore( checkpoint)?$/ }))
       const undo = await screen.findByRole('button', { name: 'Undo restore' })
       await waitFor(() => expect(rpcCount('thread.checkpoints')).toBe(2))
       return undo.closest('.notice')!
