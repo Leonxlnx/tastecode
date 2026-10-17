@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type {
   ProviderId,
   ResultOf,
@@ -8,9 +8,17 @@ import type {
 } from '@harness/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Transport } from '../transport.js'
+import { ProfileSettings } from './ProfileSettings.js'
 import { UsageSettings } from './UsageSettings.js'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
+
+async function advance(ms: number): Promise<void> {
+  await act(() => vi.advanceTimersByTimeAsync(ms))
+}
 
 describe('usage settings', () => {
   it('loads local history, changes period, and explicitly requests a rescan', async () => {
@@ -110,7 +118,8 @@ describe('usage settings', () => {
     expect(pathStartY(grokPath)).toBeGreaterThan(pathStartY(codexPath))
   })
 
-  it('keeps cached totals visible and updates when background indexing finishes', async () => {
+  it('keeps cached totals visible and checks a background scan again after 2 s', async () => {
+    vi.useFakeTimers()
     let call = 0
     const request = vi.fn(async () => {
       const result = historyResult('30d')
@@ -120,16 +129,19 @@ describe('usage settings', () => {
     })
     const transport = { request } as unknown as Transport
     render(<UsageSettings transport={transport} />)
+    await advance(0)
 
-    expect(await screen.findByText(/Indexing local usage in the background/)).toBeTruthy()
+    expect(screen.getByText(/Indexing local usage in the background/)).toBeTruthy()
     expect(screen.getByText('$12.34', { selector: '.usage-cost__value' })).toBeTruthy()
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2), { timeout: 1_500 })
-    await waitFor(() => {
-      expect(screen.queryByText(/Indexing local usage in the background/)).toBeNull()
-    })
+    await advance(1_999)
+    expect(request).toHaveBeenCalledTimes(1)
+    await advance(1)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText(/Indexing local usage in the background/)).toBeNull()
   })
 
   it('keeps polling a background scan after a transient refresh failure', async () => {
+    vi.useFakeTimers()
     let call = 0
     const request = vi.fn(async () => {
       const result = historyResult('30d')
@@ -144,28 +156,47 @@ describe('usage settings', () => {
     })
     const transport = { request } as unknown as Transport
     render(<UsageSettings transport={transport} />)
+    await advance(0)
 
-    expect(await screen.findByText(/Indexing local usage in the background/)).toBeTruthy()
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2), { timeout: 1_500 })
-    expect(await screen.findByText(/Temporary connection failure/)).toBeTruthy()
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(3), { timeout: 1_500 })
-    await waitFor(() => {
-      expect(screen.queryByText(/Indexing local usage in the background/)).toBeNull()
-    })
+    expect(screen.getByText(/Indexing local usage in the background/)).toBeTruthy()
+    await advance(2_000)
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/Temporary connection failure/)).toBeTruthy()
+    await advance(3_000)
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(/Indexing local usage in the background/)).toBeNull()
   })
 
   it('cancels a pending scan poll when the page unmounts', async () => {
+    vi.useFakeTimers()
     const result = historyResult('30d')
     result.scan = { status: 'scanning', filesProcessed: 10, filesTotal: 100 }
     const request = vi.fn(async () => result)
     const transport = { request } as unknown as Transport
     const view = render(<UsageSettings transport={transport} />)
+    await advance(0)
 
-    expect(await screen.findByText(/Indexing local usage in the background/)).toBeTruthy()
+    expect(screen.getByText(/Indexing local usage in the background/)).toBeTruthy()
     view.unmount()
-    await new Promise((resolve) => setTimeout(resolve, 600))
+    await advance(30_000)
 
     expect(request).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares the all-time history with the profile page', async () => {
+    const request = vi.fn(async (_method: string, params: { range: UsageHistoryRange }) =>
+      historyResult(params.range),
+    )
+    const transport = { request } as unknown as Transport
+    const view = render(<UsageSettings transport={transport} />)
+    await screen.findByText('gpt-5.6-sol')
+    fireEvent.click(screen.getByRole('radio', { name: 'All' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    view.unmount()
+
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+    expect(await screen.findByRole('heading', { name: 'Local activity' })).toBeTruthy()
+    expect(request).toHaveBeenCalledTimes(2)
   })
 
   it('uses the product names for every provider', async () => {

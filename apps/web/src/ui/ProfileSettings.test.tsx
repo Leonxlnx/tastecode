@@ -171,6 +171,21 @@ describe('profile settings', () => {
     })
   })
 
+  it('counts cache writes as input in the cache hit rate, like the Usage page', async () => {
+    const result = historyResult()
+    result.totals = {
+      ...result.totals,
+      uncachedInputTokens: 150_000,
+      cachedInputTokens: 750_000,
+      cacheWriteInputTokens: 100_000,
+    }
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+
+    const rate = (await screen.findByText('Cache hit rate')).closest('div')
+    expect(rate?.querySelector('dd')?.textContent).toBe('75%')
+  })
+
   it('shows an actionable error when no cached profile can be loaded', async () => {
     const request = vi.fn(async () => {
       throw new Error('History unavailable')
@@ -186,6 +201,7 @@ describe('profile settings', () => {
   })
 
   it('continues polling after a transient profile scan failure', async () => {
+    vi.useFakeTimers()
     let call = 0
     const request = vi.fn(async () => {
       call += 1
@@ -200,12 +216,15 @@ describe('profile settings', () => {
     const transport = { request } as unknown as Transport
 
     render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+    await act(() => vi.advanceTimersByTimeAsync(0))
 
-    expect(await screen.findByText(/Indexing local activity/)).toBeTruthy()
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(3), { timeout: 1_600 })
-    await waitFor(() => {
-      expect(screen.queryByText(/Indexing local activity/)).toBeNull()
-    })
+    expect(screen.getByText(/Indexing local activity/)).toBeTruthy()
+    await act(() => vi.advanceTimersByTimeAsync(2_000))
+    expect(request).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/Temporary history failure/)).toBeTruthy()
+    await act(() => vi.advanceTimersByTimeAsync(3_000))
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(/Indexing local activity/)).toBeNull()
   })
 
   it('reserves the plan in the facts while the account loads and fills the same slot', () => {
