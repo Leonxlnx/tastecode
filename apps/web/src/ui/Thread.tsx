@@ -1,12 +1,10 @@
 import {
-  createContext,
   Fragment,
   lazy,
   memo,
   Suspense,
   type ReactNode,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -63,6 +61,13 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSkeleton } from './Skeleton.js'
+import {
+  REVEAL_CLOSE_MS,
+  REVEAL_EASING,
+  REVEAL_OPEN_MS,
+  RowMeasureContext,
+  useDisclosure,
+} from './disclosure.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
@@ -107,15 +112,6 @@ const ThreadSearch = lazy(() =>
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
-
-/**
- * Lets a disclosure re-measure its virtual row in the same commit that its
- * reveal enters or leaves flow. Waiting for the ResizeObserver would move the
- * rows below one frame after the reveal starts animating.
- */
-const RowMeasureContext = createContext<
-  ((row: Element, header: Element | null) => void) | undefined
->(undefined)
 
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
@@ -1869,8 +1865,6 @@ function looksLikeIdentifier(name: string): boolean {
   return !/\s/.test(name) && /[._\-A-Z0-9]/.test(name)
 }
 
-type DisclosurePhase = 'closed' | 'opening' | 'open' | 'closing'
-
 function ReasoningDisclosure({
   item,
   text,
@@ -1984,71 +1978,6 @@ function thoughtDuration(ms: number): string {
   const hours = Math.floor(minutes / 60)
   const restMinutes = minutes % 60
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
-}
-
-/** Mirror --dur-fast, --dur-press and --ease-out: the reveal transitions in thread.css. */
-const REVEAL_OPEN_MS = 180
-const REVEAL_CLOSE_MS = 140
-const REVEAL_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
-
-function settledPhase(phase: DisclosurePhase): DisclosurePhase {
-  return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
-}
-
-function useDisclosure() {
-  const [phase, setPhase] = useState<DisclosurePhase>('closed')
-  const revealRef = useRef<HTMLDivElement>(null)
-  const measureRow = useContext(RowMeasureContext)
-  const expanded = phase === 'open' || phase === 'opening'
-  const transitioning = phase === 'opening' || phase === 'closing'
-
-  // The reveal enters or leaves flow in this commit. Measuring the row now,
-  // before paint, starts the rows below in the same frame as the wipe; the
-  // ResizeObserver would only catch up a frame later.
-  useLayoutEffect(() => {
-    if (!transitioning || !measureRow) return
-    const reveal = revealRef.current
-    const row = reveal?.closest('.thread__row')
-    // The summary button sits right before its reveal in every disclosure.
-    if (row) measureRow(row, reveal?.previousElementSibling ?? null)
-  }, [phase, transitioning, measureRow])
-
-  useEffect(() => {
-    if (!transitioning) return
-    // A reversal before the first paint can leave no transition to finish.
-    const timer = window.setTimeout(
-      () => setPhase((current) => (current === phase ? settledPhase(phase) : current)),
-      (phase === 'opening' ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS) + 60,
-    )
-    return () => window.clearTimeout(timer)
-  }, [phase, transitioning])
-
-  const toggle = useCallback(() => {
-    const reduceMotion =
-      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    setPhase((current) =>
-      current === 'open' || current === 'opening'
-        ? reduceMotion
-          ? 'closed'
-          : 'closing'
-        : reduceMotion
-          ? 'open'
-          : 'opening',
-    )
-  }, [])
-
-  const finishTransition = useCallback(() => {
-    setPhase(settledPhase)
-  }, [])
-
-  return {
-    expanded,
-    contentMounted: phase !== 'closed',
-    dataOpen: phase === 'open' ? 'true' : phase === 'closed' ? 'false' : phase,
-    revealRef,
-    toggle,
-    finishTransition,
-  } as const
 }
 
 /**
