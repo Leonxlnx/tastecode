@@ -13,8 +13,11 @@ import { runCli } from '@harness/proc/cli'
  * terminal draws `┌`, `│`, `●` and `└`. The counts read the same either way.
  */
 
-/** `opencode auth list` took 1.9 to 6.0 s here; it starts the whole CLI. */
-export const OPENCODE_AUTH_TIMEOUT_MS = 20_000
+/**
+ * `opencode auth list` starts the whole CLI: 1.9 to 6.0 s on a quiet machine,
+ * 16 s with the CPU at 100%. A check that runs out reports nothing.
+ */
+export const OPENCODE_AUTH_TIMEOUT_MS = 60_000
 
 type RunCli = (
   command: string,

@@ -40,7 +40,7 @@ describe('openCodeAccount', () => {
     const run = answering(fixture(''))
     await expect(openCodeAccount(run)).resolves.toEqual({ signedIn: true })
     expect(run).toHaveBeenCalledWith('opencode', ['auth', 'list'], OPENCODE_AUTH_TIMEOUT_MS)
-    expect(OPENCODE_AUTH_TIMEOUT_MS).toBe(20_000)
+    expect(OPENCODE_AUTH_TIMEOUT_MS).toBe(60_000)
   })
 
   it('is signed in with only a provider key in the environment', async () => {
