@@ -1122,7 +1122,8 @@ describe('missing provider re-check', () => {
     const row = providerRow('Grok')
     expect(within(row).getByRole('link', { name: 'Open setup guide' })).toBeTruthy()
     const check = action(row, 'Check again')
-    expect(check.className).toContain('is-secondary')
+    // The row's secondary slot draws the quiet settings button.
+    expect(check.className).toContain('set-button--quiet')
 
     fireEvent.click(check)
     expect(within(row).getByRole('status').textContent).toBe('Checking…')
