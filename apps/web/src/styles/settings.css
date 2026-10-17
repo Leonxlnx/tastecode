@@ -1962,10 +1962,6 @@
   border-top: 1px solid var(--line);
 }
 
-.provider-terminal + .settings__row {
-  border-top: 1px solid var(--line);
-}
-
 .settings__row-copy {
   min-width: 0;
 }
@@ -2019,27 +2015,15 @@
   color: var(--text-2);
 }
 
-/* The provider roster is open type, not a card. Each provider is one line
-   wired to its account, and the wire is the status: solid between two
-   terminals once an account is attached, a dotted leader while the provider
-   waits for one, nothing when the provider is not on this machine. */
-@property --provider-wire {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
+/* The provider roster is open type, not a card. Each provider is an entity
+   row wired to its account, and the wire is the status: the shared settings
+   leader while the provider waits for an account, a solid line between two
+   terminals once one is attached (the one mark only providers draw), nothing
+   when the provider is not on this machine. */
 
-.settings__group--providers {
-  container-type: inline-size;
-}
+.settings .provider-row {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
 
-.provider-settings__entry .settings__row {
-  border-top: 0;
-}
-
-/* Doubled class: the viewport rules for generic rows further down must not
-   re-align or re-gap this grid. */
-.settings__row.provider-row {
   display: grid;
   grid-template-columns:
     max-content minmax(0, max-content) minmax(44px, 1fr) minmax(0, max-content)
@@ -2050,48 +2034,50 @@
   gap: 0;
   min-height: 54px;
   padding: 8px 0;
-  --provider-wire: color-mix(in srgb, var(--text-3) 72%, transparent);
-  transition: --provider-wire var(--dur-fast) var(--ease-out);
+  transition: --set-leader var(--dur-fast) var(--ease-out);
 }
 
-/* Nothing in the row is a target, so hovering lights its wire instead of
-   painting a surface behind it. */
-.provider-row:hover {
-  background: none;
-  --provider-wire: var(--text-2);
+/* Nothing in the row is a target, so pointing at it lights its wire. */
+.settings .provider-row:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
-.provider-row[data-fault] {
-  --provider-wire: var(--error);
+.settings .provider-row[data-link='connected'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 72%, transparent);
 }
 
-.provider-row::after {
+.settings .provider-row[data-link='connected']:is(:hover, :focus-within) {
+  --set-leader: var(--text-2);
+}
+
+/* A failure keeps its colour under the pointer too. */
+.settings .provider-row[data-link][data-fault] {
+  --set-leader: var(--error);
+}
+
+/* The wire runs through the middle of the row, level with the mark. */
+.settings .provider-row > .set-leader {
   grid-column: 3;
   grid-row: 1;
-  height: 5px;
-  margin-inline: 14px;
-  background: radial-gradient(circle, var(--provider-wire) 0.9px, transparent 1.35px) left center /
-    8px 100% repeat-x;
-  content: '';
+  translate: none;
 }
 
-.provider-row[data-link='connected']::after {
+.settings .provider-row[data-link='connected'] > .set-leader {
   background:
-    radial-gradient(circle at 2.5px 50%, var(--provider-wire) 2px, transparent 2.5px),
-    radial-gradient(circle at calc(100% - 2.5px) 50%, var(--provider-wire) 2px, transparent 2.5px),
-    linear-gradient(var(--provider-wire), var(--provider-wire)) center / calc(100% - 5px) 1px
-      no-repeat;
+    radial-gradient(circle at 2.5px 50%, var(--set-leader) 2px, transparent 2.5px),
+    radial-gradient(circle at calc(100% - 2.5px) 50%, var(--set-leader) 2px, transparent 2.5px),
+    linear-gradient(var(--set-leader), var(--set-leader)) center / calc(100% - 5px) 1px no-repeat;
   animation: provider-wire-draw 560ms var(--ease-out) both;
 }
 
-.provider-row[data-link='none']::after {
+.settings .provider-row[data-link='none'] > .set-leader {
   background: none;
 }
 
 /* Work in flight runs along the wire towards the account. */
-.provider-row[data-live]::after {
-  background: linear-gradient(90deg, var(--provider-wire) 50%, transparent 50%) left center / 8px
-    1px repeat-x;
+.settings .provider-row[data-live] > .set-leader {
+  background: linear-gradient(90deg, var(--set-leader) 50%, transparent 50%) left center / 8px 1px
+    repeat-x;
   animation: provider-wire-flow 520ms linear infinite;
 }
 
@@ -2108,7 +2094,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .provider-row::after {
+  .settings .provider-row > .set-leader {
     animation: none !important;
   }
 }
@@ -2128,22 +2114,15 @@
   min-width: 0;
 }
 
-.provider-row .settings__row-title {
-  overflow: hidden;
-  color: var(--text-2);
-  font-size: var(--t-lg);
-  font-weight: 550;
-  letter-spacing: -0.012em;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.settings .provider-row .set-entity__name {
   transition: color var(--dur-slow) var(--ease-out);
 }
 
-.provider-row[data-link='connected'] :is(.provider-row__mark, .settings__row-title) {
+.settings .provider-row[data-link='connected'] :is(.provider-row__mark, .set-entity__name) {
   color: var(--text);
 }
 
-.provider-row[data-link='none'] .settings__row-title {
+.settings .provider-row[data-link='none'] .set-entity__name {
   color: var(--text-3);
 }
 
@@ -2154,11 +2133,9 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
 }
 
-.provider-row[data-link='connected'] .provider-row__status {
+.settings .provider-row[data-link='connected'] .provider-row__status {
   color: var(--text-2);
 }
 
@@ -2281,19 +2258,15 @@
   color: var(--text);
 }
 
-/* Too narrow for a wire: the account drops under the name and hairlines
-   take over the rhythm. */
-@container (max-width: 520px) {
-  .settings__row.provider-row {
+/* Too narrow for a wire (the shared leader steps aside at the same width):
+   the account drops under the name and hairlines take over the rhythm. */
+@container settings-content (max-width: 560px) {
+  .settings .provider-row {
     grid-template-columns: max-content minmax(0, 1fr) max-content max-content;
     grid-template-rows: auto auto;
     row-gap: 2px;
     min-height: 62px;
     padding: 11px 0;
-  }
-
-  .provider-row::after {
-    display: none;
   }
 
   .provider-row__mark,

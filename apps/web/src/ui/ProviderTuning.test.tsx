@@ -181,9 +181,14 @@ describe('provider defaults at a glance', () => {
     const defaults = screen.getByRole('group', { name: 'Claude Code defaults' })
     expect(defaults.getAttribute('aria-busy')).toBe('true')
     expect(within(defaults).queryByRole('button')).toBeNull()
+    // Settings sub-rows on the shared leader, each wired to the mark.
     expect(
-      Array.from(defaults.querySelectorAll('.provider-tune__label'), (label) => label.textContent),
+      Array.from(defaults.querySelectorAll('.set-subrow__name'), (label) => label.textContent),
     ).toEqual(['Model', 'Access', 'Context'])
+    for (const row of defaults.querySelectorAll('.provider-tune__row')) {
+      expect(row.classList.contains('set-subrow')).toBe(true)
+      expect(row.querySelector(':scope > .set-leader')?.getAttribute('aria-hidden')).toBe('true')
+    }
     expect(defaults.querySelectorAll('.tune-skeleton')).toHaveLength(3)
 
     rerender({ pending: false })

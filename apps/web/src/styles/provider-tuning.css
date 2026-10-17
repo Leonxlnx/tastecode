@@ -1,8 +1,9 @@
 /* A provider's defaults hang off its mark as a small schematic: one trunk
    drops from the mark and each setting branches off it, so every value reads
-   as wired to the provider it belongs to. Like a table of contents, each
-   branch is a name, a dotted leader and exactly one value; the controls that
-   change a value open from it, so the page stays as quiet as a list. */
+   as wired to the provider it belongs to. Each branch is a settings sub-row
+   (settings-system.css): a name, the shared leader and exactly one value; the
+   controls that change a value open from it, so the page stays as quiet as a
+   list. Only the trunk and branches are drawn here. */
 @property --tune-leader {
   syntax: '<color>';
   inherits: true;
@@ -11,7 +12,6 @@
 
 .provider-tune {
   --tune-wire: var(--line-strong);
-  --tune-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
   /* The trunk starts under the centre of the 18px provider mark. */
   margin: -9px 0 16px 8px;
 }
@@ -22,13 +22,7 @@
 
 .provider-tune__row {
   position: relative;
-  display: grid;
-  grid-template-columns: 64px minmax(24px, 1fr) minmax(0, max-content);
-  grid-template-areas: 'label leader value';
-  align-items: center;
-  min-height: 32px;
   padding-left: 26px;
-  transition: --tune-leader var(--dur-fast) var(--ease-out);
   animation: provider-tune-row 340ms var(--ease-out) both;
 }
 
@@ -38,10 +32,6 @@
 
 .provider-tune__row:nth-child(3) {
   animation-delay: 80ms;
-}
-
-.provider-tune__row:hover {
-  --tune-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
 /* Trunk through the row, and the branch out to its name. */
@@ -86,38 +76,6 @@
   .provider-tune__row {
     animation: none;
   }
-}
-
-.provider-tune__label {
-  grid-area: label;
-  overflow: hidden;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.provider-tune__row:hover .provider-tune__label {
-  color: var(--text-2);
-}
-
-.provider-tune__leader {
-  grid-area: leader;
-  height: 5px;
-  margin-inline: 4px 10px;
-  background: radial-gradient(circle, var(--tune-leader) 0.75px, transparent 1.15px) left center /
-    5px 100% repeat-x;
-}
-
-/* The value is the settings inline select: its chevron lands on the same edge
-   as the account row's action. */
-.provider-tune__value {
-  grid-area: value;
-  display: flex;
-  justify-content: flex-end;
-  min-width: 0;
-  font-size: var(--t-sm);
 }
 
 .tune-value {
@@ -185,7 +143,7 @@
 }
 
 /* The real value fills in where its placeholder stood. */
-.provider-tune__value > .menuwrap {
+.provider-tune .set-subrow__value > .menuwrap {
   animation: fade-in var(--dur-fast) var(--ease-out);
 }
 
@@ -563,15 +521,5 @@
     .tune-value__chevron
   ) {
     transition: none;
-  }
-}
-
-@container (max-width: 420px) {
-  .provider-tune__row {
-    grid-template-columns: 56px minmax(12px, 1fr) minmax(0, max-content);
-  }
-
-  .provider-tune__leader {
-    margin-inline: 2px 6px;
   }
 }

@@ -26,10 +26,16 @@ describe('provider row grammar', () => {
     expect(Array.from(row.children).map((child) => child.className)).toEqual([
       'provider-row__mark',
       'provider-row__identity',
-      'provider-row__status',
+      'set-leader',
+      'provider-row__status set-entity__status',
       'provider-row__secondary',
       'provider-row__primary',
     ])
+    // A settings entity row: its name in the entity role, its wire the shared leader.
+    expect(row.querySelector('.provider-row__identity > .set-entity__name')?.textContent).toBe(
+      'Codex',
+    )
+    expect(row.querySelector('.set-leader')?.getAttribute('aria-hidden')).toBe('true')
     expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     expect(row.querySelector('.provider-row__mark')?.getAttribute('title')).toBe('codex-cli 1.4.0')
     expect(within(row).queryByText('codex-cli 1.4.0')).toBeNull()

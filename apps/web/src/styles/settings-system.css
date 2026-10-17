@@ -2,7 +2,8 @@
    One page header, open sections and leader rows for every Settings tab; cards
    are left to dashboards and forms. Five text roles: the 26px title, the
    13.5px row name and value, the 12.5px section heading and note, and 11.5px
-   fine print. Weights stay at 400, 500 and 550. Spacing steps are 4, 8, 12,
+   fine print; entity rows add their 15px name, sub-rows step down to 12.5.
+   Weights stay at 400, 500 and 550. Spacing steps are 4, 8, 12,
    16 and 24, plus 28 under the page header and 36 between sections. */
 
 @property --set-leader {
@@ -187,12 +188,75 @@
   line-height: 1.45;
 }
 
+/* Entity rows: a thing with a name of its own (a provider; MCP servers and
+   skills next). The name is the one 15px role and the status steps down to
+   the note size. How the row is laid out stays with each kind of entity. */
+
+.settings .set-entity__name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: var(--t-lg);
+  font-weight: 550;
+  letter-spacing: -0.012em;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity__status {
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+}
+
+/* Sub-rows: the settings an entity carries (a provider's defaults). A row one
+   step down: the name at 12.5/400 in --text-3, the shared leader, and an
+   inline select at the same size as the value. */
+
+.settings .set-subrow {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(24px, 1fr) minmax(0, max-content);
+  align-items: center;
+  min-height: 32px;
+  font-size: var(--t-sm);
+  line-height: 1.35;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-subrow:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+.settings .set-subrow__name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-subrow:is(:hover, :focus-within) .set-subrow__name {
+  color: var(--text-2);
+}
+
+.settings .set-subrow__value {
+  display: flex;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
 @container settings-content (max-width: 560px) {
   .settings .set-leader {
     display: none;
   }
 
-  .settings .set-row {
+  .settings :is(.set-row, .set-subrow) {
     grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
     column-gap: 16px;
   }

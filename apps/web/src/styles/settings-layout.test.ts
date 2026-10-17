@@ -173,13 +173,16 @@ describe('settings viewport CSS', () => {
       /\.provider-row__primary:empty,\s*\.provider-row__secondary:empty \{[^}]*display: none;/s,
     )
     // Slots space themselves, so the empty action column collapses to nothing.
-    expect(settingsCss).toMatch(/\.settings__row\.provider-row \{[^}]*gap: 0;/s)
+    expect(settingsCss).toMatch(/\.settings \.provider-row \{[^}]*gap: 0;/s)
     expect(settingsCss).toMatch(
       /\.provider-row__secondary \{[^}]*grid-column: 5;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 6;/s,
     )
+    // The roster goes narrow where every settings leader steps aside.
     expect(settingsCss).toMatch(
-      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.provider-row__status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[\s\S]*?\.provider-row__secondary \{[^}]*grid-column: 3;[^}]*\}\s*\.provider-row__primary \{[^}]*grid-column: 4;/s,
     )
+    expect(settingsCss).not.toMatch(/@container \(max-width/)
+    expect(settingsCss).not.toMatch(/settings__group--providers/)
     expect(settingsCss).toMatch(/\.provider-row__status \{[^}]*grid-column: 4;[^}]*min-width: 0;/s)
     expect(settingsCss).toMatch(/\.provider-row \.set-button \{[^}]*min-width: 70px;/s)
     // Only a quiet action bleeds to the edge; a boxed one keeps its border on it.
@@ -257,25 +260,47 @@ describe('settings viewport CSS', () => {
     }
   })
 
-  it('draws the provider account wire from the link state', () => {
+  it('draws the provider account wire from the link state on the shared leader', () => {
+    // Waiting for an account is the settings leader itself, in column 3.
     expect(settingsCss).toMatch(
-      /\.provider-row::after \{[^}]*grid-column: 3;[^}]*radial-gradient\([^}]*repeat-x;/s,
+      /\.settings \.provider-row > \.set-leader \{[^}]*grid-column: 3;[^}]*translate: none;/s,
+    )
+    expect(settingsCss).not.toMatch(/provider-row::after|--provider-wire/)
+    // The solid wire between two terminals is the one provider-only mark.
+    expect(settingsCss).toMatch(
+      /\.settings \.provider-row\[data-link='connected'\] > \.set-leader \{[^}]*var\(--set-leader\)[^}]*linear-gradient\([^}]*animation: provider-wire-draw/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row\[data-link='connected'\]::after \{[^}]*linear-gradient\([^}]*animation: provider-wire-draw/s,
+      /\.settings \.provider-row\[data-link='none'\] > \.set-leader \{[^}]*background: none;/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row\[data-link='none'\]::after \{[^}]*background: none;/s,
+      /\.settings \.provider-row\[data-live\] > \.set-leader \{[^}]*animation: provider-wire-flow/s,
     )
     expect(settingsCss).toMatch(
-      /\.provider-row\[data-live\]::after \{[^}]*animation: provider-wire-flow/s,
+      /@media \(prefers-reduced-motion: reduce\) \{\s*\.settings \.provider-row > \.set-leader \{[^}]*animation: none !important;/s,
     )
-    expect(settingsCss).toMatch(
-      /@media \(prefers-reduced-motion: reduce\) \{\s*\.provider-row::after \{[^}]*animation: none !important;/s,
+    // A failure stays red under the pointer.
+    expect(settingsCss.indexOf(".provider-row[data-link='connected']:is(:hover")).toBeLessThan(
+      settingsCss.indexOf('.provider-row[data-link][data-fault]'),
     )
-    // Too narrow for a wire: it steps aside instead of squeezing the account.
-    expect(settingsCss).toMatch(
-      /@container \(max-width: 520px\) \{[\s\S]*?\.provider-row::after \{[^}]*display: none;/s,
+  })
+
+  it('sets providers in the entity and sub-row roles', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__name \{[^}]*color: var\(--text-2\);[^}]*font-size: var\(--t-lg\);[^}]*font-weight: 550;[^}]*letter-spacing: -0\.012em;/s,
     )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__status \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-subrow \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(24px, 1fr\) minmax\(0, max-content\);[^}]*min-height: 32px;[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-subrow__name \{[^}]*color: var\(--text-3\);[^}]*font-weight: 400;/s,
+    )
+    // The provider defaults draw only their trunk and branches.
+    expect(tuningCss).not.toMatch(/provider-tune__(label|leader|value)|grid-template-columns/)
+    expect(tuningCss).toMatch(/\.provider-tune__row \{[^}]*padding-left: 26px;/s)
+    expect(settingsCss).not.toMatch(/\.provider-row \.settings__row-title/)
   })
 })

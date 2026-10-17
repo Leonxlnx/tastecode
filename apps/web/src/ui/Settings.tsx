@@ -1214,10 +1214,7 @@ export function ProviderSettings(props: {
   )
 
   return (
-    <SettingsPanel
-      title="Providers"
-      groupClassName="settings__group--plain settings__group--providers"
-    >
+    <SettingsPage title="Providers">
       {props.providersLoading && props.providerStatuses.length === 0 ? (
         <SkeletonStatus label="Loading providers…">
           {PROVIDER_ROSTER.map((id, index) => (
@@ -1230,7 +1227,11 @@ export function ProviderSettings(props: {
       ) : (
         PROVIDER_ROSTER.flatMap(byId).map(renderProviderRow)
       )}
-      {agents.map(renderAgentRow)}
+      {agents.map((agent) => (
+        <div className="provider-settings__entry" key={agent.id}>
+          {renderAgentRow(agent)}
+        </div>
+      ))}
       <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
       {(props.modelConnections ?? []).map((connection) => (
         <SettingsRow key={connection.id} title={connection.displayName}>
@@ -1368,7 +1369,7 @@ export function ProviderSettings(props: {
         </button>
       )}
       <ProviderUpdateCheck transport={props.transport} />
-    </SettingsPanel>
+    </SettingsPage>
   )
 }
 

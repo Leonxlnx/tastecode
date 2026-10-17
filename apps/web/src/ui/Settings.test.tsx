@@ -776,7 +776,7 @@ function renderProviders(
 function installedProvider(id: ProviderId, displayName: string): ProviderStatus {
   return { id, displayName, installed: true, auth: 'unknown' }
 }
-const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.settings__row')!
+const providerRow = (name: string) => screen.getByText(name).closest<HTMLElement>('.provider-row')!
 const action = (row: HTMLElement, name: string) =>
   within(row).getByRole('button', { name }) as HTMLButtonElement
 describe('provider authentication states', () => {
@@ -832,7 +832,7 @@ describe('provider authentication states', () => {
       expect(codex.querySelector('.provider-row__status')?.textContent).toBe('Signed in'),
     )
     // The roster keeps its own order, whatever order the server reported.
-    expect(Array.from(document.querySelectorAll('.settings__row'))).toEqual([claude, codex, grok])
+    expect(Array.from(document.querySelectorAll('.provider-row'))).toEqual([claude, codex, grok])
     const columns = (row: HTMLElement) => Array.from(row.children).map((child) => child.className)
     expect(columns(codex)).toEqual(columns(claude))
     expect(columns(claude)).toEqual(columns(grok))
@@ -1660,7 +1660,7 @@ describe('provider settings', () => {
     }
     expect(screen.getAllByText('Codex')).toHaveLength(1)
 
-    const codexRow = screen.getByText('Codex').closest<HTMLElement>('.settings__row')
+    const codexRow = screen.getByText('Codex').closest<HTMLElement>('.provider-row')
     if (!codexRow) throw new Error('Codex provider row missing')
     const email = within(codexRow).getByText('private@example.com', {
       selector: '.settings__email-value',
@@ -1697,8 +1697,8 @@ describe('provider settings', () => {
     expect(screen.getByText('Kimi CLI')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Connect another plan or API' })).toBeTruthy()
 
-    const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')
-    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    const claudeRow = screen.getByText('Claude Code').closest<HTMLElement>('.provider-row')
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.provider-row')
     expect(claudeRow?.querySelector('.provider-row__status')?.textContent).toBe(
       'claude@example.com · pro',
     )
@@ -1927,7 +1927,7 @@ describe('provider settings', () => {
     )
 
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Sign in' })).toHaveLength(2))
-    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.settings__row')
+    const grokRow = screen.getByText('Grok').closest<HTMLElement>('.provider-row')
     if (!grokRow) throw new Error('Grok row missing')
     fireEvent.click(within(grokRow).getByRole('button', { name: 'Sign in' }))
     await waitFor(() =>
@@ -1969,7 +1969,7 @@ describe('provider settings', () => {
     await waitFor(() => expect(screen.queryByTestId('install-terminal')).toBeNull())
     await waitFor(() => expect(providerRow('Grok').textContent).toContain('grok.user@example.com'))
 
-    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.settings__row')
+    const kimiRow = screen.getByText('Kimi CLI').closest<HTMLElement>('.provider-row')
     if (!kimiRow) throw new Error('Kimi row missing')
     expect(within(kimiRow).getByRole('button', { name: 'Sign in' })).toBeTruthy()
     expect(open).toHaveBeenCalledTimes(1)

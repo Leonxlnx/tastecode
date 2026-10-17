@@ -267,12 +267,13 @@ export function ProviderTuningSkeleton() {
   )
 }
 
+/** A settings sub-row; the provider adds only the branch that wires it to the mark. */
 function TuneRow(props: { label: string; children: ReactNode }) {
   return (
-    <div className="provider-tune__row">
-      <span className="provider-tune__label">{props.label}</span>
-      <span className="provider-tune__leader" aria-hidden />
-      <div className="provider-tune__value">{props.children}</div>
+    <div className="set-subrow provider-tune__row">
+      <span className="set-subrow__name">{props.label}</span>
+      <span className="set-leader" aria-hidden />
+      <div className="set-subrow__value">{props.children}</div>
     </div>
   )
 }

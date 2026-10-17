@@ -5159,7 +5159,7 @@ describe('new chats', () => {
       expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
       await waitFor(() =>
         expect(
-          screen.getByText('Claude Code').closest<HTMLElement>('.settings__row')!.textContent,
+          screen.getByText('Claude Code').closest<HTMLElement>('.provider-row')!.textContent,
         ).toContain(
           outcome === 'success'
             ? 'Signed in'
