@@ -18,12 +18,10 @@ export type Checkpoint = {
   createdAt: number
 }
 
-/** The cut sits above the prompt a restore goes back to, or after the last
-    prompt while none is picked. */
 type Cut =
-  | { state: 'unpicked'; index: number }
-  | { state: 'loading'; index: number }
-  | { state: 'picked'; index: number; files: string[] }
+  | { state: 'unpicked'; firstGone: number }
+  | { state: 'loading'; firstGone: number }
+  | { state: 'picked'; firstGone: number; files: string[] }
 
 function placeCut(
   checkpoints: Checkpoint[],
@@ -31,10 +29,11 @@ function placeCut(
   loadingId: number | undefined,
 ): Cut {
   const loading = checkpoints.findIndex((checkpoint) => checkpoint.id === loadingId)
-  if (loading >= 0) return { state: 'loading', index: loading }
+  if (loading >= 0) return { state: 'loading', firstGone: loading }
   const picked = checkpoints.findIndex((checkpoint) => checkpoint.id === inspection?.checkpoint.id)
-  if (inspection && picked >= 0) return { state: 'picked', index: picked, files: inspection.files }
-  return { state: 'unpicked', index: checkpoints.length }
+  if (inspection && picked >= 0)
+    return { state: 'picked', firstGone: picked, files: inspection.files }
+  return { state: 'unpicked', firstGone: checkpoints.length }
 }
 
 function filesBack(files: string[]): ReactNode {
@@ -72,25 +71,23 @@ export function RollbackDialog(props: {
   const prompts = useRef<(HTMLButtonElement | null)[]>([])
   const opened = useRef(false)
 
-  // The notches are cut into the sheet's edge, outside the scrolling list,
-  // so they follow the list's scroll position through this property.
-  const followScroll = () =>
+  const moveNotchesWithScroll = () =>
     sheet.current?.style.setProperty('--rollback-scroll', `${list.current?.scrollTop ?? 0}px`)
 
   useLayoutEffect(() => {
     const scroller = list.current
     if (!scroller) return
-    const prompt = prompts.current[cut.index]
+    const prompt = prompts.current[cut.firstGone]
     if (!prompt) scroller.scrollTop = scroller.scrollHeight
     else if (opened.current) prompt.scrollIntoView({ block: 'nearest' })
     else scroller.scrollTop = prompt.offsetTop - (scroller.clientHeight - prompt.offsetHeight) / 2
     opened.current = true
-    followScroll()
-  }, [cut.index])
+    moveNotchesWithScroll()
+  }, [cut.firstGone])
 
   const pick = (index: number, focus = false) => {
     const checkpoint = props.checkpoints[index]
-    if (!checkpoint || index === cut.index || props.restoring) return
+    if (!checkpoint || index === cut.firstGone || props.restoring) return
     props.onInspect(checkpoint)
     if (focus) prompts.current[index]?.focus()
   }
@@ -99,7 +96,7 @@ export function RollbackDialog(props: {
     const step = event.key === 'ArrowUp' ? -1 : event.key === 'ArrowDown' ? 1 : 0
     if (step && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
       event.preventDefault()
-      pick(cut.index + step, prompts.current.includes(event.target as HTMLButtonElement))
+      pick(cut.firstGone + step, prompts.current.includes(event.target as HTMLButtonElement))
     }
     dialog.onKeyDown(event)
   }
@@ -117,7 +114,7 @@ export function RollbackDialog(props: {
         <div
           className="rollback__sheet"
           ref={sheet}
-          style={{ '--rollback-cut': cut.index } as CSSProperties}
+          style={{ '--rollback-cut': cut.firstGone } as CSSProperties}
         >
           <header className="sheet__head">
             <h2 className="sheet__title" id={titleId}>
@@ -128,11 +125,11 @@ export function RollbackDialog(props: {
             </button>
           </header>
 
-          <div className="rollback__list" ref={list} onScroll={followScroll}>
+          <div className="rollback__list" ref={list} onScroll={moveNotchesWithScroll}>
             <ol className="rollback__chat">
               {props.checkpoints.map((checkpoint, index) => (
                 <li
-                  className={`rollback__row${index >= cut.index ? ' is-gone' : ''}`}
+                  className={`rollback__row${index >= cut.firstGone ? ' is-gone' : ''}`}
                   key={checkpoint.id}
                 >
                   <button
@@ -141,9 +138,11 @@ export function RollbackDialog(props: {
                     }}
                     className="rollback__prompt"
                     aria-label={`Before “${checkpoint.label}”`}
-                    aria-pressed={index === cut.index}
+                    aria-pressed={index === cut.firstGone}
                     title={new Date(checkpoint.createdAt).toLocaleString()}
-                    tabIndex={index === Math.min(cut.index, props.checkpoints.length - 1) ? 0 : -1}
+                    tabIndex={
+                      index === Math.min(cut.firstGone, props.checkpoints.length - 1) ? 0 : -1
+                    }
                     disabled={props.restoring}
                     onClick={() => pick(index)}
                   >
