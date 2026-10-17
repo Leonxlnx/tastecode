@@ -37,6 +37,7 @@
     "electron": "^43.4.0",
     "electron-builder": "26.15.3",
     "esbuild": "^0.28.1",
+    "happy-dom": "^20.11.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
   },
