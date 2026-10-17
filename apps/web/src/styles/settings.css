@@ -811,6 +811,11 @@
   line-height: 1;
 }
 
+/* Over 5% of the tokens have no price, so the figure understates the period's cost. */
+.usage-cost__value--partial {
+  color: var(--text-2);
+}
+
 .usage-cost__caption {
   margin: 8px 0 0;
   color: var(--text-3);

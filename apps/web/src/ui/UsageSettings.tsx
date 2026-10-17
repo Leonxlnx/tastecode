@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type PointerEvent as ReactPointerEvent,
-} from 'react'
+import { useCallback, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type {
   ProviderId,
   ResultOf,
@@ -20,6 +13,7 @@ import {
 } from '@tabler/icons-react'
 import { providerPresentation } from '../provider-presentation.js'
 import type { Transport } from '../transport.js'
+import { cacheHitRate, useUsageHistory } from '../usage-history-state.js'
 import { SourceIdentity } from './SourceIdentity.js'
 
 const RANGE_OPTIONS = [
@@ -40,51 +34,7 @@ const money = new Intl.NumberFormat('en-US', {
 
 export function UsageSettings(props: { transport: Transport }) {
   const [range, setRange] = useState<UsageHistoryRange>('30d')
-  const [data, setData] = useState<ResultOf<'usage.history'>>()
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string>()
-  const [requestVersion, setRequestVersion] = useState(0)
-  const forceRefresh = useRef(false)
-  const scanInProgress = useRef(false)
-
-  useEffect(() => {
-    let active = true
-    let pollTimer: ReturnType<typeof setTimeout> | undefined
-    const refresh = forceRefresh.current
-    forceRefresh.current = false
-    setLoading(true)
-    setError(undefined)
-    void props.transport
-      .request('usage.history', { range, ...(refresh ? { refresh: true } : {}) })
-      .then((result) => {
-        if (!active) return
-        setData(result)
-        scanInProgress.current = result.scan.status === 'scanning'
-      })
-      .catch((requestError: unknown) => {
-        if (!active) return
-        setError(requestError instanceof Error ? requestError.message : String(requestError))
-      })
-      .finally(() => {
-        if (active) {
-          setLoading(false)
-          if (scanInProgress.current) {
-            pollTimer = setTimeout(() => {
-              if (active) setRequestVersion((version) => version + 1)
-            }, 500)
-          }
-        }
-      })
-    return () => {
-      active = false
-      clearTimeout(pollTimer)
-    }
-  }, [props.transport, range, requestVersion])
-
-  const refresh = useCallback(() => {
-    forceRefresh.current = true
-    setRequestVersion((version) => version + 1)
-  }, [])
+  const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
 
   if (!data && loading) {
     return (
@@ -200,13 +150,21 @@ export function UsageSettings(props: { transport: Transport }) {
 
 function CostSummary(props: { data: ResultOf<'usage.history'> }) {
   const totalCost = props.data.totals.estimatedCostUsd
+  const priced = pricedShare(props.data.totals)
+  const partial = priced !== undefined && priced < FULL_ESTIMATE_SHARE
   return (
     <section className="usage-cost" aria-labelledby="usage-cost-title">
       <p className="usage-eyebrow" id="usage-cost-title">
         Estimated API cost
       </p>
-      <p className="usage-cost__value">{formatMoney(totalCost)}</p>
-      <p className="usage-cost__caption">At current public model rates</p>
+      <p className={`usage-cost__value${partial ? ' usage-cost__value--partial' : ''}`}>
+        {formatMoney(totalCost)}
+      </p>
+      <p className="usage-cost__caption">
+        {partial
+          ? `Partial estimate · ${formatPercent(Math.floor(priced * 1_000) / 1_000)} of tokens priced`
+          : 'At current public model rates'}
+      </p>
 
       <div className="usage-cost__providers">
         {props.data.providers.length > 0 ? (
@@ -781,6 +739,18 @@ function niceMaximum(value: number): number {
   return nice * scale
 }
 
+/**
+ * The dollar figure counts as the cost of the period only when at least this
+ * share of its tokens has a public or provider-reported price.
+ */
+const FULL_ESTIMATE_SHARE = 0.95
+
+/** Share of tokens with a price, or undefined when there are no tokens. */
+function pricedShare(totals: UsageHistoryTotals): number | undefined {
+  if (totals.processedTokens <= 0) return undefined
+  return (totals.pricedTokens + totals.providerReportedTokens) / totals.processedTokens
+}
+
 function costQuality(totals: UsageHistoryTotals) {
   const denominator = totals.processedTokens
   if (denominator <= 0) return { providerReported: 0, modelPriced: 0, unpriced: 0 }
@@ -789,12 +759,6 @@ function costQuality(totals: UsageHistoryTotals) {
     modelPriced: totals.pricedTokens / denominator,
     unpriced: totals.unpricedTokens / denominator,
   }
-}
-
-function cacheHitRate(totals: UsageHistoryTotals): number | undefined {
-  const inputTokens =
-    totals.uncachedInputTokens + totals.cachedInputTokens + totals.cacheWriteInputTokens
-  return inputTokens > 0 ? totals.cachedInputTokens / inputTokens : undefined
 }
 
 function pricingLabel(
@@ -808,7 +772,7 @@ function pricingLabel(
   ) {
     return 'provider cost'
   }
-  if (pricing === 'family') return 'family price'
+  if (pricing === 'family') return 'approximate'
   if (pricing === 'unpriced') return 'unpriced'
   return undefined
 }
