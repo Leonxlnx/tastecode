@@ -1,11 +1,10 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import path from 'node:path'
 import type { ApprovalMode, Capabilities, DomainEvent, Model, Thread } from '@harness/contracts'
 import { killTree, ProtocolFrameError, spawnOwned, readNdjson } from '@harness/proc'
 import { captureCli } from '@harness/proc/cli'
 import { z } from 'zod'
+import { antigravityCommand } from './command.js'
 import {
   collapseAntigravityModels,
   getAntigravityIndex,
@@ -97,16 +96,6 @@ export function antigravityTurnArgs(
     ...(options.approval === 'full' ? ['--dangerously-skip-permissions'] : []),
     ...(conversationId ? ['--conversation', conversationId] : []),
   ]
-}
-
-/** Resolve the binary: PATH name normally, the installer's fixed Windows home
- *  as a fallback because the installing shell's PATH update needs a restart. */
-export function antigravityCommand(): string {
-  if (process.platform !== 'win32') return 'agy'
-  const localAppData = process.env['LOCALAPPDATA']
-  if (!localAppData) return 'agy.exe'
-  const installed = path.join(localAppData, 'agy', 'bin', 'agy.exe')
-  return existsSync(installed) ? installed : 'agy.exe'
 }
 
 const AgyUsageSchema = z.object({
