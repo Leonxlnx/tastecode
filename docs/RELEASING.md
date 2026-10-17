@@ -241,6 +241,47 @@ chats/settings on each OS. Unit tests and a draft cannot establish that result. 
 bad published build, ship a higher patched version; never silently downgrade or replace
 the published bytes.
 
+## Feedback inbox key
+
+In-app feedback (the account menu, the command palette, `/feedback` and **Report** on chat
+errors) goes to the team's Trecko inbox through the local server. The inbox key is a
+Trecko public submit key: it can only add feedback entries, but it is still **never
+committed**. Builds without a key hide every feedback entry point.
+
+- **Local release builds.** `pnpm build` (the desktop step, `apps/desktop/scripts/build-main.js`)
+  reads `TASTECODE_FEEDBACK_URL` and `TASTECODE_FEEDBACK_KEY` from the environment, or, when
+  neither is set, from `~/.tastecode/trecko-feedback.env` (`HARNESS_CONFIG_DIR` overrides the
+  directory). It writes the endpoint to the gitignored `apps/desktop/dist/feedback/feedback.env`,
+  and electron-builder copies that into the package as `resources/feedback/feedback.env`. The
+  build prints only `feedback endpoint: <host> (from <source>)` or `feedback endpoint: none`.
+  A set but unusable environment value fails the build instead of shipping without feedback.
+- **At runtime.** Desktop main passes only the path of that file to the server
+  (`TASTECODE_FEEDBACK_CONFIG`). The server reads the endpoint once at startup and deletes
+  every feedback variable from its own environment, so agent CLIs, terminals and git never
+  inherit it. The key is never sent to the renderer, logged or stored in the database.
+- **Development.** `pnpm dev` reads `~/.tastecode/trecko-feedback.env` directly.
+- **Future CI releases.** Store the key as the repository secret `TASTECODE_FEEDBACK_KEY` and
+  the URL as the repository variable `TASTECODE_FEEDBACK_URL`
+  (`gh secret set TASTECODE_FEEDBACK_KEY`, `gh variable set TASTECODE_FEEDBACK_URL`). Expose
+  them only on the `pnpm build` step of the `package` job in
+  `.github/workflows/release-artifact-proof.yml`, never on install, lint or test steps:
+
+  ```yaml
+  - run: pnpm build
+    env:
+      TASTECODE_FEEDBACK_URL: ${{ vars.TASTECODE_FEEDBACK_URL }}
+      TASTECODE_FEEDBACK_KEY: ${{ secrets.TASTECODE_FEEDBACK_KEY }}
+  ```
+
+  The workflow is `workflow_dispatch` on `main` only, so fork pull requests never see the
+  secret. This wiring is documented, not yet added; hosted CI is started only by Leon.
+
+- **Rotation.** Creating a new key in Trecko stops feedback from every shipped build until the
+  next release carries the new key. Use Trecko's pause switch for a short flood instead.
+- **Guard.** `pnpm test` runs `tools/scripts/tracked-secrets.test.js`, which fails when a
+  `fb_` key appears in any tracked file. Before packaging, also confirm
+  `resources/feedback/feedback.env` holds only the two feedback lines.
+
 ## Existing beta 5 and earlier installations
 
 Those packages still contain the old `https://tastecode.dev/releases` generic feed.

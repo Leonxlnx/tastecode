@@ -151,6 +151,7 @@ import {
   serializeModelCatalogCache,
 } from './model-catalog-cache.js'
 import { parseSideChatCommand } from './side-chat-command.js'
+import { FEEDBACK_SENT_NOTICE, useFeedbackStatus, type FeedbackRequest } from './feedback-state.js'
 import {
   composerDraftKey,
   isEmptyComposerDraft,
@@ -306,6 +307,9 @@ const CheckoutDiscardDialog = lazy(() =>
 )
 const RollbackDialog = lazy(() =>
   import('./ui/RollbackDialog.js').then((module) => ({ default: module.RollbackDialog })),
+)
+const FeedbackDialog = lazy(() =>
+  import('./ui/FeedbackDialog.js').then((module) => ({ default: module.FeedbackDialog })),
 )
 const Onboarding = lazy(() =>
   import('./ui/Onboarding.js').then((module) => ({ default: module.Onboarding })),
@@ -526,6 +530,11 @@ export function App() {
     (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
     [usageController],
   )
+  const retryUsage = useCallback(
+    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    [usageController],
+  )
+  const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
     async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
       try {
@@ -856,6 +865,41 @@ export function App() {
   const [actionError, setActionError] = useState<ComposerError>()
   const reportError = useCallback((message: string) => {
     setActionError({ id: crypto.randomUUID(), message })
+  }, [])
+  const feedback = useFeedbackStatus(transport)
+  const refreshFeedback = feedback.refresh
+  const [feedbackRequest, setFeedbackRequest] = useState<FeedbackRequest>()
+  /** The chat the dialog describes, read when it opens. Kept in a ref so openers stay stable. */
+  const feedbackContext = useRef<FeedbackRequest['context']>({})
+  const feedbackOpens = useRef(0)
+  const openFeedback = useCallback(
+    (
+      source: FeedbackRequest['source'],
+      options: { message?: string; error?: NonNullable<FeedbackRequest['context']['error']> } = {},
+    ) => {
+      setFeedbackRequest({
+        source,
+        ...(options.message ? { message: options.message } : {}),
+        context: {
+          ...feedbackContext.current,
+          ...(options.error ? { error: options.error } : {}),
+        },
+        id: ++feedbackOpens.current,
+      })
+      // A wait that started earlier is counted from the server's current answer.
+      refreshFeedback()
+    },
+    [refreshFeedback],
+  )
+  const openAccountFeedback = useCallback(() => openFeedback('account_menu'), [openFeedback])
+  const openCommandFeedback = useCallback(
+    (message: string) => openFeedback('slash_command', { message }),
+    [openFeedback],
+  )
+  const closeFeedback = useCallback(() => setFeedbackRequest(undefined), [])
+  const finishFeedback = useCallback(() => {
+    setFeedbackRequest(undefined)
+    setNotice(FEEDBACK_SENT_NOTICE)
   }, [])
   const [archiveToastDismissed, setArchiveToastDismissed] = useState(false)
   const pendingDeletionChecks = useRef(new Map<string, object>())
@@ -1731,6 +1775,11 @@ export function App() {
     const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
       usageController.changed(provider)
     })
+    // Live windows reach the bars as the server folds them in, not only after
+    // the spaced usage.changed signal and a new request.
+    const offUsageLimits = transport.on('usage.limits', ({ source }) => {
+      usageController.applySource(source)
+    })
     const offSequenceGap = transport.onSequenceGap(() => {
       threadController.markHistoriesForRecovery()
       resync.current()
@@ -1797,6 +1846,7 @@ export function App() {
       offPreviewCapture()
       offSidebarSettings()
       offUsageChanged()
+      offUsageLimits()
       offSequenceGap()
       offState()
       transport.close()
@@ -2799,29 +2849,21 @@ export function App() {
     })
   }, [activeId, thread.running, refreshCheckpoints])
 
-  const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
-  const usageProviders = useMemo(
-    () => [
-      provider,
-      ...providerStatuses
+  // Plan limits belong to the account, so a chat switch neither asks again nor
+  // resets them; the thread token totals the request could carry are unused.
+  // Other installed providers are read when the account popup shows them,
+  // not at launch, where each would start its own vendor process.
+  const otherUsageProviders = useMemo(
+    () =>
+      providerStatuses
         .filter((status) => status.installed && status.id !== provider)
         .map((status) => status.id),
-    ],
     [provider, providerStatuses],
   )
 
   useLayoutEffect(() => {
-    usageController.select(
-      usageProviders.map((sourceProvider) => ({
-        provider: sourceProvider,
-        ...(sourceProvider === provider && usageThreadId
-          ? {
-              threadId: usageThreadId,
-            }
-          : {}),
-      })),
-    )
-  }, [usageController, usageThreadId, provider, usageProviders])
+    usageController.select([{ provider }], otherUsageProviders)
+  }, [usageController, provider, otherUsageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -5361,6 +5403,18 @@ export function App() {
         shortcut: keybind('keybindings'),
         run: () => openSettings('keybinds'),
       },
+      ...(feedback.status.enabled
+        ? [
+            {
+              id: 'send-feedback',
+              title: 'Send feedback…',
+              detail: 'Report a bug or share an idea with the TasteCode team',
+              group: 'Actions' as const,
+              keywords: 'bug report problem error issue idea feedback',
+              run: () => openFeedback('command_palette'),
+            },
+          ]
+        : []),
       {
         id: 'open-pull-requests',
         title: 'Pull requests',
@@ -5460,6 +5514,8 @@ export function App() {
     addProject,
     openSettings,
     openPullRequests,
+    feedback.status.enabled,
+    openFeedback,
     active?.session.pinned,
     activeId,
     collapsed,
@@ -5528,13 +5584,47 @@ export function App() {
               },
             }
           : undefined
+  feedbackContext.current = {
+    ...(activeId ? { threadId: activeId } : {}),
+    provider,
+    ...(sourceAgent ? { custom: true } : {}),
+    ...(selectedModelChoice?.model.id ? { model: selectedModelChoice.model.id } : {}),
+    surface: settingsOpen
+      ? 'settings'
+      : surface === 'pull-requests'
+        ? 'pull_requests'
+        : designMode
+          ? 'design'
+          : 'chat',
+  }
+  /** Lets the person send an error they saw to the team. Opening the dialog sends nothing. */
+  const reportable = <T extends ComposerError>(
+    error: T,
+    kind: NonNullable<FeedbackRequest['context']['error']>['kind'],
+  ): T =>
+    feedback.status.enabled
+      ? {
+          ...error,
+          report: () =>
+            openFeedback('error_report', {
+              error: { kind, message: error.message.slice(0, 4000) },
+            }),
+        }
+      : error
   const composerErrors: ComposerError[] = [
-    ...(actionError ? [{ ...actionError, dismiss: () => setActionError(undefined) }] : []),
+    ...(actionError
+      ? [reportable({ ...actionError, dismiss: () => setActionError(undefined) }, 'action')]
+      : []),
     ...(thread.error && activeId
-      ? [{ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }]
+      ? [reportable({ ...thread.error, id: `chat:${activeId}:${thread.error.id}` }, 'turn')]
       : []),
     ...(currentModelError
-      ? [{ ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } }]
+      ? [
+          reportable(
+            { ...currentModelError, action: { label: 'Retry models', run: refreshCatalog } },
+            'models',
+          ),
+        ]
       : []),
     ...(offlineError ? [offlineError] : []),
   ]
@@ -5570,7 +5660,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
-          onRetryUsage={refreshUsage}
+          onShowUsage={showUsage}
+          onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}
@@ -5596,6 +5687,7 @@ export function App() {
           onOpenSearch={openSidebarSearch}
           onOpenPullRequests={openPullRequests}
           onOpenSettings={openSettings}
+          onSendFeedback={feedback.status.enabled ? openAccountFeedback : undefined}
         />
 
         <div
@@ -5713,7 +5805,11 @@ export function App() {
                     sendAvailability={sendAvailability}
                     errors={composerErrors}
                     errorsVisible={!settingsOpen && surface === 'chat'}
-                    providerError={composerProviderError}
+                    providerError={
+                      composerProviderError
+                        ? reportable(composerProviderError, 'provider')
+                        : undefined
+                    }
                     providerSignInRequired={providerStatuses.some(
                       (status) => status.id === provider && status.installed,
                     )}
@@ -5747,6 +5843,7 @@ export function App() {
                     onSetupProvider={openProviderSetup}
                     onSend={sendTurn}
                     onSteer={steerTurn}
+                    onFeedbackCommand={feedback.status.enabled ? openCommandFeedback : undefined}
                     onInterrupt={interrupt}
                     stopping={stopping}
                     onDeleteQueuedTurn={deleteQueuedTurn}
@@ -5790,7 +5887,8 @@ export function App() {
                         !settingsOpen &&
                         paletteScope === null &&
                         !rollbackOpen &&
-                        !checkoutDelete
+                        !checkoutDelete &&
+                        !feedbackRequest
                       }
                       onOpen={openBottomPanel}
                       onClose={closeTerminal}
@@ -5821,7 +5919,11 @@ export function App() {
                 sideChatStartOptions={sideChatStartOptions}
                 sideChatPromptRequest={sideChatPromptRequest}
                 nativeSurfacesVisible={
-                  !settingsOpen && paletteScope === null && !rollbackOpen && !checkoutDelete
+                  !settingsOpen &&
+                  paletteScope === null &&
+                  !rollbackOpen &&
+                  !checkoutDelete &&
+                  !feedbackRequest
                 }
                 onOpen={openWorkspacePanel}
                 onClose={closeWorkspacePanel}
@@ -5977,6 +6079,20 @@ export function App() {
         </Suspense>
       ) : null}
 
+      {feedbackRequest ? (
+        <Suspense fallback={null}>
+          <FeedbackDialog
+            key={feedbackRequest.id}
+            transport={transport}
+            request={feedbackRequest}
+            status={feedback.status}
+            onSent={finishFeedback}
+            onStatusChange={feedback.refresh}
+            onClose={closeFeedback}
+          />
+        </Suspense>
+      ) : null}
+
       {checkoutDelete ? (
         <Suspense fallback={null}>
           <CheckoutDiscardDialog
@@ -6030,7 +6146,7 @@ export function App() {
       </NoticePresence>
 
       <NoticePresence
-        className={`notice${undoRestore || notice === 'Restore undone.' ? ' notice--success' : ''}`}
+        className={`notice${undoRestore || notice === 'Restore undone.' || notice === FEEDBACK_SENT_NOTICE ? ' notice--success' : ''}`}
         role="alert"
         visible={Boolean(notice)}
         dismissKey={notice}

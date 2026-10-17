@@ -3,6 +3,7 @@ import type {
   MethodName,
   ProviderId,
   ProviderSetup,
+  ProviderSourceShape,
   ProviderStatus,
   ResultOf,
   ThreadInboxStatus,
@@ -109,12 +110,25 @@ const isCapabilities = objectValidator<Capabilities>({
   autoReview: optional(isBoolean),
   images: isBoolean,
   context: optional(isContextControl),
+  subagents: optional(
+    enumValidator<NonNullable<Capabilities['subagents']>>({ summary: true, progress: true }),
+  ),
+  multipleAccounts: optional(isBoolean),
 })
 const isSetup = objectValidator<ProviderSetup>({
   installUrl: isUrl,
   installCommand: optional(isString),
   login: enumValidator<ProviderSetup['login']>({ app: true, provider: true }),
   loginOpensBrowser: optional(isBoolean),
+})
+const isSourceShape = objectValidator<ProviderSourceShape>({
+  agent: enumValidator<ProviderSourceShape['agent']>({
+    none: true,
+    optional: true,
+    required: true,
+  }),
+  connection: isBoolean,
+  direct: isBoolean,
 })
 const isProvider = objectValidator<ProviderStatus>({
   id: isProviderId,
@@ -129,6 +143,7 @@ const isProvider = objectValidator<ProviderStatus>({
   capabilities: optional(isCapabilities),
   setup: optional(isSetup),
   problem: optional(isString),
+  source: optional(isSourceShape),
 })
 type Project = ResultOf<'projects.list'>['projects'][number]
 const isSession = objectValidator<Project['sessions'][number]>({
@@ -137,6 +152,7 @@ const isSession = objectValidator<Project['sessions'][number]>({
   provider: isProviderId,
   agent: optional(isString),
   connectionId: optional(isString),
+  accountId: optional(isNonEmptyString),
   createdAt: isFiniteNumber,
   running: isBoolean,
   pinned: optional(isBoolean),
@@ -164,6 +180,9 @@ export function parseProjectsListResult(value: unknown): ResultOf<'projects.list
 }
 export function parseProvidersListResult(value: unknown): ResultOf<'providers.list'> | undefined {
   return isProvidersList(value) ? value : undefined
+}
+function isNonEmptyString(value: unknown): boolean {
+  return typeof value === 'string' && value.length > 0
 }
 function isUrl(value: unknown): boolean {
   if (typeof value !== 'string') return false
