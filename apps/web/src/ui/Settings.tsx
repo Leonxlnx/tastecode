@@ -151,6 +151,7 @@ import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
+import type { PlanLimitsSource } from './usage/UsageLimits.js'
 import {
   SettingsPage,
   SettingsSection,
@@ -276,6 +277,8 @@ function SettingsComponent(props: {
   projectName: string | undefined
   account: Account | undefined
   accountLoading?: boolean | undefined
+  /** Plan limits for every provider, shown on the Usage tab. */
+  usageLimits?: PlanLimitsSource | undefined
   profileIdentity?: ProfileIdentityPreferences | undefined
   onProfileIdentityChange?: ((updates: Partial<ProfileIdentityPreferences>) => void) | undefined
   providerStatuses: ProviderStatus[]
@@ -497,7 +500,9 @@ function SettingsComponent(props: {
           ) : null}
           {section === 'skills' ? <SkillsSettings {...props} /> : null}
           {section === 'workflows' ? <GeneralSettings {...props} /> : null}
-          {section === 'usage' ? <UsageSettings transport={props.transport} /> : null}
+          {section === 'usage' ? (
+            <UsageSettings transport={props.transport} limits={props.usageLimits} />
+          ) : null}
           {section === 'appearance' ? <AppearanceSettings {...props} /> : null}
           {section === 'keybinds' ? (
             <KeybindSettings
