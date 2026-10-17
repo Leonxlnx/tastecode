@@ -8,6 +8,8 @@ export type OpenCodeCatalogEntry = {
   name: string
   /** models.dev's family, such as `deepseek-flash` or `minimax`. */
   family?: string | undefined
+  /** models.dev's status, such as `active`, `beta` or `alpha`. */
+  status?: string | undefined
   /** models.dev's release day, an ISO date. */
   releaseDate?: string | undefined
   isDefault: boolean
@@ -127,6 +129,19 @@ function nameKey(name: string): string {
   return name.trim().toLowerCase()
 }
 
+/** models.dev statuses of a release that is not yet the stable one. */
+const PREVIEW_STATUSES: ReadonlySet<string> = new Set(['alpha', 'beta'])
+
+/**
+ * The family a model replaces older generations within. A beta or alpha
+ * release forms its own, as a name that says "Preview" already does, so it
+ * never takes over from the stable model it previews.
+ */
+function familyOf(entry: OpenCodeCatalogEntry, lineage: NameLineage): string {
+  const stage = entry.status && PREVIEW_STATUSES.has(entry.status) ? ` ${entry.status}` : ''
+  return `${entry.providerID}/${lineage.skeleton}${stage}`
+}
+
 /**
  * The models of every connected provider, newest first. Each is named as
  * its provider names it; the provider's name follows only when another
@@ -151,7 +166,7 @@ export function openCodeModels(entries: readonly OpenCodeCatalogEntry[]): Model[
     const shared = (providersByName.get(nameKey(entry.name))?.size ?? 0) > 1
     const lab = modelLab(entry)
     const lineage = nameLineage(entry.name)
-    const family = lineage ? `${entry.providerID}/${lineage.skeleton}` : undefined
+    const family = lineage ? familyOf(entry, lineage) : undefined
     const released = isoDay(entry.releaseDate)
     return {
       id: `${entry.providerID}/${entry.modelID}`,

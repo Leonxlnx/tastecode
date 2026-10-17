@@ -168,6 +168,28 @@ describe('openCodeModels', () => {
     })
   })
 
+  it('keeps a beta or alpha release from replacing the stable model it previews', () => {
+    const listed = byId(
+      openCodeModels([
+        entry('tinfoil', 'Tinfoil', 'deepseek-v4-1-flash', 'DeepSeek V4.1 Flash', {
+          status: 'beta',
+        }),
+        entry('tinfoil', 'Tinfoil', 'deepseek-v4-flash', 'DeepSeek V4 Flash', {
+          status: 'active',
+        }),
+        entry('tinfoil', 'Tinfoil', 'deepseek-v5-flash', 'DeepSeek V5 Flash', {
+          status: 'alpha',
+        }),
+      ]),
+    )
+    expect(listed.get('tinfoil/deepseek-v4-flash')?.family).toBe('tinfoil/deepseek v# flash')
+    expect(listed.get('tinfoil/deepseek-v4-1-flash')).toMatchObject({
+      family: 'tinfoil/deepseek v# flash beta',
+      generation: '4.1',
+    })
+    expect(listed.get('tinfoil/deepseek-v5-flash')?.family).toBe('tinfoil/deepseek v# flash alpha')
+  })
+
   it('leaves out a release day that is not a calendar day', () => {
     const models = openCodeModels(
       ['2026-13-40', '2026-02-30', 'soon', ''].map((releaseDate, index) =>

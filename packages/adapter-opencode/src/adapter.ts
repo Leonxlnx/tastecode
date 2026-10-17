@@ -560,6 +560,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
               modelID: model.id,
               name: model.name,
               family: model.family,
+              status: model.status,
               releaseDate: model.release_date,
               isDefault: v2
                 ? v2.defaultModel === id

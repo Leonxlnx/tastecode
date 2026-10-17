@@ -747,6 +747,47 @@ describe('OpenCode adapter', () => {
     }
   })
 
+  it("hands OpenCode's model status to the lineage", async () => {
+    const mock = await serveCatalog({
+      '/config/providers': {
+        providers: [
+          {
+            id: 'tinfoil',
+            name: 'Tinfoil',
+            models: {
+              'deepseek-v4-1-flash': {
+                id: 'deepseek-v4-1-flash',
+                name: 'DeepSeek V4.1 Flash',
+                status: 'beta',
+                release_date: '2026-09-10',
+              },
+              'deepseek-v4-flash': {
+                id: 'deepseek-v4-flash',
+                name: 'DeepSeek V4 Flash',
+                status: 'active',
+                release_date: '2026-04-24',
+              },
+            },
+          },
+        ],
+        default: {},
+      },
+      '/api/model': { data: [] },
+      '/api/agent': { data: [] },
+    })
+    const adapter = new OpenCodeAdapter({ baseUrl: mock.baseUrl })
+    try {
+      expect(
+        (await adapter.listModels()).map((model) => [model.id, model.family, model.generation]),
+      ).toEqual([
+        ['tinfoil/deepseek-v4-1-flash', 'tinfoil/deepseek v# flash beta', '4.1'],
+        ['tinfoil/deepseek-v4-flash', 'tinfoil/deepseek v# flash', '4'],
+      ])
+    } finally {
+      await adapter.dispose()
+    }
+  })
+
   it('rejects automatic approval review on resumed sessions too', async () => {
     await expect(
       new OpenCodeAdapter().resumeThread('opencode-session-1', 'C:\\repo', {
