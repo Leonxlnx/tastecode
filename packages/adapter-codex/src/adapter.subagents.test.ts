@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
-import type { DomainEvent } from '@harness/contracts'
+import type { DomainEvent, Item, Subagent } from '@harness/contracts'
 import type { JsonRpcValue } from '@harness/proc'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CodexAdapter } from './adapter.js'
+import { CODEX_CAPABILITIES, CodexAdapter } from './adapter.js'
 import { FakeCodexRpc } from './fake-rpc.test-support.js'
 
 const proc = vi.hoisted(() => ({ rpc: undefined as FakeCodexRpc | undefined }))
@@ -137,5 +137,150 @@ describe('Codex subagent threads', () => {
       thread: { id: CHILD, parentThreadId: PARENT, cwd: 'C:\\project' },
     })
     expect(events.some((event) => event.type === 'thread.started')).toBe(false)
+  })
+})
+
+const SPAWN = 'call_62a5ff679af246a48ae7639449e73791'
+/** The frame that completes the spawning item; the subagent is still running after it. */
+const spawned = frames.findIndex(
+  (frame) => frame.method === 'item/completed' && JSON.stringify(frame.params).includes(SPAWN),
+)
+
+function spawnItems(events: DomainEvent[], id = SPAWN): Item[] {
+  return events.flatMap((event) =>
+    (event.type === 'item.started' || event.type === 'item.completed') && event.item.id === id
+      ? [event.item]
+      : [],
+  )
+}
+
+describe('Codex subagents', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('declares progress reporting', () => {
+    expect(CODEX_CAPABILITIES.subagents).toBe('progress')
+  })
+
+  it('reports the captured subagent on the item that spawned it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { events, failures, replay } = await parentTurn()
+    // One frame a second, so every throttled update goes out.
+    for (const frame of frames) {
+      replay([frame])
+      vi.advanceTimersByTime(1_000)
+    }
+
+    expect(failures).toEqual([])
+    const sent = spawnItems(events)
+    expect(sent.every((item) => item.subagent?.id === CHILD)).toBe(true)
+    expect(sent.at(-1)).toMatchObject({
+      type: 'tool_call',
+      status: 'completed',
+      text: 'Subagent started',
+      subagent: {
+        id: CHILD,
+        name: 'read_first_line',
+        state: 'completed',
+        toolUses: 1,
+        lastTool: 'shell',
+        tokens: 41_083,
+        durationMs: 33_129,
+        summary: 'Tiny scratch project for a subagent capture.',
+      } satisfies Subagent,
+    })
+    // The spawning call returns at once; the subagent's work shows up on it while it runs.
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        status: 'completed',
+        subagent: expect.objectContaining({ state: 'running', toolUses: 1, lastTool: 'shell' }),
+      }),
+    )
+    // Its row already says it finished; the separate notice adds nothing.
+    expect(spawnItems(events, `subagent-completed-${CHILD_TURN}`)).toEqual([])
+  })
+
+  it('sends progress at most once a second, then the latest numbers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const { rpc, events, replay } = await parentTurn()
+    replay(frames.slice(0, spawned + 1))
+    const before = spawnItems(events).length
+    for (const id of ['a', 'b', 'c']) {
+      rpc.emitNotification('item/started', {
+        threadId: CHILD,
+        turnId: CHILD_TURN,
+        startedAtMs: 1,
+        item: { type: 'mcpToolCall', id, server: 'docs', tool: 'search', status: 'inProgress' },
+      })
+    }
+    expect(spawnItems(events)).toHaveLength(before)
+
+    vi.advanceTimersByTime(1_000)
+    expect(spawnItems(events)).toHaveLength(before + 1)
+    expect(spawnItems(events).at(-1)?.subagent).toMatchObject({
+      state: 'running',
+      toolUses: 3,
+      lastTool: 'docs.search',
+    })
+  })
+
+  it('ends a subagent that is still running with the app-server', async () => {
+    const { adapter, events, replay } = await parentTurn()
+    replay(frames.slice(0, spawned + 1))
+    expect(spawnItems(events).at(-1)?.subagent?.state).toBe('running')
+
+    await adapter.dispose()
+    expect(spawnItems(events).at(-1)).toMatchObject({
+      status: 'completed',
+      subagent: { id: CHILD, state: 'interrupted' },
+    })
+  })
+
+  // Multi-agent v1 spawns through collabAgentToolCall. Not captured: the shapes follow
+  // generated/v2/ThreadItem.ts and generated/v2/Thread.ts.
+  it('keeps the identity of a subagent spawned with spawnAgent', async () => {
+    const { rpc, events } = await parentTurn()
+    const collab = (tool: string, status: string, agentsStates: JsonRpcValue) => ({
+      threadId: PARENT,
+      turnId: PARENT_TURN,
+      completedAtMs: 2,
+      item: {
+        type: 'collabAgentToolCall',
+        id: `call-${tool}`,
+        tool,
+        status,
+        senderThreadId: PARENT,
+        receiverThreadIds: ['child-1'],
+        prompt: tool === 'spawnAgent' ? 'Audit the reducer' : null,
+        model: null,
+        reasoningEffort: null,
+        agentsStates,
+      },
+    })
+    rpc.emitNotification('thread/started', {
+      thread: { id: 'child-1', parentThreadId: PARENT, agentNickname: 'Scout', agentRole: null },
+    })
+    rpc.emitNotification(
+      'item/completed',
+      collab('spawnAgent', 'completed', { 'child-1': { status: 'running', message: null } }),
+    )
+    rpc.emitNotification(
+      'item/completed',
+      collab('wait', 'completed', { 'child-1': { status: 'completed', message: 'All clear' } }),
+    )
+
+    expect(spawnItems(events, 'call-spawnAgent').at(-1)).toMatchObject({
+      text: 'Spawned a subagent\nAudit the reducer',
+      subagent: {
+        id: 'child-1',
+        name: 'Scout',
+        description: 'Audit the reducer',
+        state: 'completed',
+        summary: 'All clear',
+      },
+    })
+    // Waiting names the subagent too, but only the spawning row carries it.
+    expect(spawnItems(events, 'call-wait').at(-1)).not.toHaveProperty('subagent')
   })
 })

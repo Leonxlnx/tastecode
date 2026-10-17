@@ -43,6 +43,7 @@ import {
   prepareMcpConfig,
 } from './mcp.js'
 import { mapSkillList } from './skills.js'
+import { CodexSubagents } from './subagents.js'
 import {
   AccountLoginCompletedNotificationSchema,
   AccountResponseSchema,
@@ -640,6 +641,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
    * usage are not this chat's.
    */
   readonly #ownThreads = new Set<string>()
+  readonly #subagents = new CodexSubagents((event) => this.emit('event', event))
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
   #sessionThread: { id: string; workspacePath: string } | undefined
@@ -791,6 +793,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpLogins.clear()
     const turns = [...this.#activeTurns]
     this.#activeTurns.clear()
+    this.#subagents.endSession()
     // The provider is gone: settle cards without replying to its dead requests.
     for (const id of this.#approvals.keys()) {
       this.#approvals.delete(id)
@@ -1324,6 +1327,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#approvals.clear()
     this.#userInputs.clear()
     this.#mcpLogins.clear()
+    // Their threads stop with the process; say so while someone still listens.
+    this.#subagents.endSession()
     this.removeAllListeners()
     this.#processStop = stopped
     return stopped
@@ -1478,7 +1483,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       !this.#ownThreads.has(threadId) &&
       !CONNECTION_NOTIFICATIONS.has(method)
     ) {
-      this.#onForeignNotification(method, params)
+      this.#onForeignNotification(threadId, method, params)
       return
     }
 
@@ -1511,7 +1516,10 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       case 'thread/started': {
         const p = ThreadStartedNotificationSchema.parse(params)
         // A subagent's thread; its parent is the chat.
-        if (p.thread.parentThreadId && !this.#ownThreads.has(p.thread.id)) return
+        if (p.thread.parentThreadId && !this.#ownThreads.has(p.thread.id)) {
+          this.#subagents.onThreadStarted(p.thread)
+          return
+        }
         emit({
           type: 'thread.started',
           thread: {
@@ -1556,29 +1564,29 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/started': {
         const p = ItemStartedNotificationSchema.parse(params)
-        const item = mapThreadItem(p.item, {
-          turnId: p.turnId,
-          status: 'started',
-          createdAt: p.startedAtMs,
-        })
-        emit({
-          type: 'item.started',
-          item,
-        })
+        const item = this.#subagents.onItem(
+          p.item,
+          mapThreadItem(p.item, {
+            turnId: p.turnId,
+            status: 'started',
+            createdAt: p.startedAtMs,
+          }),
+        )
+        if (item) emit({ type: 'item.started', item })
         return
       }
 
       case 'item/completed': {
         const p = ItemCompletedNotificationSchema.parse(params)
-        const item = mapThreadItem(p.item, {
-          turnId: p.turnId,
-          status: 'completed',
-          createdAt: p.completedAtMs,
-        })
-        emit({
-          type: 'item.completed',
-          item,
-        })
+        const item = this.#subagents.onItem(
+          p.item,
+          mapThreadItem(p.item, {
+            turnId: p.turnId,
+            status: 'completed',
+            createdAt: p.completedAtMs,
+          }),
+        )
+        if (item) emit({ type: 'item.completed', item })
         return
       }
 
@@ -1740,14 +1748,18 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     }
   }
 
-  /** A thread this chat did not start, such as a subagent's: nothing of it enters the chat. */
-  #onForeignNotification(method: string, params: JsonRpcValue | undefined): void {
+  /**
+   * A thread this chat did not start, a subagent's: nothing of it enters the chat. Its
+   * progress becomes the snapshot on the item that spawned it.
+   */
+  #onForeignNotification(threadId: string, method: string, params: JsonRpcValue | undefined): void {
     // Its approvals reached the user like any other, so its finished turn still declines
     // the ones nobody answered.
     if (method === 'turn/completed') {
       const p = TurnCompletedNotificationSchema.parse(params)
       this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
     }
+    this.#subagents.onThreadNotification(threadId, method, params)
   }
 
   /**
