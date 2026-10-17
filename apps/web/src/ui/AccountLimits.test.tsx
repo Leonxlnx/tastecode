@@ -611,23 +611,31 @@ describe('account limits', () => {
     expect(credits[0]?.expiresAt).toBeNull()
   })
 
-  it('updates the expiry warning while open and clears its timer on close', () => {
+  it('reads the expiry warning when it opens and when values change, with no timer', () => {
     vi.useFakeTimers()
     const now = Date.UTC(2026, 8, 13, 12)
     vi.setSystemTime(now)
-    const view = render(
-      limits({
-        status: 'ready',
-        provider: 'codex',
-        summary: summary([{ ...resetLimit, resetCredits: [{ expiresAt: now + 86_400_000 }] }]),
-      }),
-    )
-    const time = screen.getByRole('list').querySelector('time')!
-    expect(time.hasAttribute('data-expiring-soon')).toBe(false)
+    const state = (marker: number): AccountLimitsState => ({
+      status: 'ready',
+      provider: 'codex',
+      summary: summary([
+        {
+          ...resetLimit,
+          valueLabel: `${marker} available`,
+          resetCredits: [{ expiresAt: now + 86_400_000 }],
+        },
+      ]),
+    })
+    const view = render(limits(state(1)))
+    const time = () => screen.getByRole('list').querySelector('time')!
+    expect(time().hasAttribute('data-expiring-soon')).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
 
+    // Nothing ticks while it stays open; new values read the clock again.
     act(() => vi.advanceTimersByTime(60_000))
-    expect(time.hasAttribute('data-expiring-soon')).toBe(true)
-    view.unmount()
+    expect(time().hasAttribute('data-expiring-soon')).toBe(false)
+    view.rerender(limits(state(2)))
+    expect(time().hasAttribute('data-expiring-soon')).toBe(true)
     expect(vi.getTimerCount()).toBe(0)
   })
 

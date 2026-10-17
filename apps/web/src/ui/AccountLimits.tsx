@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ProviderId, ProviderLimitSource, ResultOf } from '@harness/contracts'
 import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
@@ -130,6 +130,7 @@ function LimitSource(props: {
           name={name}
           provider={props.state.provider}
           limit={limit}
+          now={props.now}
           onConsumeReset={props.onConsumeReset}
         />
       ))}
@@ -191,6 +192,7 @@ function LimitRow(props: {
   name: string
   provider: ProviderId
   limit: Limit
+  now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const consumable = props.limit.action === 'consume-reset' && props.onConsumeReset !== undefined
@@ -220,12 +222,15 @@ function LimitRow(props: {
         </div>
       ) : null}
       {props.limit.resetsAt !== undefined ? (
-        <span className="account-menu__limit-reset">{resetLabel(props.limit.resetsAt)}</span>
+        <span className="account-menu__limit-reset">
+          {resetLabel(props.limit.resetsAt, props.now)}
+        </span>
       ) : null}
       {credits?.length ? (
         <ResetCreditExpiries
           credits={credits}
           provider={props.provider}
+          now={props.now}
           onConsumeReset={consumable ? props.onConsumeReset : undefined}
         />
       ) : null}
@@ -340,14 +345,10 @@ function ResetCreditRow(props: {
 function ResetCreditExpiries(props: {
   credits: NonNullable<Limit['resetCredits']>
   provider: ProviderId
+  now: number
   onConsumeReset?: ConsumeReset | undefined
 }) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [])
-
+  const now = props.now
   const ordered = [...props.credits].sort(
     (a, b) => (a.expiresAt ?? Infinity) - (b.expiresAt ?? Infinity),
   )
@@ -410,10 +411,10 @@ function remaining(limit: Limit): number {
 }
 
 /** A reset within the week reads as weekday and time; further out, as a date. */
-function resetLabel(at: number): string {
+function resetLabel(at: number, now: number): string {
   const date = new Date(at)
   if (Number.isNaN(date.getTime())) return 'Reset time unavailable.'
-  const untilReset = at - Date.now()
+  const untilReset = at - now
   const withinWeek = untilReset >= 0 && untilReset < 6 * 86_400_000
   const formatted = date.toLocaleString(
     undefined,
