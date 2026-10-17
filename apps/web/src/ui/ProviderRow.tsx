@@ -93,7 +93,12 @@ function ProviderRowAction(props: {
 }) {
   const action = props.action
   if (!action) return null
-  const className = `settings__action is-${props.tone}${action.danger ? ' is-danger' : ''}`
+  // Signing out reads the same in either slot; otherwise the secondary slot is quiet.
+  const className = action.danger
+    ? 'set-button set-button--danger'
+    : props.tone === 'secondary'
+      ? 'set-button set-button--quiet'
+      : 'set-button'
   return action.href ? (
     <a className={className} href={action.href} target="_blank" rel="noopener noreferrer">
       {action.label}

@@ -29,6 +29,7 @@ import { APPROVAL_MODES } from './approval-modes.js'
 import { Menu, MenuItem } from './Menu.js'
 import { getFriendlyEffortLabel } from './model-selector-utils.js'
 import { Skeleton } from './Skeleton.js'
+import { SettingsSegmented } from './settings/SettingsSegmented.js'
 import '../styles/provider-tuning.css'
 
 /** The contract's floor: compacting earlier than this leaves no room to work. */
@@ -379,7 +380,7 @@ function ModelDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} default model: ${value}${effortLabel ? `, ${effortLabel}` : ''}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelRole="dialog"
       panelLabel={`${props.name} default model`}
       panelClassName="menu--compact provider-tune__menu"
@@ -549,7 +550,7 @@ function AccessDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} default access: ${current.short}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelLabel={`${props.name} default access`}
       panelClassName="menu--compact menu--permissions"
       trigger={(open) => (
@@ -642,7 +643,7 @@ function ContextDefault(props: {
       align="right"
       drop="down"
       label={`${props.name} context: ${summary}`}
-      triggerClassName="provider-tune__trigger"
+      triggerClassName="provider-tune__trigger set-select--inline"
       panelRole="dialog"
       panelLabel={`${props.name} context`}
       panelClassName="menu--compact provider-tune__menu provider-tune__menu--context"
@@ -659,7 +660,7 @@ function ContextDefault(props: {
             <div className="tune-panel__head">
               <span className="tune-panel__title">Window</span>
               {control.windows.length > 1 ? (
-                <Segmented
+                <SettingsSegmented
                   ariaLabel={`${props.name} context window`}
                   value={settings?.window === undefined ? AUTO_WINDOW : String(settings.window)}
                   options={[
@@ -732,59 +733,6 @@ function ContextDefault(props: {
         </div>
       )}
     </Menu>
-  )
-}
-
-/** A few equal choices side by side, the chosen one raised. */
-function Segmented(props: {
-  ariaLabel: string
-  value: string
-  options: readonly { value: string; label: string; title?: string }[]
-  onChange: (value: string) => void
-}) {
-  const buttons = useRef<Array<HTMLButtonElement | null>>([])
-  const selected = props.options.findIndex((option) => option.value === props.value)
-  const focusable = selected >= 0 ? selected : 0
-
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    const count = props.options.length
-    let next: number
-    if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (index + 1) % count
-    else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp')
-      next = (index - 1 + count) % count
-    else if (event.key === 'Home') next = 0
-    else if (event.key === 'End') next = count - 1
-    else return
-    event.preventDefault()
-    const option = props.options[next]
-    if (!option) return
-    buttons.current[next]?.focus()
-    if (option.value !== props.value) props.onChange(option.value)
-  }
-
-  return (
-    <div className="tune-segmented" role="radiogroup" aria-label={props.ariaLabel}>
-      {props.options.map((option, index) => (
-        <button
-          key={option.value}
-          ref={(element) => {
-            buttons.current[index] = element
-          }}
-          className="tune-segmented__option"
-          type="button"
-          role="radio"
-          aria-checked={index === selected}
-          tabIndex={index === focusable ? 0 : -1}
-          title={option.title}
-          onClick={() => {
-            if (option.value !== props.value) props.onChange(option.value)
-          }}
-          onKeyDown={(event) => onKeyDown(event, index)}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
   )
 }
 
