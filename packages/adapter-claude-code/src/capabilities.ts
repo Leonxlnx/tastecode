@@ -1,4 +1,20 @@
-import type { Capabilities, McpServerConfig } from '@harness/contracts'
+import type { Capabilities, McpCapabilities, McpServerConfig } from '@harness/contracts'
+
+/**
+ * Claude reports the servers its own settings, plugins and claude.ai load.
+ * TasteCode adds project servers to new sessions; inherited ones stay
+ * read-only, because hiding one would change Claude's own configuration.
+ */
+export const CLAUDE_MCP_CAPABILITIES: McpCapabilities = {
+  inventory: true,
+  add: true,
+  update: true,
+  remove: true,
+  reload: false,
+  startOAuth: false,
+  cancelOAuth: false,
+  hideInherited: false,
+}
 
 /** Keep unsupported provider operations out of saved project configuration too. */
 export function validateClaudeMcpServer(
