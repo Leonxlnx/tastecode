@@ -2843,7 +2843,8 @@ export function App() {
     })
   }, [activeId, thread.running, refreshCheckpoints])
 
-  const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
+  // Plan limits belong to the account, so a chat switch neither asks again nor
+  // resets them; the thread token totals the request could carry are unused.
   const usageProviders = useMemo(
     () => [
       provider,
@@ -2855,17 +2856,8 @@ export function App() {
   )
 
   useLayoutEffect(() => {
-    usageController.select(
-      usageProviders.map((sourceProvider) => ({
-        provider: sourceProvider,
-        ...(sourceProvider === provider && usageThreadId
-          ? {
-              threadId: usageThreadId,
-            }
-          : {}),
-      })),
-    )
-  }, [usageController, usageThreadId, provider, usageProviders])
+    usageController.select(usageProviders.map((sourceProvider) => ({ provider: sourceProvider })))
+  }, [usageController, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.

@@ -4566,6 +4566,43 @@ describe('new chats', () => {
     ).toHaveLength(2)
   })
 
+  it('keeps plan limits and asks nothing new when switching chats of one provider', async () => {
+    serverProjects = [
+      {
+        path: '/work/project',
+        name: 'project',
+        pinned: false,
+        createdAt: 0,
+        sessions: [
+          { id: 'thread-a', title: 'First chat', provider: 'codex', createdAt: 1, running: false },
+          { id: 'thread-b', title: 'Second chat', provider: 'codex', createdAt: 0, running: false },
+        ],
+      },
+    ]
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'First chat, Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
+        provider: 'codex',
+        intent: 'background',
+      }),
+    )
+    expect(await screen.findByText('75% left')).toBeTruthy()
+    transport.request.mockClear()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Second chat, Codex' }))
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'thread-b' }),
+      ),
+    )
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 120)))
+
+    expect(transport.request).not.toHaveBeenCalledWith('usage.summary', expect.anything())
+    expect(screen.getByText('75% left')).toBeTruthy()
+  })
+
   it('refreshes usage once for active-provider change bursts', async () => {
     render(<App />)
     await waitFor(() =>
@@ -4649,10 +4686,10 @@ describe('new chats', () => {
     transport.request.mockClear()
     fireEvent.click(await screen.findByRole('button', { name: 'Claude thread, Claude Code' }))
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'claude-thread',
-        intent: 'background',
-      }),
+      expect(transport.request).toHaveBeenCalledWith(
+        'thread.history',
+        expect.objectContaining({ threadId: 'claude-thread' }),
+      ),
     )
     transport.request.mockClear()
 
@@ -4664,7 +4701,7 @@ describe('new chats', () => {
 
     await waitFor(() =>
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'claude-thread',
+        provider: 'claude-code',
         intent: 'background',
       }),
     )
@@ -11968,7 +12005,7 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'untouched-thread',
+        provider: 'codex',
         intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
@@ -12291,7 +12328,7 @@ describe('reopening a session', () => {
         threadId: 'untouched-thread',
       })
       expect(transport.request).toHaveBeenCalledWith('usage.summary', {
-        threadId: 'untouched-thread',
+        provider: 'codex',
         intent: 'background',
       })
       expect(transport.request).toHaveBeenCalledWith('projects.list', {})
