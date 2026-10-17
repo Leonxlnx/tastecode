@@ -188,9 +188,10 @@
   line-height: 1.45;
 }
 
-/* Entity rows: a thing with a name of its own (a provider; MCP servers and
-   skills next). The name is the one 15px role and the status steps down to
-   the note size. How the row is laid out stays with each kind of entity. */
+/* Entity rows: a thing with a name of its own (a provider, a skill, an MCP
+   server). The name is the one 15px role and the status steps down to the
+   note size. Providers keep their own wired layout; listed entities share
+   the one below. */
 
 .settings .set-entity__name {
   min-width: 0;
@@ -251,12 +252,133 @@
   min-width: 0;
 }
 
+/* Listed entities (skills, MCP servers): the name runs along the leader to
+   its status, the controls sit at the far edge of that line, and what the
+   entity is (a description, a path, a failure) hangs under the name at the
+   note size. The leader runs level with the controls, as a provider's does. */
+
+.settings .set-entity {
+  --set-leader: color-mix(in srgb, var(--text-3) 46%, transparent);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: start;
+  padding-block: 10px;
+  transition: --set-leader var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-entity:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
+}
+
+/* Switched off: a fainter leader and a quieter name until pointed at. */
+.settings .set-entity[data-tone='muted'] {
+  --set-leader: color-mix(in srgb, var(--text-3) 28%, transparent);
+}
+
+.settings .set-entity[data-tone='error'] {
+  --set-leader: var(--error);
+}
+
+.settings .set-entity__main {
+  min-width: 0;
+}
+
+.settings .set-entity__head {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) minmax(0, max-content);
+  align-items: center;
+  min-height: 28px;
+}
+
+.settings .set-entity__head > .set-leader {
+  translate: none;
+}
+
+/* With no status, the leader runs on to the controls' own margin. */
+.settings .set-entity__head > .set-leader:last-child {
+  margin-right: 0;
+}
+
+.settings .set-entity__head > .set-entity__status {
+  justify-self: end;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity .set-entity__name {
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.settings .set-entity:is(:hover, :focus-within) .set-entity__name {
+  color: var(--text);
+}
+
+.settings .set-entity[data-tone='muted']:not(:hover, :focus-within) .set-entity__name {
+  color: var(--text-3);
+}
+
+.settings .set-entity__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  margin-left: 14px;
+}
+
+.settings .set-entity__detail {
+  max-width: 64ch;
+  margin: 2px 0 0;
+  color: var(--text-3);
+  font-size: var(--t-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* A path or command: one line in the code face, cut at the column edge. */
+.settings .set-entity__detail--code {
+  max-width: none;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings .set-entity__detail strong {
+  font-weight: 550;
+}
+
+.settings .set-entity__detail--error {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--error);
+}
+
+.settings .set-entity__detail--error > svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Centred where the first detail line's text would sit. */
+.settings .set-entity__skeleton-detail {
+  max-width: 100%;
+  margin: 7px 0 3px;
+}
+
 @container settings-content (max-width: 560px) {
   .settings .set-leader {
     display: none;
   }
 
   .settings :is(.set-row, .set-subrow) {
+    grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+    column-gap: 16px;
+  }
+
+  .settings .set-entity__head {
     grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
     column-gap: 16px;
   }
@@ -597,6 +719,13 @@
   flex: 1;
   min-width: 0;
   margin: 0;
+}
+
+/* A notice about several things gives each one a line under the first. */
+.settings .set-notice__line {
+  display: block;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
 }
 
 .settings .set-notice__action {

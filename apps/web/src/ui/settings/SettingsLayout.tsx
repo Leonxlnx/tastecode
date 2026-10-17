@@ -4,6 +4,7 @@ import {
   IconInfoCircle as Info,
   IconLoader2 as LoaderCircle,
 } from '@tabler/icons-react'
+import { Skeleton, SkeletonStatus } from '../Skeleton.js'
 import '../../styles/settings-system.css'
 
 /*
@@ -121,6 +122,41 @@ export function SettingsNotice(props: {
       <p className="set-notice__text">{props.children}</p>
       {props.action ? <div className="set-notice__action">{props.action}</div> : null}
     </div>
+  )
+}
+
+// Fixed per position: a placeholder that reshuffles between renders jitters.
+const ENTITY_SKELETON_NAME_WIDTHS = [112, 148, 88] as const
+const ENTITY_SKELETON_DETAIL_WIDTHS = [236, 184, 212] as const
+
+/**
+ * Listed entities (skills, MCP servers) before their list arrives: each row
+ * a name on the leader, a status at its end and one detail line, announced
+ * as `label`.
+ */
+export function SettingsEntitySkeleton(props: { label: string; rows?: number | undefined }) {
+  return (
+    <SkeletonStatus label={props.label}>
+      {Array.from({ length: props.rows ?? 3 }, (_, index) => {
+        const at = index % ENTITY_SKELETON_NAME_WIDTHS.length
+        return (
+          <div className="set-entity" key={index} aria-hidden>
+            <div className="set-entity__main">
+              <div className="set-entity__head">
+                <Skeleton width={ENTITY_SKELETON_NAME_WIDTHS[at]} height={11} />
+                <span className="set-leader" />
+                <Skeleton width={52} height={9} />
+              </div>
+              <Skeleton
+                className="set-entity__skeleton-detail"
+                width={ENTITY_SKELETON_DETAIL_WIDTHS[at]}
+                height={8}
+              />
+            </div>
+          </div>
+        )
+      })}
+    </SkeletonStatus>
   )
 }
 
