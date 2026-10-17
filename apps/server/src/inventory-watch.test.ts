@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -132,6 +140,41 @@ describe('inventory watcher', () => {
     watcher.clear()
     expect(fake.open()).toEqual([])
     expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('ignores a read of a watched folder but not a new skill in it', async () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), 'harness-inventory-watch-'))
+    const skills = path.join(root, 'skills')
+    const skill = path.join(skills, 'one')
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(path.join(skill, 'SKILL.md'), '---\nname: one\n---\n')
+    // Windows updates a last-access time older than an hour on the next read
+    // and reports it as a change of that entry; a probe reads every skill.
+    const hoursAgo = new Date(Date.now() - 3 * 60 * 60_000)
+    utimesSync(skill, hoursAgo, hoursAgo)
+    utimesSync(path.join(skill, 'SKILL.md'), hoursAgo, hoursAgo)
+    const onChange = vi.fn()
+    const watcher = new InventoryWatcher({
+      targets: () => [{ directory: skills }],
+      onChange,
+      ttlMs: 60_000,
+      debounceMs: 50,
+    })
+    try {
+      // Setting the times is itself a status change; let it age past the slack.
+      await new Promise((resolve) => setTimeout(resolve, 2_200))
+      watcher.lease(root)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      readdirSync(skill)
+      readFileSync(path.join(skill, 'SKILL.md'), 'utf8')
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      expect(onChange).not.toHaveBeenCalled()
+      mkdirSync(path.join(skills, 'two'))
+      await vi.waitFor(() => expect(onChange).toHaveBeenCalledWith(root), { timeout: 5_000 })
+    } finally {
+      watcher.clear()
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('notices a real change to a project MCP file', async () => {

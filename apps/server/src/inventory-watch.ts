@@ -1,4 +1,5 @@
-import { watch as watchFolder, type FSWatcher } from 'node:fs'
+import { statSync, watch as watchFolder, type FSWatcher } from 'node:fs'
+import path from 'node:path'
 
 /** A folder watched without recursion, and the entries in it that matter (all when absent). */
 export type InventoryWatchTarget = { directory: string; names?: readonly string[] | undefined }
@@ -11,6 +12,8 @@ export type FolderWatch = (
 type Project = {
   expires: number
   generation: number
+  /** When the folders were last watched afresh; older writes were already reported. */
+  armedAt: number
   watchers: Array<Pick<FSWatcher, 'close'>>
   debounce?: ReturnType<typeof setTimeout> | undefined
 }
@@ -50,7 +53,7 @@ export class InventoryWatcher {
     const project = this.#projects.get(projectPath)
     if (project) project.expires = expires
     else {
-      const created: Project = { expires, generation: 0, watchers: [] }
+      const created: Project = { expires, generation: 0, armedAt: 0, watchers: [] }
       this.#projects.set(projectPath, created)
       void this.#arm(projectPath, created)
     }
@@ -74,6 +77,7 @@ export class InventoryWatcher {
 
   async #arm(projectPath: string, project: Project): Promise<void> {
     const generation = ++project.generation
+    project.armedAt = Date.now()
     for (const watcher of project.watchers.splice(0)) watcher.close()
     let targets: InventoryWatchTarget[]
     try {
@@ -87,6 +91,7 @@ export class InventoryWatcher {
       try {
         const watcher = this.#watch(target.directory, (_event, filename) => {
           if (names && filename && !names.has(entryKey(filename))) return
+          if (!written(target.directory, filename, project.armedAt)) return
           this.#changed(projectPath, project)
         })
         // A watched folder that is deleted errors on some systems; its parent reports it.
@@ -130,6 +135,27 @@ export class InventoryWatcher {
     if (next === undefined) return
     this.#expiry = setTimeout(() => this.#scheduleExpiry(), Math.max(1, next - now))
     this.#expiry.unref?.()
+  }
+}
+
+/** Some file systems keep modification times to the second or two. */
+const TIME_SLACK_MS = 2_000
+
+/**
+ * Reading a file or folder updates its last-access time, and Windows reports
+ * that as a change: every probe that read the skills folders reported one and
+ * probed again. A real change writes, adds, removes or renames the entry, so
+ * it moves the entry's modification or status-change time, or the entry is
+ * gone. A stat reads neither content nor access time; the events it filters
+ * are rare, and the names filter has already dropped unrelated entries.
+ */
+function written(directory: string, filename: string | null, since: number): boolean {
+  if (!filename) return true
+  try {
+    const stats = statSync(path.join(directory, filename))
+    return Math.max(stats.mtimeMs, stats.ctimeMs) >= since - TIME_SLACK_MS
+  } catch {
+    return true
   }
 }
 
