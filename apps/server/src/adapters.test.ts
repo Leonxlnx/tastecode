@@ -260,6 +260,29 @@ describe('resumable provider setup', () => {
     },
   )
 
+  it('reports live limit windows only from a Claude session on the default account', async () => {
+    const harness: CustomHarness = {
+      id: 'claude-wrapper',
+      displayName: 'Claude wrapper',
+      provider: 'claude-code',
+      command: process.execPath,
+      args: [],
+    }
+    const runtime = providerRuntime(
+      'claude-code',
+      () => {},
+      () => harness,
+    )
+    // A wrapper runs from a real project folder.
+    const workspace = realpathSync(os.tmpdir())
+    const own = await runtime.start(workspace, {})
+    expect(own.session.onLimitsUpdated).toBeTypeOf('function')
+    expect(own.session.onUsageChanged).toBeUndefined()
+    // A wrapper may run another account, whose windows are not the default account's.
+    const wrapped = await runtime.start(workspace, { agent: harness.id })
+    expect(wrapped.session.onLimitsUpdated).toBeUndefined()
+  })
+
   it.each([false, true])(
     'passes Claude MCP options and cleans up a failed open (resume: %s)',
     async (resume) => {

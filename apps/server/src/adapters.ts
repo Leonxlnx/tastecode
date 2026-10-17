@@ -968,7 +968,8 @@ function claudeRuntime(
     return adapter
   }
 
-  const sessionFor = (adapter: ClaudeCodeAdapter): AgentSession => ({
+  // A custom harness may run another account, whose limit windows are not the default account's.
+  const sessionFor = (adapter: ClaudeCodeAdapter, agent: string | undefined): AgentSession => ({
     capabilities: adapter.capabilities,
     sendTurn: (threadId, text, attachments, turnOptions) =>
       adapter.sendTurn(threadId, text, attachments, turnOptions),
@@ -977,7 +978,7 @@ function claudeRuntime(
     respondToApproval: (id, decision) => adapter.respondToApproval(id, decision),
     respondToUserInput: (id, answers) => adapter.respondToUserInput(id, answers),
     setApproval: (approval) => adapter.setApproval(approval),
-    onUsageChanged: (listener) => adapter.on('usageChanged', listener),
+    ...(agent ? {} : { onLimitsUpdated: (listener) => adapter.on('limitsUpdated', listener) }),
     onDisconnected: (listener) => adapter.onDisconnected(listener),
     dispose: () => adapter.dispose(),
     on: (event: 'event' | 'log', listener: never) => adapter.on(event, listener),
@@ -986,7 +987,7 @@ function claudeRuntime(
   return {
     async start(workspacePath, options) {
       const adapter = await adapterFor(options.agent, workspacePath)
-      return startedSession(sessionFor(adapter), () =>
+      return startedSession(sessionFor(adapter, options.agent), () =>
         adapter.startThread(workspacePath, {
           model: options.model,
           effort: options.effort,
@@ -1003,7 +1004,7 @@ function claudeRuntime(
       const adapter = await adapterFor(options.agent, workspacePath)
       return mapProviderSession(
         threadId,
-        await startedSession(sessionFor(adapter), () =>
+        await startedSession(sessionFor(adapter, options.agent), () =>
           adapter.resumeThread(options.providerSessionId ?? threadId, workspacePath, {
             model: options.model,
             effort: options.effort,

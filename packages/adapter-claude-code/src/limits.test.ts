@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SDKControlGetUsageResponse } from '@anthropic-ai/claude-agent-sdk'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { claudeLimitSource, mapClaudeUsage } from './limits.js'
+import { claudeLimitSource, mapClaudeRateLimitEvent, mapClaudeUsage } from './limits.js'
 import type { ClaudeUsageQueryFactory } from './sdk-runtime.js'
 
 afterEach(() => {
@@ -106,6 +106,114 @@ describe('Claude Code subscription limits', () => {
           windowMinutes: 10_080,
         },
       ],
+    })
+  })
+
+  describe('live rate_limit_event windows', () => {
+    // Captured from claude 2.1.296 during turns on 2026-10-12 to 2026-10-16. `utilization` is a
+    // fraction and `resetsAt` epoch seconds; the top level carries utilization only near a limit.
+    const captured = {
+      allowed: {
+        status: 'allowed',
+        resetsAt: 1_792_119_600,
+        rateLimitType: 'five_hour',
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled',
+        isUsingOverage: false,
+        unifiedWindows: { five_hour: { utilization: 0.76, resetsAt: 1_792_119_600 } },
+      },
+      warning: {
+        status: 'allowed_warning',
+        resetsAt: 1_791_773_400,
+        rateLimitType: 'five_hour',
+        utilization: 0.93,
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled',
+        isUsingOverage: false,
+        surpassedThreshold: 0.9,
+        unifiedWindows: { five_hour: { utilization: 0.93, resetsAt: 1_791_773_400 } },
+        overageEnabled: false,
+      },
+    }
+    const session = (usedPercent: number, resetsAt: number) => ({
+      id: 'five_hour',
+      label: 'Session',
+      usedPercent,
+      resetsAt: resetsAt * 1000,
+      windowMinutes: 300,
+    })
+
+    it('maps captured events to the row the full read names five_hour', () => {
+      expect(mapClaudeRateLimitEvent(captured.allowed)).toEqual([session(76, 1_792_119_600)])
+      expect(mapClaudeRateLimitEvent(captured.warning)).toEqual([session(93, 1_791_773_400)])
+    })
+
+    it('maps every known window an event lists and leaves unknown ones to the full read', () => {
+      expect(
+        mapClaudeRateLimitEvent({
+          status: 'allowed',
+          unifiedWindows: {
+            five_hour: { utilization: 0.2, resetsAt: 1_800_000_000 },
+            seven_day: { utilization: 0.455, resetsAt: 1_800_400_000 },
+            seven_day_overage_included: { utilization: 0.5, resetsAt: 1_800_400_000 },
+            overage: { utilization: 0.1 },
+            constructor: { utilization: 0.3 },
+          },
+        }),
+      ).toEqual([
+        session(20, 1_800_000_000),
+        {
+          id: 'seven_day',
+          label: 'Weekly',
+          usedPercent: 45.5,
+          resetsAt: 1_800_400_000_000,
+          windowMinutes: 10_080,
+        },
+      ])
+    })
+
+    it('reads the top-level window when an event lists no windows', () => {
+      expect(
+        mapClaudeRateLimitEvent({
+          status: 'allowed_warning',
+          rateLimitType: 'seven_day_opus',
+          utilization: 0.91,
+          resetsAt: 1_800_000_000,
+        }),
+      ).toEqual([
+        {
+          id: 'seven_day_opus',
+          label: 'Opus weekly',
+          usedPercent: 91,
+          resetsAt: 1_800_000_000_000,
+          windowMinutes: 10_080,
+        },
+      ])
+      // Without a utilization there is no number to show.
+      expect(
+        mapClaudeRateLimitEvent({ status: 'allowed', rateLimitType: 'five_hour', resetsAt: 1 }),
+      ).toEqual([])
+    })
+
+    it('shows a refused window as used up when the event gives no utilization', () => {
+      expect(
+        mapClaudeRateLimitEvent({
+          status: 'rejected',
+          rateLimitType: 'five_hour',
+          resetsAt: 1_800_000_000,
+        }),
+      ).toEqual([session(100, 1_800_000_000)])
+    })
+
+    it('skips values in a unit the event does not use and malformed events', () => {
+      expect(
+        mapClaudeRateLimitEvent({
+          status: 'allowed',
+          unifiedWindows: { five_hour: { utilization: 76, resetsAt: 1_800_000_000 } },
+        }),
+      ).toEqual([])
+      expect(mapClaudeRateLimitEvent(null)).toEqual([])
+      expect(mapClaudeRateLimitEvent({ status: 'allowed', unifiedWindows: 'changed' })).toEqual([])
     })
   })
 

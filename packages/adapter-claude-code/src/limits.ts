@@ -141,6 +141,73 @@ export function mapClaudeUsage(value: unknown): ClaudeLimitSource {
   return { status: 'ready', limits }
 }
 
+/** The windows a live event can report, under the row ids and labels the full read uses. */
+const LIVE_WINDOWS = {
+  five_hour: { label: 'Session', windowMinutes: SESSION_MINUTES },
+  seven_day: { label: 'Weekly', windowMinutes: WEEK_MINUTES },
+  seven_day_sonnet: { label: 'Sonnet weekly', windowMinutes: WEEK_MINUTES },
+  seven_day_opus: { label: 'Opus weekly', windowMinutes: WEEK_MINUTES },
+} as const satisfies Record<string, { label: string; windowMinutes: number }>
+/** The event reports utilization as a fraction; anything else is a unit this mapping does not know. */
+const FractionSchema = z.number().min(0).max(1)
+const EpochSecondsSchema = z.number().positive().finite()
+const LiveWindowSchema = z.looseObject({
+  utilization: FractionSchema.nullish().catch(undefined),
+  resetsAt: EpochSecondsSchema.nullish().catch(undefined),
+})
+const RateLimitInfoSchema = z.looseObject({
+  status: z.string().optional(),
+  rateLimitType: z.string().optional(),
+  utilization: FractionSchema.optional().catch(undefined),
+  resetsAt: EpochSecondsSchema.optional().catch(undefined),
+  unifiedWindows: z.record(z.string(), LiveWindowSchema).optional().catch(undefined),
+})
+
+function liveRow(
+  type: string,
+  utilization: number | null | undefined,
+  resetsAt: number | null | undefined,
+): ProviderLimit[] {
+  if (!Object.hasOwn(LIVE_WINDOWS, type) || utilization === null || utilization === undefined) {
+    return []
+  }
+  const window = LIVE_WINDOWS[type as keyof typeof LIVE_WINDOWS]
+  return [
+    {
+      id: type,
+      label: window.label,
+      usedPercent: Math.round(utilization * 10_000) / 100,
+      ...(resetsAt === null || resetsAt === undefined ? {} : { resetsAt: resetsAt * 1000 }),
+      windowMinutes: window.windowMinutes,
+    },
+  ]
+}
+
+/**
+ * The plan-limit windows a `rate_limit_event` reports during a turn. Claude
+ * Code 2.1.296 sends every window it knows in `unifiedWindows` (utilization as
+ * a fraction, reset times in epoch seconds) and the top-level `utilization`
+ * only near a limit. A refused request with no utilization means the window
+ * is used up. Windows this mapping does not know, such as overage, are left
+ * to the full read rather than guessed.
+ */
+export function mapClaudeRateLimitEvent(info: unknown): ProviderLimit[] {
+  const parsed = RateLimitInfoSchema.safeParse(info)
+  if (!parsed.success) return []
+  const { status, rateLimitType, utilization, resetsAt, unifiedWindows } = parsed.data
+  const rows = unifiedWindows
+    ? Object.entries(unifiedWindows).flatMap(([type, window]) =>
+        liveRow(type, window.utilization, window.resetsAt),
+      )
+    : rateLimitType
+      ? liveRow(rateLimitType, utilization, resetsAt)
+      : []
+  if (status === 'rejected' && rateLimitType && !rows.some((row) => row.id === rateLimitType)) {
+    rows.push(...liveRow(rateLimitType, 1, unifiedWindows?.[rateLimitType]?.resetsAt ?? resetsAt))
+  }
+  return rows
+}
+
 /**
  * The limit read starts a full CLI only to ask one control question, so it
  * turns off the startup work an interactive session does. All four names are
