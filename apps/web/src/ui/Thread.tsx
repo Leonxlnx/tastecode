@@ -424,6 +424,22 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }
   shiftedItems.current = { threadId: props.threadId, items: thread.items }
 
+  const projectThread = useMemo(createThreadProjector, [props.threadId])
+  const { turns, presentations } = projectThread(
+    thread.items,
+    thread.turnTiming,
+    thread.activeTurn?.id,
+  )
+  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
+  const showWorkingRail = running && thread.activeTurn !== undefined
+  const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
+  // Until the turn's first response row exists, the working rail sits at the
+  // end of the runway, in space the runway itself keeps for it. A spacer
+  // outside the runway left in the commit that added the row, a layout before
+  // the row was measured with the rail's room: the transcript was briefly
+  // shorter and the scroll was clamped.
+  const railReserve = showWorkingRail && railIndex === undefined ? WORKING_RAIL_PX : 0
+
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     getScrollElement: () => scroller.current,
@@ -447,6 +463,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     // the rows it shows change.
     directDomUpdates: true,
     onChange: onVirtualChange,
+    paddingEnd: railReserve,
   })
   virtualizerRef.current = virtualizer
   // Mocked lists in tests have no container to size.
@@ -723,12 +740,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [virtualizer],
   )
 
-  const projectThread = useMemo(createThreadProjector, [props.threadId])
-  const { turns, presentations } = projectThread(
-    thread.items,
-    thread.turnTiming,
-    thread.activeTurn?.id,
-  )
   const projectRepeatedDesignRows = useMemo(createRepeatedDesignRowProjector, [props.threadId])
   const repeatedDesignRowAt = projectRepeatedDesignRows(thread.items)
   estimateRow.current = (index) => {
@@ -739,7 +750,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   }
   const checkpoints = thread.running ? EMPTY_CHECKPOINTS : (props.checkpoints ?? EMPTY_CHECKPOINTS)
   const checkpointIndex = useMemo(() => createCheckpointIndex(checkpoints), [checkpoints])
-  const activePresentation = thread.activeTurn ? presentations.get(thread.activeTurn.id) : undefined
   const searchJumpRead = useRef<{ request: number; cursor: string } | undefined>(undefined)
   // The older-history hook stops waiting for the complete read when its effects
   // are torn down, which StrictMode also does on mount; the next run must ask again.
@@ -900,10 +910,10 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // measurementsCache, not getOffsetForIndex: the latter clamps to the
   // maximum scroll offset, which is below the anchor row's true start
   // whenever the thread is shorter than the viewport.
-  const showWorkingRail = running && thread.activeTurn !== undefined
-  const railIndex = showWorkingRail ? activePresentation?.firstResponseIndex : undefined
   const railIndexRef = useRef(railIndex)
   railIndexRef.current = railIndex
+  const railReserveRef = useRef(railReserve)
+  railReserveRef.current = railReserve
   const rail = useRef<{ element: HTMLDivElement | null; offset: number | undefined }>({
     element: null,
     offset: undefined,
@@ -914,9 +924,10 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     const { element, offset } = rail.current
     if (!element) return
     const index = railIndexRef.current
-    const total = virtualizer.getTotalSize()
+    // Without a response row, over the room the runway keeps at its end.
+    const reserved = virtualizer.getTotalSize() - railReserveRef.current
     const next =
-      index === undefined ? total : (virtualizer.measurementsCache[index]?.start ?? total)
+      index === undefined ? reserved : (virtualizer.measurementsCache[index]?.start ?? reserved)
     if (next === offset) return
     rail.current.offset = next
     element.style.transform = `translateY(${next}px)`
@@ -1141,8 +1152,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 // replaced by the server's a few seconds in, and a key would
                 // remount the rail at exactly the moment this render position
                 // exists to survive. Before any response row exists the rail
-                // sits at the end of the runway, over the space the spacer
-                // below holds.
+                // sits at the end of the runway, over the room the runway
+                // keeps there (railReserve).
                 <div className="thread__rail" ref={setRail}>
                   {activePresentation?.design ? (
                     <FrameWorkingRail
@@ -1159,10 +1170,6 @@ export const Thread = memo(function Thread(props: ThreadProps) {
                 </div>
               ) : null}
             </div>
-
-            {showWorkingRail && thread.activeTurn && railIndex === undefined ? (
-              <div className="thread__rail-spacer" aria-hidden />
-            ) : null}
 
             {/* Above the plan and the diff: it is the only thing here that blocks
             the agent, so it should be the first thing the eye lands on. */}
@@ -1430,6 +1437,8 @@ const JUMP_MIN_PX_PER_MS = 0.8
 const JUMP_HANDOVER_PX = JUMP_MIN_PX_PER_MS * JUMP_EASE_MS
 /** How long after a turn ends its last changes still glide into view. */
 const FOLLOW_SETTLE_MS = 1_200
+/** The working rail's footprint above its turn's first response: --working-rail-h in thread.css. */
+const WORKING_RAIL_PX = 42
 /** How long after a chat opens its rows are still measuring themselves in. */
 const OPEN_SETTLE_MS = 400
 /** How long a wheel turn or scroll key still explains the scroll events after it. */

@@ -138,6 +138,35 @@ describe('Thread virtual rows', () => {
     expect(transcriptRenders.mock.calls.length - before).toBeLessThanOrEqual(2)
   })
 
+  it('keeps the working rail room in the runway until the first response row takes it', () => {
+    heights = [60]
+    const prompt = item('prompt', { role: 'user', text: 'Explain the fix' })
+    const running = { running: true, activeTurn: { id: 'turn', startedAt: 1 } }
+    const store = new ThreadFrameStore({ ...emptyThread, items: [prompt], ...running })
+    const view = render(
+      <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
+    )
+    const runway = view.container.querySelector<HTMLElement>('.thread__runway')!
+    const rail = view.container.querySelector<HTMLElement>('.thread__rail')!
+    // The rail's 42px sit at the end of the runway, under the rail.
+    expect(runway.style.height).toBe('102px')
+    expect(rail.style.transform).toBe('translateY(60px)')
+
+    // The answer row pads its top by the same 42px for the rail.
+    heights = [60, 82]
+    act(() =>
+      store.publish({
+        ...emptyThread,
+        items: [prompt, item('answer', { role: 'assistant', status: 'started', text: 'It' })],
+        ...running,
+      }),
+    )
+
+    expect(runway.style.height).toBe('142px')
+    expect(rail.style.transform).toBe('translateY(60px)')
+    expect(view.container.querySelector('.thread__rail-spacer')).toBeNull()
+  })
+
   it('moves the rows and the working rail below a row that grew, without a render', () => {
     const { rows, rail } = streamingThread()
     const [prompt, answer] = rows()

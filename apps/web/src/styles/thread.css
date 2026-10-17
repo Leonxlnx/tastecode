@@ -35,8 +35,9 @@
   gap: 12px;
   /* The working rail's full footprint: the 30px summary line plus the gap to
      the response below it. The rail itself is absolutely positioned so it can
-     stay mounted for the whole turn; is-rail-anchor and .thread__rail-spacer
-     reserve exactly this much space for it to overlay. */
+     stay mounted for the whole turn; is-rail-anchor, or the runway's end before
+     any response row exists, reserves exactly this much space for it to overlay
+     (WORKING_RAIL_PX in Thread.tsx). */
   --working-rail-h: 42px;
 }
 
@@ -81,12 +82,6 @@
   top: 0;
   left: 0;
   width: 100%;
-}
-
-/* Holds the rail's space in the column while no response row exists yet. */
-.thread__rail-spacer {
-  flex: none;
-  height: var(--working-rail-h);
 }
 
 .thread__row.is-entering > :is(.reply, .aux, .activity, .turn-error) {
