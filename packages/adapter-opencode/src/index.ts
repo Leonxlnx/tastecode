@@ -1,5 +1,3 @@
-export * from './adapter.js'
-export { readOpenCodeUsageHistory } from './usage-history.js'
 export {
   mapOpenCodeCommands,
   mapOpenCodeMcpServers,
@@ -13,3 +11,5 @@ export {
   type OpenCodeProjectInventory,
 } from './discovery.js'
 export { openCodeInventoryWatchPaths, type OpenCodeInventoryWatch } from './watch-paths.js'
+export * from './adapter.js'
+export { readOpenCodeUsageHistory } from './usage-history.js'
