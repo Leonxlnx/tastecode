@@ -31,9 +31,15 @@ vi.mock('../bridge.js', async (importOriginal) => ({
 }))
 
 vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: (props: { installKey: string }) => {
+  InstallTerminal: (props: { installKey: string; profile?: string }) => {
     if (settingsLoading.terminal) throw settingsLoading.terminal
-    return <div data-testid="install-terminal" data-install-key={props.installKey} />
+    return (
+      <div
+        data-testid="install-terminal"
+        data-install-key={props.installKey}
+        data-profile={props.profile}
+      />
+    )
   },
 }))
 
@@ -895,7 +901,8 @@ describe('settings loading values', () => {
       settingsLoading.terminal = undefined
       terminal.resolve()
     })
-    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    // The same look as the workspace terminal a sign-in opens.
+    expect((await screen.findByTestId('install-terminal')).dataset['profile']).toBe('workspace')
     expect(screen.queryByText('Opening terminal…')).toBeNull()
   })
 })
@@ -1740,6 +1747,56 @@ describe('provider settings', () => {
     expect(screen.queryByLabelText('API key')).toBeNull()
   })
 
+  it('lists API connections on roster rows and removes one by name', async () => {
+    const onConnectionsChanged = vi.fn()
+    const transport = new TestTransport((method) => {
+      if (method === 'connections.remove') return {}
+      throw new Error('Unexpected ' + method)
+    })
+    const connection = (id: string, displayName: string, credentialConfigured: boolean) => ({
+      id,
+      displayName,
+      preset: 'openrouter' as const,
+      transport: 'openai-compatible' as const,
+      baseUrl: 'https://openrouter.ai/api/v1',
+      enabled: true,
+      credentialConfigured,
+    })
+    render(
+      <ProviderSettings
+        provider="api"
+        account={undefined}
+        providerStatuses={[]}
+        modelConnections={[
+          connection('research', 'Research API', true),
+          connection('draft', 'Draft API', false),
+        ]}
+        transport={transport}
+        onConnectionsChanged={onConnectionsChanged}
+        onAccountChange={() => {}}
+      />,
+    )
+
+    const section = screen.getByRole('region', { name: 'API connections' })
+    // A stored key wires the row like a signed-in provider; a missing one leaves it open.
+    const research = within(section).getByText('Research API').closest<HTMLElement>('.provider-row')
+    expect(research?.dataset['link']).toBe('connected')
+    expect(research?.textContent).toContain('OpenRouter')
+    const draft = within(section).getByText('Draft API').closest<HTMLElement>('.provider-row')
+    expect(draft?.dataset['link']).toBe('open')
+    expect(draft?.textContent).toContain('Key missing')
+    expect(
+      within(section).getByRole('button', { name: 'Connect another plan or API' }),
+    ).toBeTruthy()
+
+    fireEvent.click(within(section).getByRole('button', { name: 'Remove Draft API' }))
+    await waitFor(() => expect(onConnectionsChanged).toHaveBeenCalledTimes(1))
+    expect(transport.requests).toContainEqual({
+      method: 'connections.remove',
+      params: { connectionId: 'draft' },
+    })
+  })
+
   it('renders every nightly CLI provider returned by the server', async () => {
     const providers: Array<[ProviderId, string]> = [
       ['cursor', 'Cursor'],
@@ -2373,6 +2430,107 @@ describe('provider settings', () => {
       '_blank',
       'noopener,noreferrer',
     )
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+  })
+
+  it('brings the workspace sign-in terminal back instead of drawing a second one', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'auth.status') return { signedIn: false }
+      if (method === 'providers.launch') return { terminalId: 'term-claude-show' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+    render(
+      <ProviderSettings
+        provider="claude-code"
+        account={{ signedIn: false }}
+        providerStatuses={[
+          {
+            id: 'claude-code',
+            displayName: 'Claude Code',
+            installed: true,
+            auth: 'unknown',
+            setup: { installUrl: 'https://example.test', login: 'provider' },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+    const target = {
+      provider: 'claude-code',
+      displayName: 'Claude Code',
+      installKey: 'login:claude-code',
+    }
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    await waitFor(() => expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith(target))
+    const row = providerRow('Claude Code')
+    expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull()
+    fireEvent.click(within(row).getByRole('button', { name: 'Show terminal' }))
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+    expect(onProviderLoginTerminalOpen).toHaveBeenLastCalledWith(target)
+    expect(screen.queryByTestId('install-terminal')).toBeNull()
+
+    // App closes the workspace view when a sign-in ends; the failed log stays here.
+    act(() => transport.emit('terminal.exit', { terminalId: 'term-claude-show', exitCode: 1 }))
+    await screen.findByRole('button', { name: 'Retry sign-in' })
+    expect(screen.queryByRole('button', { name: 'Show terminal' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Details' }))
+    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+  })
+
+  it('reopens the workspace install terminal instead of drawing a second one', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'providers.install') return { terminalId: 'term-codex-show' }
+      throw new Error(`unexpected ${method}`)
+    })
+    const onProviderLoginTerminalOpen = vi.fn()
+    render(
+      <ProviderSettings
+        provider="codex"
+        account={undefined}
+        providerStatuses={[
+          {
+            id: 'codex',
+            displayName: 'Codex',
+            installed: false,
+            auth: 'unknown',
+            setup: {
+              installUrl: 'https://developers.openai.com/codex/cli',
+              installCommand: 'npm install -g @openai/codex',
+              login: 'provider',
+            },
+          },
+        ]}
+        transport={transport}
+        onConnectionsChanged={() => {}}
+        onAccountChange={() => {}}
+        onProviderLoginTerminalOpen={onProviderLoginTerminalOpen}
+      />,
+    )
+    const target = {
+      provider: 'codex',
+      displayName: 'Codex',
+      installKey: 'codex',
+      operation: 'install',
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Install' }))
+    await waitFor(() => expect(onProviderLoginTerminalOpen).toHaveBeenCalledWith(target))
+    const row = providerRow('Codex')
+    fireEvent.click(within(row).getByRole('button', { name: 'Show terminal' }))
+    expect(onProviderLoginTerminalOpen).toHaveBeenCalledTimes(2)
+    expect(onProviderLoginTerminalOpen).toHaveBeenLastCalledWith(target)
+
+    // The workspace keeps a failed install's terminal, so the row still points there.
+    act(() => transport.emit('terminal.exit', { terminalId: 'term-codex-show', exitCode: 1 }))
+    await screen.findByRole('button', { name: 'Retry install' })
+    expect(within(row).queryByRole('button', { name: 'Details' })).toBeNull()
+    expect(within(row).getByRole('button', { name: 'Show terminal' })).toBeTruthy()
     expect(screen.queryByTestId('install-terminal')).toBeNull()
   })
 })

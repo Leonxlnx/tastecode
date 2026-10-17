@@ -456,7 +456,7 @@ function ProfileHistory(props: { transport: Transport }) {
           {loading ? <RefreshCw size={14} aria-hidden /> : <CircleAlert size={14} aria-hidden />}
           <span>{loading ? 'Reading the local activity index.' : error}</span>
           {!loading ? (
-            <button className="settings__action" type="button" onClick={refresh}>
+            <button className="set-button" type="button" onClick={refresh}>
               Try again
             </button>
           ) : null}

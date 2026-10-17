@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'utf8')
@@ -7,6 +7,14 @@ const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url)
 const generalCss = readFileSync(new URL('./general-settings.css', import.meta.url), 'utf8')
 const keybindsCss = readFileSync(new URL('./keybinds.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
+
+/** Every component source under ui/, tests excluded, as [path, text]. */
+function uiSources(): Array<[string, string]> {
+  const root = new URL('../ui/', import.meta.url)
+  return readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'))
+    .map((file) => [file, readFileSync(new URL(file.replaceAll('\\', '/'), root), 'utf8')])
+}
 
 describe('settings viewport CSS', () => {
   it('keeps both panes scrollable inside short windows', () => {
@@ -18,12 +26,11 @@ describe('settings viewport CSS', () => {
     expect(settingsCss).toMatch(/\.settings__main \{[^}]*scrollbar-gutter: stable;/s)
   })
 
-  it('insets every card row, header and note by the same 14px', () => {
-    expect(settingsCss).toMatch(/\.settings__row \{[^}]*padding: 10px 14px;/s)
-    expect(settingsCss).toMatch(
-      /\.settings \.settings__row:has\(> \.settings__row-control > :is\(\.switch, \.settings__switch-skeleton\)\) \{[^}]*padding: 12px 14px;/s,
-    )
-    expect(settingsCss).toMatch(/\.settings__group-note \{[^}]*padding: 10px 14px;/s)
+  it('has no card rows or groups left, only the v1 rows', () => {
+    expect(settingsCss).not.toMatch(/settings__(row|group)/)
+    for (const [file, source] of uiSources()) {
+      expect(/settings__(row|group)\b/.test(source), file).toBe(false)
+    }
   })
 
   it('lays every v1 row out as name, leader and value on one 40px rhythm', () => {
@@ -45,6 +52,10 @@ describe('settings viewport CSS', () => {
 
   it('spaces v1 pages by the header and section steps', () => {
     expect(systemCss).toMatch(/\.settings \.set-page__head \{[^}]*margin: 0 0 28px;/s)
+    // A narrow pane moves page actions under the description instead of squeezing it.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-page__head \{[^}]*flex-wrap: wrap;/s,
+    )
     expect(systemCss).toMatch(
       /\.settings \.set-section \+ \.set-section,\s*\.settings \.set-row \+ \.set-section \{[^}]*margin-top: 36px;/s,
     )
@@ -130,12 +141,6 @@ describe('settings viewport CSS', () => {
     )
   })
 
-  it('bounds state and action controls to the narrow row width', () => {
-    expect(settingsCss).toMatch(
-      /\.settings__row-control:has\(> \.state-label\) \{[^}]*max-width: 100%;/s,
-    )
-  })
-
   it('keeps provider model bulk actions compact, on the segmented track', () => {
     expect(settingsCss).toMatch(/\.model-visibility__bulk-actions button \{[^}]*min-width: 42px;/s)
     expect(systemCss).toMatch(
@@ -211,37 +216,54 @@ describe('settings viewport CSS', () => {
 
   it('draws every settings button from one 28px set', () => {
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button, \.settings__action\) \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
+      /\.settings \.set-button \{[^}]*height: 28px;[^}]*padding: 0 10px;[^}]*border: 1px solid var\(--line-strong\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);[^}]*font-weight: 500;/s,
     )
     expect(systemCss).toMatch(
       /\.settings \.set-button--primary \{[^}]*background: var\(--text\);[^}]*color: var\(--bg\);/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button--danger, \.settings__action\.is-danger\):hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
+      /\.settings \.set-button--danger:hover:not\(:disabled\) \{[^}]*color: var\(--error\);/s,
     )
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-button--quiet, \.settings__action\.is-secondary\) \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
+      /\.settings \.set-button--quiet \{[^}]*border-color: transparent;[^}]*color: var\(--text-3\);/s,
     )
     expect(systemCss).toMatch(/\.settings \.set-button--icon \{[^}]*width: 28px;[^}]*padding: 0;/s)
-    // The old per-feature button looks are gone.
-    expect(settingsCss).not.toMatch(/(^|\n)\.settings__action \{/)
-    expect(settingsCss).not.toMatch(/\.provider-row \.settings__action/)
+    // The old per-feature button looks and their alias are gone.
+    const alias = /(?<![\w-])settings__action\b/
+    expect(settingsCss).not.toMatch(alias)
+    expect(systemCss).not.toMatch(alias)
+    for (const [file, source] of uiSources()) expect(alias.test(source), file).toBe(false)
   })
 
   it('draws every form field from one 28px text field', () => {
     expect(systemCss).toMatch(
-      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\) \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
+      /\.settings \.set-input \{[^}]*height: 28px;[^}]*padding: 0 8px;[^}]*border: 1px solid var\(--chrome-border\);[^}]*border-radius: var\(--r-md\);[^}]*font-size: var\(--t-sm\);/s,
     )
+    expect(systemCss).toMatch(/\.settings textarea\.set-input \{[^}]*min-height: 72px;/s)
     expect(systemCss).toMatch(
-      /\.settings :is\(textarea\.set-input, \.mcp-editor textarea\) \{[^}]*min-height: 72px;/s,
-    )
-    expect(systemCss).toMatch(
-      /\.settings :is\(\.set-input, \.mcp-editor input, \.mcp-editor textarea\):focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
+      /\.settings \.set-input:focus \{[^}]*border-color: var\(--text-3\);[^}]*box-shadow: 0 0 0 2px color-mix\(in srgb, var\(--text\) 8%, transparent\);/s,
     )
     // The API form's second, 34px copy of the field rules is gone with the first.
     expect(settingsCss).not.toMatch(/\.provider-form input/)
     expect(settingsCss).not.toMatch(/\.mcp-editor input/)
+    expect(systemCss).not.toMatch(/\.mcp-editor (input|textarea)/)
     expect(settingsCss).not.toMatch(/\.avatar-lab__field input/)
+  })
+
+  it('draws every settings form as one card of labelled fields', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-form \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);[^}]*padding: 16px;[^}]*background: var\(--bg-rail\);[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--r-lg\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings :is\(\.set-form label, \.set-form__field\) \{[^}]*display: grid;[^}]*color: var\(--text-2\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-form__actions \{[^}]*display: flex;[^}]*justify-content: flex-end;/s,
+    )
+    // One column where the leaders step aside.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{\s*\.settings \.set-form \{[^}]*grid-template-columns: minmax\(0, 1fr\);/s,
+    )
   })
 
   it('has two select looks: boxed for headers and forms, inline for leader rows', () => {
@@ -322,6 +344,44 @@ describe('settings viewport CSS', () => {
     expect(tuningCss).not.toMatch(/provider-tune__(label|leader|value)|grid-template-columns/)
     expect(tuningCss).toMatch(/\.provider-tune__row \{[^}]*padding-left: 26px;/s)
     expect(settingsCss).not.toMatch(/\.provider-row \.settings__row-title/)
+  })
+
+  it('lists skills on the shared entity rows, without cards', () => {
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity \{[^}]*grid-template-columns: minmax\(0, 1fr\) max-content;[^}]*padding-block: 10px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(32px, 1fr\) minmax\(0, max-content\);[^}]*min-height: 28px;/s,
+    )
+    expect(systemCss).toMatch(
+      /\.settings \.set-entity__detail \{[^}]*color: var\(--text-3\);[^}]*font-size: var\(--t-sm\);/s,
+    )
+    // The entity rows step aside from their leader where every row does.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-entity__head \{[^}]*grid-template-columns: minmax\(0, max-content\) minmax\(0, 1fr\);/s,
+    )
+    expect(settingsCss).not.toMatch(/skills-settings|skill-row/)
+  })
+
+  it('lists MCP servers on the same rows, with the editor on the shared form', () => {
+    // No header, empty card, message box, inherited header or editor grid of its own.
+    expect(settingsCss).not.toMatch(
+      /mcp-settings__(header|actions|empty|message|scope-note)|mcp-inherited|\.mcp-row(__heading|__actions|__transport|__failure)? \{|\.mcp-editor \{/,
+    )
+    // Only the tool list under a server is its own.
+    expect(settingsCss).toMatch(/\.settings \.mcp-row__details \{[^}]*font-size: var\(--t-sm\);/s)
+  })
+
+  it('sets API connections as a roster section with the shared form', () => {
+    expect(settingsCss).toMatch(
+      /\.settings \.provider-settings__entry \+ \.set-section \{[^}]*margin-top: 36px;/s,
+    )
+    // The form is the shared one; its old grid, written twice, and the inset heading are gone.
+    expect(settingsCss).not.toMatch(
+      /\.provider-form \{|provider-form__(field|wide|actions|error)|settings__group-title--inside|provider-settings__(status|actions)/,
+    )
+    expect(settingsCss.match(/\.provider-form__select \{/g)).toHaveLength(1)
+    expect(settingsSource).not.toContain('settings__group-title')
   })
 
   it('draws the provider updates line from quiet buttons at the note size', () => {

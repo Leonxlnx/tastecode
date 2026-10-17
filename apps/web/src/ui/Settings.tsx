@@ -166,7 +166,7 @@ import {
   SettingsNotice,
   SettingsPage,
   SettingsSection,
-  SettingsRow as SettingsLeaderRow,
+  SettingsRow,
 } from './settings/SettingsLayout.js'
 import {
   DEFAULT_KEYBINDINGS,
@@ -531,7 +531,7 @@ function SettingsComponent(props: {
           {section === 'data' ? <DataSettings {...props} /> : null}
           {section === 'debug' ? (
             <SettingsPage title="Debug">
-              <SettingsLeaderRow name="Onboarding">
+              <SettingsRow name="Onboarding">
                 <button
                   className="set-button"
                   type="button"
@@ -540,7 +540,7 @@ function SettingsComponent(props: {
                 >
                   Force onboarding
                 </button>
-              </SettingsLeaderRow>
+              </SettingsRow>
               <UsageHistoryReset transport={props.transport} />
               <AppUpdateSimulationRow />
               <ProviderUpdateSimulationRow transport={props.transport} />
@@ -570,7 +570,7 @@ function AppUpdateSimulationRow() {
   useEffect(() => onSimulatedAppUpdate((state) => setRunning(state !== undefined)), [])
 
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Simulate app update"
       note="Plays a fake release through the sidebar button and About. Nothing is downloaded; restarting reloads the window."
     >
@@ -592,7 +592,7 @@ function AppUpdateSimulationRow() {
       >
         Stop
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -605,7 +605,7 @@ const PROVIDER_UPDATE_SIMULATIONS = [
 function ProviderUpdateSimulationRow(props: { transport: Transport }) {
   const { store, state } = useProviderUpdates(props.transport)
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Simulate provider updates"
       note="Pops the update notice with made-up releases one step past what is installed. Update plays the whole run without touching a CLI; dismissing the notice ends it."
     >
@@ -628,7 +628,7 @@ function ProviderUpdateSimulationRow(props: { transport: Transport }) {
       >
         Stop
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -1261,147 +1261,172 @@ export function ProviderSettings(props: {
           {renderAgentRow(agent)}
         </div>
       ))}
-      <h2 className="settings__group-title settings__group-title--inside">API connections</h2>
-      {(props.modelConnections ?? []).map((connection) => (
-        <SettingsRow key={connection.id} title={connection.displayName}>
-          <div className="provider-settings__actions">
-            <StateLabel
-              state={connection.credentialConfigured ? 'ready' : 'setup-needed'}
-              detail={
-                connection.credentialConfigured
-                  ? CONNECTION_PRESETS[connection.preset].label
-                  : 'Key missing'
-              }
-            />
-            <ProviderIcon mark={connectionMark(connection.preset)} size={17} />
-            <button
-              className="set-button set-button--danger"
-              type="button"
-              onClick={() => {
-                void props.transport
-                  .request('connections.remove', { connectionId: connection.id })
-                  .then(props.onConnectionsChanged)
-              }}
-            >
-              Remove
-            </button>
+      <SettingsSection title="API connections">
+        {(props.modelConnections ?? []).map((connection) => (
+          <ConnectionRow
+            key={connection.id}
+            connection={connection}
+            onRemove={() => {
+              void props.transport
+                .request('connections.remove', { connectionId: connection.id })
+                .then(props.onConnectionsChanged)
+            }}
+          />
+        ))}
+        {addingConnection ? (
+          <div className="set-form">
+            <div className="set-form__field">
+              <span>Provider</span>
+              <Menu
+                align="left"
+                drop="down"
+                label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
+                panelLabel="API provider"
+                panelClassName="provider-form__menu"
+                triggerClassName="provider-form__select set-select"
+                trigger={(open) => (
+                  <>
+                    <span className="provider-form__select-value">
+                      <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
+                      {CONNECTION_PRESETS[connectionPreset].label}
+                    </span>
+                    <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
+                  </>
+                )}
+              >
+                {(close) =>
+                  Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
+                    <MenuItem
+                      key={value}
+                      title={config.label}
+                      icon={
+                        <ProviderIcon
+                          mark={connectionMark(value as ModelConnectionPreset)}
+                          size={16}
+                        />
+                      }
+                      active={value === connectionPreset}
+                      onClick={() => {
+                        chooseConnectionPreset(value as ModelConnectionPreset)
+                        close()
+                      }}
+                    />
+                  ))
+                }
+              </Menu>
+            </div>
+            <label>
+              <span>Name</span>
+              <input
+                className="set-input"
+                value={connectionName}
+                onChange={(event) => setConnectionName(event.target.value)}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>Base URL</span>
+              <input
+                className="set-input"
+                value={connectionBaseUrl}
+                onChange={(event) => setConnectionBaseUrl(event.target.value)}
+                spellCheck={false}
+              />
+            </label>
+            <label>
+              <span>Default model</span>
+              <input
+                className="set-input"
+                value={connectionDefaultModel}
+                onChange={(event) => setConnectionDefaultModel(event.target.value)}
+                placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
+                spellCheck={false}
+              />
+            </label>
+            <label className="set-form__wide">
+              <span>API key</span>
+              <input
+                className="set-input"
+                type="password"
+                value={connectionApiKey}
+                onChange={(event) => setConnectionApiKey(event.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            {connectionError ? <p className="set-form__error">{connectionError}</p> : null}
+            <div className="set-form__actions">
+              <button
+                className="set-button set-button--quiet"
+                type="button"
+                onClick={() => setAddingConnection(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="set-button set-button--primary"
+                type="button"
+                disabled={
+                  connectionSaving ||
+                  !connectionName.trim() ||
+                  !connectionBaseUrl.trim() ||
+                  !connectionApiKey.trim()
+                }
+                onClick={() => void addConnection()}
+              >
+                {connectionSaving ? 'Connecting…' : 'Connect'}
+              </button>
+            </div>
           </div>
-        </SettingsRow>
-      ))}
-      {addingConnection ? (
-        <div className="provider-form">
-          <div className="provider-form__field">
-            <span>Provider</span>
-            <Menu
-              align="left"
-              drop="down"
-              label={`Provider, ${CONNECTION_PRESETS[connectionPreset].label}`}
-              panelLabel="API provider"
-              panelClassName="provider-form__menu"
-              triggerClassName="provider-form__select set-select"
-              trigger={(open) => (
-                <>
-                  <span className="provider-form__select-value">
-                    <ProviderIcon mark={connectionMark(connectionPreset)} size={16} />
-                    {CONNECTION_PRESETS[connectionPreset].label}
-                  </span>
-                  <ChevronDown className={open ? 'is-open' : undefined} size={14} aria-hidden />
-                </>
-              )}
-            >
-              {(close) =>
-                Object.entries(CONNECTION_PRESETS).map(([value, config]) => (
-                  <MenuItem
-                    key={value}
-                    title={config.label}
-                    icon={
-                      <ProviderIcon
-                        mark={connectionMark(value as ModelConnectionPreset)}
-                        size={16}
-                      />
-                    }
-                    active={value === connectionPreset}
-                    onClick={() => {
-                      chooseConnectionPreset(value as ModelConnectionPreset)
-                      close()
-                    }}
-                  />
-                ))
-              }
-            </Menu>
-          </div>
-          <label>
-            <span>Name</span>
-            <input
-              className="set-input"
-              value={connectionName}
-              onChange={(event) => setConnectionName(event.target.value)}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>Base URL</span>
-            <input
-              className="set-input"
-              value={connectionBaseUrl}
-              onChange={(event) => setConnectionBaseUrl(event.target.value)}
-              spellCheck={false}
-            />
-          </label>
-          <label>
-            <span>Default model</span>
-            <input
-              className="set-input"
-              value={connectionDefaultModel}
-              onChange={(event) => setConnectionDefaultModel(event.target.value)}
-              placeholder={CONNECTION_PRESETS[connectionPreset].placeholder}
-              spellCheck={false}
-            />
-          </label>
-          <label className="provider-form__wide">
-            <span>API key</span>
-            <input
-              className="set-input"
-              type="password"
-              value={connectionApiKey}
-              onChange={(event) => setConnectionApiKey(event.target.value)}
-              autoComplete="off"
-            />
-          </label>
-          {connectionError ? <p className="provider-form__error">{connectionError}</p> : null}
-          <div className="provider-form__actions">
-            <button
-              className="set-button set-button--quiet"
-              type="button"
-              onClick={() => setAddingConnection(false)}
-            >
-              Cancel
-            </button>
-            <button
-              className="set-button set-button--primary"
-              type="button"
-              disabled={
-                connectionSaving ||
-                !connectionName.trim() ||
-                !connectionBaseUrl.trim() ||
-                !connectionApiKey.trim()
-              }
-              onClick={() => void addConnection()}
-            >
-              {connectionSaving ? 'Connecting…' : 'Connect'}
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button className="set-button" type="button" onClick={() => setAddingConnection(true)}>
-          <KeyRound size={15} aria-hidden />
-          Connect another plan or API
-        </button>
-      )}
+        ) : (
+          <button
+            className="set-button provider-connections__add"
+            type="button"
+            onClick={() => setAddingConnection(true)}
+          >
+            <KeyRound size={15} aria-hidden />
+            Connect another plan or API
+          </button>
+        )}
+      </SettingsSection>
       <ProviderUpdateCheck transport={props.transport} />
     </SettingsPage>
   )
 }
 
+/**
+ * An API connection on the roster's own row: its mark and name, the solid
+ * wire once a key is stored (the open leader while one is missing), and
+ * Remove where a provider has Sign out.
+ */
+function ConnectionRow(props: { connection: ModelConnection; onRemove: () => void }) {
+  const configured = props.connection.credentialConfigured
+  return (
+    <div className="provider-row" data-link={configured ? 'connected' : 'open'}>
+      <div className="provider-row__mark">
+        <ProviderIcon mark={connectionMark(props.connection.preset)} size={18} />
+      </div>
+      <div className="provider-row__identity">
+        <p className="set-entity__name">{props.connection.displayName}</p>
+      </div>
+      <span className="set-leader" aria-hidden />
+      <div className="provider-row__status set-entity__status">
+        <span className="provider-row__status-text">
+          {configured ? CONNECTION_PRESETS[props.connection.preset].label : 'Key missing'}
+        </span>
+      </div>
+      <div className="provider-row__secondary" />
+      <div className="provider-row__primary">
+        <button
+          className="set-button set-button--danger"
+          type="button"
+          aria-label={`Remove ${props.connection.displayName}`}
+          onClick={props.onRemove}
+        >
+          Remove
+        </button>
+      </div>
+    </div>
+  )
+}
 function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
@@ -1566,7 +1591,7 @@ function ModelSourcesSkeleton() {
             </div>
           </div>
           {MODEL_SKELETON_WIDTHS.slice(0, rows).map((width, row) => (
-            <SettingsLeaderRow
+            <SettingsRow
               key={row}
               className="model-visibility__model"
               name={
@@ -1578,7 +1603,7 @@ function ModelSourcesSkeleton() {
               <span className="settings__switch-skeleton">
                 <Skeleton width={30} height={18} />
               </span>
-            </SettingsLeaderRow>
+            </SettingsRow>
           ))}
         </div>
       ))}
@@ -1669,7 +1694,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
       note="Used for session titles, commit-message drafts, and other short writing."
     >
       {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
-      <SettingsLeaderRow
+      <SettingsRow
         name="Model"
         note={
           loading ? (
@@ -1729,12 +1754,9 @@ function BackgroundModelSettings(props: { transport: Transport }) {
             }}
           />
         )}
-      </SettingsLeaderRow>
+      </SettingsRow>
       {manual && selected && effortOptions.length > 0 ? (
-        <SettingsLeaderRow
-          name="Reasoning effort"
-          note="Choose the effort used for background writing."
-        >
+        <SettingsRow name="Reasoning effort" note="Choose the effort used for background writing.">
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background reasoning effort"
@@ -1749,10 +1771,10 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               })
             }
           />
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
       {manual && selected && fastTier ? (
-        <SettingsLeaderRow name="Speed" note="Choose the speed used for background writing.">
+        <SettingsRow name="Speed" note="Choose the speed used for background writing.">
           <AppSelect
             className="set-select--inline"
             ariaLabel="Background speed"
@@ -1769,7 +1791,7 @@ function BackgroundModelSettings(props: { transport: Transport }) {
               void update({ mode: 'manual', target: { ...manual, serviceTier } })
             }}
           />
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
     </SettingsSection>
   )
@@ -1885,7 +1907,7 @@ function AppearanceSettings(props: {
         <SettingsSection label="Shared appearance controls">
           {props.showMacOSHaptics ? <SidebarHapticsSetting /> : null}
           {props.showMacOSFontSmoothing ? (
-            <SettingsLeaderRow name="Font smoothing">
+            <SettingsRow name="Font smoothing">
               <button
                 className={`switch${props.macOSFontSmoothing ? ' is-on' : ''}`}
                 type="button"
@@ -1896,7 +1918,7 @@ function AppearanceSettings(props: {
               >
                 <span className="switch__thumb" />
               </button>
-            </SettingsLeaderRow>
+            </SettingsRow>
           ) : null}
         </SettingsSection>
       ) : null}
@@ -1972,7 +1994,7 @@ function AppearanceEditor(props: {
         )
       }
     >
-      <SettingsLeaderRow name="Accent">
+      <SettingsRow name="Accent">
         <AppearanceColorPicker
           label="Accent palette"
           value={props.preference.accent}
@@ -1980,8 +2002,8 @@ function AppearanceEditor(props: {
           options={ACCENT_OPTIONS}
           onChange={(accent) => props.onChange({ accent })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Background">
+      </SettingsRow>
+      <SettingsRow name="Background">
         <AppearanceColorPicker
           label="Background"
           value={props.preference.backdrop}
@@ -1989,8 +2011,8 @@ function AppearanceEditor(props: {
           options={BACKDROP_OPTIONS}
           onChange={(backdrop) => props.onChange({ backdrop })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Interface font">
+      </SettingsRow>
+      <SettingsRow name="Interface font">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Interface font"
@@ -2002,8 +2024,8 @@ function AppearanceEditor(props: {
           search={FONT_SEARCH}
           onChange={(font) => props.onChange({ font })}
         />
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Sidebar translucency">
+      </SettingsRow>
+      <SettingsRow name="Sidebar translucency">
         <AppSelect
           className="set-select--inline"
           ariaLabel="Sidebar translucency"
@@ -2012,7 +2034,7 @@ function AppearanceEditor(props: {
           options={GLASS_SELECT_OPTIONS}
           onChange={(value) => props.onChange({ glass: Number(value) })}
         />
-      </SettingsLeaderRow>
+      </SettingsRow>
     </SettingsSection>
   )
 }
@@ -2020,7 +2042,7 @@ function AppearanceEditor(props: {
 function SidebarHapticsSetting() {
   const enabled = useSyncExternalStore(subscribeAppHaptics, readAppHaptics, readAppHaptics)
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Trackpad haptics"
       note="Feel responsive detents while resizing, choosing effort, and placing dragged chats."
     >
@@ -2041,7 +2063,7 @@ function SidebarHapticsSetting() {
       >
         <span className="switch__thumb" />
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -2163,7 +2185,7 @@ function DataSettings(props: {
   return (
     <SettingsPage title="Data & privacy">
       {isDesktop ? (
-        <SettingsLeaderRow
+        <SettingsRow
           name="Local diagnostics"
           note="Off by default. Stores redacted app error text only on this device. Nothing is uploaded. New entries stop immediately when turned off."
         >
@@ -2198,9 +2220,9 @@ function DataSettings(props: {
               <span className="switch__thumb" />
             </button>
           )}
-        </SettingsLeaderRow>
+        </SettingsRow>
       ) : null}
-      <SettingsLeaderRow
+      <SettingsRow
         name="Reset app preferences"
         note={
           <>
@@ -2222,7 +2244,7 @@ function DataSettings(props: {
           <RotateCcw size={13} aria-hidden />
           <span>Reset…</span>
         </button>
-      </SettingsLeaderRow>
+      </SettingsRow>
       {confirming ? (
         <ResetConfirmation
           onCancel={() => setConfirming(false)}
@@ -2346,7 +2368,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
   }
 
   return (
-    <SettingsLeaderRow
+    <SettingsRow
       name="Usage history index"
       note="Clears the generated cache and reparses every local provider history. Sessions and Harness data are not deleted."
     >
@@ -2363,7 +2385,7 @@ function UsageHistoryReset(props: { transport: Transport }) {
         <RotateCcw size={13} aria-hidden />
         <span>{state === 'resetting' ? 'Resetting…' : 'Reset and rescan'}</span>
       </button>
-    </SettingsLeaderRow>
+    </SettingsRow>
   )
 }
 
@@ -2442,7 +2464,7 @@ function AboutSettings(props: { transport: Transport }) {
 
   return (
     <SettingsPage title="About">
-      <SettingsLeaderRow name="TasteCode">
+      <SettingsRow name="TasteCode">
         <SettingsMeta>
           {nativeUpdate === undefined ? (
             <SettingsValueSkeleton label="Loading app version…" width={132} />
@@ -2450,8 +2472,8 @@ function AboutSettings(props: { transport: Transport }) {
             `${isDesktop ? 'Desktop' : 'Browser'} · ${nativeUpdate.status !== 'unsupported' ? nativeUpdate.currentVersion : 'pre-release'}${result?.localCommit ? ` · ${short(result.localCommit)}` : ''}`
           )}
         </SettingsMeta>
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Updates">
+      </SettingsRow>
+      <SettingsRow name="Updates">
         {nativeUpdate?.status === 'error' ? (
           <RowIssue
             message={nativeUpdate.error ?? 'Update check failed'}
@@ -2489,8 +2511,8 @@ function AboutSettings(props: { transport: Transport }) {
                   ? 'Checking…'
                   : 'Check for updates'}
         </button>
-      </SettingsLeaderRow>
-      <SettingsLeaderRow name="Source">
+      </SettingsRow>
+      <SettingsRow name="Source">
         <button
           className="set-button"
           type="button"
@@ -2500,7 +2522,7 @@ function AboutSettings(props: { transport: Transport }) {
         >
           GitHub
         </button>
-      </SettingsLeaderRow>
+      </SettingsRow>
     </SettingsPage>
   )
 }
@@ -2509,8 +2531,8 @@ function AboutSettings(props: { transport: Transport }) {
  * A provider that is not on this machine yet. When the server knows a real
  * install command the button runs it in the background — no docs page — and
  * the row narrates progress from the live output. App-level callers hand the
- * live terminal to the expanded workspace card; isolated callers keep the
- * attachable details fallback in this row.
+ * live terminal to the expanded workspace card, and Show terminal brings that
+ * one view back; isolated callers keep the attachable details fallback here.
  */
 function InstallableRow(props: {
   provider: ProviderStatus
@@ -2556,18 +2578,19 @@ function InstallableRow(props: {
     [key],
   )
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+      operation: 'install',
+    })
+
   const start = () => {
     setStartError(undefined)
     setShowTerminal(false)
     void beginInstall(props.transport, props.target)
-      .then(() => {
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-          operation: 'install',
-        })
-      })
+      .then(openExpandedTerminal)
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
       )
@@ -2596,14 +2619,21 @@ function InstallableRow(props: {
           }
         : undefined
   const setup = props.provider.setup
+  // The workspace keeps an install's terminal, failed ones included, until it
+  // is closed; the row reopens that view rather than drawing a second one.
+  const inline = !props.onOpenExpandedTerminal
   const secondary: ProviderAction | undefined =
     install?.phase === 'running' || install?.phase === 'failed' || install?.phase === 'succeeded'
-      ? {
-          label: showTerminal ? 'Hide details' : 'Details',
-          expanded: showTerminal,
-          controls: detailsId,
-          onClick: () => setShowTerminal((visible) => !visible),
-        }
+      ? !inline
+        ? install.phase === 'succeeded'
+          ? undefined
+          : { label: 'Show terminal', onClick: openExpandedTerminal }
+        : {
+            label: showTerminal ? 'Hide details' : 'Details',
+            expanded: showTerminal,
+            controls: detailsId,
+            onClick: () => setShowTerminal((visible) => !visible),
+          }
       : { label: 'Check again', disabled: recheck.checking, onClick: recheck.check }
   const primary: ProviderAction | undefined = !setup?.installCommand
     ? setup
@@ -2629,7 +2659,7 @@ function InstallableRow(props: {
         primary={primary}
         secondary={secondary}
       />
-      {install ? (
+      {install && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
@@ -2641,9 +2671,10 @@ function InstallableRow(props: {
 /**
  * Sign-in for a provider whose login lives inside its own CLI. The button
  * launches that CLI in a server-side pty. App-level callers hand the attached
- * terminal to the expanded workspace pane for every provider; isolated callers
- * keep the guided card and attachable details here. A clean exit refreshes the
- * account, while a dirty exit keeps the log available for a retry.
+ * terminal to the expanded workspace pane for every provider, and Show terminal
+ * brings that one view back while the sign-in runs; isolated callers keep the
+ * guided card and attachable details here. A clean exit refreshes the account,
+ * while a dirty exit keeps the log behind Details for a retry.
  */
 function CliSignInRow(props: {
   provider: ProviderStatus
@@ -2693,6 +2724,13 @@ function CliSignInRow(props: {
     if (login?.phase && login.phase !== 'running') setShowTerminal(false)
   }, [login?.phase])
 
+  const openExpandedTerminal = () =>
+    props.onOpenExpandedTerminal?.({
+      provider: props.provider.id,
+      displayName: props.provider.displayName,
+      installKey: key,
+    })
+
   const start = () => {
     setStarting(true)
     setStartError(undefined)
@@ -2709,11 +2747,7 @@ function CliSignInRow(props: {
     )
       .then(() => {
         if (installState(key)?.phase !== 'running' || installState(key)?.canceling) return
-        props.onOpenExpandedTerminal?.({
-          provider: props.provider.id,
-          displayName: props.provider.displayName,
-          installKey: key,
-        })
+        openExpandedTerminal()
       })
       .catch((cause: unknown) =>
         setStartError(cause instanceof Error ? cause.message : String(cause)),
@@ -2758,8 +2792,13 @@ function CliSignInRow(props: {
         : login?.phase === 'canceled'
           ? 'Sign-in canceled'
           : 'Not signed in'
-  const details: ProviderAction | undefined =
-    login && (running || login.phase === 'failed')
+  // While the sign-in runs, the workspace terminal is its one view: the row
+  // brings it back instead of attaching a second one. App closes that view when
+  // a sign-in ends, so a failed one keeps its log behind Details here.
+  const inline = !props.onOpenExpandedTerminal || !running
+  const details: ProviderAction | undefined = !inline
+    ? { label: 'Show terminal', disabled: stopping, onClick: openExpandedTerminal }
+    : login && (running || login.phase === 'failed')
       ? {
           label: showTerminal ? 'Hide details' : 'Details',
           expanded: showTerminal,
@@ -2828,7 +2867,7 @@ function CliSignInRow(props: {
           ) : null}
         </div>
       ) : null}
-      {login ? (
+      {login && inline ? (
         <div id={detailsId} className="provider-terminal" hidden={!showTerminal}>
           {showTerminal ? <ProviderTerminal transport={props.transport} installKey={key} /> : null}
         </div>
@@ -2837,6 +2876,7 @@ function CliSignInRow(props: {
   )
 }
 
+/** An install or sign-in log on the workspace terminal's look, like the expanded terminal. */
 function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
     <Suspense
@@ -2846,7 +2886,11 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
         </SkeletonStatus>
       }
     >
-      <InstallTerminal transport={props.transport} installKey={props.installKey} />
+      <InstallTerminal
+        transport={props.transport}
+        installKey={props.installKey}
+        profile="workspace"
+      />
     </Suspense>
   )
 }
@@ -2925,23 +2969,6 @@ function SettingsValueSkeleton(props: { label: string; width: number }) {
       <span className="visually-hidden">{props.label}</span>
       <Skeleton width={props.width} height={9} />
     </span>
-  )
-}
-
-function SettingsRow(props: {
-  title: ReactNode
-  note?: ReactNode
-  className?: string
-  children?: ReactNode
-}) {
-  return (
-    <div className={`settings__row${props.className ? ` ${props.className}` : ''}`}>
-      <div className="settings__row-copy">
-        <p className="settings__row-title">{props.title}</p>
-        {props.note ? <p className="settings__row-note">{props.note}</p> : null}
-      </div>
-      {props.children ? <div className="settings__row-control">{props.children}</div> : null}
-    </div>
   )
 }
 

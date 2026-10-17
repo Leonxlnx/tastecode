@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { cleanup, render, screen, within } from '@testing-library/react'
 import {
   SettingsEmpty,
+  SettingsEntitySkeleton,
   SettingsNotice,
   SettingsPage,
   SettingsRow,
@@ -100,5 +101,19 @@ describe('settings layout primitives', () => {
     expect(screen.getByText('No MCP servers yet').className).toBe('set-empty__title')
     expect(screen.getByText('Add one to use it in every chat.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Add server' })).toBeTruthy()
+  })
+
+  it('holds the place of listed entities with rows of their own shape', () => {
+    render(<SettingsEntitySkeleton label="Discovering skills…" rows={2} />)
+
+    const status = screen.getByRole('status')
+    expect(status.getAttribute('aria-busy')).toBe('true')
+    expect(status.textContent).toBe('Discovering skills…')
+    const rows = status.querySelectorAll('.set-entity')
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.getAttribute('aria-hidden')).toBe('true')
+      expect(row.querySelector('.set-entity__head > .set-leader')).toBeTruthy()
+    }
   })
 })

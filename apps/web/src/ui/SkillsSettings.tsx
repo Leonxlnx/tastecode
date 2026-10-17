@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ProviderId, ResultOf, Skill } from '@harness/contracts'
 import {
   IconAlertTriangle as AlertTriangle,
@@ -7,7 +7,12 @@ import {
 import { pickSkillFolder } from '../bridge.js'
 import type { Transport } from '../transport.js'
 import { useProviderWatch } from '../provider-watch.js'
-import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
+import {
+  SettingsEmpty,
+  SettingsEntitySkeleton,
+  SettingsNotice,
+  SettingsPage,
+} from './settings/SettingsLayout.js'
 
 type Inventory = ResultOf<'skills.list'>
 type Context = { transport: Transport; provider: ProviderId; projectPath: string | undefined }
@@ -26,7 +31,6 @@ export function SkillsSettings(props: {
   // Per id: one toggle settling must not unlock another switch still in flight.
   const [busy, setBusy] = useState<ReadonlySet<string>>(() => new Set())
   const [reload, setReload] = useState(0)
-  const titleId = useId()
   const inventoryGeneration = useRef(0)
   const inventoryContext = useRef<Context | undefined>(undefined)
   const errorContext = useRef<Context | undefined>(undefined)
@@ -180,40 +184,16 @@ export function SkillsSettings(props: {
   const currentInventory = contextMatches(inventoryContext.current) ? inventory : undefined
   const currentError = currentInventory || contextMatches(errorContext.current) ? error : undefined
   const projectSkills = currentInventory?.skills.filter((skill) => skill.scope === 'project') ?? []
-  const providerStatus = !props.projectPath
-    ? 'Select a project to check Agent Skills support.'
-    : currentError && !currentInventory
-      ? `${props.providerName} · Agent Skills status unavailable`
-      : !currentInventory
-        ? `Checking ${props.providerName} Agent Skills support…`
-        : `${props.providerName} · Agent Skills inventory ${currentInventory.capabilities.inventory ? 'available' : 'unavailable'}`
   // A background refresh keeps the current list on screen; blanking it
   // to a loading note on every skills.changed push read as flicker.
   const discovering = Boolean(props.projectPath) && loading && !inventory
-  const status = !props.projectPath
-    ? 'Select a project in the sidebar first.'
-    : discovering
-      ? undefined
-      : !currentInventory
-        ? undefined
-        : !currentInventory.capabilities.inventory
-          ? `${props.providerName} does not expose Agent Skills here yet.`
-          : projectSkills.length === 0
-            ? 'No Agent Skills have been imported into this project.'
-            : undefined
 
   return (
-    <section className="settings__panel skills-settings" aria-labelledby={titleId}>
-      <header className="skills-settings__header">
-        <div>
-          <h1 className="settings__title" id={titleId}>
-            Skills
-          </h1>
-          <p role="status" aria-live="polite" aria-atomic="true">
-            {providerStatus}
-          </p>
-        </div>
-        {props.projectPath && currentInventory?.capabilities.install ? (
+    <SettingsPage
+      title="Skills"
+      description={pageDescription(props.providerName, props.projectPath, props.projectName)}
+      actions={
+        props.projectPath && currentInventory?.capabilities.install ? (
           <button
             className="set-button"
             type="button"
@@ -223,50 +203,72 @@ export function SkillsSettings(props: {
             <FolderPlus size={14} aria-hidden />
             {busy.has('install') ? 'Installing…' : 'Install from folder'}
           </button>
-        ) : null}
-      </header>
-
+        ) : undefined
+      }
+    >
       {currentError ? (
-        <p className="skills-settings__error" role="alert">
-          {currentError}{' '}
-          <button className="set-button" type="button" onClick={() => setReload((n) => n + 1)}>
-            Retry
-          </button>
-        </p>
+        <SettingsNotice
+          tone="error"
+          action={
+            <button className="set-button" type="button" onClick={() => setReload((n) => n + 1)}>
+              Retry
+            </button>
+          }
+        >
+          {currentError}
+        </SettingsNotice>
       ) : null}
-      {discovering ? (
-        <SkeletonStatus label="Discovering skills…" className="settings__group">
-          <SkeletonRows rows={3} detail control density="roomy" />
-        </SkeletonStatus>
+      {currentInventory && !currentInventory.capabilities.inventory ? (
+        <SettingsNotice tone="info">
+          Skills from {props.providerName}’s own settings are loaded in chats but can’t be listed
+          here.
+        </SettingsNotice>
       ) : null}
-      {status ? <p className="skills-settings__empty">{status}</p> : null}
       {currentInventory?.errors.length ? (
-        <div className="skills-settings__error" role="alert">
-          <strong>Some skills could not be loaded</strong>
+        <SettingsNotice tone="error">
+          Some skills could not be loaded.
           {currentInventory.errors.map((entry) => (
-            <p key={`${entry.path}:${entry.message}`}>
+            <span className="set-notice__line" key={`${entry.path}:${entry.message}`}>
               {entry.message} · {entry.path}
-            </p>
+            </span>
           ))}
-        </div>
+        </SettingsNotice>
       ) : null}
-      {currentInventory?.capabilities.inventory && projectSkills.length ? (
-        <div className="settings__group">
-          {projectSkills.map((skill) => (
-            <SkillRow
-              key={skill.id}
-              skill={skill}
-              configurable={currentInventory.capabilities.configure}
-              busy={busy.has(skill.id)}
-              onToggle={() => void toggle(skill)}
-            />
-          ))}
-        </div>
-      ) : null}
-    </section>
+      {!props.projectPath ? (
+        <SettingsEmpty title="Select a project in the sidebar first." />
+      ) : discovering ? (
+        <SettingsEntitySkeleton label="Discovering skills…" />
+      ) : !currentInventory?.capabilities.inventory ? null : projectSkills.length ? (
+        projectSkills.map((skill) => (
+          <SkillRow
+            key={skill.id}
+            skill={skill}
+            configurable={currentInventory.capabilities.configure}
+            busy={busy.has(skill.id)}
+            onToggle={() => void toggle(skill)}
+          />
+        ))
+      ) : (
+        <SettingsEmpty title="No Agent Skills have been imported into this project." />
+      )}
+    </SettingsPage>
   )
 }
 
+/** The provider and, once a project is open, the project the list belongs to. */
+function pageDescription(
+  providerName: string,
+  projectPath: string | undefined,
+  projectName: string | undefined,
+): string {
+  return projectPath && projectName ? `${providerName} · ${projectName}` : providerName
+}
+
+/**
+ * One skill: its name along the leader to its switch (or to its state when
+ * the provider does not let TasteCode change it), with what it does, where
+ * it lives and anything it is missing underneath.
+ */
 function SkillRow(props: {
   skill: Skill
   configurable: boolean
@@ -277,26 +279,37 @@ function SkillRow(props: {
   const source =
     props.skill.source.type === 'folder' ? props.skill.source.path : 'Managed by provider'
   return (
-    <article className={`settings__row skill-row${props.skill.enabled ? '' : ' is-disabled'}`}>
-      <div className="settings__row-copy">
-        <div className="skill-row__heading">
-          <h2>{name}</h2>
-          <span>{props.skill.scope === 'project' ? 'Project' : props.skill.scope}</span>
-          <span>{props.skill.enabled ? 'Enabled' : 'Disabled'}</span>
+    <article className="set-entity" data-tone={props.skill.enabled ? undefined : 'muted'}>
+      <div className="set-entity__main">
+        <div className="set-entity__head">
+          <h2 className="set-entity__name">{name}</h2>
+          <span className="set-leader" aria-hidden />
+          {props.configurable ? null : (
+            <span className="set-entity__status">
+              {props.skill.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          )}
         </div>
-        <p className="skill-row__description">{props.skill.description}</p>
-        <p className="skill-row__source" title={source}>
+        {props.skill.description ? (
+          <p className="set-entity__detail">{props.skill.description}</p>
+        ) : null}
+        <p className="set-entity__detail set-entity__detail--code" title={source}>
           {source}
         </p>
         {props.skill.dependencyErrors.map((entry) => (
-          <p className="skill-row__dependency" key={`${entry.dependency}:${entry.message}`}>
+          <p
+            className="set-entity__detail set-entity__detail--error"
+            key={`${entry.dependency}:${entry.message}`}
+          >
             <AlertTriangle size={13} aria-hidden />
-            <strong>{entry.dependency}</strong> · {entry.message}
+            <span>
+              <strong>{entry.dependency}</strong> · {entry.message}
+            </span>
           </p>
         ))}
       </div>
       {props.configurable ? (
-        <div className="settings__row-control">
+        <div className="set-entity__actions">
           <button
             className={`switch${props.skill.enabled ? ' is-on' : ''}`}
             type="button"
