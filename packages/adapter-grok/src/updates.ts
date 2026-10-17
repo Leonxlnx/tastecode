@@ -1,5 +1,17 @@
 import { runCli } from '@harness/proc/cli'
-import { cliVersion, type CliUpdateSource } from '@harness/proc/updates'
+import { cliVersion, vendorInstallCommand, type CliUpdateSource } from '@harness/proc/updates'
+
+/**
+ * xAI's installer, as https://docs.x.ai/build/overview runs it. It puts `grok`
+ * in ~/.grok/bin, which the desktop PATH already searches, and `grok update`
+ * then updates that install.
+ */
+export function grokInstallCommand(platform: NodeJS.Platform = process.platform): string {
+  return vendorInstallCommand(
+    { windows: 'https://x.ai/cli/install.ps1', posix: 'https://x.ai/cli/install.sh' },
+    platform,
+  )
+}
 
 export const GROK_UPDATES: CliUpdateSource = {
   command: 'grok',
