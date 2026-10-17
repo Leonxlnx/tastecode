@@ -150,7 +150,12 @@ function listed(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function fakeGit(branch = 'feature/pr-chip'): GitRunner {
+function fakeGit(
+  branch = 'feature/pr-chip',
+  options: { upstream?: string | null; defaultBranch?: string | null } = {},
+): GitRunner {
+  const upstream = options.upstream === undefined ? `origin/${branch}` : options.upstream
+  const defaultBranch = options.defaultBranch === undefined ? 'main' : options.defaultBranch
   return async (_cwd, args) => {
     if (args[0] === 'symbolic-ref') return { code: 0, stdout: `refs/heads/${branch}\n` }
     if (args[0] === 'config')
@@ -158,8 +163,10 @@ function fakeGit(branch = 'feature/pr-chip'): GitRunner {
     return {
       code: 0,
       stdout:
-        `refs/heads/${branch}\u0000origin/${branch}\u0000ahead 1\u0000\n` +
-        'refs/remotes/origin/HEAD\u0000\u0000\u0000refs/remotes/origin/main\n',
+        `refs/heads/${branch}\u0000${upstream ?? ''}\u0000${upstream ? 'ahead 1' : ''}\u0000\n` +
+        (defaultBranch
+          ? `refs/remotes/origin/HEAD\u0000\u0000\u0000refs/remotes/origin/${defaultBranch}\n`
+          : ''),
     }
   }
 }
@@ -380,5 +387,122 @@ describe('the pull request for a checkout', () => {
 
     expect((await lookups.forCheckout('/a')).pullRequest?.number).toBe(2)
     expect(run).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('opening a pull request for a checkout', () => {
+  const created = 'https://github.com/Leonxlnx/tastecode/pull/1801\n'
+
+  function creator(
+    output: (args: string[]) => Promise<string>,
+    git: Parameters<typeof fakeGit>[1] & { branch?: string } = {},
+  ) {
+    const run = vi.fn<GhRunner>((args) => output(args))
+    const lookups = new CheckoutPullRequests({
+      run,
+      account: async () => signedIn,
+      git: fakeGit(git.branch, git),
+      now: () => 1_000,
+    })
+    return { lookups, run }
+  }
+
+  const request = {
+    title: 'feat: review\n  commits',
+    body: 'Why\n\n- "quoted" & $HOME',
+    draft: false,
+  }
+
+  it('runs gh with the head, the default branch and a one-line title, the body on stdin', async () => {
+    const { lookups, run } = creator(async (args) => (args[1] === 'create' ? created : '[]'))
+
+    expect(await lookups.create('/p', request)).toEqual({
+      repository: 'Leonxlnx/tastecode',
+      number: 1801,
+      url: 'https://github.com/Leonxlnx/tastecode/pull/1801',
+    })
+    expect(run).toHaveBeenCalledWith(
+      [
+        'pr',
+        'create',
+        '--repo=Leonxlnx/personalharness',
+        '--head=feature/pr-chip',
+        '--base=main',
+        '--title=feat: review commits',
+        '--body-file=-',
+      ],
+      { stdin: 'Why\n\n- "quoted" & $HOME', timeoutMs: 60_000 },
+    )
+  })
+
+  it('opens a draft into the base the user chose', async () => {
+    const { lookups, run } = creator(async () => `Creating pull request\n\n${created}`)
+    await lookups.create('/p', { ...request, base: 'nightly', draft: true })
+    expect(run.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(['--base=nightly', '--draft']))
+  })
+
+  it('asks GitHub for the default branch when the checkout does not know it', async () => {
+    const { lookups, run } = creator(
+      async (args) =>
+        args[0] === 'repo' ? JSON.stringify({ defaultBranchRef: { name: 'trunk' } }) : created,
+      { defaultBranch: null },
+    )
+    await lookups.create('/p', request)
+    expect(run.mock.calls.map(([args]) => args.slice(0, 2))).toEqual([
+      ['repo', 'view'],
+      ['pr', 'create'],
+    ])
+    expect(run.mock.calls[1]?.[0]).toContain('--base=trunk')
+  })
+
+  it('refuses the default branch and a branch that is not pushed under its name', async () => {
+    const never = async () => {
+      throw new Error('gh must not run')
+    }
+    await expect(creator(never, { branch: 'main' }).lookups.create('/p', request)).rejects.toThrow(
+      'A pull request needs a branch other than main. Switch branches first.',
+    )
+    await expect(creator(never, { upstream: null }).lookups.create('/p', request)).rejects.toThrow(
+      'Push the branch before opening a pull request.',
+    )
+    await expect(
+      creator(never, { upstream: 'origin/main' }).lookups.create('/p', request),
+    ).rejects.toThrow('Push the branch before opening a pull request.')
+    await expect(
+      creator(never).lookups.create('/p', { ...request, base: 'feature/pr-chip' }),
+    ).rejects.toThrow('A pull request needs a branch other than feature/pr-chip.')
+  })
+
+  it('says why gh refused in words the user can act on', async () => {
+    const refused = (message: string) =>
+      creator(async () => {
+        throw new Error(message)
+      }).lookups.create('/p', request)
+    await expect(
+      refused('a pull request for branch "feature/pr-chip" into branch "main" already exists:'),
+    ).rejects.toThrow('feature/pr-chip already has an open pull request into main.')
+    await expect(
+      refused('pull request create failed: GraphQL: No commits between main and feature/pr-chip'),
+    ).rejects.toThrow('feature/pr-chip has no commits that main does not have.')
+    await expect(refused('HTTP 502')).rejects.toThrow('HTTP 502')
+    await expect(creator(async () => 'done').lookups.create('/p', request)).rejects.toThrow(
+      'GitHub CLI did not report the new pull request.',
+    )
+  })
+
+  it('looks the branch up again afterwards, whether or not gh succeeded', async () => {
+    let fail = false
+    const { lookups, run } = creator(async (args) => {
+      if (args[1] === 'list') return '[]'
+      if (fail) throw new Error('already exists')
+      return created
+    })
+    await lookups.forCheckout('/p')
+    await lookups.create('/p', request)
+    await lookups.forCheckout('/p')
+    fail = true
+    await expect(lookups.create('/p', request)).rejects.toThrow()
+    await lookups.forCheckout('/p')
+    expect(run.mock.calls.filter(([args]) => args[1] === 'list')).toHaveLength(3)
   })
 })

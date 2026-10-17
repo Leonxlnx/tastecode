@@ -567,6 +567,12 @@ export function startServer(
         return (await checkoutPullRequestService()).forCheckout(checkout, p.refresh ?? false)
       }
 
+      case 'pullRequests.create': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return (await checkoutPullRequestService()).create(checkout, p)
+      }
+
       case 'pullRequests.image':
         return (await pullRequestService()).images.image(parseParams(method, params).url)
 

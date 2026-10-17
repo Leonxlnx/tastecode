@@ -586,6 +586,12 @@ describe('git writes in a chat checkout', () => {
     expect(git(remote, 'rev-parse', 'refs/heads/chat/one')).toBe(
       git(worktreePath, 'rev-parse', 'HEAD'),
     )
+
+    expect(
+      await call(port, 'pullRequests.create', { ...checkout, title: 'x', body: '', draft: false }),
+    ).toMatchObject({
+      error: { code: 'internal', message: 'This checkout has no GitHub remote named origin.' },
+    })
   })
   // Every step spawns git, which takes a while on a busy Windows machine.
 }, 60_000)

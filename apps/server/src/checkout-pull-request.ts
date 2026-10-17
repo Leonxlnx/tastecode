@@ -6,6 +6,8 @@ import {
   type CheckoutPullRequestUnavailable,
   type PullRequestAccount,
   type PullRequestChecksSummary,
+  type PullRequestCreate,
+  type PullRequestCreateResult,
 } from '@harness/contracts'
 import { z } from 'zod'
 import {
@@ -27,6 +29,9 @@ const GIT_TIMEOUT_MS = 5_000
 // The first gh process on a busy Windows machine took over 15 s; the pull
 // request list allows the same 30 s.
 const GH_TIMEOUT_MS = 30_000
+// Creating also resolves the head and base on GitHub before it answers.
+const CREATE_TIMEOUT_MS = 60_000
+const PULL_REQUEST_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/(\d+)/g
 const HEADS = 'refs/heads/'
 const ORIGIN_HEAD = 'refs/remotes/origin/HEAD'
 const ORIGIN_BRANCHES = 'refs/remotes/origin/'
@@ -59,6 +64,11 @@ type CheckoutGit =
 type Lookup =
   | { pullRequest?: CheckoutPullRequest; fetchedAt: number }
   | { reason: 'gh_missing' | 'signed_out' | 'failed'; fetchedAt: number }
+
+/** What `gh repo view --json defaultBranchRef` printed (captured 2026-10-17). */
+const RawRepositorySchema = z.object({
+  defaultBranchRef: z.object({ name: z.string().min(1) }),
+})
 
 const RawLookupSchema = z.array(
   z.object({
@@ -139,6 +149,67 @@ export class CheckoutPullRequests {
       ...(lookup.pullRequest ? { pullRequest: lookup.pullRequest } : {}),
       fetchedAt: lookup.fetchedAt,
     }
+  }
+
+  /**
+   * Open a pull request from the checkout's pushed branch into `base`, else
+   * the repository's default branch. gh gets the title as one line and the
+   * body on stdin; the lookup for that branch is dropped either way, so the
+   * next read shows the new pull request or the one that already existed.
+   */
+  async create(checkout: string, request: PullRequestCreate): Promise<PullRequestCreateResult> {
+    const git = await readCheckoutGit(checkout, this.#git)
+    if ('reason' in git) throw new Error(CREATE_REFUSALS[git.reason])
+    const { branch, repository } = git
+    const sameBranch = () =>
+      new Error(`A pull request needs a branch other than ${branch}. Switch branches first.`)
+    if (branch === (request.base ?? git.defaultBranch)) throw sameBranch()
+    // gh looks for the head by name in the base repository, which is the
+    // pushed branch only when origin holds it under the same name.
+    if (git.upstream !== `origin/${branch}`) {
+      throw new Error('Push the branch before opening a pull request.')
+    }
+
+    const key = lookupKey(repository, branch)
+    try {
+      // Without --base, gh reads a merge-base setting from whatever repository
+      // the server happens to run in.
+      const base = request.base ?? git.defaultBranch ?? (await this.#defaultBranch(repository))
+      if (base === branch) throw sameBranch()
+      const output = await this.#run(
+        [
+          'pr',
+          'create',
+          `--repo=${repository}`,
+          `--head=${branch}`,
+          `--base=${base}`,
+          `--title=${request.title.replace(/\s+/g, ' ').trim()}`,
+          '--body-file=-',
+          ...(request.draft ? ['--draft'] : []),
+        ],
+        { stdin: request.body, timeoutMs: CREATE_TIMEOUT_MS },
+      ).catch((error: unknown) => {
+        throw createFailure(error, branch, base)
+      })
+      // gh prints the new pull request's URL; a terminal would get more text first.
+      const created = [...output.matchAll(PULL_REQUEST_URL)].at(-1)
+      if (!created?.[1] || !created[2]) {
+        throw new Error('GitHub CLI did not report the new pull request. Check it on GitHub.')
+      }
+      return { repository: created[1], number: Number(created[2]), url: created[0] }
+    } finally {
+      this.#drop(key)
+    }
+  }
+
+  async #defaultBranch(repository: string): Promise<string> {
+    const output = await this.#run(['repo', 'view', repository, '--json', 'defaultBranchRef'], {
+      timeoutMs: GH_TIMEOUT_MS,
+    })
+    const parsed = RawRepositorySchema.safeParse(parseJsonOrUndefined(output))
+    if (!parsed.success)
+      throw new Error(`GitHub did not say which branch ${repository} merges into.`)
+    return parsed.data.defaultBranchRef.name
   }
 
   /** A turn finished in this checkout: its agent may have pushed or opened a pull request. */
@@ -342,6 +413,36 @@ export const runGit: GitRunner = (cwd, args) =>
       },
     )
   })
+
+/** Why a checkout cannot open a pull request, as the user should read it. */
+const CREATE_REFUSALS = {
+  not_git: 'This folder is not a git checkout.',
+  no_branch: 'Commit something before opening a pull request.',
+  detached: 'Check out a branch before opening a pull request.',
+  no_remote: 'This checkout has no GitHub remote named origin.',
+  gh_missing: 'Install the GitHub CLI to open pull requests.',
+  signed_out: 'Sign in to the GitHub CLI to open pull requests.',
+  failed: 'Git could not read this checkout.',
+} satisfies Record<CheckoutPullRequestUnavailable, string>
+
+function createFailure(error: unknown, branch: string, base: string): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/already exists/i.test(message)) {
+    return new Error(`${branch} already has an open pull request into ${base}.`)
+  }
+  if (/no commits between/i.test(message)) {
+    return new Error(`${branch} has no commits that ${base} does not have.`)
+  }
+  return error instanceof Error ? error : new Error(message)
+}
+
+function parseJsonOrUndefined(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown
+  } catch {
+    return undefined
+  }
+}
 
 function lookupKey(repository: string, branch: string): string {
   return `${repository.toLowerCase()}\u0000${branch}`
