@@ -96,8 +96,10 @@ describe('radius system', () => {
     )
     expect(pullRequestsCss).toMatch(/\.pr-dialog \{[^}]*border-radius: var\(--r-dialog\)/s)
     expect(appCss).toMatch(/\.sheet__panel \{[^}]*border-radius: var\(--r-dialog\)/s)
+    expect(rollbackCss).toMatch(/\.rollback__sheet \{[^}]*border-radius: var\(--r-dialog\)/s)
     expect(appCss).toMatch(/\.attachment-preview__open \{[^}]*border-radius: var\(--r-xl\)/s)
     expect(threadCss).toMatch(/\.said \{[^}]*border-radius: var\(--r-lg\)/s)
+    expect(rollbackCss).toMatch(/\.rollback__prompt \{[^}]*border-radius: var\(--r-lg\)/s)
   })
 
   it('keeps floating surfaces and their interactive rows on one nested radius system', () => {
@@ -122,10 +124,6 @@ describe('radius system', () => {
       /\.session-search__result \{[^}]*border-radius: var\(--r-popup-item\);/s,
     )
     expect(sessionSearchCss).toMatch(/\.session-search__results \{[^}]*padding: 3px;/s)
-    expect(rollbackCss).toMatch(
-      /\.rollback__checkpoint \{[^}]*border-radius: var\(--r-popup-item\);/s,
-    )
-    expect(rollbackCss).toMatch(/\.rollback__list \{[^}]*padding: 3px;/s)
     expect(modelSelectorCss).toMatch(
       /\.model-selector__menu \{[^}]*--r-popup-item: var\(--r-md\);[^}]*--r-popup: var\(--r-lg\);[^}]*border-radius: var\(--r-popup\);/s,
     )
