@@ -3,6 +3,7 @@ import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import {
   detectProviders,
   installCommandFor,
+  installTimeAuth,
   launchCommandFor,
   prewarmProviders,
   type SystemProbe,
@@ -133,14 +134,17 @@ describe('detectProviders', () => {
     expect(find(providers, 'opencode').setup?.installUrl).toBe('https://opencode.ai/en/docs')
   })
 
-  it('reports when the installed Cursor wire version is unsupported', async () => {
-    const providers = await detectProviders(
-      system({ isInstalled: async () => true, version: async () => '2025.12.1' }),
-    )
+  it('keeps Cursor usable after it updates itself to a newer build', async () => {
+    for (const version of ['2026.10.02-abc1234', '2025.12.1']) {
+      const providers = await detectProviders(
+        system({ isInstalled: async () => true, version: async () => version }),
+      )
 
-    const cursor = find(providers, 'cursor')
-    expect(cursor.installed).toBe(true)
-    expect(cursor.problem).toContain('supports 2026.07')
+      const cursor = find(providers, 'cursor')
+      expect(cursor.installed).toBe(true)
+      expect(cursor.version).toBe(version)
+      expect(cursor.problem).toBeUndefined()
+    }
   })
 
   it('omits the version when the binary would not say', async () => {
@@ -151,6 +155,29 @@ describe('detectProviders', () => {
     // Reporting an empty string would render as a blank version chip, which
     // reads as a broken install rather than a quiet one.
     expect(find(providers, 'codex').version).toBeUndefined()
+  })
+
+  it('finds Antigravity without starting agy', async () => {
+    const asked: string[] = []
+    const providers = await detectProviders(
+      system({
+        isInstalled: async () => true,
+        version: async (command) => {
+          asked.push(command)
+          return '1.4.0'
+        },
+      }),
+    )
+
+    // Starting agy launches its language server and self-updater; a scan only
+    // needs to find the binary.
+    const antigravity = find(providers, 'antigravity')
+    expect(antigravity.installed).toBe(true)
+    expect(antigravity.version).toBeUndefined()
+    expect(antigravity.problem).toBeUndefined()
+    expect(antigravity.capabilities).toBeDefined()
+    expect(asked).not.toContain('agy')
+    expect(asked).toContain('codex')
   })
 
   it('never claims to know whether someone is signed in', async () => {
@@ -170,6 +197,22 @@ describe('detectProviders', () => {
 
     expect(find(providers, 'codex').auth).toBe('authenticated')
     expect(find(providers, 'claude-code').auth).toBe('unknown')
+  })
+
+  it('reports unknown for a provider whose probe declares no sign-in check', async () => {
+    // Nothing is started for these: the account read answers them later.
+    const unchecked = [
+      'claude-code',
+      'grok',
+      'cursor',
+      'opencode',
+      'antigravity',
+      'pi',
+      'acp',
+    ] as const
+    for (const provider of unchecked) {
+      await expect(installTimeAuth(provider)).resolves.toBe('unknown')
+    }
   })
 
   it('reports every provider we know about, installed or not', async () => {
