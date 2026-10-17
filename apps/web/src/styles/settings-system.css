@@ -72,8 +72,7 @@
 }
 
 /* One quiet action on the heading's line (Reset colors): the 28px button
-   overhangs the 12.5px line instead of growing it, and its label sits flush
-   with the column edge, under the values. */
+   overhangs the 12.5px line instead of growing it. */
 .settings .set-section__action {
   display: flex;
   flex: none;
@@ -81,7 +80,9 @@
   margin-block: -6px;
 }
 
-.settings .set-section__action > .set-button--quiet:last-child {
+/* A trailing quiet action, on a page header or a section heading, sets its
+   label flush with the column edge, under the values. */
+.settings :is(.set-page__actions, .set-section__action) > .set-button--quiet:last-child {
   margin-right: -10px;
 }
 
@@ -117,12 +118,14 @@
   padding-block: 6px;
 }
 
-.settings .set-row:is(:hover, :focus-within) {
-  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
-}
-
+/* A muted row (nothing set yet) still lights under the pointer; an active or
+   failing row keeps its tone. */
 .settings .set-row[data-tone='muted'] {
   --set-leader: color-mix(in srgb, var(--text-3) 28%, transparent);
+}
+
+.settings .set-row:is(:hover, :focus-within) {
+  --set-leader: color-mix(in srgb, var(--text-3) 85%, transparent);
 }
 
 .settings .set-row[data-tone='active'] {

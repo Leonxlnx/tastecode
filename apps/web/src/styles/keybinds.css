@@ -1,72 +1,19 @@
-/* Keybinds read like a shortcut card, in the roster's grammar: each action is
-   one line, wired to its shortcut by a dotted leader, with the key in a column
-   of its own so every shortcut lines up under the one above. The leader is the
-   state, as the roster's wire is: it lights while the row is pointed at, runs
-   towards the keys while they are being recorded, turns red when they are
-   refused, and draws itself in when they land. */
-@property --keybind-wire {
-  syntax: '<color>';
-  inherits: true;
-  initial-value: transparent;
-}
+/* Keybinds read like a shortcut card on the Settings v1 rows: each action is
+   one line, wired to its shortcut by the shared dotted leader, with the key in
+   a column of its own so every shortcut lines up under the one above. The
+   leader is the state, through the row's tone (settings-system.css): faint
+   while nothing is bound, lit while the row is pointed at, in ink while keys
+   are being recorded and red when they are refused. Recording runs it towards
+   the keys, and a shortcut that lands draws it in. */
 
-.keybind-settings__header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-}
-
-.keybind-settings__header .settings__title {
-  margin-bottom: 6px;
-}
-
-.keybind-settings__restore,
-.keybind-settings__search-clear {
-  position: relative;
-  z-index: 1;
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text-3);
-  cursor: pointer;
-  font: inherit;
-  white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.keybind-settings__restore,
-.keybind-settings__search-clear {
-  font-size: var(--t-sm);
-}
-
-.keybind-settings__restore:hover,
-.keybind-settings__search-clear:hover {
-  color: var(--text);
-}
-
-.keybind-settings__restore:focus-visible,
-.keybind-settings__search-clear:focus-visible {
-  border-radius: var(--r-xs);
-  outline: var(--focus-ring);
-  outline-offset: var(--focus-ring-offset);
-}
-
-.keybind-settings__intro {
-  margin: 0 0 30px;
-  color: var(--text-3);
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
-  line-height: 1.45;
-}
-
-/* Search is a line of type led by its glyph: no box, no rule. */
+/* Search is the settings text field, led by its glyph, with Clear inside its
+   right end. */
 .keybind-settings__search {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  margin: 0 0 28px;
   color: var(--text-3);
-  cursor: text;
   transition: color var(--dur-fast) var(--ease-out);
 }
 
@@ -75,101 +22,49 @@
 }
 
 .keybind-settings__search-icon {
-  flex: none;
+  position: absolute;
+  left: 8px;
+  pointer-events: none;
 }
 
-.keybind-settings__search input {
-  flex: 1;
-  min-width: 0;
-  padding: 0;
-  background: none;
-  border: 0;
-  color: var(--text);
-  font: inherit;
-  font-size: var(--t-lg);
-  letter-spacing: -0.012em;
-  outline: 0;
+.settings .keybind-settings__search .set-input {
+  padding-left: 28px;
 }
 
-.keybind-settings__search input::placeholder {
-  color: var(--text-3);
+.settings .keybind-settings__search:has(.keybind-settings__search-clear) .set-input {
+  padding-right: 56px;
 }
 
 .keybind-settings__search input::-webkit-search-cancel-button {
   display: none;
 }
 
-.keybind-group {
-  margin-top: 30px;
+.keybind-settings__search-clear {
+  position: absolute;
+  right: 0;
 }
 
-.keybind-group__heading {
-  margin: 0 0 4px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  font-weight: 500;
-  letter-spacing: -0.003em;
-}
-
+/* Positioned for the recorder's hit area, which stretches over the row. */
 .keybind-row {
-  --keybind-wire: color-mix(in srgb, var(--text-3) 46%, transparent);
-
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, max-content) minmax(32px, 1fr) max-content;
-  align-items: baseline;
-  padding-block: 10px;
-  font-size: var(--t-lg);
-  letter-spacing: -0.012em;
-  line-height: 1.35;
-  transition: --keybind-wire var(--dur-fast) var(--ease-out);
 }
 
-.keybind-row:not([data-bound]) {
-  --keybind-wire: color-mix(in srgb, var(--text-3) 28%, transparent);
-}
-
-.keybind-row:is(:hover, :focus-within) {
-  --keybind-wire: color-mix(in srgb, var(--text-3) 85%, transparent);
-}
-
-.keybind-row[data-recording] {
-  --keybind-wire: var(--text-2);
-}
-
-.keybind-row[data-fault] {
-  --keybind-wire: var(--error);
-}
-
-/* Names are set like the roster's providers: a full weight, not a whisper. */
+/* A long name ends before the leader instead of wrapping. */
 .keybind-row__name {
-  min-width: 0;
-  margin: 0;
   overflow: hidden;
-  color: var(--text-2);
-  font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-/* The provider defaults' leader, dot for dot. */
-.keybind-row__leader {
-  height: 5px;
-  margin-inline: 14px;
-  background: radial-gradient(circle, var(--keybind-wire) 0.75px, transparent 1.15px) left center /
-    5px 100% repeat-x;
 }
 
 /* Recording: the leader runs towards the keys, as work in flight runs along
    the roster's wire. */
-.keybind-row[data-recording]:not([data-fault]) .keybind-row__leader {
-  background: linear-gradient(90deg, var(--keybind-wire) 50%, transparent 50%) left center / 8px 1px
+.keybind-row[data-recording]:not([data-tone='error']) .set-leader {
+  background: linear-gradient(90deg, var(--set-leader) 50%, transparent 50%) left center / 8px 1px
     repeat-x;
   animation: keybind-wire-flow 520ms linear infinite;
 }
 
-.keybind-row[data-landed] .keybind-row__leader {
+.keybind-row[data-landed] .set-leader {
   animation: keybind-wire-draw 560ms var(--ease-out) both;
 }
 
@@ -183,10 +78,6 @@
   from {
     clip-path: inset(0 100% 0 0);
   }
-}
-
-.keybind-row:is(:hover, :focus-within, [data-recording]) .keybind-row__name {
-  color: var(--text);
 }
 
 /* The recorder is the whole row: its hit area stretches over the line. */
@@ -258,7 +149,7 @@
 }
 
 /* A refused chord stays in place, in the error's ink. */
-.keybind-row[data-fault] .keybind-shortcut {
+.keybind-row[data-tone='error'] .keybind-shortcut {
   color: var(--error);
 }
 
@@ -333,18 +224,20 @@
 }
 
 /* Clipped only top and bottom, for the fold: the last quiet action hangs past
-   the right edge to sit optically flush, and its hover fill must not be cut. */
+   the right edge to sit optically flush, and its hover fill must not be cut.
+   Set as the row's note; what the action does stays a step brighter than the
+   hint under it. */
 .keybind-row__detail-inner {
   min-height: 0;
   overflow-x: visible;
   overflow-y: clip;
-  font-size: var(--t-md);
-  letter-spacing: -0.006em;
+  font-size: var(--t-sm);
   line-height: 1.45;
 }
 
 .keybind-row__note {
-  margin: 5px 0 0;
+  max-width: 60ch;
+  margin: 2px 0 0;
   color: var(--text-2);
 }
 
@@ -390,12 +283,6 @@
   margin-right: -10px;
 }
 
-.keybind-settings__empty {
-  margin: 30px 0 0;
-  color: var(--text-3);
-  font-size: var(--t-md);
-}
-
 .command-palette__shortcut {
   flex: none;
   margin-left: 18px;
@@ -412,19 +299,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .keybind-row,
-  .keybind-row__name,
   .keybind-recorder__empty,
   .keybind-row__detail,
   .keybind-settings__search,
-  .keybind-settings__restore,
-  .keybind-settings__search-clear,
   .keybind-row__action,
   .keybind-shortcut--live .keybind-shortcut__modifier {
     transition: none;
   }
 
-  .keybind-row .keybind-row__leader,
+  .keybind-row .set-leader,
   .keybind-shortcut[data-landed],
   .keybind-shortcut[data-landed] > *,
   .keybind-shortcut__caret::before {

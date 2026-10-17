@@ -5,6 +5,7 @@ const settingsCss = readFileSync(new URL('./settings.css', import.meta.url), 'ut
 const systemCss = readFileSync(new URL('./settings-system.css', import.meta.url), 'utf8')
 const tuningCss = readFileSync(new URL('./provider-tuning.css', import.meta.url), 'utf8')
 const generalCss = readFileSync(new URL('./general-settings.css', import.meta.url), 'utf8')
+const keybindsCss = readFileSync(new URL('./keybinds.css', import.meta.url), 'utf8')
 const settingsSource = readFileSync(new URL('../ui/Settings.tsx', import.meta.url), 'utf8')
 
 describe('settings viewport CSS', () => {
@@ -98,7 +99,33 @@ describe('settings viewport CSS', () => {
     // Reset colors is the section's quiet action, flush with the column edge.
     expect(systemCss).toMatch(/\.settings \.set-section__action \{[^}]*margin-block: -6px;/s)
     expect(systemCss).toMatch(
-      /\.settings \.set-section__action > \.set-button--quiet:last-child \{[^}]*margin-right: -10px;/s,
+      /\.settings :is\(\.set-page__actions, \.set-section__action\) > \.set-button--quiet:last-child \{[^}]*margin-right: -10px;/s,
+    )
+  })
+
+  it('lays Keybinds out on the shared rows, leader and text field', () => {
+    // The leader is the shared one; its old private copy and property are gone.
+    expect(keybindsCss).not.toMatch(/radial-gradient\(|--keybind-wire/)
+    expect(keybindsCss).not.toMatch(
+      /keybind-row__leader|keybind-group|keybind-settings__(header|intro|restore|empty)/,
+    )
+    // Recording still runs the shared leader towards the keys, unless refused.
+    expect(keybindsCss).toMatch(
+      /\.keybind-row\[data-recording\]:not\(\[data-tone='error'\]\) \.set-leader \{[^}]*linear-gradient\(90deg, var\(--set-leader\) 50%, transparent 50%\)[^}]*animation: keybind-wire-flow/s,
+    )
+    expect(keybindsCss).toMatch(
+      /\.keybind-row\[data-landed\] \.set-leader \{[^}]*keybind-wire-draw/s,
+    )
+    // The search is the settings field with room for its glyph.
+    expect(keybindsCss).toMatch(
+      /\.settings \.keybind-settings__search \.set-input \{[^}]*padding-left: 28px;/s,
+    )
+    // A row with nothing bound still lights under the pointer.
+    expect(systemCss.indexOf(".set-row[data-tone='muted']")).toBeLessThan(
+      systemCss.indexOf('.set-row:is(:hover, :focus-within) {'),
+    )
+    expect(systemCss.indexOf('.set-row:is(:hover, :focus-within) {')).toBeLessThan(
+      systemCss.indexOf(".set-row[data-tone='active']"),
     )
   })
 
