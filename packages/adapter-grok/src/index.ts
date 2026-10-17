@@ -27,3 +27,4 @@ export {
   type GrokProjectInventory,
 } from './discovery.js'
 export { GROK_MCP_CAPABILITIES } from './mcp.js'
+export { grokInventoryWatchPaths, type GrokInventoryWatch } from './watch-paths.js'
