@@ -151,16 +151,37 @@ const OpenCodeV2SessionSchema = z.object({
   time: z.object({ created: z.number().optional() }).optional(),
 })
 const SessionEnvelopeSchema = z.object({ data: OpenCodeV2SessionSchema })
-const OpenCodeV2ProviderSchema = z.object({ id: z.string(), name: z.string() })
-const ProviderEnvelopeSchema = z.object({ data: z.array(OpenCodeV2ProviderSchema) })
 const OpenCodeV2CatalogModelSchema = z.object({
   id: z.string(),
   providerID: z.string(),
-  name: z.string(),
-  enabled: z.boolean().optional(),
   variants: JsonRpcValueSchema.optional(),
 })
 const ModelEnvelopeSchema = z.object({ data: z.array(OpenCodeV2CatalogModelSchema) })
+/**
+ * `GET /config/providers`, captured from 1.18.13: only the providers OpenCode
+ * can reach (a stored credential, a provider key in the environment, a config
+ * entry, or OpenCode's own free tier), each with the models it can run, which
+ * leaves out deprecated ones. It is the set `opencode models` prints. Both
+ * protocols serve it; v2's `/api/provider` and `/api/model` instead return
+ * the whole models.dev catalog while they warm up.
+ */
+const ConnectedModelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: z.string().optional(),
+  release_date: z.string().optional(),
+  variants: JsonRpcValueSchema.optional(),
+})
+const ConnectedProvidersSchema = z.object({
+  providers: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      models: z.record(z.string(), ConnectedModelSchema),
+    }),
+  ),
+  default: z.record(z.string(), z.string()).optional(),
+})
 const OpenCodeV2AgentSchema = z.object({
   id: z.string(),
   mode: z.string().optional(),
@@ -184,8 +205,9 @@ const LegacySessionPropertiesSchema = z.object({
 })
 
 type OpenCodeV2Session = z.infer<typeof OpenCodeV2SessionSchema>
-type OpenCodeV2Provider = z.infer<typeof OpenCodeV2ProviderSchema>
 type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
+type ConnectedProviders = z.infer<typeof ConnectedProvidersSchema>
+type ConnectedModel = z.infer<typeof ConnectedModelSchema>
 
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
@@ -510,31 +532,44 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     return () => this.off('disconnected', listener)
   }
 
+  /**
+   * The models of the providers OpenCode reports as connected, newest first.
+   * A model of a provider without a credential cannot run, so it is never
+   * offered, however large the models.dev catalog behind it is.
+   */
   async listModels(): Promise<Model[]> {
     await this.start()
-    if (this.#protocol === 'v2') return this.#listV2Models()
-    const { data: result } = await this.#newClient().provider.list({
-      throwOnError: true,
+    const directory = this.#workspacePath || process.cwd()
+    const [connected, v2] = await Promise.all([
+      this.#readConnectedProviders(directory),
+      this.#protocol === 'v2' ? this.#readV2ModelDetails(directory) : undefined,
+    ])
+    const rows = connected.providers.flatMap((provider) =>
+      Object.values(provider.models)
+        .filter((model) => model.status !== 'deprecated')
+        .map((model) => ({ provider, model })),
+    )
+    // Newest first, as OpenCode's own catalog orders them; a stable sort keeps
+    // OpenCode's provider order between models of the same day.
+    rows.sort((left, right) => releaseDay(right.model).localeCompare(releaseDay(left.model)))
+    return rows.map(({ provider, model }) => {
+      const id = `${provider.id}/${model.id}`
+      // A v2 session takes a variant from v2's own catalog row, so v2 offers
+      // only those; 1.18.13 lists none there and the effort stays OpenCode's.
+      const reasoningEfforts = openCodeReasoningEfforts(v2 ? v2.catalog.get(id) : model)
+      return {
+        id,
+        displayName: `${provider.name} · ${model.name}`,
+        isDefault: v2 ? v2.defaultModel === id : connected.default?.[provider.id] === model.id,
+        reasoningEfforts,
+        ...(reasoningEfforts.length > 0
+          ? {
+              defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
+            }
+          : {}),
+        serviceTiers: [],
+      }
     })
-    return result.all
-      .filter((provider) => result.connected.includes(provider.id))
-      .flatMap((provider) =>
-        Object.values(provider.models).map((model) => {
-          const reasoningEfforts = openCodeReasoningEfforts(model)
-          return {
-            id: `${provider.id}/${model.id}`,
-            displayName: `${provider.name} · ${model.name}`,
-            isDefault: result.default[provider.id] === model.id,
-            reasoningEfforts,
-            ...(reasoningEfforts.length > 0
-              ? {
-                  defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-                }
-              : {}),
-            serviceTiers: [],
-          }
-        }),
-      )
   }
 
   dispose(): Promise<void> {
@@ -659,58 +694,45 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
     this.#instructionsPending = false
   }
 
-  async #listV2Models(): Promise<Model[]> {
-    const location = `?location%5Bdirectory%5D=${encodeURIComponent(this.#workspacePath || process.cwd())}`
-    let providers: OpenCodeV2Provider[] = []
-    let models: OpenCodeV2CatalogModel[] = []
-    // The v2 service starts accepting HTTP before its location-scoped catalog
-    // has loaded. Retry that empty-but-successful state briefly; otherwise the
-    // first picker open would incorrectly fall back to "Provider default".
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      providers = (
-        await this.#v2RequestParsed(`/api/provider${location}`, {}, ProviderEnvelopeSchema)
-      ).data
-      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
-      if (models.length > 0) break
-      if (attempt < 4) await new Promise((resolve) => setTimeout(resolve, 250))
-    }
-    // A cold v2 service can publish connected providers one tick before its
-    // model catalog. Resolving those providers once triggers catalog loading;
-    // this stays data-driven and avoids any provider-name special case.
-    if (models.length === 0 && providers.length > 0) {
-      await Promise.all(
-        providers.map((provider) =>
-          this.#v2Request(`/api/provider/${encodeURIComponent(provider.id)}${location}`),
-        ),
+  async #readConnectedProviders(directory: string): Promise<ConnectedProviders> {
+    if (this.#protocol === 'v2') {
+      // The route predates v2 and answers on the same server; it waits for the
+      // catalog to load, so a cold start needs no retry.
+      return this.#v2RequestParsed(
+        `/config/providers?directory=${encodeURIComponent(directory)}`,
+        {},
+        ConnectedProvidersSchema,
       )
-      models = (await this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema)).data
     }
-    const agents = await this.#v2RequestParsed(
-      `/api/agent${location}`,
-      {},
-      AgentEnvelopeSchema,
-    ).catch(() => ({ data: [] }))
-    const defaultModel =
+    const { data } = await this.#newClient(directory).config.providers({ throwOnError: true })
+    return ConnectedProvidersSchema.parse(data)
+  }
+
+  /**
+   * The build agent's model and v2's catalog rows, which carry the variants a
+   * v2 session accepts. Either may be missing on a cold start; neither decides
+   * which models are offered.
+   */
+  async #readV2ModelDetails(directory: string): Promise<{
+    defaultModel: string | undefined
+    catalog: Map<string, OpenCodeV2CatalogModel>
+  }> {
+    const location = `?location%5Bdirectory%5D=${encodeURIComponent(directory)}`
+    const [agents, catalog] = await Promise.all([
+      this.#v2RequestParsed(`/api/agent${location}`, {}, AgentEnvelopeSchema).catch(() => ({
+        data: [],
+      })),
+      this.#v2RequestParsed(`/api/model${location}`, {}, ModelEnvelopeSchema).catch(() => ({
+        data: [],
+      })),
+    ])
+    const agentModel =
       agents.data.find((agent) => agent.id === 'build')?.model ??
       agents.data.find((agent) => agent.mode === 'primary')?.model
-    const providerNames = new Map(providers.map((provider) => [provider.id, provider.name]))
-    return models
-      .filter((model) => model.enabled !== false && providerNames.has(model.providerID))
-      .map((model) => {
-        const reasoningEfforts = openCodeReasoningEfforts(model)
-        return {
-          id: `${model.providerID}/${model.id}`,
-          displayName: `${providerNames.get(model.providerID)} · ${model.name}`,
-          isDefault: defaultModel?.providerID === model.providerID && defaultModel.id === model.id,
-          reasoningEfforts,
-          ...(reasoningEfforts.length > 0
-            ? {
-                defaultReasoningEffort: OPENCODE_DEFAULT_VARIANT,
-              }
-            : {}),
-          serviceTiers: [],
-        }
-      })
+    return {
+      defaultModel: agentModel ? `${agentModel.providerID}/${agentModel.id}` : undefined,
+      catalog: new Map(catalog.data.map((model) => [`${model.providerID}/${model.id}`, model])),
+    }
   }
 
   #onV2Event(event: OpenCodeV2Event): void {
@@ -869,6 +891,11 @@ function parseModel(
   const slash = value.indexOf('/')
   if (slash < 1 || slash === value.length - 1) throw new Error('OpenCode models use provider/model')
   return { providerID: value.slice(0, slash), modelID: value.slice(slash + 1) }
+}
+
+/** A model's release day as an ISO date, which sorts as text; empty when unknown. */
+function releaseDay(model: ConnectedModel): string {
+  return model.release_date ?? ''
 }
 
 function openCodeThread(session: OpenCodeV2Session, workspacePath: string): Thread {
