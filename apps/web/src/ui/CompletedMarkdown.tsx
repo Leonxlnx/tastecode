@@ -192,13 +192,6 @@ function preserveRelativeLinks() {
 
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
-const STREAM_ANIMATION = {
-  animation: 'fadeIn',
-  duration: 160,
-  easing: 'cubic-bezier(0.23, 1, 0.32, 1)',
-  sep: 'word',
-  stagger: 14,
-} as const
 
 /** Full Markdown is loaded only for completed output that uses Markdown syntax.
  * Completed output skips Streamdown's repeated whole-string repair passes. */
@@ -227,9 +220,11 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
       <Streamdown
         BlockComponent={MarkdownBlock}
         className="md"
+        // Streaming mode keeps per-block rendering. Without `animated`,
+        // Streamdown applies a changed text's blocks in a transition, so new
+        // blocks render in slices instead of one task.
         mode="streaming"
         isAnimating={false}
-        animated={STREAM_ANIMATION}
         parseIncompleteMarkdown={false}
         parseMarkdownIntoBlocksFn={splitBlocks}
         plugins={STREAMDOWN_PLUGINS}
