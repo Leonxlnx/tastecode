@@ -149,9 +149,8 @@ export const SessionUpdateSchema = z.object({
       }),
     )
     .optional(),
-  availableCommands: z
-    .array(z.object({ name: z.string().optional(), description: z.string().optional() }))
-    .optional(),
+  /** Read entry by entry in commands.ts, so one malformed command drops only itself. */
+  availableCommands: z.array(z.unknown()).optional(),
   currentModeId: z.string().optional(),
   used: z.number().optional(),
   size: z.number().optional(),

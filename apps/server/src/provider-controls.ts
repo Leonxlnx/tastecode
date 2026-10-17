@@ -6,15 +6,23 @@ import type {
   McpServerConfig,
   Model,
   ParamsOf,
+  ProviderCommand,
   ProviderId,
   ProviderLimit,
   ProviderLimitSource,
+  ResultOf,
   Skill,
   SkillCapabilities,
   SkillDiscoveryError,
 } from '@harness/contracts'
 import { validateAcpMcpServer } from '@harness/adapter-acp/mcp'
-import { validateClaudeMcpServer } from '@harness/adapter-claude-code/capabilities'
+import {
+  CLAUDE_MCP_CAPABILITIES,
+  validateClaudeMcpServer,
+} from '@harness/adapter-claude-code/capabilities'
+import { GROK_MCP_CAPABILITIES } from '@harness/adapter-grok/mcp'
+import { OPENCODE_MCP_CAPABILITIES } from '@harness/adapter-opencode/inventory'
+import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -24,6 +32,7 @@ const loadClaude = retryableLazy(() => import('@harness/adapter-claude-code'))
 const loadCursor = retryableLazy(() => import('@harness/adapter-cursor'))
 const loadGrok = retryableLazy(() => import('@harness/adapter-grok'))
 const loadAcp = retryableLazy(() => import('@harness/adapter-acp'))
+const loadOpenCode = retryableLazy(() => import('@harness/adapter-opencode'))
 
 export type ProviderLoginResult = {
   loginId: string | null
@@ -33,8 +42,35 @@ export type ProviderLoginResult = {
 type LoginResponse = { loginId: string; authUrl?: string }
 type LoginHandle = LoginResponse & { cancel: () => Promise<void> }
 type LimitSource = { status: 'ready'; limits: ProviderLimit[] } | { status: 'unavailable' }
-/** Targets without a lease here yet (`commands`) are accepted and ignored. */
+/**
+ * The Codex control process serves no commands, so a `commands` watch holds no
+ * process lease. It does watch a project inventory's configuration folders,
+ * and services report command changes through `InventoryRead.changed`.
+ */
 type WatchTarget = ParamsOf<'providers.watch'>['targets'][number]
+
+/** A provider's own MCP servers, before the project's TasteCode overrides. */
+export type McpInventory = {
+  capabilities: McpCapabilities
+  servers: McpServer[]
+  /** Still collecting; a change notification follows when it settles. */
+  loading?: boolean
+}
+/** A live chat's answer; the provider's capabilities do not depend on it. */
+export type ActiveMcpInventory = Omit<McpInventory, 'capabilities'>
+export type CommandInventory = ResultOf<'commands.list'>
+export type SkillInventory = {
+  capabilities: SkillCapabilities
+  skills: Skill[]
+  errors: SkillDiscoveryError[]
+}
+/** What a service gets with each inventory read of one project. */
+export type InventoryRead<Active> = {
+  /** Reads a chat already running in the project, which costs no new process. */
+  readActive?: (() => Promise<Active>) | undefined
+  /** Reports that this project's answer changed after the read returned. */
+  changed: () => void
+}
 
 /** Only this settings surface is required of an injected control process. */
 export type CodexControlAdapter = Pick<
@@ -45,6 +81,8 @@ export type CodexControlAdapter = Pick<
   | 'account'
   | 'listModels'
   | 'listMcpServers'
+  | 'isMcpLoading'
+  | 'whenMcpServersListed'
   | 'listSkills'
   | 'setSkillEnabled'
   | 'rateLimitSource'
@@ -68,6 +106,17 @@ export type ProviderServices = {
     onComplete: (result: ProviderLoginResult) => void,
   ) => LoginHandle | Promise<LoginHandle>
   signOut?: (agent?: string) => Promise<void>
+  listMcpServers?: (
+    projectPath: string,
+    read: InventoryRead<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    read: InventoryRead<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string, read: InventoryRead<never>) => Promise<SkillInventory>
+  /** Commands and MCP servers of a project without a chat, cached; explicit readers above win. */
+  projectInventory?: ProjectInventoryService
 }
 
 export type ProviderControl = {
@@ -79,13 +128,14 @@ export type ProviderControl = {
   watch(projectPath: string, targets: WatchTarget[]): { expiresInMs: number }
   listModels?: (agent?: string) => Promise<Model[]>
   listMcpServers?: (
-    readActive?: () => Promise<McpServer[]>,
-  ) => Promise<{ capabilities: McpCapabilities; servers: McpServer[] }>
-  listSkills?: (projectPath: string) => Promise<{
-    capabilities: SkillCapabilities
-    skills: Skill[]
-    errors: SkillDiscoveryError[]
-  }>
+    projectPath: string,
+    readActive?: () => Promise<ActiveMcpInventory>,
+  ) => Promise<McpInventory>
+  listCommands?: (
+    projectPath: string,
+    readActive?: () => Promise<ProviderCommand[]>,
+  ) => Promise<CommandInventory>
+  listSkills?: (projectPath: string) => Promise<SkillInventory>
   setSkillEnabled?: (projectPath: string, skillId: string, enabled: boolean) => Promise<boolean>
   startLogin?: () => Promise<LoginResponse>
   cancelLogin?: (loginId: string) => Promise<void>
@@ -104,8 +154,11 @@ export type ProviderControlsOptions = {
   onUsageChanged?: (provider: ProviderId) => void
   onMcpChanged?: (provider: ProviderId, projectPath: string) => void
   onSkillsChanged?: (provider: ProviderId, projectPath: string) => void
+  onCommandsChanged?: (provider: ProviderId, projectPath: string) => void
   onAuthChanged?: (provider: ProviderId) => void
   controlIdleMs?: number
+  /** How long an unanswered Codex MCP status load may keep the shared process. */
+  mcpLoadHoldMs?: number
   watchTtlMs?: number
   loginTtlMs?: number
   /** How long a sign-in may take to return its URL before later auth work proceeds. */
@@ -156,10 +209,30 @@ const defaultServices = {
   antigravity: {},
   api: {},
   codex: {},
-  opencode: {},
+  opencode: {
+    // OpenCode reports these from a running server. A project without a chat
+    // starts one without a session (4-12 s), cached.
+    projectInventory: {
+      mcpCapabilities: OPENCODE_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadOpenCode()).discoverOpenCodeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadOpenCode()).openCodeInventoryWatchPaths(projectPath),
+    },
+  },
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
+    // Claude reports its commands and servers only from a running agent. A
+    // project without a chat starts one without a prompt (10-15 s), cached.
+    projectInventory: {
+      mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+      discover: async (projectPath, options) =>
+        (await loadClaude()).discoverClaudeProject(projectPath, options),
+      watchPaths: async (projectPath) =>
+        (await loadClaude()).claudeInventoryWatchPaths(projectPath),
+    },
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
     startLogin: async (complete) => (await loadClaude()).startClaudeLogin(complete),
@@ -173,6 +246,16 @@ const defaultServices = {
   grok: {
     // Grok's MCP sessions run through ACP.
     validateMcpServer: validateAcpMcpServer,
+    // Grok reports commands, skills and MCP status only from a session, and
+    // its print-mode chats report none. A project without an ACP chat starts
+    // one without a prompt (about 3 s), cached.
+    projectInventory: {
+      mcpCapabilities: GROK_MCP_CAPABILITIES,
+      skillCapabilities: { inventory: true, configure: false, install: false },
+      discover: async (projectPath, options) =>
+        (await loadGrok()).discoverGrokProject(projectPath, options),
+      watchPaths: async (projectPath) => (await loadGrok()).grokInventoryWatchPaths(projectPath),
+    },
     account: async () => (await loadGrok()).grokAccount(),
     usageLimitSource: async () => (await loadGrok()).grokLimitSource(),
     signOut: async () => (await loadGrok()).signOutGrok(),
@@ -197,12 +280,15 @@ export class ProviderControls {
   readonly #skills: WatchLeases
   readonly #mcp: WatchLeases
   readonly #idleMs: number
+  readonly #mcpLoadHoldMs: number
+  readonly #mcpHolds = new Set<ReturnType<typeof setTimeout>>()
   readonly #loginTtlMs: number
   readonly #loginStartTimeoutMs: number
   readonly #limitCacheMs: number
   readonly #unavailableLimitCacheMs: number
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  readonly #projectInventories = new Map<ProviderId, ProjectInventoryCache>()
   #shared: ProcessEntry | undefined
   #users = 0
   #idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -214,6 +300,7 @@ export class ProviderControls {
   constructor(options: ProviderControlsOptions) {
     this.#options = options
     this.#idleMs = duration(options.controlIdleMs, 5_000, 0)
+    this.#mcpLoadHoldMs = duration(options.mcpLoadHoldMs, 3 * 60_000, 1)
     this.#loginTtlMs = duration(options.loginTtlMs, 10 * 60_000, 1)
     this.#loginStartTimeoutMs = duration(options.loginStartTimeoutMs, 60_000, 1)
     // Codex reports a limit change after nearly every model request, and each
@@ -240,9 +327,15 @@ export class ProviderControls {
   }
 
   forgetProject(projectPath: string): void {
+    for (const inventory of this.#projectInventories.values()) inventory.forget(projectPath)
     this.#skills.delete(projectPath)
     this.#mcp.delete(projectPath)
     this.#scheduleIdle()
+  }
+
+  /** A chat's last server list includes the project servers TasteCode gave it. */
+  projectMcpConfigChanged(provider: ProviderId, projectPath: string): void {
+    this.#projectInventories.get(provider)?.forgetLiveServers(projectPath)
   }
 
   /**
@@ -279,8 +372,11 @@ export class ProviderControls {
     this.#users = 0
     clearTimeout(this.#idleTimer)
     clearTimeout(this.#watchTimer)
+    for (const timer of this.#mcpHolds) clearTimeout(timer)
+    this.#mcpHolds.clear()
     this.#skills.clear()
     this.#mcp.clear()
+    for (const inventory of this.#projectInventories.values()) inventory.clear()
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
@@ -337,6 +433,7 @@ export class ProviderControls {
       ...defaultServices[provider],
       ...this.#options.services?.[provider],
     }
+    const inventory = this.#projectInventory(provider, services)
     const control: ProviderControl = {
       capabilities,
       account: async (agent) => {
@@ -379,6 +476,57 @@ export class ProviderControls {
             cancelLogin: (loginId: string) => this.#cancelLogin(provider, loginId),
           }
         : {}),
+      ...(services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() =>
+                services.listMcpServers!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'mcp', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() =>
+                services.listCommands!(
+                  projectPath,
+                  this.#inventoryRead(provider, 'commands', projectPath, readActive),
+                ),
+              ),
+          }
+        : {}),
+      ...(services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(() =>
+                services.listSkills!(
+                  projectPath,
+                  this.#inventoryRead<never>(provider, 'skills', projectPath),
+                ),
+              ),
+          }
+        : {}),
+      ...(inventory && !services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() => inventory.listMcpServers(projectPath, readActive)),
+          }
+        : {}),
+      ...(inventory && !services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() => inventory.listCommands(projectPath, readActive)),
+          }
+        : {}),
+      ...(inventory && services.projectInventory?.skillCapabilities && !services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(async () => inventory.listSkills(projectPath)),
+          }
+        : {}),
     }
     if (provider !== 'codex') return control
     return {
@@ -389,13 +537,20 @@ export class ProviderControls {
         agent
           ? this.#readModels(provider, agent)
           : this.#withShared((adapter) => adapter.listModels()),
-      listMcpServers: (readActive) =>
+      listMcpServers: (projectPath, readActive) =>
         this.#read(async () => {
-          const [servers, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
-            readActive ? readActive() : this.#withShared((adapter) => adapter.listMcpServers()),
+          const [inventory, { CODEX_MCP_CAPABILITIES }] = await Promise.all([
+            readActive
+              ? readActive()
+              : this.#withShared(async (adapter) => {
+                  const servers = await adapter.listMcpServers()
+                  if (!adapter.isMcpLoading()) return { servers }
+                  this.#holdForMcpLoad(adapter, projectPath)
+                  return { servers, loading: true }
+                }),
             loadCodex(),
           ])
-          return { capabilities: CODEX_MCP_CAPABILITIES, servers }
+          return { capabilities: CODEX_MCP_CAPABILITIES, ...inventory }
         }),
       listSkills: (projectPath) =>
         this.#read(async () => {
@@ -540,6 +695,49 @@ export class ProviderControls {
     return account
   }
 
+  #projectInventory(
+    provider: ProviderId,
+    services: ProviderServices,
+  ): ProjectInventoryCache | undefined {
+    if (!services.projectInventory) return undefined
+    const inventory = new ProjectInventoryCache({
+      service: services.projectInventory,
+      watchTtlMs: this.#skills.ttlMs,
+      onChanged: (projectPath, parts) => {
+        if (this.#closed) return
+        if (parts.includes('mcp')) this.#options.onMcpChanged?.(provider, projectPath)
+        if (parts.includes('commands')) this.#options.onCommandsChanged?.(provider, projectPath)
+        if (parts.includes('skills')) this.#options.onSkillsChanged?.(provider, projectPath)
+      },
+      onError: (_projectPath, error) =>
+        this.#options.onLog?.(
+          provider,
+          `${provider} could not read a project's commands, skills and MCP servers: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    })
+    this.#projectInventories.set(provider, inventory)
+    return inventory
+  }
+
+  #inventoryRead<Active>(
+    provider: ProviderId,
+    target: WatchTarget,
+    projectPath: string,
+    readActive?: () => Promise<Active>,
+  ): InventoryRead<Active> {
+    const generation = this.#generation
+    return {
+      readActive,
+      changed: () => {
+        // A probe that outlives a reset describes processes that are gone.
+        if (this.#closed || generation !== this.#generation) return
+        if (target === 'mcp') this.#options.onMcpChanged?.(provider, projectPath)
+        else if (target === 'skills') this.#options.onSkillsChanged?.(provider, projectPath)
+        else this.#options.onCommandsChanged?.(provider, projectPath)
+      },
+    }
+  }
+
   async #readModels(provider: ProviderId, agent?: string): Promise<Model[]> {
     return this.#read(() => this.#options.listModels(provider, agent))
   }
@@ -657,6 +855,35 @@ export class ProviderControls {
     }
   }
 
+  /**
+   * Codex answers its MCP status list only after every server started, which
+   * can outlast the idle stop and the 60 s watch lease. The shared process
+   * stays up until the list lands (bounded), and a requester whose lease
+   * lapsed still hears that it changed.
+   */
+  #holdForMcpLoad(adapter: CodexControlAdapter, projectPath: string): void {
+    const generation = this.#generation
+    this.#users += 1
+    let released = false
+    const release = (listed: boolean) => {
+      if (released) return
+      released = true
+      clearTimeout(timer)
+      this.#mcpHolds.delete(timer)
+      if (this.#closed || generation !== this.#generation) return
+      this.#users -= 1
+      this.#scheduleIdle()
+      // A leased project already heard the adapter's own change event.
+      if (listed && ![...this.#mcp].includes(projectPath)) {
+        this.#options.onMcpChanged?.('codex', projectPath)
+      }
+    }
+    const timer = setTimeout(() => release(false), this.#mcpLoadHoldMs)
+    timer.unref?.()
+    this.#mcpHolds.add(timer)
+    void adapter.whenMcpServersListed().then(release, () => release(false))
+  }
+
   async #withFresh<T>(operation: (adapter: CodexControlAdapter) => Promise<T>): Promise<T> {
     const generation = this.#generation
     // Do not accumulate another process after an earlier one failed to stop.
@@ -702,6 +929,7 @@ export class ProviderControls {
 
   #watch(provider: ProviderId, projectPath: string, targets: WatchTarget[]) {
     this.#assertOpen()
+    this.#projectInventories.get(provider)?.watch(projectPath, targets)
     if (PROVIDER_CAPABILITIES[provider].notifications) {
       if (targets.includes('skills')) this.#skills.add(projectPath)
       if (targets.includes('mcp')) this.#mcp.add(projectPath)
