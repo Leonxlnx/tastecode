@@ -157,6 +157,7 @@ import { ProfileSettings } from './ProfileSettings.js'
 import { GeneratedAvatarLab } from './GeneratedAvatarLab.js'
 import type { ProfileIdentityPreferences } from '../profile-preferences.js'
 import { SourceIdentity } from './SourceIdentity.js'
+import { ModelBulkActions, ModelVisibilityRow } from './ModelVisibilityControls.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import {
@@ -1801,19 +1802,6 @@ function ModelVisibilityGroup(props: {
   onModelVisibilityChange: (key: string, visible: boolean) => void
   onModelsVisibilityChange: (keys: readonly string[], visible: boolean) => void
 }) {
-  const visibleCount = props.choices.filter((choice) => !props.hiddenModels.has(choice.key)).length
-  const allVisible = visibleCount === props.choices.length
-  const noneVisible = visibleCount === 0
-
-  const setAllVisible = (visible: boolean) => {
-    props.onModelsVisibilityChange(
-      props.choices
-        .filter((choice) => props.hiddenModels.has(choice.key) === visible)
-        .map((choice) => choice.key),
-      visible,
-    )
-  }
-
   // A source is one section: its identity is the heading, All and None its
   // action, and every model a leader row whose value is the switch.
   return (
@@ -1826,52 +1814,23 @@ function ModelVisibilityGroup(props: {
         )
       }
       action={
-        <div
-          className="model-visibility__bulk-actions"
-          role="group"
-          aria-label={`${props.source} model visibility`}
-        >
-          <button
-            type="button"
-            aria-label={`Show all ${props.source} models in model picker`}
-            disabled={allVisible}
-            onClick={() => setAllVisible(true)}
-          >
-            All
-          </button>
-          <button
-            type="button"
-            aria-label={`Hide all ${props.source} models from model picker`}
-            disabled={noneVisible}
-            onClick={() => setAllVisible(false)}
-          >
-            None
-          </button>
-        </div>
+        <ModelBulkActions
+          name={`${props.source} models`}
+          groupLabel={`${props.source} model visibility`}
+          choices={props.choices}
+          hiddenModels={props.hiddenModels}
+          onModelsVisibilityChange={props.onModelsVisibilityChange}
+        />
       }
     >
-      {props.choices.map((choice) => {
-        const visible = !props.hiddenModels.has(choice.key)
-        return (
-          <SettingsLeaderRow
-            className="model-visibility__model"
-            key={choice.key}
-            name={choice.model.displayName}
-            tone={visible ? undefined : 'muted'}
-          >
-            <button
-              className={`switch${visible ? ' is-on' : ''}`}
-              type="button"
-              role="switch"
-              aria-label={`Include ${choice.model.displayName} in model picker`}
-              aria-checked={visible}
-              onClick={() => props.onModelVisibilityChange(choice.key, !visible)}
-            >
-              <span className="switch__thumb" />
-            </button>
-          </SettingsLeaderRow>
-        )
-      })}
+      {props.choices.map((choice) => (
+        <ModelVisibilityRow
+          key={choice.key}
+          choice={choice}
+          visible={!props.hiddenModels.has(choice.key)}
+          onModelVisibilityChange={props.onModelVisibilityChange}
+        />
+      ))}
     </SettingsSection>
   )
 }
