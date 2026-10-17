@@ -7,7 +7,7 @@ import {
 } from './live-markdown.js'
 import { applyCodeWrap } from '../code-wrap.js'
 import { isInlineFileReference } from './file-reference.js'
-import { revealClock, type RevealCursor } from './reveal-clock.js'
+import { REVEAL_PENDING_ATTRIBUTE, revealClock, type RevealCursor } from './reveal-clock.js'
 import '../styles/markdown.css'
 
 // Code blocks read the wrap choice from the document root; set it before the
@@ -230,8 +230,9 @@ const LIVE_FILE_ICON_PATHS = [
  * prose type instead of a code chip. Settling the live span into the same box
  * (a generic file icon until the typed one arrives) keeps a table's columns
  * and a paragraph's line breaks where they will be once the reply completes.
+ * Its icon waits for the reveal like a code chip's box does.
  */
-function settleLiveInlineCode(code: HTMLElement): void {
+function settleLiveInlineCode(code: HTMLElement, reveal: RevealCursor): void {
   if (!isInlineFileReference(code.textContent ?? '')) return
   const reference = document.createElement('span')
   const icon = document.createElement('span')
@@ -253,6 +254,7 @@ function settleLiveInlineCode(code: HTMLElement): void {
   icon.append(svg)
   reference.append(icon, ...code.childNodes)
   code.replaceWith(reference)
+  if (code.hasAttribute(REVEAL_PENDING_ATTRIBUTE)) reveal.holdBox(reference)
 }
 
 /** A GFM task marker: the same disabled checkbox the completed list renders. */
@@ -321,7 +323,7 @@ function applyLiveMarkdown(
     if (operation.type === 'node.close') {
       flushText()
       const element = dom.stack.pop()
-      if (operation.node === 'inline-code' && element) settleLiveInlineCode(element)
+      if (operation.node === 'inline-code' && element) settleLiveInlineCode(element, reveal)
       continue
     }
     if (operation.type === 'task') {

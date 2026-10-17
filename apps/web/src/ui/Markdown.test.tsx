@@ -492,6 +492,24 @@ describe('Markdown streaming reveal', () => {
     expect(code().hasAttribute('data-reveal-pending')).toBe(false)
   })
 
+  it('shows a file reference icon once the reveal reaches its name', () => {
+    const { container } = render(<Markdown text="Open `src/handler.ts` next" streaming />)
+    const reference = () => container.querySelector('.md-file-ref')!
+    expect(reference().hasAttribute('data-reveal-pending')).toBe(true)
+    let held = 0
+    for (let frame = 0; frame < 40; frame += 1) {
+      frames(1)
+      const visible = shown(container)
+      if (reference().hasAttribute('data-reveal-pending')) {
+        held += 1
+        expect(visible.length).toBeLessThanOrEqual('Open '.length)
+      }
+    }
+    expect(held).toBeGreaterThan(0)
+    expect(shown(container)).toBe('Open src/handler.ts next')
+    expect(reference().hasAttribute('data-reveal-pending')).toBe(false)
+  })
+
   it('shows a reply opened mid-stream at once', () => {
     const text = 'Opened later. '.repeat(40)
     const { container } = render(<Markdown text={text} streaming />)

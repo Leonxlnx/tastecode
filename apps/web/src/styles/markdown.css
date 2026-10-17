@@ -552,6 +552,15 @@
   background-color: transparent;
 }
 
+/* A file reference's icon waits for its name the same way. */
+.md[data-streaming-markdown] .md-file-ref__icon {
+  transition: opacity var(--dur-fast) var(--ease-in-out);
+}
+
+.md .md-file-ref[data-reveal-pending] > .md-file-ref__icon {
+  opacity: 0;
+}
+
 /* The soft leading edge: the characters shown last fade in through three
    steps. A highlight's currentColor is not the colour of the text it covers,
    so every element that sets its own text colour names it here as well. */
