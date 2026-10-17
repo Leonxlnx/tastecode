@@ -529,6 +529,12 @@ function modelSource(choice: ModelChoice): string {
   })
 }
 
+type CatalogSourceControls = {
+  relist: (source: string) => void
+  /** Without a source, every source the run left for later. */
+  discover: (source?: string) => void
+}
+
 /** Replaces one source's rows where they stood, so a source listed again does not move. */
 function replaceSourceRows(
   catalog: ModelChoice[],
@@ -737,8 +743,13 @@ export function App() {
   const [catalogRequest, setCatalogRequest] = useState(0)
   /** When the catalog was last listed, however that started. */
   const catalogRequestedAt = useRef(Date.now())
-  /** Lists one source of the current catalog run again, when the server says it changed. */
-  const relistCatalogSource = useRef<((source: string) => void) | undefined>(undefined)
+  /**
+   * The current catalog run's sources: `relist` lists one again when the server
+   * says it changed, `discover` lists one (or every) source the run left for later.
+   */
+  const catalogSources = useRef<CatalogSourceControls | undefined>(undefined)
+  /** Set once the picker or Settings needed every source; later runs list them all at once. */
+  const everyModelSourceWanted = useRef(false)
   const [pendingModelSources, setPendingModelSources] = useState<ReadonlySet<string>>(new Set())
   const [providerCatalogSource, setProviderCatalogSource] = useState<
     { transport: Transport; request: number } | undefined
@@ -1132,6 +1143,18 @@ export function App() {
     [preferredModelSource, selectableModels],
   )
   const preferredSourcePending = pendingModelSources.has(preferredModelSource)
+  // A source left for later is listed as soon as the composer is on it.
+  useEffect(() => {
+    catalogSources.current?.discover(preferredModelSource)
+  }, [preferredModelSource])
+  // Stable identity on purpose: the composer passes it to the picker's menu.
+  const discoverEveryModelSource = useCallback(() => {
+    everyModelSourceWanted.current = true
+    catalogSources.current?.discover()
+  }, [])
+  useEffect(() => {
+    if (settingsOpen) discoverEveryModelSource()
+  }, [settingsOpen, discoverEveryModelSource])
   const selectableImplicitChoice =
     implicitChoice &&
     (!activeModelSource || modelSource(implicitChoice) === activeModelSource) &&
@@ -1908,9 +1931,12 @@ export function App() {
   useEffect(() => {
     let cancelled = false
     catalogRequestedAt.current = Date.now()
-    let relistSource: ((source: string) => void) | undefined
-    const relistFromPush = (source: string) => relistSource?.(source)
-    relistCatalogSource.current = relistFromPush
+    let runSources: CatalogSourceControls | undefined
+    const controls: CatalogSourceControls = {
+      relist: (source) => runSources?.relist(source),
+      discover: (source) => runSources?.discover(source),
+    }
+    catalogSources.current = controls
     // Sources settle one by one, and a large catalog costs a full serialize
     // per write, so their snapshots are coalesced into one trailing write
     // that the final catalog write replaces.
@@ -1954,6 +1980,10 @@ export function App() {
       // must not override what the user picked since.
       const unchosen = providerUnchosenAtLaunch.current
       providerUnchosenAtLaunch.current = false
+      let launchSource = sourceKey({
+        provider: providerRef.current,
+        agentId: sourceAgentRef.current,
+      })
       if (!activeIdRef.current && unchosen) {
         const fallback = providers.find(
           (status) =>
@@ -1964,8 +1994,42 @@ export function App() {
         )
         if (fallback) {
           setProvider(fallback.id)
+          launchSource = sourceKey({ provider: fallback.id })
         }
       }
+      // Until the picker or Settings first needs the others, a source the
+      // composer cannot use right now shows its cached rows instead of being
+      // listed, so its CLI (cursor-agent, agy, opencode serve) does not start
+      // with the app.
+      const launchSession = activeIdRef.current
+        ? findSession(projectsRef.current, activeIdRef.current)?.session
+        : undefined
+      const launchSetup = readStoredModelChoice(customModelsRef.current)
+      const launchSources = new Set([
+        launchSource,
+        ...(launchSession
+          ? [
+              sourceKey({
+                provider: launchSession.provider,
+                connectionId: launchSession.connectionId,
+                agentId: launchSession.agent,
+              }),
+            ]
+          : []),
+        ...(launchSetup ? [modelSource(launchSetup)] : []),
+      ])
+      const installedProviders = new Set(
+        providers
+          .filter((entry) => entry.installed)
+          .map((entry) => sourceKey({ provider: entry.id })),
+      )
+      // A provider's own source (a key without an agent or connection part)
+      // that is not installed cannot list anything, and a new chat then falls
+      // back to whatever else is listed, so everything is listed at once.
+      const launchListable = [...launchSources].some(
+        (source) => source.includes(':') || installedProviders.has(source),
+      )
+      const listEverySource = everyModelSourceWanted.current || !launchListable
       setProviderCatalogSource({ transport, request: catalogRequest })
       setPendingModelSources(
         new Set([
@@ -2027,7 +2091,13 @@ export function App() {
       }
       // One run per source at a time: a change announced while that source is
       // still listing lists it once more afterwards.
-      type SourceRun = { discover: () => Promise<unknown>; running: boolean; again: boolean }
+      type SourceRun = {
+        discover: () => Promise<unknown>
+        running: boolean
+        again: boolean
+        /** Left for later: shows its cached rows until something needs it. */
+        deferred: boolean
+      }
       const sourceRuns = new Map<string, SourceRun>()
       const finishRun = (source: string, run: SourceRun, done: Promise<unknown>) => {
         void done
@@ -2036,14 +2106,26 @@ export function App() {
             run.running = false
             if (!run.again) return
             run.again = false
-            relistSource?.(source)
+            runSources?.relist(source)
           })
       }
       const trackSource = (
         source: string,
         discover: () => Promise<unknown>,
       ): Promise<{ source: string }> => {
-        const run: SourceRun = { discover, running: true, again: false }
+        const cachedRows = listEverySource
+          ? []
+          : catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            )
+        // A source with nothing to show yet is listed now, so the picker never
+        // opens on a provider without rows.
+        if (cachedRows.length > 0 && !launchSources.has(source)) {
+          sourceRuns.set(source, { discover, running: false, again: false, deferred: true })
+          settleSource(source, { discovered: false, models: cachedRows })
+          return Promise.resolve({ source })
+        }
+        const run: SourceRun = { discover, running: true, again: false, deferred: false }
         sourceRuns.set(source, run)
         const done = discover()
         finishRun(source, run, done)
@@ -2052,16 +2134,37 @@ export function App() {
           () => ({ source }),
         )
       }
-      relistSource = (source) => {
-        const run = sourceRuns.get(source)
-        if (cancelled || !run) return
-        if (run.running) {
-          run.again = true
-          return
-        }
+      const startRun = (source: string, run: SourceRun) => {
         run.running = true
         delete discoveryErrors[source]
         finishRun(source, run, run.discover())
+      }
+      const startDeferred = (source: string, run: SourceRun) => {
+        if (!run.deferred) return
+        run.deferred = false
+        setPendingModelSources((current) => new Set([...current, source]))
+        startRun(source, run)
+      }
+      runSources = {
+        relist: (source) => {
+          const run = sourceRuns.get(source)
+          // A source left for later lists its newest models when it is needed.
+          if (cancelled || !run || run.deferred) return
+          if (run.running) {
+            run.again = true
+            return
+          }
+          startRun(source, run)
+        },
+        discover: (source) => {
+          if (cancelled) return
+          if (source === undefined) {
+            for (const [key, run] of sourceRuns) startDeferred(key, run)
+            return
+          }
+          const run = sourceRuns.get(source)
+          if (run) startDeferred(source, run)
+        },
       }
       const discoverProvider = async (entry: ProviderStatus) => {
         const preserveCatalog = () => {
@@ -2446,7 +2549,7 @@ export function App() {
     })
     return () => {
       cancelled = true
-      if (relistCatalogSource.current === relistFromPush) relistCatalogSource.current = undefined
+      if (catalogSources.current === controls) catalogSources.current = undefined
       // Sources this run validated stay cached for the next run to start from.
       takePendingCacheWrite()?.()
     }
@@ -2458,7 +2561,7 @@ export function App() {
   useEffect(
     () =>
       transport.on('models.changed', ({ provider, agent }) => {
-        relistCatalogSource.current?.(sourceKey({ provider, agentId: agent }))
+        catalogSources.current?.relist(sourceKey({ provider, agentId: agent }))
       }),
     [transport],
   )
@@ -5884,6 +5987,7 @@ export function App() {
                     onReady={handleComposerReady}
                     queuedTurns={queuedTurns}
                     canSteerQueue={canSteerQueue}
+                    onModelSelectorOpen={discoverEveryModelSource}
                     onModelChange={selectModel}
                     onEffortChange={changeEffort}
                     onServiceTierChange={changeServiceTier}

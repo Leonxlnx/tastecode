@@ -2174,8 +2174,9 @@ describe('web client', () => {
 
     render(<App />)
 
+    // Claude Code shows its cached rows until the picker needs it listed.
     await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
     )
     // The first frame already shows Sonnet 5.5 and Haiku 5.5, which that
     // build hid while their aliases named an older generation.
@@ -2261,7 +2262,8 @@ describe('web client', () => {
       expect(offeredModelNames('codex')).toEqual(['GPT-5.6 Sol'])
       openSettings()
       await act(() => vi.dynamicImportSettled())
-      fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+      // Opening Settings lists Claude Code, which can still be settling.
+      fireEvent.click(await screen.findByRole('button', { name: 'Models' }, { timeout: 5_000 }))
       fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
       await waitFor(() => expect(savedOverrides()).toEqual(['claude-code:claude-opus-5=shown']))
       first.unmount()
@@ -2275,6 +2277,9 @@ describe('web client', () => {
         view.unmount()
       }
     },
+    // Three launches and the first Settings import, which alone can take
+    // seconds on a loaded machine.
+    15_000,
   )
 
   it('never starts a chat on another provider than the picker names while its source loads', async () => {
@@ -2723,6 +2728,66 @@ describe('web client', () => {
       await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
       await settled()
       expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol'])
+    })
+  })
+
+  describe('for a provider the composer is not on', () => {
+    const cachedClaudeChoices = () =>
+      choicesFor(
+        { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+        claudeCodeLineup(),
+      )
+    const listedProviders = () =>
+      transport.request.mock.calls
+        .filter(([method]) => method === 'models.list')
+        .map(([, params]) => methods['models.list'].params.parse(params).provider)
+    const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    const launchWithCachedClaude = async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+      localStorage.setItem(
+        'harness.modelCatalog.v1',
+        serializeModelCatalogCache([...cachedClaudeChoices(), cachedCodexChoice()]),
+      )
+      mockLiveDiscovery()
+      render(<App />)
+      // Grok has no cached rows, so it is listed along with the composer's source.
+      await waitFor(() => expect([...listedProviders()].sort()).toEqual(['codex', 'grok']))
+      await settled()
+    }
+
+    it('shows its cached rows and lists it once the picker opens', async () => {
+      await launchWithCachedClaude()
+      expect(offeredModelNames('claude-code')).toEqual([
+        'Fable 5.1',
+        'Opus 5.5',
+        'Sonnet 5.5',
+        'Haiku 5.5',
+      ])
+      // A change to a source left for later waits until it is needed.
+      act(() => transport.listeners.get('models.changed')?.({ provider: 'claude-code' }))
+      await settled()
+      expect(listedProviders()).not.toContain('claude-code')
+
+      act(() => composerProps().onModelSelectorOpen?.())
+      await waitFor(() => expect(listedProviders()).toContain('claude-code'))
+      act(() => composerProps().onModelSelectorOpen?.())
+      await settled()
+      expect(rpcCount('models.list')).toBe(3)
+    })
+
+    it('lists it as soon as the composer moves to it', async () => {
+      await launchWithCachedClaude()
+      const opus = cachedClaudeChoices().find((choice) => choice.model.displayName === 'Opus 5.5')!
+      act(() => composerProps().onModelChange(opus.key))
+      await waitFor(() => expect(listedProviders()).toContain('claude-code'))
+      await settled()
+      expect(rpcCount('models.list')).toBe(3)
+    })
+
+    it('lists it when Settings opens', async () => {
+      await launchWithCachedClaude()
+      openSettings()
+      await waitFor(() => expect(listedProviders()).toContain('claude-code'))
     })
   })
 
