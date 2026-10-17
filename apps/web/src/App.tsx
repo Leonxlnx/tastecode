@@ -2008,47 +2008,88 @@ export function App() {
         }
         return result
       }
+      const discoverProvider = async (entry: ProviderStatus) => {
+        const preserveCatalog = () => {
+          const source = sourceKey({ provider: entry.id })
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          return settleSource(source, {
+            provider: entry.id,
+            discovered: false,
+            models: preserved,
+          })
+        }
+        try {
+          const result = await transport.request('models.list', { provider: entry.id })
+          const models = choicesFor(
+            {
+              provider: entry.id,
+              sourceName: entry.displayName,
+              mark: providerMark(entry.id),
+            },
+            result.models,
+            false,
+          )
+          if (models.length === 0) return preserveCatalog()
+          return settleSource(sourceKey({ provider: entry.id }), {
+            provider: entry.id,
+            discovered: true,
+            models,
+          })
+        } catch (cause) {
+          discoveryErrors[sourceKey({ provider: entry.id })] = {
+            id: `models:${entry.id}:${catalogRequest}`,
+            message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
+          }
+          return preserveCatalog()
+        }
+      }
       const directPromise = Promise.all(
         providers
           .filter((entry) => entry.installed && entry.id !== 'acp' && entry.id !== 'api')
-          .map(async (entry) => {
-            const preserveCatalog = () => {
-              const source = sourceKey({ provider: entry.id })
-              const preserved = catalogModelsRef.current.filter(
-                (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-              )
-              return settleSource(source, {
-                provider: entry.id,
-                discovered: false,
-                models: preserved,
-              })
-            }
-            try {
-              const result = await transport.request('models.list', { provider: entry.id })
-              const models = choicesFor(
-                {
-                  provider: entry.id,
-                  sourceName: entry.displayName,
-                  mark: providerMark(entry.id),
-                },
-                result.models,
-                false,
-              )
-              if (models.length === 0) return preserveCatalog()
-              return settleSource(sourceKey({ provider: entry.id }), {
-                provider: entry.id,
-                discovered: true,
-                models,
-              })
-            } catch (cause) {
-              discoveryErrors[sourceKey({ provider: entry.id })] = {
-                id: `models:${entry.id}:${catalogRequest}`,
-                message: `Could not load ${entry.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-              }
-              return preserveCatalog()
-            }
-          }),
+          .map(discoverProvider),
       )
+      const discoverAgent = async (agent: ResultOf<'acp.agents'>['agents'][number]) => {
+        const source = sourceKey({ provider: 'acp', agentId: agent.id })
+        const preserveCatalog = () =>
+          settleSource(source, {
+            source,
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
+        try {
+          const result = await transport.request('models.list', {
+            provider: 'acp',
+            agent: agent.id,
+          })
+          const models = choicesFor(
+            {
+              provider: 'acp',
+              sourceName: agent.name,
+              mark: agentMark(agent.id),
+              agent: { id: agent.id, name: agent.name },
+            },
+            result.models,
+            false,
+          )
+          return models.length
+            ? settleSource(source, { source, discovered: true, models })
+            : preserveCatalog()
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: 'models:' + source + ':' + catalogRequest,
+            message:
+              'Could not load ' +
+              agent.name +
+              ' models. ' +
+              (cause instanceof Error ? cause.message : String(cause)),
+          }
+          return preserveCatalog()
+        }
+      }
       const acpPromise = agentsCatalog.then(async (result) => {
         if (cancelled) return []
         const agents = result?.agents ?? []
@@ -2062,50 +2103,7 @@ export function App() {
                 .map((agent) => sourceKey({ provider: 'acp', agentId: agent.id })),
             ]),
         )
-        return Promise.all(
-          agents
-            .filter((agent) => agent.installed)
-            .map(async (agent) => {
-              const source = sourceKey({ provider: 'acp', agentId: agent.id })
-              const preserveCatalog = () =>
-                settleSource(source, {
-                  source,
-                  discovered: false,
-                  models: catalogModelsRef.current.filter(
-                    (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-                  ),
-                })
-              try {
-                const result = await transport.request('models.list', {
-                  provider: 'acp',
-                  agent: agent.id,
-                })
-                const models = choicesFor(
-                  {
-                    provider: 'acp',
-                    sourceName: agent.name,
-                    mark: agentMark(agent.id),
-                    agent: { id: agent.id, name: agent.name },
-                  },
-                  result.models,
-                  false,
-                )
-                return models.length
-                  ? settleSource(source, { source, discovered: true, models })
-                  : preserveCatalog()
-              } catch (cause) {
-                discoveryErrors[source] = {
-                  id: 'models:' + source + ':' + catalogRequest,
-                  message:
-                    'Could not load ' +
-                    agent.name +
-                    ' models. ' +
-                    (cause instanceof Error ? cause.message : String(cause)),
-                }
-                return preserveCatalog()
-              }
-            }),
-        )
+        return Promise.all(agents.filter((agent) => agent.installed).map(discoverAgent))
       })
       const apiPromise = connectionsCatalog.then(async (result) => {
         if (cancelled) return []
@@ -2185,40 +2183,39 @@ export function App() {
             ),
           ]),
       )
-      const customSourcesPromise = Promise.all(
-        harnesses.map(async (harness) => {
-          const source = sourceKey({ provider: harness.provider, agentId: harness.id })
-          const input = {
+      const discoverHarness = async (harness: ResultOf<'harnesses.list'>['harnesses'][number]) => {
+        const source = sourceKey({ provider: harness.provider, agentId: harness.id })
+        const input = {
+          provider: harness.provider,
+          sourceName: harness.displayName,
+          mark: providerMark(harness.provider),
+          agent: { id: harness.id, name: harness.displayName },
+        }
+        try {
+          const result = await transport.request('models.list', {
             provider: harness.provider,
-            sourceName: harness.displayName,
-            mark: providerMark(harness.provider),
-            agent: { id: harness.id, name: harness.displayName },
+            agent: harness.id,
+          })
+          return settleSource(source, {
+            source,
+            discovered: true,
+            models: choicesFor(input, result.models, true),
+          })
+        } catch (cause) {
+          discoveryErrors[source] = {
+            id: `models:${source}:${catalogRequest}`,
+            message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
           }
-          try {
-            const result = await transport.request('models.list', {
-              provider: harness.provider,
-              agent: harness.id,
-            })
-            return settleSource(source, {
-              source,
-              discovered: true,
-              models: choicesFor(input, result.models, true),
-            })
-          } catch (cause) {
-            discoveryErrors[source] = {
-              id: `models:${source}:${catalogRequest}`,
-              message: `Could not load ${harness.displayName} models. ${cause instanceof Error ? cause.message : String(cause)}`,
-            }
-            const preserved = catalogModelsRef.current.filter(
-              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-            )
-            if (preserved.length > 0)
-              return settleSource(source, { source, discovered: false, models: preserved })
-            const fallback = choicesFor(input, [], true)
-            return settleSource(source, { source, discovered: false, models: fallback })
-          }
-        }),
-      )
+          const preserved = catalogModelsRef.current.filter(
+            (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+          )
+          if (preserved.length > 0)
+            return settleSource(source, { source, discovered: false, models: preserved })
+          const fallback = choicesFor(input, [], true)
+          return settleSource(source, { source, discovered: false, models: fallback })
+        }
+      }
+      const customSourcesPromise = Promise.all(harnesses.map(discoverHarness))
       const [direct, acp, api, customSources] = await Promise.all([
         directPromise,
         acpPromise,
