@@ -30,8 +30,19 @@ export type ClaudeLogin = {
   cancel: () => Promise<void>
 }
 
+/**
+ * `claude auth status` starts the full native CLI. It answers in 1-4 s on an
+ * idle machine but took 11.5 s on a real profile under load, so the generic
+ * 5 s limit reported a signed-in account as unavailable.
+ */
+const CLAUDE_AUTH_STATUS_TIMEOUT_MS = 20_000
+
 export async function claudeAccount(options: ClaudeAccountOptions = {}): Promise<Account> {
-  const result = await (options.run ?? runCli)('claude', ['auth', 'status'])
+  const result = await (options.run ?? runCli)(
+    'claude',
+    ['auth', 'status'],
+    CLAUDE_AUTH_STATUS_TIMEOUT_MS,
+  )
   let account: Account
   try {
     account = parseClaudeAccount(result.stdout)
