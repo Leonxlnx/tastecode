@@ -1276,17 +1276,20 @@ export class Orchestrator {
     this.#requireMcpManagement(provider)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.add(provider, projectPath, server)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   updateMcpServer(provider: ProviderId, projectPath: string, server: McpServerConfig): void {
     this.#requireMcpManagement(provider)
     this.#controls.forProvider(provider).validateMcpServer?.(server)
     this.#mcpConfig.update(provider, projectPath, server)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   removeMcpServer(provider: ProviderId, projectPath: string, serverId: string): void {
     this.#requireMcpManagement(provider)
     this.#mcpConfig.remove(provider, projectPath, serverId)
+    this.#controls.projectMcpConfigChanged(provider, projectPath)
   }
 
   async reloadMcpServers(provider: ProviderId, projectPath: string): Promise<void> {

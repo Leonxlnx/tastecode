@@ -20,6 +20,7 @@ import {
   CLAUDE_MCP_CAPABILITIES,
   validateClaudeMcpServer,
 } from '@harness/adapter-claude-code/capabilities'
+import { ProjectInventoryCache, type ProjectInventoryService } from './project-inventory-cache.js'
 import { PROVIDER_CAPABILITIES, type ProviderControlCapabilities } from './provider-capabilities.js'
 import { retryableLazy } from './retryable-lazy.js'
 import { WatchLeases } from './watch-leases.js'
@@ -110,6 +111,8 @@ export type ProviderServices = {
     read: InventoryRead<ProviderCommand[]>,
   ) => Promise<CommandInventory>
   listSkills?: (projectPath: string, read: InventoryRead<never>) => Promise<SkillInventory>
+  /** Commands and MCP servers of a project without a chat, cached; explicit readers above win. */
+  projectInventory?: ProjectInventoryService
 }
 
 export type ProviderControl = {
@@ -206,17 +209,12 @@ const defaultServices = {
   pi: {},
   'claude-code': {
     validateMcpServer: validateClaudeMcpServer,
-    // Claude reports its servers only from a running session; without a chat
-    // in the project there is no inventory yet.
-    listMcpServers: async (_projectPath, read) => {
-      if (read.readActive) {
-        try {
-          return { capabilities: CLAUDE_MCP_CAPABILITIES, ...(await read.readActive()) }
-        } catch {
-          // The chat closed during the read; answer as if it had not been open.
-        }
-      }
-      return { capabilities: { ...CLAUDE_MCP_CAPABILITIES, inventory: false }, servers: [] }
+    // Claude reports its commands and servers only from a running agent. A
+    // project without a chat starts one without a prompt (10-15 s), cached.
+    projectInventory: {
+      mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+      discover: async (projectPath, options) =>
+        (await loadClaude()).discoverClaudeProject(projectPath, options),
     },
     account: async () => (await loadClaude()).claudeAccount(),
     usageLimitSource: async () => (await loadClaude()).claudeLimitSource(),
@@ -263,6 +261,7 @@ export class ProviderControls {
   readonly #unavailableLimitCacheMs: number
   readonly #limitChangeIntervalMs: number
   readonly #limits = new Map<ProviderId, LimitEntry>()
+  readonly #projectInventories = new Map<ProviderId, ProjectInventoryCache>()
   #shared: ProcessEntry | undefined
   #users = 0
   #idleTimer: ReturnType<typeof setTimeout> | undefined
@@ -301,9 +300,15 @@ export class ProviderControls {
   }
 
   forgetProject(projectPath: string): void {
+    for (const inventory of this.#projectInventories.values()) inventory.forget(projectPath)
     this.#skills.delete(projectPath)
     this.#mcp.delete(projectPath)
     this.#scheduleIdle()
+  }
+
+  /** A chat's last server list includes the project servers TasteCode gave it. */
+  projectMcpConfigChanged(provider: ProviderId, projectPath: string): void {
+    this.#projectInventories.get(provider)?.forgetLiveServers(projectPath)
   }
 
   /**
@@ -344,6 +349,7 @@ export class ProviderControls {
     this.#mcpHolds.clear()
     this.#skills.clear()
     this.#mcp.clear()
+    for (const inventory of this.#projectInventories.values()) inventory.clear()
     for (const entry of this.#limits.values()) clearTimeout(entry.notifyTimer)
     this.#limits.clear()
     for (const login of this.#logins.values()) clearTimeout(login.timer)
@@ -400,6 +406,7 @@ export class ProviderControls {
       ...defaultServices[provider],
       ...this.#options.services?.[provider],
     }
+    const inventory = this.#projectInventory(provider, services)
     const control: ProviderControl = {
       capabilities,
       account: async (agent) => {
@@ -473,6 +480,18 @@ export class ProviderControls {
                   this.#inventoryRead<never>(provider, 'skills', projectPath),
                 ),
               ),
+          }
+        : {}),
+      ...(inventory && !services.listMcpServers
+        ? {
+            listMcpServers: (projectPath: string, readActive?: () => Promise<ActiveMcpInventory>) =>
+              this.#read(() => inventory.listMcpServers(projectPath, readActive)),
+          }
+        : {}),
+      ...(inventory && !services.listCommands
+        ? {
+            listCommands: (projectPath: string, readActive?: () => Promise<ProviderCommand[]>) =>
+              this.#read(() => inventory.listCommands(projectPath, readActive)),
           }
         : {}),
     }
@@ -641,6 +660,28 @@ export class ProviderControls {
     }
     entry.account = identity
     return account
+  }
+
+  #projectInventory(
+    provider: ProviderId,
+    services: ProviderServices,
+  ): ProjectInventoryCache | undefined {
+    if (!services.projectInventory) return undefined
+    const inventory = new ProjectInventoryCache({
+      service: services.projectInventory,
+      onChanged: (projectPath, parts) => {
+        if (this.#closed) return
+        if (parts.includes('mcp')) this.#options.onMcpChanged?.(provider, projectPath)
+        if (parts.includes('commands')) this.#options.onCommandsChanged?.(provider, projectPath)
+      },
+      onError: (_projectPath, error) =>
+        this.#options.onLog?.(
+          provider,
+          `${provider} could not read a project's commands and MCP servers: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+    })
+    this.#projectInventories.set(provider, inventory)
+    return inventory
   }
 
   #inventoryRead<Active>(

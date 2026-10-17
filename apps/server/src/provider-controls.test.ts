@@ -162,9 +162,7 @@ describe('declared provider controls', () => {
     expect(createCodex).not.toHaveBeenCalled()
   })
 
-  it("answers Claude's MCP inventory from a live chat and says when there is none", async () => {
-    const { registry, createCodex } = setup()
-    const claude = registry.forProvider('claude-code')
+  it("answers Claude's inventory from a live chat, else from a cached project probe", async () => {
     const readOnly = {
       add: true,
       update: true,
@@ -185,27 +183,98 @@ describe('declared provider controls', () => {
       resources: [],
       resourceTemplates: [],
     }
+    const commands: ProviderCommand[] = [{ name: 'context', description: 'Show context' }]
+    const probe = deferred<{ commands: ProviderCommand[]; servers: McpServer[] }>()
+    const discover = vi.fn(() => probe.promise)
+    const { registry, hooks, createCodex } = setup({
+      services: {
+        'claude-code': {
+          projectInventory: { mcpCapabilities: { inventory: true, ...readOnly }, discover },
+        },
+      },
+    })
+    const claude = registry.forProvider('claude-code')
 
     await expect(claude.listMcpServers!('/project')).resolves.toEqual({
-      capabilities: { inventory: false, ...readOnly },
-      servers: [],
-    })
-    await expect(
-      claude.listMcpServers!('/project', async () => ({ servers: [server], loading: true })),
-    ).resolves.toEqual({
       capabilities: { inventory: true, ...readOnly },
-      servers: [server],
+      servers: [],
       loading: true,
     })
-    // A chat that closes during the read leaves the answer for no chat.
+    await expect(claude.listCommands!('/project')).resolves.toEqual({ commands: [], loading: true })
+    await flush()
+    expect(discover).toHaveBeenCalledOnce()
+    expect(discover).toHaveBeenCalledWith('/project', expect.anything())
+    probe.resolve({ commands, servers: [server] })
+    await flush()
+    expect(hooks.onMcpChanged.mock.calls).toEqual([['claude-code', '/project']])
+    expect(hooks.onCommandsChanged.mock.calls).toEqual([['claude-code', '/project']])
+    await expect(claude.listMcpServers!('/project')).resolves.toEqual({
+      capabilities: { inventory: true, ...readOnly },
+      servers: [server],
+    })
+    await expect(claude.listCommands!('/project')).resolves.toEqual({ commands, loading: false })
+
+    // A live chat answers instead, and one that closes during the read leaves the cache.
+    await expect(
+      claude.listMcpServers!('/project', async () => ({ servers: [], loading: true })),
+    ).resolves.toEqual({
+      capabilities: { inventory: true, ...readOnly },
+      servers: [],
+      loading: true,
+    })
     await expect(
       claude.listMcpServers!('/project', async () => {
         throw new Error('Claude Agent SDK session is not running')
       }),
-    ).resolves.toEqual({ capabilities: { inventory: false, ...readOnly }, servers: [] })
+    ).resolves.toEqual({ capabilities: { inventory: true, ...readOnly }, servers: [server] })
+    expect(discover).toHaveBeenCalledOnce()
     expect(createCodex).not.toHaveBeenCalled()
   })
 
+  it('offers Claude project inventories by default without starting anything', () => {
+    const { registry, createCodex } = setup()
+    const claude = registry.forProvider('claude-code')
+    expect(claude.listMcpServers).toBeDefined()
+    expect(claude.listCommands).toBeDefined()
+    expect(registry.forProvider('cursor').listCommands).toBeUndefined()
+    expect(createCodex).not.toHaveBeenCalled()
+  })
+
+  it('stops a running project probe when the controls reset', async () => {
+    const signals: AbortSignal[] = []
+    const discover = vi.fn(
+      (_projectPath: string, { signal }: { signal: AbortSignal }) =>
+        new Promise<never>((_resolve, reject) => {
+          signals.push(signal)
+          signal.addEventListener('abort', () => reject(new Error('stopped')), { once: true })
+        }),
+    )
+    const { registry, hooks } = setup({
+      services: {
+        'claude-code': {
+          projectInventory: {
+            mcpCapabilities: {
+              inventory: true,
+              add: true,
+              update: true,
+              remove: true,
+              reload: false,
+              startOAuth: false,
+              cancelOAuth: false,
+            },
+            discover,
+          },
+        },
+      },
+    })
+    await registry.forProvider('claude-code').listCommands!('/project')
+    await flush()
+    await registry.disposeAll()
+    expect(signals[0]!.aborted).toBe(true)
+    await flush()
+    expect(hooks.onCommandsChanged).not.toHaveBeenCalled()
+    expect(hooks.onLog).not.toHaveBeenCalled()
+  })
   it('keeps the full roster and creates no processes until a read needs one', async () => {
     const { registry, createCodex } = setup()
     expect(Object.keys(PROVIDER_CAPABILITIES).sort()).toEqual([...ProviderIdSchema.options].sort())

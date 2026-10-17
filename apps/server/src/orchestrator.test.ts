@@ -14,6 +14,7 @@ import {
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { CLAUDE_MCP_CAPABILITIES } from '@harness/adapter-claude-code/capabilities'
 import { ProviderIdSchema } from '@harness/contracts'
 import type {
   ApprovalMode,
@@ -284,6 +285,14 @@ class FakeSession implements AgentSession {
   }
 }
 
+/** Claude's project probe would start the real CLI; without a chat it finds nothing here. */
+const quietClaudeInventory: NonNullable<ProviderControlsOptions['services']>['claude-code'] = {
+  projectInventory: {
+    mcpCapabilities: CLAUDE_MCP_CAPABILITIES,
+    discover: async () => ({ commands: [], servers: [] }),
+  },
+}
+
 type QueueNotificationError = { current?: Error }
 type CredentialFailure = { current?: Error }
 type LifecycleHook = {
@@ -421,7 +430,10 @@ function harness(
     runtimeFor,
     ...(maxIdleThreadRuntimes === undefined ? {} : { maxIdleThreadRuntimes }),
     ...(idleThreadRuntimeMs === undefined ? {} : { idleThreadRuntimeMs }),
-    ...(providerServices ? { providerServices } : {}),
+    providerServices: {
+      ...providerServices,
+      'claude-code': { ...quietClaudeInventory, ...providerServices?.['claude-code'] },
+    },
     ...(worktreeRoot ? { worktreeRoot } : {}),
   })
 
@@ -7021,7 +7033,9 @@ describe('MCP inventory', () => {
       expect(() =>
         orchestrator.updateMcpServer('claude-code', '/repo', { id: 'docs', enabled: false }),
       ).toThrow('cannot hide an inherited MCP server')
-      expect(await orchestrator.listMcpServers('claude-code', '/repo')).toEqual(saved)
+      expect((await orchestrator.listMcpServers('claude-code', '/repo')).servers).toEqual(
+        saved.servers,
+      )
       expect(sessions).toEqual([])
     } finally {
       await orchestrator.disposeAll()
@@ -7048,23 +7062,79 @@ describe('MCP inventory', () => {
     }
   })
 
-  it('reports provider MCP capabilities without starting one', async () => {
-    const { orchestrator, sessions } = harness()
-
-    await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toEqual({
-      capabilities: {
-        inventory: false,
-        add: true,
-        update: true,
-        remove: true,
-        reload: false,
-        startOAuth: false,
-        cancelOAuth: false,
-        hideInherited: false,
+  it("reads Claude's servers for a project without a chat from a cached probe", async () => {
+    const inherited: McpServer = {
+      id: 'plugin:acme-docs:acme-docs',
+      displayName: 'acme-docs',
+      description: 'Plugin acme-docs',
+      scope: 'global',
+      enabled: true,
+      auth: { status: 'not_required' },
+      startup: { state: 'ready' },
+      tools: [],
+      resources: [],
+      resourceTemplates: [],
+    }
+    let finish: (() => void) | undefined
+    const discover = vi.fn(
+      () =>
+        new Promise<{ commands: ProviderCommand[]; servers: McpServer[] }>((resolve) => {
+          finish = () =>
+            resolve({
+              commands: [{ name: 'context', description: 'Show context' }],
+              servers: [inherited],
+            })
+        }),
+    )
+    const { orchestrator, sessions, mcpChanges, commandChanges } = harness(
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        'claude-code': {
+          projectInventory: { mcpCapabilities: CLAUDE_MCP_CAPABILITIES, discover },
+        },
       },
-      servers: [],
-    })
-    expect(sessions).toEqual([])
+    )
+    try {
+      orchestrator.addMcpServer('claude-code', '/repo', {
+        id: 'docs',
+        enabled: true,
+        transport: { type: 'http', url: 'https://example.com/mcp' },
+      })
+      await expect(orchestrator.listMcpServers('claude-code', '/repo')).resolves.toMatchObject({
+        capabilities: { inventory: true, add: true, hideInherited: false },
+        servers: [{ id: 'docs', scope: 'project' }],
+        loading: true,
+      })
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [],
+        loading: true,
+      })
+      await vi.waitFor(() => expect(finish).toBeDefined())
+      finish!()
+      await vi.waitFor(() =>
+        expect(mcpChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }]),
+      )
+      expect(commandChanges).toEqual([{ provider: 'claude-code', projectPath: '/repo' }])
+
+      const settled = await orchestrator.listMcpServers('claude-code', '/repo')
+      expect(settled.loading).toBeUndefined()
+      expect(settled.servers.map(({ id, scope }) => [id, scope])).toEqual([
+        ['plugin:acme-docs:acme-docs', 'global'],
+        ['docs', 'project'],
+      ])
+      await expect(orchestrator.listCommands('claude-code', '/repo')).resolves.toEqual({
+        commands: [{ name: 'context', description: 'Show context' }],
+        loading: false,
+      })
+      // One probe served every read, and no chat was started for it.
+      expect(discover).toHaveBeenCalledOnce()
+      expect(sessions).toEqual([])
+    } finally {
+      await orchestrator.disposeAll()
+    }
   })
 
   it("reads Claude's servers from a live chat in the project", async () => {
@@ -7100,10 +7170,11 @@ describe('MCP inventory', () => {
       servers: sessions[0]!.mcpServers,
       loading: true,
     })
-    // Another project has no Claude chat, so it has no inventory yet.
+    // Another project has no Claude chat, so a probe starts for it.
     await expect(orchestrator.listMcpServers('claude-code', '/other')).resolves.toMatchObject({
-      capabilities: { inventory: false },
+      capabilities: { inventory: true },
       servers: [],
+      loading: true,
     })
     await orchestrator.disposeAll()
   })
