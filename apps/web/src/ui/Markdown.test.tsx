@@ -492,6 +492,23 @@ describe('Markdown streaming reveal', () => {
     expect(code().hasAttribute('data-reveal-pending')).toBe(false)
   })
 
+  it('shows a list bullet once the reveal reaches its item', () => {
+    const { container } = render(<Markdown text={'Steps:\n\n- read\n- test'} streaming />)
+    const items = () => [...container.querySelectorAll('li')]
+    expect(items().every((item) => item.hasAttribute('data-reveal-pending'))).toBe(true)
+    let heldSecond = 0
+    for (let frame = 0; frame < 40; frame += 1) {
+      frames(1)
+      if (items()[1]!.hasAttribute('data-reveal-pending')) {
+        heldSecond += 1
+        expect(shown(container).length).toBeLessThanOrEqual('Steps:\nread'.length)
+      }
+    }
+    expect(heldSecond).toBeGreaterThan(0)
+    expect(shown(container)).toBe('Steps:\nreadtest')
+    expect(items().some((item) => item.hasAttribute('data-reveal-pending'))).toBe(false)
+  })
+
   it('shows a file reference icon once the reveal reaches its name', () => {
     const { container } = render(<Markdown text="Open `src/handler.ts` next" streaming />)
     const reference = () => container.querySelector('.md-file-ref')!

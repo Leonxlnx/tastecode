@@ -316,8 +316,11 @@ function applyLiveMarkdown(
     if (operation.type === 'node.open') {
       flushText()
       openLiveMarkdownNode(parent, dom, operation)
-      // A code chip laid out ahead would show as an empty box until its text arrives.
-      if (operation.node === 'inline-code') reveal.holdBox(dom.stack.at(-1)!)
+      // A code chip laid out ahead would show as an empty box until its text
+      // arrives, and a list item as a bullet with nothing next to it.
+      if (operation.node === 'inline-code' || operation.node === 'list-item') {
+        reveal.holdBox(dom.stack.at(-1)!)
+      }
       continue
     }
     if (operation.type === 'node.close') {

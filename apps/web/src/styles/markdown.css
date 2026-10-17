@@ -561,6 +561,15 @@
   opacity: 0;
 }
 
+/* A list item's bullet, or a task's checkbox, waits for its first word. */
+.md li[data-reveal-pending]::marker {
+  color: transparent;
+}
+
+.md li[data-reveal-pending] > input[type='checkbox'] {
+  opacity: 0;
+}
+
 /* The soft leading edge: the characters shown last fade in through three
    steps. A highlight's currentColor is not the colour of the text it covers,
    so every element that sets its own text colour names it here as well. */
