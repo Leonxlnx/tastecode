@@ -45,6 +45,7 @@ import {
   prepareMcpConfig,
 } from './mcp.js'
 import { mapSkillList } from './skills.js'
+import { CodexSubagents } from './subagents.js'
 import {
   AccountLoginCompletedNotificationSchema,
   AccountResponseSchema,
@@ -147,6 +148,25 @@ const IGNORABLE_NOTIFICATIONS = new Set([
 /** Provider state TasteCode either does not expose or already derives from shared events. */
 export function isIgnorableCodexNotification(method: string): boolean {
   return IGNORABLE_NOTIFICATIONS.has(method)
+}
+
+/**
+ * Notifications that name a thread but are not part of its chat. A subagent's
+ * request must still resolve, and MCP state can arrive before thread/start
+ * answers, so these pass for every thread on the connection.
+ */
+const CONNECTION_NOTIFICATIONS = new Set([
+  'serverRequest/resolved',
+  'warning',
+  'mcpServer/startupStatus/updated',
+  'mcpServer/oauthLogin/completed',
+])
+
+/** The thread a notification reports on; one property read, since deltas pass here too. */
+function notificationThreadId(params: JsonRpcValue | undefined): string | undefined {
+  if (typeof params !== 'object' || params === null || Array.isArray(params)) return undefined
+  const threadId = params['threadId']
+  return typeof threadId === 'string' ? threadId : undefined
 }
 
 export function formatCodexWarning(notification: WarningNotification): string {
@@ -599,6 +619,13 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   /** Configured server names, read once per status load. */
   #mcpConfigured = new Map<string, Promise<ConfiguredMcpServer[]>>()
   #threadModels = new Map<string, string>()
+  /**
+   * Threads this adapter started or resumed. Codex 0.163 streams the threads
+   * its subagents run in over the same connection; their turns, items and
+   * usage are not this chat's.
+   */
+  readonly #ownThreads = new Set<string>()
+  readonly #subagents = new CodexSubagents((event) => this.emit('event', event))
   #activeTurns = new Map<string, string>()
   #pendingTurnCompletions = new Set<Set<string>>()
   #sessionThread: { id: string; workspacePath: string } | undefined
@@ -754,6 +781,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#processStop = Promise.resolve(rpc.dispose())
     this.#sessionThread = undefined
     this.#threadModels.clear()
+    this.#ownThreads.clear()
     this.#mcpStartup.clear()
     this.#mcpInventory.clear()
     this.#mcpInventoryLoads.clear()
@@ -761,6 +789,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpLogins.clear()
     const turns = [...this.#activeTurns]
     this.#activeTurns.clear()
+    this.#subagents.endSession()
     // The provider is gone: settle cards without replying to its dead requests.
     for (const id of this.#approvals.keys()) {
       this.#approvals.delete(id)
@@ -1146,6 +1175,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       ThreadStartResponseSchema,
       THREAD_START_TIMEOUT_MS,
     )
+    this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
@@ -1186,6 +1216,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
       },
       ThreadResumeResponseSchema,
     )
+    this.#ownThreads.add(response.thread.id)
     this.#threadModels.set(response.thread.id, response.model)
     if (options.approval) this.#threadApprovals.set(response.thread.id, options.approval)
     const thread = {
@@ -1359,6 +1390,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#mcpInventoryLoads.clear()
     this.#mcpConfigured.clear()
     this.#threadModels.clear()
+    this.#ownThreads.clear()
     this.#threadApprovals.clear()
     this.#activeTurns.clear()
     this.#sessionThread = undefined
@@ -1367,6 +1399,8 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     this.#approvals.clear()
     this.#userInputs.clear()
     this.#mcpLogins.clear()
+    // Their threads stop with the process; say so while someone still listens.
+    this.#subagents.endSession()
     this.removeAllListeners()
     this.#processStop = stopped
     return stopped
@@ -1515,6 +1549,15 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
   #onNotification(method: string, params: JsonRpcValue | undefined): void {
     if (isIgnorableCodexNotification(method)) return
+    const threadId = notificationThreadId(params)
+    if (
+      threadId !== undefined &&
+      !this.#ownThreads.has(threadId) &&
+      !CONNECTION_NOTIFICATIONS.has(method)
+    ) {
+      this.#onForeignNotification(threadId, method, params)
+      return
+    }
 
     const emit = (event: DomainEvent) => this.emit('event', event)
 
@@ -1544,6 +1587,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'thread/started': {
         const p = ThreadStartedNotificationSchema.parse(params)
+        // A subagent's thread; its parent is the chat.
+        if (p.thread.parentThreadId && !this.#ownThreads.has(p.thread.id)) {
+          this.#subagents.onThreadStarted(p.thread)
+          return
+        }
         emit({
           type: 'thread.started',
           thread: {
@@ -1576,27 +1624,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         const activeTurn = this.#activeTurns.get(p.threadId)
         for (const completed of this.#pendingTurnCompletions) completed.add(p.turn.id)
         if (this.#activeTurns.get(p.threadId) === p.turn.id) this.#activeTurns.delete(p.threadId)
-        // A turn that ends with unanswered approvals must not leave the
-        // thread pinned to 'approval' forever — the request is durably in
-        // the event log, so without a resolved event even a restart keeps
-        // the ghost card. Decline what nobody answered.
-        for (const [id, pending] of this.#approvals) {
-          if (
-            (pending.threadId !== undefined && pending.threadId !== p.threadId) ||
-            (pending.turnId !== undefined && pending.turnId !== p.turn.id) ||
-            (pending.turnId === undefined && activeTurn !== undefined && activeTurn !== p.turn.id)
-          )
-            continue
-          this.#approvals.delete(id)
-          pending.respond(approvalReply(pending, 'deny'))
-          emit({ type: 'approval.resolved', id })
-        }
-        for (const [id, pending] of this.#userInputs) {
-          if (pending.threadId !== p.threadId || pending.turnId !== p.turn.id) continue
-          this.#userInputs.delete(id)
-          pending.respond({ answers: {} })
-          emit({ type: 'user_input.resolved', id })
-        }
+        this.#declineOpenRequests(p.threadId, p.turn.id, activeTurn)
         emit({
           type: 'turn.completed',
           turnId: p.turn.id,
@@ -1608,29 +1636,29 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
 
       case 'item/started': {
         const p = ItemStartedNotificationSchema.parse(params)
-        const item = mapThreadItem(p.item, {
-          turnId: p.turnId,
-          status: 'started',
-          createdAt: p.startedAtMs,
-        })
-        emit({
-          type: 'item.started',
-          item,
-        })
+        const item = this.#subagents.onItem(
+          p.item,
+          mapThreadItem(p.item, {
+            turnId: p.turnId,
+            status: 'started',
+            createdAt: p.startedAtMs,
+          }),
+        )
+        if (item) emit({ type: 'item.started', item })
         return
       }
 
       case 'item/completed': {
         const p = ItemCompletedNotificationSchema.parse(params)
-        const item = mapThreadItem(p.item, {
-          turnId: p.turnId,
-          status: 'completed',
-          createdAt: p.completedAtMs,
-        })
-        emit({
-          type: 'item.completed',
-          item,
-        })
+        const item = this.#subagents.onItem(
+          p.item,
+          mapThreadItem(p.item, {
+            turnId: p.turnId,
+            status: 'completed',
+            createdAt: p.completedAtMs,
+          }),
+        )
+        if (item) emit({ type: 'item.completed', item })
         return
       }
 
@@ -1797,6 +1825,46 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
         // etc.). Ignoring the rest is correct; logging it is how we
         // notice when something worth mapping appears.
         this.emit('log', `unmapped notification: ${method}`)
+    }
+  }
+
+  /**
+   * A thread this chat did not start, a subagent's: nothing of it enters the chat. Its
+   * progress becomes the snapshot on the item that spawned it.
+   */
+  #onForeignNotification(threadId: string, method: string, params: JsonRpcValue | undefined): void {
+    // Its approvals reached the user like any other, so its finished turn still declines
+    // the ones nobody answered.
+    if (method === 'turn/completed') {
+      const p = TurnCompletedNotificationSchema.parse(params)
+      this.#declineOpenRequests(p.threadId, p.turn.id, undefined)
+    }
+    this.#subagents.onThreadNotification(threadId, method, params)
+  }
+
+  /**
+   * A turn that ends with unanswered approvals must not leave the thread
+   * pinned to 'approval' forever — the request is durably in the event log,
+   * so without a resolved event even a restart keeps the ghost card. Decline
+   * what nobody answered.
+   */
+  #declineOpenRequests(threadId: string, turnId: string, activeTurn: string | undefined): void {
+    for (const [id, pending] of this.#approvals) {
+      if (
+        (pending.threadId !== undefined && pending.threadId !== threadId) ||
+        (pending.turnId !== undefined && pending.turnId !== turnId) ||
+        (pending.turnId === undefined && activeTurn !== undefined && activeTurn !== turnId)
+      )
+        continue
+      this.#approvals.delete(id)
+      pending.respond(approvalReply(pending, 'deny'))
+      this.emit('event', { type: 'approval.resolved', id })
+    }
+    for (const [id, pending] of this.#userInputs) {
+      if (pending.threadId !== threadId || pending.turnId !== turnId) continue
+      this.#userInputs.delete(id)
+      pending.respond({ answers: {} })
+      this.emit('event', { type: 'user_input.resolved', id })
     }
   }
 }

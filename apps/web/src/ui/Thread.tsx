@@ -1,5 +1,4 @@
 import {
-  createContext,
   Fragment,
   lazy,
   memo,
@@ -9,7 +8,6 @@ import {
   type ReactNode,
   type WheelEvent as ReactWheelEvent,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -62,6 +60,22 @@ import { LazyMediaViewer as MediaViewer, preloadMediaViewer } from './LazyMediaV
 import { Markdown } from './Markdown.js'
 import { Plan } from './Plan.js'
 import { ThreadSkeleton } from './Skeleton.js'
+import {
+  REVEAL_CLOSE_MS,
+  REVEAL_EASING,
+  REVEAL_OPEN_MS,
+  RowMeasureContext,
+  useDisclosure,
+} from './disclosure.js'
+import {
+  runningSubagentCount,
+  runningSubagentsText,
+  subagentActivityLabel,
+  SubagentGlyph,
+  SubagentGroup,
+  SubagentRow,
+  waitingSubagentsLabel,
+} from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
@@ -108,15 +122,6 @@ const ThreadSearch = lazy(() =>
 
 const EMPTY_LIVE_ITEMS: ReadonlyMap<number, LiveItemUpdate> = new Map()
 const EMPTY_CHECKPOINTS: readonly Checkpoint[] = []
-
-/**
- * Lets a disclosure re-measure its virtual row in the same commit that its
- * reveal enters or leaves flow. Waiting for the ResizeObserver would move the
- * rows below one frame after the reveal starts animating.
- */
-const RowMeasureContext = createContext<
-  ((row: Element, header: Element | null) => void) | undefined
->(undefined)
 
 /** Space kept between a disclosure's summary and the viewport edge it moves toward. */
 const HEADER_MARGIN = 12
@@ -2014,7 +2019,7 @@ const Row = memo(function Row({
   if (activity) {
     // A batch of one would only repeat its call; the call is the row.
     const lone = !activityLive && !activity.complete ? loneToolCall(activity) : undefined
-    if (lone) return <AuxDisclosure key={lone.id} item={lone} live={false} />
+    if (lone) return <ActivityRow key={lone.id} item={lone} live={false} />
     return (
       <ActivityStack
         key={activity.complete ? 'complete' : 'working'}
@@ -2125,8 +2130,13 @@ const Row = memo(function Row({
     )
   }
 
-  return <AuxDisclosure item={item} live={live} />
+  return <ActivityRow item={item} live={live} />
 })
+
+/** A call that started a subagent draws as that subagent; anything else as a plain row. */
+function ActivityRow({ item, live }: { item: Item; live: boolean }) {
+  return item.subagent ? <SubagentRow item={item} /> : <AuxDisclosure item={item} live={live} />
+}
 
 function loneToolCall(activity: ActivityRenderSource): Item | undefined {
   const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
@@ -2434,8 +2444,6 @@ function looksLikeIdentifier(name: string): boolean {
   return !/\s/.test(name) && /[._\-A-Z0-9]/.test(name)
 }
 
-type DisclosurePhase = 'closed' | 'opening' | 'open' | 'closing'
-
 function ReasoningDisclosure({
   item,
   text,
@@ -2551,91 +2559,35 @@ function thoughtDuration(ms: number): string {
   return restMinutes === 0 ? `${hours}h` : `${hours}h ${restMinutes}m`
 }
 
-/** Mirror --dur-fast, --dur-press and --ease-out: the reveal transitions in thread.css. */
-const REVEAL_OPEN_MS = 180
-const REVEAL_CLOSE_MS = 140
-const REVEAL_EASING = 'cubic-bezier(0.23, 1, 0.32, 1)'
-
-function settledPhase(phase: DisclosurePhase): DisclosurePhase {
-  return phase === 'opening' ? 'open' : phase === 'closing' ? 'closed' : phase
-}
-
-function useDisclosure() {
-  const [phase, setPhase] = useState<DisclosurePhase>('closed')
-  const revealRef = useRef<HTMLDivElement>(null)
-  const measureRow = useContext(RowMeasureContext)
-  const expanded = phase === 'open' || phase === 'opening'
-  const transitioning = phase === 'opening' || phase === 'closing'
-
-  // The reveal enters or leaves flow in this commit. Measuring the row now,
-  // before paint, starts the rows below in the same frame as the wipe; the
-  // ResizeObserver would only catch up a frame later.
-  useLayoutEffect(() => {
-    if (!transitioning || !measureRow) return
-    const reveal = revealRef.current
-    const row = reveal?.closest('.thread__row')
-    // The summary button sits right before its reveal in every disclosure.
-    if (row) measureRow(row, reveal?.previousElementSibling ?? null)
-  }, [phase, transitioning, measureRow])
-
-  useEffect(() => {
-    if (!transitioning) return
-    // A reversal before the first paint can leave no transition to finish.
-    const timer = window.setTimeout(
-      () => setPhase((current) => (current === phase ? settledPhase(phase) : current)),
-      (phase === 'opening' ? REVEAL_OPEN_MS : REVEAL_CLOSE_MS) + 60,
-    )
-    return () => window.clearTimeout(timer)
-  }, [phase, transitioning])
-
-  const toggle = useCallback(() => {
-    const reduceMotion =
-      globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
-    setPhase((current) =>
-      current === 'open' || current === 'opening'
-        ? reduceMotion
-          ? 'closed'
-          : 'closing'
-        : reduceMotion
-          ? 'open'
-          : 'opening',
-    )
-  }, [])
-
-  const finishTransition = useCallback(() => {
-    setPhase(settledPhase)
-  }, [])
-
-  return {
-    expanded,
-    contentMounted: phase !== 'closed',
-    dataOpen: phase === 'open' ? 'true' : phase === 'closed' ? 'false' : phase,
-    revealRef,
-    toggle,
-    finishTransition,
-  } as const
-}
-
 /**
  * Every run of tool calls between two thoughts or messages folds into one
  * batch. A lone call stays a row of its own, and a list that is nothing but
- * tool calls is already the batch its summary names.
+ * tool calls is already the batch its summary names. Subagents started one
+ * after another gather under a header of their own and never fold into a
+ * tool batch, unless they are all there is to show.
  */
 function groupToolRuns(items: Item[]): (Item | Item[])[] {
-  if (items.every(isStackedActivity)) return items
+  if (items.every((item) => item.subagent)) return items
+  const flat = items.every(isStackedActivity)
   const rows: (Item | Item[])[] = []
   for (const item of items) {
     const previous = rows.at(-1)
-    if (isStackedActivity(item) && Array.isArray(previous)) {
-      previous.push(item)
-    } else if (isStackedActivity(item) && previous && !Array.isArray(previous)) {
-      if (isStackedActivity(previous)) rows[rows.length - 1] = [previous, item]
-      else rows.push(item)
+    const kind = toolRunKind(item, flat)
+    const previousKind =
+      previous && toolRunKind(Array.isArray(previous) ? previous[0]! : previous, flat)
+    if (kind && kind === previousKind) {
+      if (Array.isArray(previous)) previous.push(item)
+      else rows[rows.length - 1] = [previous!, item]
     } else {
       rows.push(item)
     }
   }
   return rows
+}
+
+function toolRunKind(item: Item, flat: boolean): 'subagents' | 'tools' | undefined {
+  if (item.subagent) return 'subagents'
+  return !flat && isStackedActivity(item) ? 'tools' : undefined
 }
 
 function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
@@ -2708,12 +2660,18 @@ function ActivityStack({
         ? undefined
         : toolTally(operationalActivity, false)
   const stopped = !live && activity.stopped === true
+  // Counted in the group the projection already holds, never across the transcript.
+  const runningSubagents = runningSubagentCount(completedActivity)
+  // While the main agent waits on subagents they are the news, whatever call it waits in.
+  const waiting = live && current ? waitingSubagentsLabel(completedActivity) : undefined
   const label =
     live && current
-      ? liveActivityLabel(current)
+      ? (waiting ?? liveActivityLabel(current))
       : tally
         ? toolTallyText(tally)
-        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}`
+        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}${
+            runningSubagents > 0 ? ` · ${runningSubagentsText(runningSubagents)}` : ''
+          }`
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
   const summaryRef = useRef<HTMLButtonElement>(null)
   const summaryId = summaryItem?.id
@@ -2767,6 +2725,8 @@ function ActivityStack({
               toolBatchGlyph(operationalActivity)
             ) : stopped ? (
               <Stop strokeWidth={1.8} />
+            ) : waiting ? (
+              <SubagentGlyph />
             ) : (
               glyph(summaryItem)
             )}
@@ -2776,7 +2736,9 @@ function ActivityStack({
           <ToolTallyLabel tally={tally} announce />
         ) : (
           <span className="activity__label" aria-live="polite" aria-atomic="true">
-            {live && current ? activityLabelParts(current, label) : label}
+            {live && current && !waiting && !current.subagent
+              ? activityLabelParts(current, label)
+              : label}
           </span>
         )}
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
@@ -2797,7 +2759,11 @@ function ActivityStack({
             <div className="activity__body">
               {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
-                  return <ToolBatch key={item[0]!.id} items={item} live={live} />
+                  return item[0]!.subagent ? (
+                    <SubagentGroup key={item[0]!.id} items={item} />
+                  ) : (
+                    <ToolBatch key={item[0]!.id} items={item} live={live} />
+                  )
                 }
                 if (item.type === 'reasoning') {
                   return (
@@ -2820,11 +2786,7 @@ function ActivityStack({
                   )
                 }
                 return (
-                  <AuxDisclosure
-                    key={item.id}
-                    item={item}
-                    live={live && item.status === 'started'}
-                  />
+                  <ActivityRow key={item.id} item={item} live={live && item.status === 'started'} />
                 )
               })}
             </div>
@@ -3088,9 +3050,11 @@ type ToolKind =
   | 'generated-image'
   | 'plan'
   | 'compaction'
+  | 'subagent'
   | 'tool'
 
 function toolKind(item: Item): ToolKind {
+  if (item.subagent) return 'subagent'
   switch (item.type) {
     case 'command':
       return 'command'
@@ -3168,6 +3132,8 @@ function toolPhrase(kind: ToolKind, count: number): string {
       return 'Updated the plan'
     case 'compaction':
       return 'Compacted context'
+    case 'subagent':
+      return `Ran ${counted('subagent', 'subagents')}`
     case 'tool':
       return `Used ${counted('tool', 'tools')}`
   }
@@ -3244,6 +3210,7 @@ function liveActivityLabel(item: Item): string {
       return `${ongoing ? 'Editing' : 'Edited'} ${target}`
     }
     case 'tool_call': {
+      if (item.subagent) return subagentActivityLabel(item.subagent)
       const text = toolText(item)
       if (isImageView(item)) {
         if (item.status === 'failed') return 'Could not view image'
@@ -3614,6 +3581,7 @@ export function workedFor(ms: number): string {
 
 function glyph(item: Item) {
   if (isContextCompaction(item)) return <ArrowDownToLine size={13} />
+  if (item.subagent) return <SubagentGlyph />
 
   switch (item.type) {
     case 'message':
@@ -3653,6 +3621,7 @@ function summariseLive(item: Item): string {
     case 'file_change':
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
+      if (item.subagent) return subagentActivityLabel(item.subagent)
       const text = toolText(item)
       const designPhase = designPhaseLabel(text)
       if (designPhase) return designPhase

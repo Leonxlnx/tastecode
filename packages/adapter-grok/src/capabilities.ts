@@ -12,4 +12,7 @@ export const GROK_CAPABILITIES: Capabilities = {
   // Every Grok model reports a 256K window and an 80% compaction point. The
   // 500K variant is chosen only inside Grok's own TUI, so it is not offered here.
   context: { windows: [256_000], compaction: true, compactionOff: false, defaultCompactAt: 80 },
+  // spawn_subagent calls carry the subagent's state and result; its tool count
+  // moves live while it is the only subagent running (see subagents.ts).
+  subagents: 'progress',
 }

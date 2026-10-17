@@ -22,6 +22,7 @@ import type {
   Model,
   ProviderCommand,
   ProviderContextSettings,
+  SubagentState,
   Thread,
   UserInputQuestion,
 } from '@harness/contracts'
@@ -50,6 +51,7 @@ import {
   type ClaudeSpawn,
 } from './sdk-runtime.js'
 import { mapClaudeRateLimitEvent, type ProviderLimit } from './limits.js'
+import { ClaudeSubagents } from './subagents.js'
 
 export { CLAUDE_CAPABILITIES } from './capabilities.js'
 
@@ -466,6 +468,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
   #mcpSettling: McpSettling | undefined
   /** The latest status list still had a server starting. */
   #mcpPending = false
+  readonly #subagents = new ClaudeSubagents((event) => this.emit('event', event))
 
   constructor(
     options: {
@@ -836,7 +839,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#queryAbort = undefined
     this.#promptQueue = undefined
     this.#query = undefined
-    this.#completeStreamingItems('failed')
+    this.#completeStreamingItems('failed', 'interrupted')
+    this.#subagents.endSession()
     this.#activeTurnId = undefined
     this.#clearStreamingState()
     this.#options = {}
@@ -1077,6 +1081,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#promptQueue = undefined
     this.#query = undefined
     this.#clearStreamingState()
+    // Background agents run inside the closed process.
+    this.#subagents.endSession()
     try {
       // An unused session has no transcript yet, so it must keep --session-id.
       await this.#startQuery(this.#resumeOnRestart ? this.#sessionId : undefined, options)
@@ -1118,6 +1124,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         this.#query = undefined
         this.#promptQueue?.close()
         this.#promptQueue = undefined
+        this.#subagents.endSession()
         this.#settlePending('Claude session disconnected.')
         if (!this.#disposed) this.emit('disconnected')
       }
@@ -1151,6 +1158,10 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       // Output that no turn waits for, such as a steer that outlived its turn, gets its own.
       const turnId = this.#activeTurnId ?? this.#startTurn()
       const event = parsed.data
+      for (const block of event.message?.content ?? []) {
+        if (block.type === 'tool_use' && block.id && block.name)
+          this.#subagents.spawn(block.id, block.name, block.input ?? {})
+      }
       this.#reportedModel = event.message?.model
       const used = contextTokens(event.message?.usage)
       if (used > 0) this.#contextTokens = used
@@ -1222,7 +1233,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         : message.is_error
           ? 'failed'
           : 'completed'
-      this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed')
+      this.#completeStreamingItems(status === 'completed' ? 'completed' : 'failed', status)
       // A steer cuts the run it steers short, and the CLI starts it as a run of its own, Stop
       // or not. Until every steer has started, a result ends only one run of the turn.
       const steerWaits =
@@ -1271,6 +1282,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       this.emit('commandsChanged')
       return
     }
+
+    if (message.type === 'system' && this.#subagents.onTaskMessage(message)) return
 
     if (message.type === 'system' && message.subtype === 'init') {
       this.#reportedModel = message.model
@@ -1353,8 +1366,9 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           ...toolUseItemFields(raw.name, input),
           createdAt: Date.now(),
         }
+        this.#subagents.spawn(raw.id, raw.name, input)
         this.#streamItems.set(id, item)
-        this.emit('event', { type: 'item.started', item })
+        this.emit('event', { type: 'item.started', item: this.#subagents.withSnapshot(item) })
         return
       }
       if (raw.type !== 'text' && raw.type !== 'thinking') return
@@ -1456,6 +1470,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       if (event.type === 'item.completed') this.#streamItems.delete(event.item.id)
       if (event.type === 'usage.updated' && this.#reportedModel) {
         this.emit('event', { ...event, usage: { ...event.usage, model: this.#reportedModel } })
+      } else if (event.type === 'item.started' || event.type === 'item.completed') {
+        this.emit('event', { ...event, item: this.#subagents.withSnapshot(event.item) })
       } else {
         this.emit('event', event)
       }
@@ -1585,7 +1601,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
       return
     }
     this.emit('event', { type: 'thread.error', threadId: this.#threadId, message })
-    this.#completeStreamingItems('failed')
+    this.#completeStreamingItems('failed', this.#interruptRequested ? 'interrupted' : 'failed')
     this.emit('event', {
       type: 'turn.completed',
       turnId,
@@ -1605,14 +1621,22 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#streamedMessageIds.clear()
   }
 
-  #completeStreamingItems(status: 'completed' | 'failed'): void {
+  #completeStreamingItems(status: 'completed' | 'failed', ended: SubagentState = status): void {
+    // The turn waited on its foreground agents; whatever still runs ends with it.
+    this.#subagents.endTurn(ended)
     for (const item of this.#streamItems.values()) {
       const { text: _streamedText, ...started } = item
-      this.emit('event', { type: 'item.completed', item: { ...started, status } })
+      this.emit('event', {
+        type: 'item.completed',
+        item: this.#subagents.withSnapshot({ ...started, status }),
+      })
     }
     // A call whose result never came back ends with the turn, not as "running".
     for (const call of this.#toolCalls.values()) {
-      this.emit('event', { type: 'item.completed', item: { ...call, status } })
+      this.emit('event', {
+        type: 'item.completed',
+        item: this.#subagents.withSnapshot({ ...call, status }),
+      })
     }
     this.#streamItems.clear()
     this.#toolCalls.clear()
