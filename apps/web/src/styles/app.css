@@ -1445,6 +1445,82 @@
   color: var(--text);
 }
 
+/* The chat checkout's pull request. Quiet like the header's other controls;
+   only the state glyph and the checks glyph carry colour. */
+.stagehead__pr {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex: none;
+  height: 24px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 9px 0 7px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--t-xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
+}
+
+.stagehead__pr:is(:hover, :focus-visible) {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.stagehead__pr-state {
+  flex: none;
+  color: var(--text-2);
+}
+
+.stagehead__pr.is-open .stagehead__pr-state {
+  color: var(--success);
+}
+
+.stagehead__pr.is-draft .stagehead__pr-state {
+  color: var(--text-3);
+}
+
+.stagehead__pr.is-closed .stagehead__pr-state {
+  color: var(--error);
+}
+
+.stagehead__pr-number {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  font-weight: 520;
+}
+
+.stagehead__pr-label {
+  color: var(--text-3);
+}
+
+.stagehead__pr-checks {
+  flex: none;
+  margin-left: 1px;
+}
+
+.stagehead__pr-checks.is-passing {
+  color: var(--success);
+}
+
+.stagehead__pr-checks.is-failing {
+  color: var(--error);
+}
+
+.stagehead__pr-checks.is-pending {
+  color: var(--attention);
+}
+
 .menu.stagehead__options-menu {
   min-width: 0;
   width: min(216px, calc(100vw - 16px));

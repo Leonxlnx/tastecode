@@ -3334,6 +3334,94 @@ describe('web client', () => {
     expect(transport.request).toHaveBeenCalledWith('pullRequests.list', { refresh: false })
   })
 
+  it('shows the chat checkout pull request in the header and opens it', async () => {
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    const listed = {
+      id: 'PR_12',
+      repository: 'Blueemi/harness',
+      number: 12,
+      title: 'Teach the parser tables',
+      url: 'https://github.com/Blueemi/harness/pull/12',
+      author: { login: 'Blueemi', isBot: false },
+      updatedAt: '2026-08-09T12:00:00Z',
+      isDraft: false,
+      state: 'OPEN',
+      additions: 4,
+      deletions: 1,
+      commentsCount: 0,
+      headRefName: 'feature/tables',
+      baseRefName: 'main',
+      relationship: 'authored',
+    }
+    let state = 'OPEN'
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'pullRequests.forCheckout') {
+        return Promise.resolve({
+          available: true,
+          branch: 'feature/tables',
+          repository: 'Blueemi/harness',
+          pullRequest: {
+            repository: 'Blueemi/harness',
+            number: 12,
+            title: 'Teach the parser tables',
+            url: 'https://github.com/Blueemi/harness/pull/12',
+            state,
+            isDraft: false,
+            checks: 'passing',
+            headRefName: 'feature/tables',
+          },
+          fetchedAt: 1,
+        })
+      }
+      if (method === 'pullRequests.list') {
+        return Promise.resolve({
+          account: { available: true, authenticated: true, login: 'Blueemi' },
+          items: [{ ...listed, id: 'PR_13', number: 13, title: 'Newer change' }, listed],
+          fetchedAt: Date.now(),
+          truncated: false,
+        })
+      }
+      if (method === 'pullRequests.detail') return new Promise(() => {})
+      return request(method, params)
+    })
+
+    await import('./ui/pull-requests/PullRequestsView.js')
+    render(<App />)
+    await act(async () => {
+      await sidebarProps().onSelectSession('untouched-thread')
+    })
+    expect(
+      await screen.findByRole('button', {
+        name: 'Pull request #12: Open, Checks passing. Show in Pull requests',
+      }),
+    ).toBeTruthy()
+    expect(transport.request).toHaveBeenCalledWith('pullRequests.forCheckout', {
+      projectPath: '/work/project',
+      threadId: 'untouched-thread',
+    })
+
+    // The agent merged it during the turn; the chip catches up when the turn ends.
+    const asked = rpcCount('pullRequests.forCheckout')
+    startTurn('untouched-thread', 'turn-1')
+    state = 'MERGED'
+    completeTurn('untouched-thread', 'turn-1')
+    expect(
+      await screen.findByRole('button', {
+        name: 'Pull request #12: Merged. Show in Pull requests',
+      }),
+    ).toBeTruthy()
+    expect(rpcCount('pullRequests.forCheckout')).toBe(asked + 1)
+
+    fireEvent.click(screen.getByRole('button', { name: /^Pull request #12:/ }))
+    expect(await screen.findByRole('region', { name: 'Pull requests' })).toBeTruthy()
+    await waitFor(() =>
+      expect(document.querySelector('.pr-list-item.is-selected')?.textContent).toContain(
+        'Teach the parser tables',
+      ),
+    )
+  })
+
   it.each([
     {
       account: { available: false, authenticated: false, error: 'GitHub CLI is not installed' },
