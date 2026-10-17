@@ -2029,7 +2029,9 @@ export function App() {
       const launchListable = [...launchSources].some(
         (source) => source.includes(':') || installedProviders.has(source),
       )
-      const listEverySource = everyModelSourceWanted.current || !launchListable
+      // A profile with nothing cached yet lists every source once, so the
+      // picker does not open on providers without rows.
+      const listEverySource = !launchListable || catalogModelsRef.current.length === 0
       setProviderCatalogSource({ transport, request: catalogRequest })
       setPendingModelSources(
         new Set([
@@ -2047,6 +2049,8 @@ export function App() {
       let publishedCatalog = catalogModelsRef.current
       /** Each source's rows as last settled, in this run. */
       const settledRows = new Map<string, ModelChoice[]>()
+      /** Every source of this run in catalog order, once all of them have answered. */
+      let catalogOrder: readonly string[] | undefined
       const settleSource = <T extends { discovered: boolean; models: ModelChoice[] }>(
         source: string,
         result: T,
@@ -2065,7 +2069,11 @@ export function App() {
           for (const choice of result.models) unknownKeys.add(choice.key)
         }
         settledRows.set(source, result.models)
-        publishedCatalog = replaceSourceRows(publishedCatalog, source, result.models)
+        // A source first listed after the run (one left for the picker with
+        // nothing cached) goes where the run would have put it, not last.
+        publishedCatalog = catalogOrder
+          ? catalogOrder.flatMap((key) => settledRows.get(key) ?? [])
+          : replaceSourceRows(publishedCatalog, source, result.models)
         setModelCatalog({
           models: publishedCatalog,
           loaded: true,
@@ -2113,16 +2121,16 @@ export function App() {
         source: string,
         discover: () => Promise<unknown>,
       ): Promise<{ source: string }> => {
-        const cachedRows = listEverySource
-          ? []
-          : catalogModelsRef.current.filter(
-              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
-            )
-        // A source with nothing to show yet is listed now, so the picker never
-        // opens on a provider without rows.
-        if (cachedRows.length > 0 && !launchSources.has(source)) {
+        // Read when each source registers: the picker may open while the run
+        // is still waiting for agents or harnesses.
+        if (!listEverySource && !everyModelSourceWanted.current && !launchSources.has(source)) {
           sourceRuns.set(source, { discover, running: false, again: false, deferred: true })
-          settleSource(source, { discovered: false, models: cachedRows })
+          settleSource(source, {
+            discovered: false,
+            models: catalogModelsRef.current.filter(
+              (choice) => !isCustomModelChoice(choice) && modelSource(choice) === source,
+            ),
+          })
           return Promise.resolve({ source })
         }
         const run: SourceRun = { discover, running: true, again: false, deferred: false }
@@ -2403,7 +2411,8 @@ export function App() {
       const listedSources = new Set(
         [...direct, ...acp, ...api, ...customSources].map((entry) => entry.source),
       )
-      const catalog = [...listedSources].flatMap((source) => settledRows.get(source) ?? [])
+      catalogOrder = [...listedSources]
+      const catalog = catalogOrder.flatMap((source) => settledRows.get(source) ?? [])
       publishedCatalog = catalog
       // The full catalog supersedes whatever snapshot is still pending.
       takePendingCacheWrite()

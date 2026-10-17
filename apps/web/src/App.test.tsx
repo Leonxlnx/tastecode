@@ -840,8 +840,11 @@ function mockDiscoveryWithFailingGrok(claudeModels?: Promise<{ models: Model[] }
   })
 }
 
-/** Wait until the `launch`-th discovery has asked Grok and finished. */
+/** Open the model picker and wait until the `launch`-th discovery has asked Grok and finished. */
 async function settleDiscoveryWithFailingGrok(launch: number) {
+  // With a cached catalog, a provider the composer is not on is listed once
+  // the picker needs it.
+  act(() => composerProps().onModelSelectorOpen?.())
   await waitFor(() =>
     expect(
       transport.request.mock.calls.filter(
@@ -1141,6 +1144,8 @@ describe('web client', () => {
       return request(method, params)
     })
     render(<App />)
+    // Claude Code is listed once the picker needs it.
+    act(() => composerProps().onModelSelectorOpen?.())
     await waitFor(() =>
       expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
     )
@@ -2750,9 +2755,10 @@ describe('web client', () => {
       )
       mockLiveDiscovery()
       render(<App />)
-      // Grok has no cached rows, so it is listed along with the composer's source.
-      await waitFor(() => expect([...listedProviders()].sort()).toEqual(['codex', 'grok']))
+      await waitFor(() => expect(listedProviders()).toEqual(['codex']))
       await settled()
+      // Grok has nothing cached and waits too.
+      expect(listedProviders()).toEqual(['codex'])
     }
 
     it('shows its cached rows and lists it once the picker opens', async () => {
@@ -2769,7 +2775,9 @@ describe('web client', () => {
       expect(listedProviders()).not.toContain('claude-code')
 
       act(() => composerProps().onModelSelectorOpen?.())
-      await waitFor(() => expect(listedProviders()).toContain('claude-code'))
+      await waitFor(() =>
+        expect([...listedProviders()].sort()).toEqual(['claude-code', 'codex', 'grok']),
+      )
       act(() => composerProps().onModelSelectorOpen?.())
       await settled()
       expect(rpcCount('models.list')).toBe(3)
@@ -2779,15 +2787,75 @@ describe('web client', () => {
       await launchWithCachedClaude()
       const opus = cachedClaudeChoices().find((choice) => choice.model.displayName === 'Opus 5.5')!
       act(() => composerProps().onModelChange(opus.key))
-      await waitFor(() => expect(listedProviders()).toContain('claude-code'))
+      await waitFor(() => expect(listedProviders()).toEqual(['codex', 'claude-code']))
       await settled()
-      expect(rpcCount('models.list')).toBe(3)
+      expect(listedProviders()).toEqual(['codex', 'claude-code'])
     })
 
     it('lists it when Settings opens', async () => {
       await launchWithCachedClaude()
       openSettings()
       await waitFor(() => expect(listedProviders()).toContain('claude-code'))
+    })
+
+    it('puts a source with nothing cached in its place once the picker lists it', async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+      localStorage.setItem(
+        'harness.modelCatalog.v1',
+        serializeModelCatalogCache([
+          cachedCodexChoice(),
+          ...choicesFor({ provider: 'grok', sourceName: 'Grok', mark: 'grok' }, [
+            { ...cachedCodexChoice().model, id: 'grok-4.7', displayName: 'Grok 4.7' },
+          ]),
+        ]),
+      )
+      mockLiveDiscovery()
+      const sourceOrder = () => [
+        ...new Set(composerProps().models.map((choice) => choice.provider)),
+      ]
+      render(<App />)
+      await waitFor(() => expect(listedProviders()).toEqual(['codex']))
+      await settled()
+      // Claude Code has nothing cached and waits for the picker as well.
+      expect(sourceOrder()).toEqual(['codex', 'grok'])
+
+      act(() => composerProps().onModelSelectorOpen?.())
+      await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
+      await settled()
+      expect(sourceOrder()).toEqual(['codex', 'claude-code', 'grok'])
+    })
+
+    it('lists an agent that registers after the picker opened', async () => {
+      const kimi = { id: 'kimi', name: 'Kimi CLI' }
+      localStorage.setItem(
+        'harness.modelCatalog.v1',
+        serializeModelCatalogCache([
+          cachedCodexChoice(),
+          ...choicesFor({ provider: 'acp', sourceName: kimi.name, mark: 'kimi', agent: kimi }, [
+            { ...cachedCodexChoice().model, id: 'kimi-k3', displayName: 'Kimi K3' },
+          ]),
+        ]),
+      )
+      let releaseAgents!: () => void
+      const agents = new Promise<ResultOf<'acp.agents'>>((resolve) => {
+        releaseAgents = () =>
+          resolve({ agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }] })
+      })
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'acp.agents' ? agents : request(method, params),
+      )
+      render(<App />)
+      await waitFor(() => expect(listedProviders()).toEqual(['codex']))
+
+      act(() => composerProps().onModelSelectorOpen?.())
+      await act(async () => releaseAgents())
+      await waitFor(() =>
+        expect(transport.request).toHaveBeenCalledWith('models.list', {
+          provider: 'acp',
+          agent: 'kimi',
+        }),
+      )
     })
   })
 
