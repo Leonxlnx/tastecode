@@ -164,6 +164,25 @@ describe('feedback ledger', () => {
   })
 })
 
+describe('model list snapshot', () => {
+  it('keeps the last good model lists across a restart in the shared settings table', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'harness-model-lists-'))
+    const file = path.join(dir, 'harness.db')
+    const seeded = new Store(file)
+    expect(seeded.modelListSnapshot()).toBeUndefined()
+    seeded.setModelListSnapshot('{"version":1,"lists":[]}')
+    seeded.close()
+
+    const reopened = new Store(file)
+    try {
+      expect(reopened.modelListSnapshot()).toBe('{"version":1,"lists":[]}')
+    } finally {
+      reopened.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('sidebar thread snapshots', () => {
   it('keeps earlier snapshots immutable across a batch and a mid-batch read', () => {
     store.addProject('/repo')

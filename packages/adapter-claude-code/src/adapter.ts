@@ -148,6 +148,14 @@ const OLDER_CLAUDE_MODELS: Model[] = [
 ]
 export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
+/**
+ * The last live answer per Claude config directory, for this process. Live rows
+ * use the runtime's alias ids (`opus`, `claude-fable-5-1[1m]`) where the catalog
+ * uses versioned ids, so answering a slow discovery with the catalog would change
+ * the ids behind the user's selection and visibility choices.
+ */
+const lastDiscoveredClaudeModels = new Map<string, Model[]>()
+
 function claudeModel(
   id: string,
   displayName: string,
@@ -675,13 +683,23 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         strictMcpConfig: true,
       }),
     })
+    const discoveryKey = this.#environment.CLAUDE_CONFIG_DIR ?? ''
+    const fallback = (reason: string): Model[] => {
+      const previous = lastDiscoveredClaudeModels.get(discoveryKey)
+      this.#log(
+        previous
+          ? `Claude model discovery kept the last live list: ${reason}`
+          : `Claude model discovery fell back to known values: ${reason}`,
+      )
+      return previous ?? CLAUDE_MODELS
+    }
     try {
       const models = await withTimeout(
         query.supportedModels(),
         30_000,
         'Claude model discovery timed out',
       )
-      if (models.length === 0) return CLAUDE_MODELS
+      if (models.length === 0) return fallback('the runtime listed no models')
       const ultracodeAvailable = await withTimeout(
         readClaudeAppliedSettings(query),
         10_000,
@@ -693,10 +711,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           return false
         },
       )
-      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
+      const discovered = mergeClaudeModels(models).map((model) =>
+        withUltracode(model, ultracodeAvailable),
+      )
+      lastDiscoveredClaudeModels.set(discoveryKey, discovered)
+      return discovered
     } catch (error) {
-      this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
-      return CLAUDE_MODELS
+      return fallback(String(error))
     } finally {
       abort.abort()
       query.close()

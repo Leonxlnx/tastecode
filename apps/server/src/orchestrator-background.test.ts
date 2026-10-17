@@ -347,7 +347,7 @@ describe('background title source discovery', () => {
     )
   })
 
-  it('reads again after the cached minute', async () => {
+  it('reads the account again after the cached minute and the shared model list once it ages', async () => {
     const { title } = harness()
     const now = Date.now()
     const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
@@ -357,11 +357,22 @@ describe('background title source discovery', () => {
       await title()
       clock.mockReturnValue(now + 60_000)
       await title()
+      expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:codex'])
+      // An older shared list still answers at once and is read again behind it.
+      clock.mockReturnValue(now + 10 * 60_000)
+      await title()
+      await vi.waitFor(() => expect(vendor.calls).toHaveLength(5))
     } finally {
       clock.mockRestore()
     }
 
-    expect(vendor.calls).toEqual(['account:codex', 'models:codex', 'account:codex', 'models:codex'])
+    expect(vendor.calls).toEqual([
+      'account:codex',
+      'models:codex',
+      'account:codex',
+      'account:codex',
+      'models:codex',
+    ])
   })
 
   it('neither caches nor joins a read that an account change overtook', async () => {
