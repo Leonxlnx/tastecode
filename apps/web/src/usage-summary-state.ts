@@ -32,8 +32,9 @@ function paramsOf(target: Target, intent: UsageReadIntent): ParamsOf<'usage.summ
  * Owns the asynchronous account-usage state independently from React.
  *
  * One revision belongs to one provider/thread target. That makes stale reads
- * harmless and lets same-target refresh failures retain useful last-known
- * values without carrying them across a provider or session switch.
+ * harmless and lets refresh failures retain useful last-known values. Plan
+ * limits belong to the account, so they survive a switch between threads of
+ * the same provider and are cleared only by a provider switch.
  */
 export class UsageSummaryController {
   readonly #load: LoadSummary
@@ -73,9 +74,12 @@ export class UsageSummaryController {
 
   select(target: Target): void {
     if (this.#disposed || sameTarget(this.#target, target)) return
+    const sameProvider = this.#target?.provider === target.provider
     this.#revision += 1
     this.#target = target
-    this.#state = undefined
+    // The next read reports the same account's limits; until it lands, the
+    // last ones stay on screen instead of reading as "Checking…" again.
+    if (!sameProvider) this.#state = undefined
     this.#dirty = false
     this.#requestedIntent = undefined
     this.#clearTimer()

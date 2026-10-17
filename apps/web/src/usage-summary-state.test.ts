@@ -88,6 +88,30 @@ describe('UsageSummaryController', () => {
     expect(load).toHaveBeenNthCalledWith(2, { provider: 'grok', intent: 'visible' })
   })
 
+  it('keeps the account limits while another thread of the same provider loads', async () => {
+    const first = deferred<Summary>()
+    const second = deferred<Summary>()
+    const reads = [first, second]
+    const load = vi.fn(() => reads.shift()!.promise)
+    const state = new UsageSummaryController(load)
+    const withLimits: Summary = {
+      ...summary(1),
+      limits: [{ label: '5h', usedPercent: 40 }],
+      limitSource: { provider: 'codex', status: 'ready', limits: [{ label: '5h', usedPercent: 40 }] },
+    }
+
+    state.select({ provider: 'codex', threadId: 'thread-a' })
+    first.resolve(withLimits)
+    await settle()
+    state.select({ provider: 'codex', threadId: 'thread-b' })
+    expect(state.snapshot()).toEqual({ status: 'loading', provider: 'codex', summary: withLimits })
+
+    second.resolve(summary(2))
+    await settle()
+    expect(state.snapshot()).toEqual({ status: 'ready', provider: 'codex', summary: summary(2) })
+    expect(load).toHaveBeenLastCalledWith({ threadId: 'thread-b', intent: 'visible' })
+  })
+
   it('asks with the reason its owner gives at the time of each request', async () => {
     let intent: 'background' | 'visible' = 'background'
     const load = vi.fn(async (_params: ParamsOf<'usage.summary'>) => summary(1))
