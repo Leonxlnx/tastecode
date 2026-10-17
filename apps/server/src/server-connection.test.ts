@@ -27,6 +27,7 @@ const state = vi.hoisted(() => ({
   historyReads: [] as number[],
   historyRefresh: Promise.resolve() as Promise<void>,
   historyChanged: new Set<string>(),
+  idleCheckouts: [] as string[],
 }))
 const temporary: string[] = []
 
@@ -82,6 +83,10 @@ vi.mock('./orchestrator.js', () => ({
     }
     async restoreCheckpoint() {
       return { undo: 'undo-token' }
+    }
+    async whileCheckoutIdle(checkout: string, operation: () => Promise<unknown>) {
+      state.idleCheckouts.push(checkout)
+      return operation()
     }
     async undoRestore() {}
     isTurnRunning() {
@@ -170,6 +175,7 @@ afterEach(async () => {
   state.historyReads.length = 0
   state.historyRefresh = Promise.resolve()
   state.historyChanged.clear()
+  state.idleCheckouts.length = 0
   vi.unstubAllEnvs()
   await Promise.all(
     temporary.splice(0).map((directory) => rm(directory, { recursive: true, maxRetries: 5 })),
@@ -522,6 +528,67 @@ describe('the pull request for a chat checkout', () => {
   })
   // Every step spawns git, which takes a while on a busy Windows machine.
 }, 30_000)
+
+describe('git writes in a chat checkout', () => {
+  function git(cwd: string, ...args: string[]): string {
+    return execFileSync('git', args, { cwd, windowsHide: true, encoding: 'utf8' }).trim()
+  }
+
+  async function call(port: number, method: string, params: unknown) {
+    const client = new WebSocket(`ws://127.0.0.1:${port}`)
+    try {
+      await once(client, 'message')
+      const reply = once(client, 'message')
+      client.send(JSON.stringify({ id: 'git', method, params }))
+      const [message] = await reply
+      return JSON.parse(String(message)) as unknown
+    } finally {
+      client.terminate()
+    }
+  }
+
+  it('commits in the chat worktree while no turn runs there, then pushes it', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'harness-workspace-git-rpc-'))
+    temporary.push(root)
+    // Never discover a repository above the temporary folder.
+    vi.stubEnv('GIT_CEILING_DIRECTORIES', root)
+    const projectPath = path.join(root, 'project')
+    const worktreePath = path.join(root, 'isolated')
+    const remote = path.join(root, 'remote.git')
+    await mkdir(projectPath)
+    git(root, 'init', '-q', '--bare', remote)
+    git(root, 'init', '-q', '-b', 'chat/one', worktreePath)
+    git(worktreePath, 'config', 'user.email', 'test@example.com')
+    git(worktreePath, 'config', 'user.name', 'Test')
+    git(worktreePath, 'config', 'commit.gpgsign', 'false')
+    git(worktreePath, 'remote', 'add', 'origin', remote)
+    await writeFile(path.join(worktreePath, 'change.txt'), 'changed\n')
+    state.projects.push({ path: projectPath })
+    state.threads.set('isolated-thread', { projectPath, worktreePath })
+    const { port } = await listen()
+    const checkout = { projectPath, threadId: 'isolated-thread' }
+
+    const committed = await call(port, 'workspace.commit', {
+      ...checkout,
+      message: 'feat: from review',
+      includeUntracked: true,
+    })
+    expect(committed).toEqual({
+      id: 'git',
+      result: { commit: git(worktreePath, 'rev-parse', 'HEAD'), branch: 'chat/one' },
+    })
+    expect(state.idleCheckouts).toEqual([worktreePath])
+
+    expect(await call(port, 'workspace.push', checkout)).toEqual({
+      id: 'git',
+      result: { branch: 'chat/one', remote: 'origin' },
+    })
+    expect(git(remote, 'rev-parse', 'refs/heads/chat/one')).toBe(
+      git(worktreePath, 'rev-parse', 'HEAD'),
+    )
+  })
+  // Every step spawns git, which takes a while on a busy Windows machine.
+}, 60_000)
 
 describe('server shutdown', () => {
   it('starts closing terminals before it waits on provider history', async () => {

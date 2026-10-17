@@ -30,6 +30,7 @@ import { imageFileName, materializeAttachment } from './uploaded-attachment.js'
 import type { UsageHistoryService } from './usage-history.js'
 import { usageSummaryWithLimits } from './usage-summary.js'
 import { listWorkspaceBranches, readWorkspace } from './workspace.js'
+import { commitCheckout, pushCheckout } from './workspace-git.js'
 import {
   listWorkspaceDirectory,
   readWorkspaceTextFile,
@@ -146,16 +147,19 @@ export function startServer(
       ([service, { CheckoutPullRequests }]) =>
         new CheckoutPullRequests({ account: (refresh) => service.account(refresh) }),
     ))
+  /** The checkout's pull request may have changed on GitHub. */
+  const checkoutChanged = (checkout: string) => {
+    void checkoutPullRequests?.then(
+      (service) => service.invalidateCheckout(checkout),
+      () => {},
+    )
+  }
   /** A finished turn may have pushed or opened a pull request from its checkout. */
   const turnEndedInCheckout = (threadId: string) => {
     if (!checkoutPullRequests) return
     const thread = store.thread(threadId)
     if (!thread) return
-    const checkout = resolveWorkspacePath(thread.worktreePath ?? thread.projectPath)
-    void checkoutPullRequests.then(
-      (service) => service.invalidateCheckout(checkout),
-      () => {},
-    )
+    checkoutChanged(resolveWorkspacePath(thread.worktreePath ?? thread.projectPath))
   }
   let notifyLifecycleScheduleChanged: (hint?: LifecycleScheduleHint) => void = () => {}
   let usageHistory: Promise<UsageHistoryService> | undefined
@@ -770,6 +774,25 @@ export function startServer(
       case 'workspace.diff': {
         const p = parseParams(method, params)
         return readWorkspaceDiff(workspaceForRequest(store, p))
+      }
+
+      case 'workspace.commit': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        return orchestrator.whileCheckoutIdle(checkout, () =>
+          commitCheckout(checkout, { message: p.message, includeUntracked: p.includeUntracked }),
+        )
+      }
+
+      case 'workspace.push': {
+        const p = parseParams(method, params)
+        const checkout = workspaceForRequest(store, p)
+        try {
+          return await pushCheckout(checkout)
+        } finally {
+          // New commits on a pull request's head restart its checks.
+          checkoutChanged(checkout)
+        }
       }
 
       case 'workspace.listDirectory': {
