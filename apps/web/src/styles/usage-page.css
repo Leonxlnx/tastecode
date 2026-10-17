@@ -1,5 +1,14 @@
 /* ---------- Usage page ----------
-   The Settings column and page header, with dashboard sections under them. */
+   The Settings column and page header, with dashboard sections under them.
+   Its own mark is the rung: plan limits and the activity chart are measured
+   in 3 px rungs on the 5 px rhythm of the leader dots every Settings row
+   draws, so the numbers read like the rest of Settings, only denser. */
+
+.settings .usage-page {
+  --usage-rung-on: var(--text-2);
+  --usage-rung-off: color-mix(in srgb, var(--text) 9%, transparent);
+  --usage-rung-low: var(--error);
+}
 
 .settings .usage-page .set-page__head {
   flex-wrap: wrap;

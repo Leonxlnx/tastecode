@@ -8,6 +8,7 @@ import { useUsageHistory } from '../usage-history-state.js'
 import { compactRelativeTime, readSessionClock, subscribeSessionClock } from './session-clock.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
+import { UsageLimits, type PlanLimitsSource } from './usage/UsageLimits.js'
 import { formatDateRange, formatInteger } from './usage/usage-format.js'
 
 const RANGE_OPTIONS = [
@@ -23,10 +24,14 @@ function isRange(value: string): value is UsageHistoryRange {
 }
 
 /**
- * Usage: the local history of the chosen period under the same page header
- * as every other Settings tab, and where the numbers come from.
+ * Usage: plan limits first, since they are what can stop work today; then
+ * the local history of the chosen period and where the numbers come from.
  */
-export function UsageSettings(props: { transport: Transport }) {
+export function UsageSettings(props: {
+  transport: Transport
+  /** The app's plan-limit owner; without one the page shows only the local history. */
+  limits?: PlanLimitsSource | undefined
+}) {
   const [range, setRange] = useState<UsageHistoryRange>('30d')
   const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
   const scanning = data?.scan.status === 'scanning'
@@ -90,6 +95,8 @@ export function UsageSettings(props: { transport: Transport }) {
           Usage could not be loaded. {error ?? 'The local session histories could not be read.'}
         </SettingsNotice>
       ) : null}
+
+      {props.limits ? <UsageLimits source={props.limits} /> : null}
 
       {data ? (
         <>
