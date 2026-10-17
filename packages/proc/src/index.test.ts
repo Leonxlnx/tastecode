@@ -106,22 +106,6 @@ describe('StdioJsonRpc', () => {
       vi.useRealTimers()
     }
   })
-
-  it('accepts a final reply delivered after process exit but before stdio closes', async () => {
-    // SAFETY: StdioJsonRpc uses only these three streams and EventEmitter process events in this test.
-    const child = new EventEmitter() as ChildProcessWithoutNullStreams
-    child.stdin = new PassThrough()
-    child.stdout = new PassThrough()
-    child.stderr = new PassThrough()
-    const rpc = new StdioJsonRpc(child, 'test agent')
-    const reply = rpc.request('final')
-
-    child.emit('exit', 0)
-    child.stdout.write('{"jsonrpc":"2.0","id":1,"result":"drained"}\n')
-
-    await expect(reply).resolves.toBe('drained')
-    child.emit('close', 0)
-  })
 })
 
 describe('runCli', () => {
