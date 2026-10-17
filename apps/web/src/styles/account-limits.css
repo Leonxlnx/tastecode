@@ -237,7 +237,8 @@
   bottom: -2px;
   width: 1px;
   height: auto;
-  border-radius: 0.5px;
+  /* A pill radius on a 1px-wide tick clamps to 0.5px, the same round ends. */
+  border-radius: var(--r-pill);
   background: color-mix(in srgb, var(--text) 62%, transparent);
   translate: -0.5px 0;
   pointer-events: none;
