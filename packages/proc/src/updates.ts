@@ -43,6 +43,40 @@ export function isNewerVersion(current: string, latest: string): boolean {
   return false
 }
 
+/** Where a vendor publishes its own install scripts, as its docs give them. */
+export type VendorInstaller = {
+  /** The PowerShell script the docs run as `irm <url> | iex`. */
+  windows: string
+  /** The bash script the docs run as `curl -fsSL <url> | bash`. */
+  posix: string
+}
+
+/**
+ * The command that runs a vendor's official installer the way its docs do,
+ * except that the script is downloaded completely before any of it runs: a
+ * failed or cut-off download exits non-zero instead of running half a script
+ * or passing for a finished install. Only the download is held to strict
+ * errors on Windows; the script itself then runs under PowerShell's defaults,
+ * as it would under `irm | iex`. The server runs the result through cmd.exe
+ * on Windows and through the user's shell elsewhere.
+ */
+export function vendorInstallCommand(
+  installer: VendorInstaller,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const url = platform === 'win32' ? installer.windows : installer.posix
+  // The URL is spliced into quoted shell text, so it may not carry any quoting.
+  if (!/^https:\/\/[\w.-]+(?:\/[\w./?=&%-]*)?$/.test(url)) {
+    throw new Error(`Not an installer URL: ${url}`)
+  }
+  if (platform === 'win32') {
+    const script = `$ErrorActionPreference = 'Stop'; $installer = Invoke-RestMethod -Uri '${url}'; $ErrorActionPreference = 'Continue'; Invoke-Expression $installer`
+    return `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(script, 'utf16le').toString('base64')}`
+  }
+  // The vendors' scripts use bash syntax, so they run in bash as documented.
+  return `/bin/sh -c 'installer=$(curl -fsSL --connect-timeout 15 --max-time 60 "${url}") && printf "%s" "$installer" | bash'`
+}
+
 export async function latestNpmVersion(packageName: string, tag = 'latest'): Promise<string> {
   return releaseVersion(
     `https://registry.npmjs.org/${encodeURIComponent(packageName)}/${encodeURIComponent(tag)}`,
