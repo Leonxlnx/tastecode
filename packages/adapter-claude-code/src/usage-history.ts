@@ -1,9 +1,8 @@
-import { createReadStream } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import readline from 'node:readline'
 import type { LocalUsageRecord, ProviderId } from '@harness/contracts'
 import { discoverJsonlArchive, type UsageHistorySource } from '@harness/proc/usage-archive'
+import { readUsageLog, type UsageLogParser } from '@harness/proc/usage-log'
 
 /** Claude Code keeps one JSONL transcript per session under `<config dir>/projects`. */
 export const CLAUDE_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageRecord> = {
@@ -16,66 +15,76 @@ export const CLAUDE_USAGE_HISTORY: UsageHistorySource<ProviderId, LocalUsageReco
 
 /** Reads Claude Code JSONL and collapses its repeated message snapshots. */
 export async function readClaudeUsageHistory(filePath: string): Promise<LocalUsageRecord[]> {
-  const messages = new Map<string, LocalUsageRecord>()
-  const lines = readline.createInterface({
-    input: createReadStream(filePath, { encoding: 'utf8', highWaterMark: 1024 * 1024 }),
-    crlfDelay: Infinity,
-  })
+  return (await readUsageLog(filePath, CLAUDE_LOG_PARSER)).entries
+}
 
-  for await (const line of lines) {
-    if (!line.includes('"type":"assistant"') || !line.includes('"usage"')) continue
-    const record = parseRecord(line)
-    const message = asRecord(record?.['message'])
-    const usage = asRecord(message?.['usage'])
-    const timestamp = dateValue(record?.['timestamp'])
-    if (!record || !message || !usage || !timestamp) continue
+/** Every message the transcript's lines so far carried usage for, by message id. */
+type ClaudeLogState = {
+  filePath: string
+  messages: Map<string, LocalUsageRecord>
+}
 
-    const messageId =
-      stringValue(message['id']) ??
-      stringValue(record['uuid']) ??
-      `${filePath}:${timestamp.getTime()}`
-    const model = stringValue(message['model']) ?? 'Unknown model'
-    const sessionId =
-      stringValue(record['sessionId']) ?? stringValue(record['session_id']) ?? filePath
-    const cacheCreation = numberValue(usage['cache_creation_input_tokens'])
-    const cacheCreationDetail = asRecord(usage['cache_creation'])
-    const oneHour = numberValue(cacheCreationDetail?.['ephemeral_1h_input_tokens'])
-    const reportedFiveMinutes = numberValue(cacheCreationDetail?.['ephemeral_5m_input_tokens'])
-    const fiveMinutes = Math.max(
-      reportedFiveMinutes + Math.max(cacheCreation - oneHour - reportedFiveMinutes, 0),
-      0,
-    )
-    const inputTokens = numberValue(usage['input_tokens'])
-    const cachedInputTokens = numberValue(usage['cache_read_input_tokens'])
-    const candidate: LocalUsageRecord = {
-      date: localDateKey(timestamp),
-      model,
-      sessionId,
-      longContext: inputTokens + cachedInputTokens + cacheCreation > 272_000,
-      tokens: {
-        uncachedInputTokens: inputTokens,
-        cachedInputTokens,
-        cacheWrite5mInputTokens: fiveMinutes,
-        cacheWrite1hInputTokens: oneHour,
-        outputTokens: numberValue(usage['output_tokens']),
-        reasoningTokens: numberValue(usage['reasoning_output_tokens']),
-        providerReportedCostUsd: numberValue(
-          usage['cost_usd'] ?? record['costUSD'] ?? record['cost_usd'],
-        ),
-      },
-    }
-    const prior = messages.get(messageId)
-    if (!prior) {
-      messages.set(messageId, candidate)
-      continue
-    }
-    prior.tokens = maxTokenCounts(prior.tokens, candidate.tokens)
-    if (candidate.model !== 'Unknown model') prior.model = candidate.model
-    prior.date = candidate.date
-    prior.sessionId = candidate.sessionId
-    prior.longContext = candidate.longContext
+const CLAUDE_LOG_PARSER: UsageLogParser<LocalUsageRecord, ClaudeLogState> = {
+  create: (filePath) => ({ filePath, messages: new Map() }),
+  restore: () => undefined,
+  line: parseClaudeLine,
+  finish: (state) => ({
+    entries: [...state.messages.values()].filter((entry) => processedTokens(entry) > 0),
+  }),
+}
+
+function parseClaudeLine(state: ClaudeLogState, line: string): void {
+  if (!line.includes('"type":"assistant"') || !line.includes('"usage"')) return
+  const record = parseRecord(line)
+  const message = asRecord(record?.['message'])
+  const usage = asRecord(message?.['usage'])
+  const timestamp = dateValue(record?.['timestamp'])
+  if (!record || !message || !usage || !timestamp) return
+
+  const messageId =
+    stringValue(message['id']) ??
+    stringValue(record['uuid']) ??
+    `${state.filePath}:${timestamp.getTime()}`
+  const model = stringValue(message['model']) ?? 'Unknown model'
+  const sessionId =
+    stringValue(record['sessionId']) ?? stringValue(record['session_id']) ?? state.filePath
+  const cacheCreation = numberValue(usage['cache_creation_input_tokens'])
+  const cacheCreationDetail = asRecord(usage['cache_creation'])
+  const oneHour = numberValue(cacheCreationDetail?.['ephemeral_1h_input_tokens'])
+  const reportedFiveMinutes = numberValue(cacheCreationDetail?.['ephemeral_5m_input_tokens'])
+  const fiveMinutes = Math.max(
+    reportedFiveMinutes + Math.max(cacheCreation - oneHour - reportedFiveMinutes, 0),
+    0,
+  )
+  const inputTokens = numberValue(usage['input_tokens'])
+  const cachedInputTokens = numberValue(usage['cache_read_input_tokens'])
+  const candidate: LocalUsageRecord = {
+    date: localDateKey(timestamp),
+    model,
+    sessionId,
+    longContext: inputTokens + cachedInputTokens + cacheCreation > 272_000,
+    tokens: {
+      uncachedInputTokens: inputTokens,
+      cachedInputTokens,
+      cacheWrite5mInputTokens: fiveMinutes,
+      cacheWrite1hInputTokens: oneHour,
+      outputTokens: numberValue(usage['output_tokens']),
+      reasoningTokens: numberValue(usage['reasoning_output_tokens']),
+      providerReportedCostUsd: numberValue(
+        usage['cost_usd'] ?? record['costUSD'] ?? record['cost_usd'],
+      ),
+    },
   }
-  return [...messages.values()].filter((entry) => processedTokens(entry) > 0)
+  const prior = state.messages.get(messageId)
+  if (!prior) {
+    state.messages.set(messageId, candidate)
+    return
+  }
+  prior.tokens = maxTokenCounts(prior.tokens, candidate.tokens)
+  if (candidate.model !== 'Unknown model') prior.model = candidate.model
+  prior.date = candidate.date
+  prior.sessionId = candidate.sessionId
+  prior.longContext = candidate.longContext
 }
 
 function maxTokenCounts(
