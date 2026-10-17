@@ -10,6 +10,7 @@ import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
 import { SettingsSegmented } from './settings/SettingsSegmented.js'
 import { UsageActivity } from './usage/UsageActivity.js'
 import { UsageLimits, type PlanLimitsSource } from './usage/UsageLimits.js'
+import { UsageModels } from './usage/UsageModels.js'
 import { UsageValue } from './usage/UsageValue.js'
 import { formatDateRange, formatInteger } from './usage/usage-format.js'
 
@@ -27,8 +28,8 @@ function isRange(value: string): value is UsageHistoryRange {
 
 /**
  * Usage: plan limits first, since they are what can stop work today; then
- * the local history of the chosen period and its API value, and where the
- * numbers come from.
+ * the local history of the chosen period, its API value and its models, and
+ * where the numbers come from.
  */
 export function UsageSettings(props: {
   transport: Transport
@@ -106,6 +107,7 @@ export function UsageSettings(props: {
         <>
           <UsageActivity data={data} periodLabel={period} />
           <UsageValue data={data} />
+          <UsageModels data={data} />
           <UsageFooter data={data} />
         </>
       ) : loading ? (
