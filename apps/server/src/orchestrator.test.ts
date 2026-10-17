@@ -7482,8 +7482,25 @@ describe('provider commands', () => {
 })
 
 describe('skills inventory', () => {
-  it('lists local Agent Skills when the provider has no vendor inventory', async () => {
-    const { orchestrator } = harness()
+  it('lists .agents skills only for providers whose CLI loads them', async () => {
+    const vendorSkill = {
+      id: 'grok:user:review',
+      name: 'review',
+      description: 'Review the change',
+      source: { type: 'provider' as const },
+      scope: 'user' as const,
+      enabled: true,
+      dependencyErrors: [],
+    }
+    const { orchestrator } = harness(undefined, undefined, undefined, undefined, {
+      grok: {
+        listSkills: async () => ({
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [vendorSkill],
+          errors: [],
+        }),
+      },
+    })
     const project = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-project-'))
     const home = mkdtempSync(path.join(os.tmpdir(), 'harness-skills-home-'))
     const skillDir = path.join(home, '.agents', 'skills', 'animate')
@@ -7492,30 +7509,33 @@ describe('skills inventory', () => {
       path.join(skillDir, 'SKILL.md'),
       '---\nname: animate\ndescription: Build an animation from scratch\n---\n',
     )
+    mkdirSync(path.join(project, '.agents', 'skills', 'local'), { recursive: true })
+    writeFileSync(
+      path.join(project, '.agents', 'skills', 'local', 'SKILL.md'),
+      '---\nname: local\ndescription: A project skill\n---\n',
+    )
     const homedir = vi.spyOn(os, 'homedir').mockReturnValue(home)
 
     try {
+      // Claude Code loads ~/.claude/skills, never .agents; its skills come with its commands.
       await expect(orchestrator.listSkills('claude-code', project)).resolves.toEqual({
-        capabilities: { inventory: true, configure: false, install: false },
-        skills: [
-          {
-            id: path.join(skillDir, 'SKILL.md'),
-            name: 'animate',
-            description: 'Build an animation from scratch',
-            source: { type: 'folder', path: skillDir },
-            scope: 'user',
-            enabled: true,
-            dependencyErrors: [],
-          },
-        ],
+        capabilities: { inventory: false, configure: false, install: false },
+        skills: [],
         errors: [],
       })
-      await expect(orchestrator.listSkills('grok', project)).resolves.toMatchObject({
-        capabilities: { inventory: true },
-        skills: [expect.objectContaining({ name: 'animate', scope: 'user' })],
+      await expect(orchestrator.listSkills('opencode', project)).resolves.toMatchObject({
+        capabilities: { inventory: false },
+        skills: [],
+      })
+      // A provider's own skill inventory comes without the .agents folders.
+      await expect(orchestrator.listSkills('grok', project)).resolves.toEqual({
+        capabilities: { inventory: true, configure: false, install: false },
+        skills: [vendorSkill],
+        errors: [],
       })
     } finally {
       homedir.mockRestore()
+      await orchestrator.disposeAll()
       rmSync(project, { recursive: true, force: true })
       rmSync(home, { recursive: true, force: true })
     }

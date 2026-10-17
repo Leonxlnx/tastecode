@@ -545,6 +545,12 @@ const UNSUPPORTED_MCP_CAPABILITIES: McpCapabilities = {
   startOAuth: false,
   cancelOAuth: false,
 }
+/** A provider without a skill inventory of its own lists none. */
+const NO_SKILL_CAPABILITIES: SkillCapabilities = {
+  inventory: false,
+  configure: false,
+  install: false,
+}
 /** TasteCode-managed project servers only: no vendor inventory, no OAuth. */
 const PROJECT_MCP_MANAGEMENT_CAPABILITIES: McpCapabilities = {
   inventory: false,
@@ -1217,11 +1223,20 @@ export class Orchestrator {
     skills: Skill[]
     errors: SkillDiscoveryError[]
   }> {
-    const local = await listLocalSkills(projectPath)
     const control = this.#controls.forProvider(provider)
-    if (!control.listSkills) return { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
+    // `.agents/skills` is Codex's folder. Listing it for a CLI that never loads
+    // it offered skills that did nothing when picked.
+    const local = control.capabilities.agentsSkillsDir
+      ? await listLocalSkills(projectPath)
+      : undefined
+    if (!control.listSkills) {
+      return local
+        ? { capabilities: LOCAL_SKILL_CAPABILITIES, ...local }
+        : { capabilities: NO_SKILL_CAPABILITIES, skills: [], errors: [] }
+    }
     this.watchProvider(provider, projectPath, ['skills'])
     const vendor = await control.listSkills(projectPath)
+    if (!local) return vendor
     return {
       capabilities: vendor.capabilities,
       skills: mergeSkills(vendor.skills, local.skills),
