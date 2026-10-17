@@ -99,13 +99,13 @@ describe('profile settings', () => {
 
     finishHistory(historyResult())
 
-    await screen.findByText('1.2M')
+    await screen.findByRole('img', { name: '4 active days in the last 12 months' })
     expect(screen.getByRole('textbox', { name: 'Display name' })).toBe(editor)
     expect(document.activeElement).toBe(editor)
     expect(request).toHaveBeenCalledTimes(1)
   })
 
-  it('builds the profile from real local history and explicitly refreshes it', async () => {
+  it('shows the year of local activity and explicitly refreshes it', async () => {
     const result = historyResult()
     const request = vi.fn(async () => result)
     const transport = { request } as unknown as Transport
@@ -127,17 +127,10 @@ describe('profile settings', () => {
     expect(renderedFace()).toEqual(expectedFace('Local profile'))
     expect(screen.queryByText('@blue.emi')).toBeNull()
     expect(screen.getByText('Pro plan')).toBeTruthy()
-    expect(await screen.findByText('1.2M')).toBeTruthy()
-    expect(screen.getByText('7', { selector: '.profile-stats dd' })).toBeTruthy()
-    expect(screen.getAllByText('3 days')).toHaveLength(2)
-    expect(screen.getByText('75%')).toBeTruthy()
-    expect(screen.getAllByText('gpt-5.6-sol').length).toBeGreaterThan(0)
-    const topProvider = screen.getByText('Top provider').closest('div')
-    expect(topProvider?.querySelector('.source-identity')?.getAttribute('title')).toBe('Codex')
-    const topModel = document.querySelector('.profile-models li')
-    expect(topModel?.querySelector('.source-identity')?.getAttribute('title')).toBe(
-      'Codex · gpt-5.6-sol',
-    )
+    expect(
+      await screen.findByRole('img', { name: '4 active days in the last 12 months' }),
+    ).toBeTruthy()
+    expect(screen.getByText('4 active days in the last 12 months')).toBeTruthy()
     const activityCell = document.querySelector<HTMLElement>('[data-activity-date="2026-08-08"]')
     expect(activityCell).not.toBeNull()
     fireEvent.pointerEnter(activityCell!)
@@ -203,19 +196,39 @@ describe('profile settings', () => {
     expect(november?.style.gridColumn).toBe('3 / span 4')
   })
 
-  it('counts cache writes as input in the cache hit rate, like the Usage page', async () => {
+  it('leaves the numbers and their warnings to the Usage page, which it links to', async () => {
     const result = historyResult()
-    result.totals = {
-      ...result.totals,
-      uncachedInputTokens: 150_000,
-      cachedInputTokens: 750_000,
-      cacheWriteInputTokens: 100_000,
-    }
+    result.warnings = ['Some token records use models without a known public API price.']
+    const onOpenUsage = vi.fn()
     const transport = { request: vi.fn(async () => result) } as unknown as Transport
-    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+    render(
+      <ProfileSettings
+        transport={transport}
+        account={undefined}
+        providerName="Codex"
+        onOpenUsage={onOpenUsage}
+      />,
+    )
 
-    const rate = (await screen.findByText('Cache hit rate')).closest('div')
-    expect(rate?.querySelector('dd')?.textContent).toBe('75%')
+    await screen.findByRole('img', { name: '4 active days in the last 12 months' })
+    for (const gone of ['Lifetime tokens', 'Total chats', 'Current streak', 'Cache hit rate']) {
+      expect(screen.queryByText(gone)).toBeNull()
+    }
+    expect(screen.queryByText(/known public API price/u)).toBeNull()
+    expect(screen.queryByText('gpt-5.6-sol')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Open Usage' }))
+    expect(onOpenUsage).toHaveBeenCalledOnce()
+  })
+
+  it('holds the heatmap place while the first answer loads, without a usage link to nowhere', () => {
+    renderProfile()
+    const loading = screen.getByRole('status', { name: '' })
+    expect(loading.textContent).toBe('Reading the local activity index…')
+    expect(loading.querySelector('.profile-activity__skeleton-grid')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Open Usage' })).toBeNull()
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Refresh profile activity' }).disabled,
+    ).toBe(true)
   })
 
   it('shows an actionable error when no cached profile can be loaded', async () => {

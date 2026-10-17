@@ -484,6 +484,7 @@ function SettingsComponent(props: {
               providerName={props.providerName}
               identity={props.profileIdentity}
               onIdentityChange={props.onProfileIdentityChange}
+              onOpenUsage={() => setSection('usage')}
             />
           ) : null}
           {section === 'providers' ? <ProviderSettings {...props} /> : null}
