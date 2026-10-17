@@ -2,10 +2,13 @@ import path from 'node:path'
 import { readFile } from 'node:fs/promises'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { cliPath, latestBrewVersion, latestNpmVersion } from '@harness/proc/updates'
-import { CLAUDE_UPDATES } from './updates.js'
+import { CLAUDE_UPDATES, claudeInstallCommand } from './updates.js'
 
 vi.mock('node:fs/promises', () => ({ readFile: vi.fn() }))
-vi.mock('@harness/proc/updates', () => ({
+vi.mock('@harness/proc/updates', async (importOriginal) => ({
+  // The install command is built for real; only the release lookups are faked.
+  vendorInstallCommand: (await importOriginal<typeof import('@harness/proc/updates')>())
+    .vendorInstallCommand,
   cliPath: vi.fn(),
   latestBrewVersion: vi.fn(),
   latestNpmVersion: vi.fn(),
@@ -43,4 +46,27 @@ describe('Claude Code update source', () => {
     vi.mocked(cliPath).mockResolvedValue(path.join('custom', 'claude'))
     expect((await CLAUDE_UPDATES.check('2.1.226')).command).toBeUndefined()
   })
+})
+
+describe('Claude Code installer', () => {
+  it('runs install.ps1 from claude.ai on Windows, downloaded before it runs', () => {
+    const command = claudeInstallCommand('win32')
+    expect(command).toMatch(/^powershell\.exe .* -EncodedCommand [A-Za-z0-9+/=]+$/)
+    const script = Buffer.from(command.split(' ').at(-1)!, 'base64').toString('utf16le')
+    expect(script).toContain("$installer = Invoke-RestMethod -Uri 'https://claude.ai/install.ps1'")
+    expect(script).toContain('Invoke-Expression $installer')
+    expect(script).not.toMatch(/npm/)
+  })
+
+  it.each(['darwin', 'linux'] as const)(
+    'pipes install.sh from claude.ai to bash on %s',
+    (platform) => {
+      const command = claudeInstallCommand(platform)
+      expect(command).toContain(
+        'installer=$(curl -fsSL --connect-timeout 15 --max-time 60 "https://claude.ai/install.sh") && printf',
+      )
+      expect(command).toMatch(/\| bash'$/)
+      expect(command).not.toMatch(/npm/)
+    },
+  )
 })

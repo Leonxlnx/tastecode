@@ -1,0 +1,6 @@
+T  Credentials [90m~\.local\share\opencode\auth.json
+|
+•  MiniMax Token Plan (minimax.io) [90mapi
+|
+—  1 credentials
+
