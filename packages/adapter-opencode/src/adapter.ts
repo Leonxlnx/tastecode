@@ -14,6 +14,7 @@ import { createOpencodeClient, type Event, type OpencodeClient } from '@opencode
 import {
   JsonRpcValueSchema,
   killTree,
+  nativeShimTarget,
   readSseData,
   spawnCli,
   type JsonRpcValue,
@@ -49,6 +50,11 @@ export type OpenCodeStartOptions = {
 export type OpenCodeTurnOptions = Pick<OpenCodeStartOptions, 'model' | 'effort'>
 
 const OPENCODE_DEFAULT_VARIANT = 'default'
+/**
+ * `opencode serve` took 9-36 s to print its URL on a loaded PC. The old 7 s limit
+ * failed three of four such starts, each of which then had to be killed.
+ */
+export const OPENCODE_SERVER_START_TIMEOUT_MS = 30_000
 
 function applyOpenCodeTurnOptions(
   current: OpenCodeTurnOptions,
@@ -190,12 +196,16 @@ type OpenCodeV2CatalogModel = z.infer<typeof OpenCodeV2CatalogModelSchema>
 export class OpenCodeAdapter extends EventEmitter<Events> {
   #processStop: Promise<void> = Promise.resolve()
   readonly #spawn: Spawn
+  /** Only the default launch looks for the executable behind npm's shim. */
+  readonly #customSpawn: boolean
   readonly #configuredBaseUrl: string | undefined
   readonly #mcpServers: McpServerConfig[]
   readonly #mcpCredentials: Record<string, string>
   #baseUrl: string | undefined
   #server: { close(): Promise<void> } | undefined
   #starting: Promise<void> | undefined
+  /** Stops a serve that has not printed its URL yet; #server cannot reach it. */
+  #launchAbort: AbortController | undefined
   #generation = 0
   #protocol: OpenCodeProtocol | undefined
   #authorization: string | undefined
@@ -228,6 +238,7 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
   ) {
     super()
     this.#spawn = options.spawn ?? spawnCli
+    this.#customSpawn = options.spawn !== undefined
     this.#configuredBaseUrl = options.baseUrl
     this.#mcpServers = options.mcpServers ?? []
     this.#mcpCredentials = options.mcpCredentials ?? {}
@@ -259,15 +270,26 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
       return
     }
     const generation = this.#generation
+    const abort = new AbortController()
+    this.#launchAbort = abort
     let server: Awaited<ReturnType<typeof launchOpenCodeServer>>
     try {
       const config =
         this.#mcpServers.length > 0
           ? { mcp: openCodeMcpConfig(this.#mcpServers, this.#mcpCredentials) }
           : {}
-      server = await launchOpenCodeServer(config, this.#spawn)
+      server = await launchOpenCodeServer(
+        config,
+        this.#spawn,
+        this.#customSpawn ? 'opencode' : ((await nativeShimTarget('opencode')) ?? 'opencode'),
+        abort.signal,
+      )
     } catch {
+      if (generation !== this.#generation)
+        throw new Error('OpenCode stopped while it was starting.')
       throw new Error('OpenCode is unavailable. Install it and run `opencode` once to sign in.')
+    } finally {
+      if (this.#launchAbort === abort) this.#launchAbort = undefined
     }
     // dispose() cannot reach a server that was still launching.
     if (generation !== this.#generation) {
@@ -539,7 +561,15 @@ export class OpenCodeAdapter extends EventEmitter<Events> {
 
   dispose(): Promise<void> {
     this.#eventController?.abort()
-    const stopped = this.#server?.close() ?? this.#processStop
+    // A serve still starting can take 30 s to print its URL. Stop it now and wait
+    // for it: a host that exits after dispose would otherwise orphan it.
+    this.#launchAbort?.abort()
+    const launching = this.#starting?.then(
+      () => undefined,
+      () => undefined,
+    )
+    const closing = this.#server?.close() ?? this.#processStop
+    const stopped = launching ? Promise.all([closing, launching]).then(() => undefined) : closing
     this.#generation += 1
     this.#starting = undefined
     this.#eventController = undefined
@@ -898,6 +928,10 @@ function openCodeV2Model(
 async function launchOpenCodeServer(
   config: Record<string, JsonRpcValue>,
   spawn: Spawn = spawnCli,
+  /** opencode.exe itself where npm installed it, so its pid is the server's and cleanup reaches it. */
+  command = 'opencode',
+  /** Aborted when the adapter is disposed: the serve is stopped before it prints its URL. */
+  signal?: AbortSignal,
 ): Promise<{
   url: string
   authorization: string
@@ -908,8 +942,9 @@ async function launchOpenCodeServer(
   const username = 'opencode'
   const password = randomUUID()
   const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`
+  if (signal?.aborted) throw new Error('OpenCode stopped while it was starting.')
   return new Promise((resolve, reject) => {
-    const child = spawn('opencode', ['serve', '--hostname=127.0.0.1', '--port=0'], {
+    const child = spawn(command, ['serve', '--hostname=127.0.0.1', '--port=0'], {
       env: {
         OPENCODE_SERVER_USERNAME: username,
         OPENCODE_SERVER_PASSWORD: password,
@@ -922,10 +957,12 @@ async function launchOpenCodeServer(
     })
     let output = ''
     let settled = false
+    const stop = () => finish(new Error('OpenCode stopped while it was starting.'))
     const finish = (error?: Error, url?: string) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
+      signal?.removeEventListener('abort', stop)
       if (error || !url) {
         void killTree(child).then(
           () => reject(error ?? new Error('OpenCode server did not publish a URL')),
@@ -935,7 +972,11 @@ async function launchOpenCodeServer(
       }
       resolve({ url, authorization, close: () => killTree(child) })
     }
-    const timer = setTimeout(() => finish(new Error('OpenCode server did not start')), 7000)
+    const timer = setTimeout(
+      () => finish(new Error('OpenCode server did not start')),
+      OPENCODE_SERVER_START_TIMEOUT_MS,
+    )
+    signal?.addEventListener('abort', stop, { once: true })
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       output = `${output}${chunk}`.slice(-4096)

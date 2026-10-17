@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs'
-import { readdir, readFile, realpath, stat } from 'node:fs/promises'
+import { createReadStream, type Stats } from 'node:fs'
+import { open, readdir, readFile, realpath, stat, type FileHandle } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
@@ -30,11 +30,17 @@ const SESSION_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const LINE_FEED = 0x0a
 // Rows that set a title or working directory from anywhere in a transcript. A quoted
 // token matches a key or an exact value, never text inside a string: there the quotes
-// are escaped.
-const METADATA_TOKEN = /"(?:customTitle|aiTitle|relocated)"/g
-// Token scans run on Latin-1 windows, where offsets are byte offsets. Windows keep
-// every string far below V8's maximum length.
-const TOKEN_WINDOW_BYTES = 8 * 1024 * 1024
+// are escaped. UTF-8 never encodes another character with these bytes.
+const METADATA_TOKENS = ['"customTitle"', '"aiTitle"', '"relocated"'].map((token) =>
+  Buffer.from(token, 'latin1'),
+)
+const TOKEN_OVERLAP = Math.max(...METADATA_TOKENS.map((token) => token.length)) - 1
+// Transcripts are read in positioned chunks: whole files reached hundreds of megabytes
+// and a cold listing read 3 GB, blocking the event loop for seconds. Every chunk is an
+// await, so no synchronous multi-megabyte stretch remains.
+const LINE_CHUNK_BYTES = 64 * 1024
+const SCAN_CHUNK_BYTES = 1024 * 1024
+const STAT_BATCH = 32
 
 function timestamp(value: unknown): number | undefined {
   const at = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN
@@ -84,59 +90,196 @@ function parseRecord(line: string): SavedRecord | undefined {
   }
 }
 
+type Line = { start: number; end: number; bytes: Buffer }
+
+async function readAt(handle: FileHandle, start: number, length: number): Promise<Buffer> {
+  const buffer = Buffer.allocUnsafe(length)
+  const { bytesRead } = await handle.read(buffer, 0, length, start)
+  return buffer.subarray(0, bytesRead)
+}
+
+function lineFeedBefore(chunk: Buffer, end: number): number {
+  return end > 0 ? chunk.lastIndexOf(LINE_FEED, end - 1) : -1
+}
+
+/** Lines in [from, to), first to last. `from` starts a line and `to` follows a line feed. */
+async function* linesForward(handle: FileHandle, from: number, to: number): AsyncGenerator<Line> {
+  let pieces: Buffer[] = []
+  let start = from
+  for (let position = from; position < to;) {
+    const chunk = await readAt(handle, position, Math.min(LINE_CHUNK_BYTES, to - position))
+    if (!chunk.length) return
+    let cursor = 0
+    for (let newline = chunk.indexOf(LINE_FEED); newline !== -1;) {
+      pieces.push(chunk.subarray(cursor, newline))
+      yield { start, end: position + newline, bytes: Buffer.concat(pieces) }
+      pieces = []
+      cursor = newline + 1
+      start = position + cursor
+      newline = chunk.indexOf(LINE_FEED, cursor)
+    }
+    if (cursor < chunk.length) pieces.push(chunk.subarray(cursor))
+    position += chunk.length
+  }
+}
+
+/** Lines in [from, to), last to first. `from` starts a line and `to` follows a line feed. */
+async function* linesBackward(handle: FileHandle, from: number, to: number): AsyncGenerator<Line> {
+  let pieces: Buffer[] = []
+  let end = to - 1
+  for (let position = end; position > from;) {
+    const start = Math.max(from, position - LINE_CHUNK_BYTES)
+    const chunk = await readAt(handle, start, position - start)
+    if (chunk.length < position - start) return
+    let cursor = chunk.length
+    for (let newline = lineFeedBefore(chunk, cursor); newline !== -1;) {
+      pieces.unshift(chunk.subarray(newline + 1, cursor))
+      yield { start: start + newline + 1, end, bytes: Buffer.concat(pieces) }
+      pieces = []
+      end = start + newline
+      cursor = newline
+      newline = lineFeedBefore(chunk, cursor)
+    }
+    if (cursor) pieces.unshift(chunk.subarray(0, cursor))
+    position = start
+  }
+  if (end > from) yield { start: from, end, bytes: Buffer.concat(pieces) }
+}
+
+/** The offset after the last line feed in [from, size), or `from` when there is none. */
+async function completeEnd(handle: FileHandle, from: number, size: number): Promise<number> {
+  for (let position = size; position > from;) {
+    const start = Math.max(from, position - LINE_CHUNK_BYTES)
+    const newline = (await readAt(handle, start, position - start)).lastIndexOf(LINE_FEED)
+    if (newline !== -1) return start + newline + 1
+    position = start
+  }
+  return from
+}
+
+function parseLine(bytes: Buffer): SavedRecord | undefined {
+  return parseRecord(bytes.toString('utf8'))
+}
+
 /**
- * The rows `metadata` reads, in file order: every row through the first message with a
- * working directory and the first prompt, the last visible message, and every row that
- * can set a title or relocate the session. Parsing every row made each launch cost grow
- * with the user's whole Claude history.
+ * Add the rows in [from, to) that hold a metadata token to `rows`, by line start; a line
+ * already there is not parsed again, and rows a digest ignores are kept as `undefined`.
+ * Chunks overlap by a token's length, so a token split across two reads still counts. A
+ * line inside one chunk is parsed from it; only longer lines take a read of their own.
  */
-async function metadataRecords(file: string): Promise<SavedRecord[]> {
-  const data = await readFile(file)
-  const parsed = new Map<number, SavedRecord | undefined>()
-  const lineEnd = (offset: number) => {
-    const newline = data.indexOf(LINE_FEED, offset)
-    return newline === -1 ? data.length : newline
+async function addTokenRows(
+  handle: FileHandle,
+  from: number,
+  to: number,
+  rows: Map<number, SavedRecord | undefined>,
+): Promise<void> {
+  const add = async (start: number, end: number, bytes?: Buffer) => {
+    if (rows.has(start)) return
+    const row = parseLine(bytes ?? (await readAt(handle, start, end - start)))
+    rows.set(start, row && visible(row) ? row : undefined)
   }
-  const parse = (start: number, end: number) => {
-    if (!parsed.has(start)) parsed.set(start, parseRecord(data.toString('utf8', start, end)))
-    return parsed.get(start)
-  }
-
-  let headEnd = 0
-  let message = false
-  let cwd = false
-  let prompt = false
-  while (headEnd < data.length && !(message && cwd && prompt)) {
-    const end = lineEnd(headEnd)
-    const row = parse(headEnd, end)
-    if (visibleMessage(row)) {
-      message = true
-      cwd ||= typeof row.cwd === 'string'
-      prompt ||= isPrompt(row)
+  // Two buffers, so the next chunk is read while this one is searched. Each chunk lands
+  // after room for the bytes carried over from the one before.
+  const buffers = [0, 1].map(() => Buffer.allocUnsafe(TOKEN_OVERLAP + SCAN_CHUNK_BYTES))
+  const read = (index: number, position: number) =>
+    handle.read(
+      buffers[index % 2]!,
+      TOKEN_OVERLAP,
+      Math.min(SCAN_CHUNK_BYTES, to - position),
+      position,
+    )
+  let next = from < to ? read(0, from) : undefined
+  let window: Buffer | undefined
+  // Where the line that holds the byte after the last line feed seen so far starts.
+  let lineStart = from
+  // Where the last matching line ends, and where one whose line feed is not read yet starts.
+  let lineEnd = from
+  let pending: number | undefined
+  try {
+    for (let index = 0, position = from; next; index++) {
+      const { bytesRead } = await next
+      next = undefined
+      if (!bytesRead) break
+      const buffer = buffers[index % 2]!
+      const kept = window ? Math.min(TOKEN_OVERLAP, window.length) : 0
+      window?.copy(buffer, TOKEN_OVERLAP - kept, window.length - kept)
+      if (position + bytesRead < to) next = read(index + 1, position + bytesRead)
+      const base = position - kept
+      window = buffer.subarray(TOKEN_OVERLAP - kept, TOKEN_OVERLAP + bytesRead)
+      const pendingEnd = pending === undefined ? -1 : window.indexOf(LINE_FEED, kept)
+      if (pending !== undefined && pendingEnd !== -1) {
+        lineEnd = base + pendingEnd
+        await add(pending, lineEnd)
+        pending = undefined
+      }
+      const hits: number[] = []
+      for (const token of METADATA_TOKENS)
+        for (let hit = window.indexOf(token); hit !== -1; hit = window.indexOf(token, hit + 1))
+          if (hit + token.length > kept) hits.push(hit)
+      for (const hit of hits.sort((left, right) => left - right)) {
+        // Each line is searched once, so a line with many tokens costs no more than one.
+        if (pending !== undefined || base + hit < lineEnd) continue
+        const before = window.lastIndexOf(LINE_FEED, hit)
+        const start = before === -1 ? lineStart : base + before + 1
+        const after = window.indexOf(LINE_FEED, hit)
+        if (after === -1) {
+          pending = start
+          continue
+        }
+        lineEnd = base + after
+        await add(start, lineEnd, start >= base ? window.subarray(start - base, after) : undefined)
+      }
+      const last = window.lastIndexOf(LINE_FEED)
+      if (last !== -1) lineStart = base + last + 1
+      position += bytesRead
     }
-    headEnd = end + 1
+  } finally {
+    // A failed read must not leave the read ahead running into a closed file.
+    await next?.catch(() => undefined)
   }
+}
 
-  let end = data.length
-  while (end > headEnd) {
-    const newline = data.lastIndexOf(LINE_FEED, end - 1)
-    if (newline + 1 < end && visibleMessage(parse(newline + 1, end))) break
-    end = newline
-  }
-
-  for (let windowStart = headEnd; windowStart < data.length;) {
-    const windowEnd = lineEnd(Math.min(windowStart + TOKEN_WINDOW_BYTES, data.length))
-    const text = data.toString('latin1', windowStart, windowEnd)
-    for (const match of text.matchAll(METADATA_TOKEN)) {
-      const hit = windowStart + match.index
-      parse(data.lastIndexOf(LINE_FEED, hit) + 1, lineEnd(hit))
+/**
+ * Fold a transcript's listing metadata from the rows that can change it: every row
+ * through the first message with a working directory and the first prompt, the last
+ * visible message, and every row that can set a title or relocate the session. A final
+ * line without its line feed may still be in the middle of a write; it counts as it is.
+ */
+async function transcriptDigest(file: string, size: number): Promise<Digest> {
+  const digest: Digest = { message: false }
+  const handle = await open(file, 'r')
+  try {
+    const complete = await completeEnd(handle, 0, size)
+    let headEnd: number | undefined
+    for await (const line of linesForward(handle, 0, complete)) {
+      const row = parseLine(line.bytes)
+      if (row) observe(digest, row)
+      if (digest.cwd !== undefined && digest.prompt !== undefined) {
+        headEnd = line.end + 1
+        break
+      }
     }
-    windowStart = windowEnd + 1
+    if (headEnd !== undefined) {
+      // Rows a digest ignores are remembered as parsed but not kept: the walk back can
+      // pass megabytes of subagent rows after the last visible message.
+      const later = new Map<number, SavedRecord | undefined>()
+      for await (const line of linesBackward(handle, headEnd, complete)) {
+        const row = parseLine(line.bytes)
+        later.set(line.start, row && visible(row) ? row : undefined)
+        if (visibleMessage(row)) break
+      }
+      await addTokenRows(handle, headEnd, complete, later)
+      for (const [, row] of [...later].sort(([left], [right]) => left - right))
+        if (row) observe(digest, row)
+    }
+    if (complete < size) {
+      const row = parseLine(await readAt(handle, complete, size - complete))
+      if (row) observe(digest, row)
+    }
+  } finally {
+    await handle.close()
   }
-
-  return [...parsed]
-    .sort(([left], [right]) => left - right)
-    .flatMap(([, row]) => (row ? [row] : []))
+  return digest
 }
 
 function sdkRecord(row: SavedRecord): SavedRecord & { type: string } {
@@ -205,42 +348,70 @@ async function conversation(
   return result
 }
 
+/**
+ * What a listing needs from a transcript, folded from its rows in file order: the
+ * first visible message, the first one with a working directory, the first prompt,
+ * the last visible message, and the last relocation and titles. A fold keeps a few
+ * strings instead of the rows, which can hold megabytes of tool output or images.
+ */
+type Digest = {
+  message: boolean
+  firstAt?: unknown
+  lastAt?: unknown
+  cwd?: string
+  /** The first prompt, already shaped as a title. */
+  prompt?: string
+  relocatedCwd?: unknown
+  customTitle?: string
+  aiTitle?: string
+}
+
+function titleText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim().slice(0, 200)
+}
+
+function observe(digest: Digest, row: SavedRecord): void {
+  if (!visible(row)) return
+  if (row.type === 'user' || row.type === 'assistant') {
+    if (!digest.message) digest.firstAt = row.timestamp
+    digest.message = true
+    digest.lastAt = row.timestamp
+    if (digest.cwd === undefined && typeof row.cwd === 'string') digest.cwd = row.cwd
+    if (digest.prompt === undefined && isPrompt(row))
+      digest.prompt = titleText(
+        contentBlocks(row)
+          .map((block) => string(block.text) ?? '')
+          .join(' '),
+      )
+  }
+  if (row.type === 'relocated') digest.relocatedCwd = row.relocatedCwd
+  if (typeof row.customTitle === 'string') digest.customTitle = row.customTitle
+  if (typeof row.aiTitle === 'string') digest.aiTitle = row.aiTitle
+}
+
 function metadata(
-  rows: SavedRecord[],
+  digest: Digest,
   id: string,
   locator: string,
   revision: string,
   mtime: number,
   index: SavedRecord,
 ): ProviderHistorySession | undefined {
-  const main = rows.filter(visible)
-  const messages = main.filter((row) => row.type === 'user' || row.type === 'assistant')
-  if (!messages.length) return undefined
-  const workspacePath =
-    string(main.findLast((row) => row.type === 'relocated')?.relocatedCwd) ??
-    string(messages.find((row) => typeof row.cwd === 'string')?.cwd) ??
-    string(index.projectPath)
+  if (!digest.message) return undefined
+  const workspacePath = string(digest.relocatedCwd) ?? digest.cwd ?? string(index.projectPath)
   if (!workspacePath) return undefined
-  const firstPrompt = messages.find(isPrompt)
-  const promptText = firstPrompt
-    ? contentBlocks(firstPrompt)
-        .map((block) => string(block.text) ?? '')
-        .join(' ')
-    : ''
-  const title =
-    string(main.findLast((row) => typeof row.customTitle === 'string')?.customTitle) ??
-    string(main.findLast((row) => typeof row.aiTitle === 'string')?.aiTitle) ??
-    string(index.summary) ??
-    string(index.firstPrompt) ??
-    promptText
+  const named =
+    digest.customTitle ?? digest.aiTitle ?? string(index.summary) ?? string(index.firstPrompt)
   return {
     id,
     locator,
     revision,
     workspacePath,
-    title: title.replace(/\s+/g, ' ').trim().slice(0, 200) || 'Claude Code conversation',
-    createdAt: timestamp(messages[0]?.timestamp) ?? timestamp(index.created) ?? mtime,
-    updatedAt: Math.max(mtime, timestamp(messages.at(-1)?.timestamp) ?? 0),
+    title:
+      (named === undefined ? (digest.prompt ?? '') : titleText(named)) ||
+      'Claude Code conversation',
+    createdAt: timestamp(digest.firstAt) ?? timestamp(index.created) ?? mtime,
+    updatedAt: Math.max(mtime, timestamp(digest.lastAt) ?? 0),
   }
 }
 
@@ -369,28 +540,36 @@ export function createClaudeHistorySource(
           /* The index is optional and can be stale. Scan transcript files as well. */
         }
         const byId = new Map(entries.map((entry) => [string(entry.sessionId), entry]))
-        for (const file of files) {
-          if (!file.isFile() || !SESSION_FILE.test(file.name)) continue
-          const locator = path.join(project, file.name)
+        const transcripts = files.flatMap((file) =>
+          file.isFile() && SESSION_FILE.test(file.name) ? [path.join(project, file.name)] : [],
+        )
+        // Stat a folder's transcripts together; one at a time, every refresh waited on
+        // each file in turn before it could skip the unchanged ones.
+        const infos: Array<Stats | undefined> = []
+        for (let index = 0; index < transcripts.length; index += STAT_BATCH)
+          infos.push(
+            ...(await Promise.all(
+              transcripts
+                .slice(index, index + STAT_BATCH)
+                .map((locator) => stat(locator).catch(() => undefined)),
+            )),
+          )
+        for (const [index, locator] of transcripts.entries()) {
           present.add(locator)
+          const info = infos[index]
+          // A transcript removed since the folder was read is simply not listed.
+          if (!info) continue
           try {
-            const info = await stat(locator)
             // Reimport saved transcripts that previously exposed machine notifications
             // or Stop markers.
             const revision = `3:${info.size}:${info.mtimeMs}:${info.ctimeMs}`
             let cached = cache.get(locator)
             if (cached?.revision !== revision) {
-              const id = file.name.slice(0, -6)
+              const id = path.basename(locator).slice(0, -6)
+              const digest = await transcriptDigest(locator, info.size)
               cached = {
                 revision,
-                session: metadata(
-                  await metadataRecords(locator),
-                  id,
-                  locator,
-                  revision,
-                  info.mtimeMs,
-                  byId.get(id) ?? {},
-                ),
+                session: metadata(digest, id, locator, revision, info.mtimeMs, byId.get(id) ?? {}),
               }
               cache.set(locator, cached)
             }

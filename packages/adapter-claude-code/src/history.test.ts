@@ -60,6 +60,71 @@ function items(events: DomainEvent[]) {
   return events.flatMap((event) => (event.type === 'item.completed' ? [event.item] : []))
 }
 
+function seeded(seed: number): () => number {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0
+    let mixed = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+    mixed = (mixed + Math.imul(mixed ^ (mixed >>> 7), 61 | mixed)) ^ mixed
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+/**
+ * A transcript of every row kind a listing reads or skips, some of them longer than a
+ * read chunk, and the session it should list as. `more` appends rows and updates it.
+ */
+function transcript(random: () => number) {
+  const start = AT + 9e12
+  const later = (step: number) => new Date(start + step * 1000).toISOString()
+  const first = row('first', 'user', 'Generated prompt', null, { timestamp: later(0) })
+  const expected = {
+    title: 'Generated prompt',
+    workspacePath: first.cwd,
+    createdAt: start,
+    updatedAt: start,
+  }
+  let customTitle: string | undefined
+  let aiTitle: string | undefined
+  let step = 0
+  const more = (count: number) => {
+    const rows: unknown[] = []
+    for (let index = 0; index < count; index++) {
+      step++
+      const big = random() < 0.1
+      const pad = 'x'.repeat(Math.floor(random() * (big ? 1_200_000 : 2_000)) + (big ? 100_000 : 0))
+      const hidden = random() < 0.3 ? { isSidechain: true } : {}
+      const kind = Math.floor(random() * 7)
+      if (kind === 0) {
+        rows.push(row(`a${step}`, 'assistant', pad, null, { timestamp: later(step) }))
+        expected.updatedAt = start + step * 1000
+      } else if (kind === 1) {
+        rows.push(row(`s${step}`, 'assistant', pad, null, { ...hidden, isMeta: true }))
+      } else if (kind === 2) {
+        const title = { type: 'ai-title', sessionId: SESSION, aiTitle: `AI ${step}`, ...hidden }
+        rows.push(random() < 0.5 ? { pad, ...title } : { ...title, pad })
+        if (!('isSidechain' in hidden)) aiTitle = title.aiTitle
+      } else if (kind === 3) {
+        const title = { type: 'custom-title', sessionId: SESSION, customTitle: `Named ${step}` }
+        rows.push({ ...title, ...hidden })
+        if (!('isSidechain' in hidden)) customTitle = title.customTitle
+      } else if (kind === 4) {
+        const relocatedCwd = path.join(os.tmpdir(), `claude-moved-${step}`)
+        rows.push({ type: 'relocated', sessionId: SESSION, relocatedCwd, pad, ...hidden })
+        if (!('isSidechain' in hidden)) expected.workspacePath = relocatedCwd
+      } else if (kind === 5) {
+        rows.push(
+          row(`side${step}`, 'user', pad, null, { isSidechain: true, timestamp: later(1e6) }),
+        )
+      } else {
+        rows.push({ type: 'system', subtype: 'informational', content: pad })
+      }
+      expected.title = customTitle ?? aiTitle ?? 'Generated prompt'
+    }
+    return rows
+  }
+  return { first, expected, more }
+}
+
 describe('Claude Code saved history', () => {
   it('maps legacy TasteCode thread IDs to native session IDs', () => {
     const source = createClaudeHistorySource()
@@ -139,6 +204,96 @@ describe('Claude Code saved history', () => {
       createdAt: AT + 1000,
     })
     expect(session?.updatedAt).toBe(Math.max((await stat(f.file)).mtimeMs, AT + 201_000))
+  })
+
+  it('finds a title row wherever it falls across the scan chunks', async () => {
+    const configDir = await mkdtemp(path.join(os.tmpdir(), 'claude-history-'))
+    directories.push(configDir)
+    const project = path.join(configDir, 'projects', '-fixture')
+    await mkdir(project, { recursive: true })
+    const head = [row('meta', 'user', 'Caveat', null, { isMeta: true }), row('p', 'user', 'Edges')]
+      .map((item) => JSON.stringify(item) + '\n')
+      .join('')
+    const filler = (length: number) =>
+      JSON.stringify(row('f', 'assistant', 'x'.repeat(length), null, { isSidechain: true })) + '\n'
+    // Token scans read 1 MB chunks from the end of the head and carry 12 bytes over, one
+    // less than the longest token.
+    const boundary = Buffer.byteLength(head) + 1024 * 1024
+    const offsets = [0, 1, 6, 12, 13, 14]
+    for (const [index, back] of offsets.entries()) {
+      const id = `00000000-0000-4000-8000-00000000000${index}`
+      const title = JSON.stringify({ type: 'custom-title', sessionId: id, customTitle: `E${back}` })
+      const before = boundary - back - title.indexOf('"customTitle"')
+      const pad = before - Buffer.byteLength(head) - Buffer.byteLength(filler(0))
+      const text = Buffer.from(head + filler(pad) + title + '\n' + filler(10))
+      expect(text.indexOf('"customTitle"')).toBe(boundary - back)
+      await writeFile(path.join(project, `${id}.jsonl`), text)
+    }
+    const sessions = await createClaudeHistorySource({ configDir }).list()
+    expect(sessions.map((session) => session.title).sort()).toEqual(
+      offsets.map((back) => `E${back}`).sort(),
+    )
+  })
+
+  it('lists generated transcripts as their rows say', async () => {
+    const random = seeded(1016)
+    for (let round = 0; round < 4; round++) {
+      const generated = transcript(random)
+      const f = await fixture([generated.first, ...generated.more(60)])
+      if (random() < 0.5) await appendFile(f.file, '{"type":"assistant","message":{"content":"to')
+      const [session] = await f.source.list()
+      expect(session).toMatchObject(generated.expected)
+    }
+  })
+
+  it('reads rows longer than a chunk at the head, around a title and at the tail', async () => {
+    const at = (second: number) => new Date(AT + second * 1000).toISOString()
+    const moved = path.join(os.tmpdir(), 'claude-long-moved')
+    const prompt = `Long ${'p'.repeat(200_000)}`
+    const f = await fixture([
+      row('prompt', 'user', prompt, null, { timestamp: at(1) }),
+      // The token sits 2.5 MB into its row, and the next row's token 2.5 MB before its end.
+      { padding: 'x'.repeat(2_500_000), type: 'ai-title', sessionId: SESSION, aiTitle: 'Far' },
+      {
+        type: 'relocated',
+        sessionId: SESSION,
+        relocatedCwd: moved,
+        padding: 'y'.repeat(2_500_000),
+      },
+      row('last', 'assistant', 'z'.repeat(300_000), null, { timestamp: at(9_000_000_000) }),
+      row('meta', 'user', 'Caveat', null, { isMeta: true, timestamp: at(9_000_000_001) }),
+      row('side', 'assistant', 'Subagent', null, {
+        isSidechain: true,
+        timestamp: at(9_000_000_002),
+      }),
+    ])
+    const [session] = await f.source.list()
+    expect(session).toMatchObject({
+      title: 'Far',
+      workspacePath: moved,
+      createdAt: AT + 1000,
+      updatedAt: AT + 9_000_000_000_000,
+    })
+  })
+
+  it('counts a final row without its line feed and skips a torn one', async () => {
+    const later = new Date(AT + 9_000_000_000_000).toISOString()
+    const f = await fixture([row('u1', 'user', 'Whole')])
+    await appendFile(
+      f.file,
+      JSON.stringify(row('a1', 'assistant', 'Done', 'u1', { timestamp: later })),
+    )
+    await writeFile(
+      path.join(f.project, `${SECOND}.jsonl`),
+      JSON.stringify(row('u2', 'user', 'Torn', null, { sessionId: SECOND })) +
+        '\n' +
+        JSON.stringify({ type: 'ai-title', sessionId: SECOND, aiTitle: 'Torn title' }).slice(0, -5),
+    )
+    const sessions = await f.source.list()
+    expect(sessions.find((session) => session.id === SESSION)?.updatedAt).toBe(
+      AT + 9_000_000_000_000,
+    )
+    expect(sessions.find((session) => session.id === SECOND)?.title).toBe('Torn')
   })
 
   it('preserves Markdown, reasoning, attachments, typed tool output, native times, and distinct turns', async () => {
