@@ -564,10 +564,11 @@ export function createClaudeHistorySource(
     options.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude'),
     'projects',
   )
-  // `key` is the transcript's revision plus its sessions index entry, if any.
+  // `key` is the revision the server stores a listing under; `progress` is unset for a
+  // listing the server kept from an earlier run.
   const cache = new Map<
     string,
-    { key: string; session: ProviderHistorySession | undefined; progress: Progress }
+    { key: string; session: ProviderHistorySession | undefined; progress: Progress | undefined }
   >()
   const validLocator = async (locator: string): Promise<boolean> => {
     const relative = path.relative(projects, locator)
@@ -589,7 +590,7 @@ export function createClaudeHistorySource(
   }
   return {
     resolveSessionId: (threadId) => (threadId.startsWith('claude-') ? threadId.slice(7) : threadId),
-    async list() {
+    async list(options) {
       const directories = await readdir(projects, { withFileTypes: true }).catch(() => [])
       const sessions = new Map<string, ProviderHistorySession>()
       const present = new Set<string>()
@@ -634,8 +635,19 @@ export function createClaudeHistorySource(
             const index = byId.get(id)
             // A sessions index entry can name a session without its transcript changing.
             const key = index ? `${revision}:${fingerprintIndex(index)}` : revision
+            // Asking for every transcript also tells the server which ones still exist.
+            const stored = options?.cached?.(locator, key)
             let cached = cache.get(locator)
-            if (cached?.key !== key) {
+            if (cached?.key === key) {
+              if (stored === undefined) options?.remember?.(locator, key, cached.session ?? null)
+            } else if (
+              stored === null ||
+              (stored?.id === id && stored.locator === locator && stored.revision === revision)
+            ) {
+              // Listed by an earlier run; a transcript that grows later is read whole once.
+              cached = { key, session: stored ?? undefined, progress: cached?.progress }
+              cache.set(locator, cached)
+            } else {
               const { digest, progress } = await readTranscript(
                 locator,
                 info.size,
@@ -647,6 +659,7 @@ export function createClaudeHistorySource(
                 progress,
               }
               cache.set(locator, cached)
+              options?.remember?.(locator, key, cached.session ?? null)
             }
             const session = cached.session
             if (session && session.updatedAt >= (sessions.get(session.id)?.updatedAt ?? 0))

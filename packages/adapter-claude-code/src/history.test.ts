@@ -12,7 +12,12 @@ import {
 } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
+import {
+  DomainEventSchema,
+  type DomainEvent,
+  type ProviderHistoryListOptions,
+  type ProviderHistorySession,
+} from '@harness/contracts'
 import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { createClaudeHistorySource } from './history.js'
 
@@ -330,6 +335,64 @@ describe('Claude Code saved history', () => {
     expect(await f.source.list()).toEqual(await fresh())
   })
 
+  it('lists from the metadata a server kept across a restart without reading transcripts', async () => {
+    const f = await fixture([row('u1', 'user', 'Kept'), row('a1', 'assistant', 'Answer', 'u1')])
+    const empty = path.join(f.project, `${SECOND}.jsonl`)
+    await writeFile(
+      empty,
+      JSON.stringify(row('m1', 'user', 'Caveat', null, { isMeta: true })) + '\n',
+    )
+    // What the server's metadata table would hold, and which locators a listing named.
+    const kept = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
+    const named = new Set<string>()
+    const options: ProviderHistoryListOptions = {
+      cached: (locator, revision) => {
+        named.add(locator)
+        const entry = kept.get(locator)
+        return entry?.revision === revision ? entry.session : undefined
+      },
+      remember: (locator, revision, session) => {
+        named.add(locator)
+        kept.set(locator, { revision, session })
+      },
+    }
+    const listed = await f.source.list(options)
+    expect(listed).toEqual(await createClaudeHistorySource({ configDir: f.configDir }).list())
+    expect(kept.get(f.file)?.session).toEqual(listed[0])
+    expect(kept.get(empty)?.session).toBeNull()
+
+    const restarted = createClaudeHistorySource({ configDir: f.configDir })
+    const probe = await open(f.file, 'r')
+    const read = vi.spyOn(Object.getPrototypeOf(probe), 'read')
+    await probe.close()
+    try {
+      read.mockClear()
+      expect(await restarted.list(options)).toEqual(listed)
+      expect(read).not.toHaveBeenCalled()
+      // Unchanged transcripts are still named, so the server keeps their rows.
+      named.clear()
+      await restarted.list(options)
+      expect([...named].sort()).toEqual([f.file, empty].sort())
+      expect(read).not.toHaveBeenCalled()
+
+      // After another restart, a transcript that grew and a kept row naming another
+      // session are read again.
+      await appendFile(f.file, JSON.stringify(row('a2', 'assistant', 'More', 'a1')) + '\n')
+      const entry = kept.get(empty)!
+      kept.set(empty, { ...entry, session: { ...listed[0]!, locator: empty } })
+      const fresh = await createClaudeHistorySource({ configDir: f.configDir }).list()
+      read.mockClear()
+      expect(await createClaudeHistorySource({ configDir: f.configDir }).list(options)).toEqual(
+        fresh,
+      )
+      expect(read).toHaveBeenCalled()
+      expect(kept.get(f.file)?.session).toEqual(fresh[0])
+      expect(kept.get(empty)?.session).toBeNull()
+    } finally {
+      read.mockRestore()
+    }
+  })
+
   it('lists a session again when its sessions index entry changes', async () => {
     const f = await fixture([row('u1', 'user', 'Prompt'), row('a1', 'assistant', 'Answer', 'u1')])
     const index = (summary: string) =>
@@ -338,9 +401,19 @@ describe('Claude Code saved history', () => {
         JSON.stringify({ entries: [{ sessionId: SESSION, summary }] }),
       )
     await index('First summary')
-    expect((await f.source.list())[0]?.title).toBe('First summary')
+    const kept = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
+    const options: ProviderHistoryListOptions = {
+      cached: (locator, revision) => {
+        const entry = kept.get(locator)
+        return entry?.revision === revision ? entry.session : undefined
+      },
+      remember: (locator, revision, session) => kept.set(locator, { revision, session }),
+    }
+    expect((await f.source.list(options))[0]?.title).toBe('First summary')
     await index('Second summary')
-    expect((await f.source.list())[0]?.title).toBe('Second summary')
+    expect((await f.source.list(options))[0]?.title).toBe('Second summary')
+    const restarted = createClaudeHistorySource({ configDir: f.configDir })
+    expect((await restarted.list(options))[0]?.title).toBe('Second summary')
   })
 
   it('reads rows longer than a chunk at the head, around a title and at the tail', async () => {
