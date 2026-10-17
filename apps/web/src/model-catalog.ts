@@ -45,6 +45,34 @@ export function filterModelChoicesByQuery(choices: ModelChoice[], query: string)
   })
 }
 
+/** One creator lab's models within a source, in the order the source lists them. */
+export type ModelLabGroup = {
+  /** The lab folded to lower case, or '' for the rows that name no lab. */
+  key: string
+  /** The lab as the source first spells it; undefined for the rows that name none. */
+  lab: string | undefined
+  choices: ModelChoice[]
+}
+
+/**
+ * A source's models grouped by the lab that made them (`model.lab`), labs in
+ * the order the source first lists them and the rows that name no lab last.
+ */
+export function groupModelChoicesByLab(choices: readonly ModelChoice[]): ModelLabGroup[] {
+  const groups = new Map<string, ModelLabGroup>()
+  for (const choice of choices) {
+    const lab = choice.model.lab?.trim() || undefined
+    const key = lab?.toLowerCase() ?? ''
+    const group = groups.get(key)
+    if (group) group.choices.push(choice)
+    else groups.set(key, { key, lab, choices: [choice] })
+  }
+  const unlabeled = groups.get('')
+  if (!unlabeled) return [...groups.values()]
+  groups.delete('')
+  return [...groups.values(), unlabeled]
+}
+
 /** Legacy models that start hidden although nothing in their family replaces them. */
 const DEFAULT_HIDDEN_MODELS = new Set([
   'gpt-5.5',

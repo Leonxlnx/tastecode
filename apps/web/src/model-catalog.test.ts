@@ -7,6 +7,7 @@ import {
   customModelKey,
   effectiveHiddenModels,
   filterModelChoicesByQuery,
+  groupModelChoicesByLab,
   importLegacyVisibility,
   isCustomModelChoice,
   modelVisibilityDefaults,
@@ -176,6 +177,29 @@ describe('model catalog', () => {
     // A row without a lab is still found by its name, and never by a stray "undefined".
     expect(filterModelChoicesByQuery(choices, 'composer')).toEqual([choices[2]])
     expect(filterModelChoicesByQuery(choices, 'undefined')).toEqual([])
+  })
+
+  it('groups a source by lab in listing order, the rows without a lab last', () => {
+    const choices = choicesFor({ provider: 'cursor', sourceName: 'Cursor', mark: 'cursor' }, [
+      { ...model, id: 'composer-2.5', displayName: 'Composer 2.5' },
+      { ...model, id: 'claude-opus-5.5', displayName: 'Claude Opus 5.5', lab: 'Anthropic' },
+      { ...model, id: 'gpt-5.6-sol', displayName: 'GPT-5.6 Sol', lab: 'OpenAI' },
+      { ...model, id: 'claude-sonnet-5.5', displayName: 'Claude Sonnet 5.5', lab: ' anthropic ' },
+      { ...model, id: 'grok-4.7', displayName: 'Grok 4.7', lab: '' },
+    ])
+
+    expect(
+      groupModelChoicesByLab(choices).map((group) => [
+        group.key,
+        group.lab,
+        group.choices.map((choice) => choice.model.id),
+      ]),
+    ).toEqual([
+      ['anthropic', 'Anthropic', ['claude-opus-5.5', 'claude-sonnet-5.5']],
+      ['openai', 'OpenAI', ['gpt-5.6-sol']],
+      ['', undefined, ['composer-2.5', 'grok-4.7']],
+    ])
+    expect(groupModelChoicesByLab([])).toEqual([])
   })
 
   describe('default visibility', () => {
