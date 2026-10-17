@@ -38,13 +38,13 @@ describe('usage summary limit source', () => {
 
   it('flattens unavailable to an empty legacy list', async () => {
     await expect(
-      usageSummaryWithLimits(totals, 'api', async () => ({
-        provider: 'api',
+      usageSummaryWithLimits(totals, 'grok', async () => ({
+        provider: 'grok',
         status: 'unavailable',
       })),
     ).resolves.toEqual({
       ...totals,
-      limitSource: { provider: 'api', status: 'unavailable' },
+      limitSource: { provider: 'grok', status: 'unavailable' },
       limits: [],
     })
   })
