@@ -27,10 +27,11 @@ type AgySpawn = (
 ) => ChildProcessWithoutNullStreams
 
 /**
- * A cold agy start took 12.8 s on a busy machine. Killing it early also kills
- * an updater it started, so the limit is generous.
+ * `agy models` answered in 4 s on a quiet machine, 12.8 s cold under load and
+ * 72 s with the CPU at 100%. Killing it early also kills an updater it started,
+ * and a sign-in check that runs out reports nothing, so the limit is generous.
  */
-export const AGY_MODELS_TIMEOUT_MS = 60_000
+export const AGY_MODELS_TIMEOUT_MS = 120_000
 
 /** How long a signed-in read also answers the next sign-in check or listing. */
 const SIGNED_IN_SHARE_MS = 30_000

@@ -110,13 +110,13 @@ describe('antigravityAccount', () => {
     await expect(antigravityAccount()).rejects.toThrow('agy models exited with code 2')
   })
 
-  it('gives a slow agy a minute before it gives up', async () => {
+  it('gives a slow agy two minutes before it gives up', async () => {
     vi.useFakeTimers()
     fake.answer = null
     const account = antigravityAccount()
     const settled = vi.fn()
     account.then(settled, settled)
-    await vi.advanceTimersByTimeAsync(59_999)
+    await vi.advanceTimersByTimeAsync(119_999)
     expect(settled).not.toHaveBeenCalled()
     await vi.advanceTimersByTimeAsync(1)
     await expect(account).rejects.toThrow('CLI did not respond within the time limit')
