@@ -148,6 +148,14 @@ const OLDER_CLAUDE_MODELS: Model[] = [
 ]
 export const CLAUDE_MODELS: Model[] = [...CURRENT_CLAUDE_MODELS, ...OLDER_CLAUDE_MODELS]
 
+/**
+ * The last live answer per Claude config directory, for this process. Live rows
+ * use the runtime's alias ids (`opus`, `claude-fable-5-1[1m]`) where the catalog
+ * uses versioned ids, so answering a slow discovery with the catalog would change
+ * the ids behind the user's selection and visibility choices.
+ */
+const lastDiscoveredClaudeModels = new Map<string, Model[]>()
+
 function claudeModel(
   id: string,
   displayName: string,
@@ -442,7 +450,7 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     this.#createQuery = options.createQuery ?? createClaudeQuery
     this.#spawn = options.spawn ?? spawnCli
     this.#environment = options.environment ?? process.env
-    this.#startupTimeoutMs = options.startupTimeoutMs ?? 15_000
+    this.#startupTimeoutMs = options.startupTimeoutMs ?? CLAUDE_STARTUP_TIMEOUT_MS
     if (!Number.isFinite(this.#startupTimeoutMs) || this.#startupTimeoutMs <= 0)
       throw new Error('Claude startup timeout must be a positive number')
   }
@@ -661,8 +669,13 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     })
   }
 
-  /** Ask the installed Claude runtime for its live model inventory without sending a prompt. */
-  async listModels(): Promise<Model[]> {
+  /**
+   * Ask the installed Claude runtime for its live model inventory without
+   * sending a prompt. With `refresh`, the caller already holds a list it keeps
+   * when this fails, so a discovery that cannot answer rejects instead of
+   * answering with the catalog.
+   */
+  async listModels(options: { refresh?: boolean } = {}): Promise<Model[]> {
     const abort = new AbortController()
     const query = this.#createQuery({
       prompt: waitForAbort(abort.signal),
@@ -675,32 +688,54 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
         strictMcpConfig: true,
       }),
     })
+    const discoveryKey = this.#environment.CLAUDE_CONFIG_DIR ?? ''
+    const fallback = (reason: string): Model[] => {
+      const previous = lastDiscoveredClaudeModels.get(discoveryKey)
+      if (previous) {
+        this.#log(`Claude model discovery kept the last live list: ${reason}`)
+        return previous
+      }
+      // The caller's list may come from an earlier launch with the live alias
+      // ids, which the catalog's versioned ids would replace.
+      if (options.refresh) throw new Error(`Claude model discovery did not answer: ${reason}`)
+      this.#log(`Claude model discovery fell back to known values: ${reason}`)
+      return CLAUDE_MODELS
+    }
+    // Settled outside the try, so a refresh that rejects is not caught as a
+    // discovery failure of its own.
+    let failure: string
     try {
       const models = await withTimeout(
         query.supportedModels(),
         30_000,
         'Claude model discovery timed out',
       )
-      if (models.length === 0) return CLAUDE_MODELS
-      const ultracodeAvailable = await withTimeout(
-        readClaudeAppliedSettings(query),
-        10_000,
-        'Claude settings discovery timed out',
-      ).then(
-        (applied) => applied?.ultracodeAvailable === true,
-        (error: unknown) => {
-          this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
-          return false
-        },
-      )
-      return mergeClaudeModels(models).map((model) => withUltracode(model, ultracodeAvailable))
+      if (models.length > 0) {
+        const ultracodeAvailable = await withTimeout(
+          readClaudeAppliedSettings(query),
+          10_000,
+          'Claude settings discovery timed out',
+        ).then(
+          (applied) => applied?.ultracodeAvailable === true,
+          (error: unknown) => {
+            this.#log(`Claude Ultracode discovery failed; not offering it: ${String(error)}`)
+            return false
+          },
+        )
+        const discovered = mergeClaudeModels(models).map((model) =>
+          withUltracode(model, ultracodeAvailable),
+        )
+        lastDiscoveredClaudeModels.set(discoveryKey, discovered)
+        return discovered
+      }
+      failure = 'the runtime listed no models'
     } catch (error) {
-      this.#log(`Claude model discovery fell back to known values: ${String(error)}`)
-      return CLAUDE_MODELS
+      failure = String(error)
     } finally {
       abort.abort()
       query.close()
     }
+    return fallback(failure)
   }
 
   dispose(): Promise<void> {
@@ -798,6 +833,8 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
     const effortOptions = claudeEffortOptions(options.effort)
     let bootstrap: Awaited<ReturnType<typeof createClaudeMcpBootstrap>> | undefined
     let bootstrapReady: ReturnType<typeof createClaudeMcpBootstrap> | undefined
+    // One budget covers the whole start; the message names the step that stalled.
+    let phase: ClaudeStartupPhase = 'start'
     try {
       await withTimeout(
         (async () => {
@@ -844,14 +881,16 @@ export class ClaudeCodeAdapter extends EventEmitter<ClaudeAdapterEvents> {
           this.#queryCostUsd = 0
           void this.#consume(query, generation)
           await query.initializationResult()
-          if (bootstrap)
+          if (bootstrap) {
+            phase = 'mcp'
             await activateClaudeMcpServers(query, bootstrap.servers, mcp.servers, abort.signal)
+          }
           if (this.#query !== query || abort.signal.aborted)
             throw new Error('Claude session is closed')
           if (options.effort === CLAUDE_ULTRACODE_EFFORT) this.#confirmUltracode(query)
         })(),
         this.#startupTimeoutMs,
-        'Claude session startup timed out. Check Claude Code and the project MCP servers, then retry.',
+        () => claudeStartupTimeoutMessage(phase, this.#startupTimeoutMs),
         abort.signal,
       )
     } catch (error) {
@@ -1669,10 +1708,33 @@ function versionedClaudeModelName(id: string): string | undefined {
   return `${family} ${version}`
 }
 
+/**
+ * A session start measured 5-44 s on a busy Windows machine: the native
+ * binary is large and loads settings and plugins before it answers. 15 s
+ * failed sessions that would have started.
+ */
+const CLAUDE_STARTUP_TIMEOUT_MS = 60_000
+
+type ClaudeStartupPhase = 'start' | 'mcp'
+
+function claudeStartupTimeoutMessage(phase: ClaudeStartupPhase, timeoutMs: number): string {
+  const budget = describeDuration(timeoutMs)
+  return phase === 'mcp'
+    ? `Claude Code started, but the project MCP servers did not connect within ${budget}. Check them in Settings, then try again.`
+    : `Claude Code did not start within ${budget}. It may be updating, or the computer is busy. Try again.`
+}
+
+function describeDuration(ms: number): string {
+  if (ms === 60_000) return 'a minute'
+  if (ms > 60_000 && ms % 60_000 === 0) return `${ms / 60_000} minutes`
+  const seconds = Math.max(1, Math.round(ms / 1_000))
+  return seconds === 1 ? '1 second' : `${seconds} seconds`
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  message: string,
+  message: string | (() => string),
   signal?: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -1681,7 +1743,10 @@ async function withTimeout<T>(
     return await Promise.race([
       promise,
       new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+        timer = setTimeout(
+          () => reject(new Error(typeof message === 'function' ? message() : message)),
+          timeoutMs,
+        )
         if (signal) {
           onAbort = () => reject(new Error('Claude session is closed'))
           if (signal.aborted) onAbort()

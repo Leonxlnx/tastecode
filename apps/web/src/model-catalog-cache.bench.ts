@@ -58,6 +58,7 @@ const catalog = choicesFor(
   })),
 )
 const raw = serializeModelCatalogCache(catalog)
+if (raw === undefined) throw new Error('the largest supported catalog no longer fits the cache')
 
 describe('largest supported model catalog startup cache', () => {
   bench(
