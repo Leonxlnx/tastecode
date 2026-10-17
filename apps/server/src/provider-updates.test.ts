@@ -65,6 +65,14 @@ describe('provider update service', () => {
     expect(check).toHaveBeenCalledTimes(2)
   })
 
+  it('asks the shared probe for a fresh version only when a refresh is requested', async () => {
+    const { service, system } = fixture()
+    await service.list()
+    expect(system.version).toHaveBeenLastCalledWith('codex', { fresh: false })
+    await service.list(true)
+    expect(system.version).toHaveBeenLastCalledWith('codex', { fresh: true })
+  })
+
   it('does not use an in-flight old version read to verify a completed update', async () => {
     const { service, system } = fixture()
     let release!: (version: string) => void

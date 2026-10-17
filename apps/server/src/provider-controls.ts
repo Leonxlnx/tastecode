@@ -116,6 +116,11 @@ export type ProviderControlsOptions = {
   unavailableLimitCacheMs?: number
   /** Minimum spacing of forwarded usage-change signals per provider. */
   limitChangeIntervalMs?: number
+  /**
+   * Waited on before a limit read that is not cached. Such a read can start a
+   * vendor process, and the server holds it while a turn streams.
+   */
+  beforeLimitRead?: () => Promise<void>
   createCodex?: () => CodexControlAdapter | Promise<CodexControlAdapter>
   services?: Partial<Record<ProviderId, ProviderServices>>
 }
@@ -500,7 +505,8 @@ export class ProviderControls {
     if (entry.reading) return entry.reading
     if (entry.value && Date.now() < entry.freshUntil) return Promise.resolve(entry.value)
     const { version, accountVersion, stored } = entry
-    const reading = read()
+    const wait = this.#options.beforeLimitRead
+    const reading = (wait ? wait().then(read) : read())
       .then((value) => {
         const unavailable = value.status === 'unavailable'
         if (
