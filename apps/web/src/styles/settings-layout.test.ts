@@ -24,7 +24,6 @@ describe('settings viewport CSS', () => {
       /\.settings \.settings__row:has\(> \.settings__row-control > :is\(\.switch, \.settings__switch-skeleton\)\) \{[^}]*padding: 12px 14px;/s,
     )
     expect(settingsCss).toMatch(/\.settings__group-note \{[^}]*padding: 10px 14px;/s)
-    expect(settingsCss).toMatch(/\.background-model-settings > header \{[^}]*padding: 10px 14px;/s)
     expect(settingsCss).toMatch(/\.model-visibility__source \{[^}]*padding: 6px 14px;/s)
   })
 
@@ -241,7 +240,9 @@ describe('settings viewport CSS', () => {
     expect(tuningCss).not.toMatch(/\.menutrigger\.provider-tune__trigger \{/)
     expect(settingsCss).not.toMatch(/\.provider-form__select \{[^}]*height:/s)
     expect(settingsSource).not.toContain('appearance-select')
-    expect(settingsSource.match(/className="set-select--inline"/g)).toHaveLength(2)
+    // Appearance's font and translucency, Background work's model, effort and speed.
+    expect(settingsSource.match(/className="set-select--inline"/g)).toHaveLength(5)
+    expect(settingsCss).not.toMatch(/background-model-settings|settings__select/)
   })
 
   it('sizes every settings switch 30x18 with a 12px thumb, in one place', () => {

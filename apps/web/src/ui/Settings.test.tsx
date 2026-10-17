@@ -580,7 +580,9 @@ describe('settings loading values', () => {
     const background = screen.getByRole('region', { name: 'Background work' })
     const loading = within(background).getByText('Loading background model…')
     expect(loading.closest('[role="status"]')?.getAttribute('aria-busy')).toBe('true')
-    expect(loading.closest('[role="status"]')?.querySelector('.skeleton--block')).toBeTruthy()
+    // The value placeholder is a line where the inline select will stand.
+    expect(loading.closest('[role="status"]')?.querySelector('.skeleton')).toBeTruthy()
+    expect(background.querySelector('.set-row__name')?.textContent).toBe('Model')
     expect(within(background).getByText('Loading background model details…').className).toBe(
       'visually-hidden',
     )
@@ -607,6 +609,15 @@ describe('settings loading values', () => {
       'Automatic (recommended)',
     )
     expect(within(background).getByText('Currently luna through Codex.')).toBeTruthy()
+    // An open section on the shared rows, its value the inline select.
+    expect(background.querySelector('.set-section__note')?.textContent).toBe(
+      'Used for session titles, commit-message drafts, and other short writing.',
+    )
+    expect(
+      within(background)
+        .getByRole('combobox', { name: 'Background model' })
+        .closest('.app-select.set-select--inline'),
+    ).toBeTruthy()
   })
 
   it('ends the background skeleton on failure without inventing a selection', async () => {
@@ -619,6 +630,7 @@ describe('settings loading values', () => {
     const background = screen.getByRole('region', { name: 'Background work' })
     expect(within(background).queryByText('Loading background model…')).toBeNull()
     expect(within(background).getByRole('alert').textContent).toBe('Background settings offline')
+    expect(within(background).getByRole('alert').classList.contains('set-notice')).toBe(true)
     expect(within(background).queryByText('Automatic (recommended)')).toBeNull()
   })
 

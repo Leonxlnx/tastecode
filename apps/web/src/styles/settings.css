@@ -2372,50 +2372,6 @@
   gap: 14px;
 }
 
-.background-model-settings {
-  overflow: hidden;
-  background: var(--bg-rail);
-  border: 1px solid var(--chrome-border);
-  border-radius: var(--r-lg);
-}
-
-.background-model-settings > header {
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--line);
-}
-
-.background-model-settings > header h2,
-.background-model-settings > header p,
-.background-model-settings__error {
-  margin: 0;
-}
-
-.background-model-settings > header h2 {
-  font-size: var(--t-sm);
-  font-weight: 500;
-}
-
-.background-model-settings > header p {
-  max-width: 66ch;
-  margin-top: 4px;
-  color: var(--text-3);
-  font-size: var(--t-sm);
-  line-height: 1.45;
-}
-
-.background-model-settings .settings__group {
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-}
-
-.background-model-settings__error {
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-  color: var(--error);
-  font-size: var(--t-sm);
-}
-
 .model-settings__empty p,
 .model-visibility__source h3 {
   margin: 0;
@@ -2730,23 +2686,6 @@
 
 .settings__row-control:has(> .state-label) {
   max-width: 100%;
-}
-
-.settings__select {
-  max-width: min(310px, 42vw);
-}
-
-.settings__select--model {
-  min-width: min(210px, 42vw);
-}
-
-.settings__select--effort {
-  min-width: 112px;
-}
-
-.settings__select .app-select__trigger:disabled {
-  color: var(--text-3);
-  opacity: 0.65;
 }
 
 .settings .settings__row:has(> .settings__row-control > :is(.switch, .settings__switch-skeleton)) {

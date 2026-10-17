@@ -152,6 +152,7 @@ import { SourceIdentity } from './SourceIdentity.js'
 import { SettingsMeta, StateLabel } from './SettingsStatus.js'
 import { UsageSettings } from './UsageSettings.js'
 import {
+  SettingsNotice,
   SettingsPage,
   SettingsSection,
   SettingsRow as SettingsLeaderRow,
@@ -1542,124 +1543,114 @@ function BackgroundModelSettings(props: { transport: Transport }) {
   const loading = state === undefined && !error
 
   return (
-    <section className="background-model-settings" aria-label="Background work">
-      <header>
-        <h2>Background work</h2>
-        <p>Used for session titles, commit-message drafts, and other short writing.</p>
-      </header>
-      <div className="settings__group">
-        <SettingsRow
-          title="Model"
-          note={
-            loading ? (
-              <SettingsValueSkeleton label="Loading background model details…" width={240} />
-            ) : state ? (
-              automaticNote
-            ) : undefined
-          }
-        >
-          {loading ? (
-            <SkeletonStatus
-              label="Loading background model…"
-              className="settings__select settings__select--model"
-            >
-              <Skeleton className="skeleton--block" width="100%" height={28} />
-            </SkeletonStatus>
-          ) : !state ? (
-            <SettingsMeta>Unavailable</SettingsMeta>
-          ) : (
-            <AppSelect
-              className="settings__select settings__select--model"
-              ariaLabel="Background model"
-              align="right"
-              value={selectedValue}
-              options={modelOptions}
-              disabled={!state || busy}
-              onChange={(value) => {
-                if (value === 'automatic') {
-                  void update({ mode: 'automatic' })
-                  return
-                }
-                const choice = backgroundModelFromValue(state?.sources ?? [], value)
-                if (!choice) return
-                const serviceTier = getNextServiceTierForModel({
-                  nextModel: choice.model,
-                  currentModel: selected?.model,
-                  currentServiceTier: manual?.serviceTier,
-                })
-                void update({
-                  mode: 'manual',
-                  target: {
-                    provider: choice.source.provider,
-                    ...(choice.source.connectionId
-                      ? { connectionId: choice.source.connectionId }
-                      : {}),
-                    ...(choice.source.agent
-                      ? {
-                          agent: choice.source.agent,
-                        }
-                      : {}),
-                    model: choice.model.id,
-                    ...(serviceTier ? { serviceTier } : {}),
-                    ...(choice.model.reasoningEfforts[0]
-                      ? {
-                          effort: choice.model.reasoningEfforts[0],
-                        }
-                      : {}),
-                  },
-                })
-              }}
-            />
-          )}
-        </SettingsRow>
-        {manual && selected && effortOptions.length > 0 ? (
-          <SettingsRow
-            title="Reasoning effort"
-            note="Choose the effort used for background writing."
-          >
-            <AppSelect
-              className="settings__select settings__select--effort"
-              ariaLabel="Background reasoning effort"
-              align="right"
-              value={selectedEffort}
-              options={effortOptions}
-              disabled={busy}
-              onChange={(effort) =>
-                void update({
-                  mode: 'manual',
-                  target: { ...manual, effort },
-                })
+    <SettingsSection
+      title="Background work"
+      note="Used for session titles, commit-message drafts, and other short writing."
+    >
+      {error ? <SettingsNotice tone="error">{error}</SettingsNotice> : null}
+      <SettingsLeaderRow
+        name="Model"
+        note={
+          loading ? (
+            <SettingsValueSkeleton label="Loading background model details…" width={240} />
+          ) : state ? (
+            automaticNote
+          ) : undefined
+        }
+      >
+        {loading ? (
+          <SkeletonStatus label="Loading background model…" className="settings-value-skeleton">
+            <Skeleton width={152} height={9} />
+          </SkeletonStatus>
+        ) : !state ? (
+          <SettingsMeta>Unavailable</SettingsMeta>
+        ) : (
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background model"
+            align="right"
+            value={selectedValue}
+            options={modelOptions}
+            disabled={!state || busy}
+            onChange={(value) => {
+              if (value === 'automatic') {
+                void update({ mode: 'automatic' })
+                return
               }
-            />
-          </SettingsRow>
-        ) : null}
-        {manual && selected && fastTier ? (
-          <SettingsRow title="Speed" note="Choose the speed used for background writing.">
-            <AppSelect
-              className="settings__select settings__select--effort"
-              ariaLabel="Background speed"
-              align="right"
-              value={selectedSpeed}
-              options={[
-                { value: 'standard', label: 'Standard' },
-                { value: 'fast', label: 'Fast' },
-              ]}
-              disabled={busy}
-              onChange={(speed) => {
-                const serviceTier =
-                  speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
-                void update({ mode: 'manual', target: { ...manual, serviceTier } })
-              }}
-            />
-          </SettingsRow>
-        ) : null}
-      </div>
-      {error ? (
-        <p className="background-model-settings__error" role="alert">
-          {error}
-        </p>
+              const choice = backgroundModelFromValue(state?.sources ?? [], value)
+              if (!choice) return
+              const serviceTier = getNextServiceTierForModel({
+                nextModel: choice.model,
+                currentModel: selected?.model,
+                currentServiceTier: manual?.serviceTier,
+              })
+              void update({
+                mode: 'manual',
+                target: {
+                  provider: choice.source.provider,
+                  ...(choice.source.connectionId
+                    ? { connectionId: choice.source.connectionId }
+                    : {}),
+                  ...(choice.source.agent
+                    ? {
+                        agent: choice.source.agent,
+                      }
+                    : {}),
+                  model: choice.model.id,
+                  ...(serviceTier ? { serviceTier } : {}),
+                  ...(choice.model.reasoningEfforts[0]
+                    ? {
+                        effort: choice.model.reasoningEfforts[0],
+                      }
+                    : {}),
+                },
+              })
+            }}
+          />
+        )}
+      </SettingsLeaderRow>
+      {manual && selected && effortOptions.length > 0 ? (
+        <SettingsLeaderRow
+          name="Reasoning effort"
+          note="Choose the effort used for background writing."
+        >
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background reasoning effort"
+            align="right"
+            value={selectedEffort}
+            options={effortOptions}
+            disabled={busy}
+            onChange={(effort) =>
+              void update({
+                mode: 'manual',
+                target: { ...manual, effort },
+              })
+            }
+          />
+        </SettingsLeaderRow>
       ) : null}
-    </section>
+      {manual && selected && fastTier ? (
+        <SettingsLeaderRow name="Speed" note="Choose the speed used for background writing.">
+          <AppSelect
+            className="set-select--inline"
+            ariaLabel="Background speed"
+            align="right"
+            value={selectedSpeed}
+            options={[
+              { value: 'standard', label: 'Standard' },
+              { value: 'fast', label: 'Fast' },
+            ]}
+            disabled={busy}
+            onChange={(speed) => {
+              const serviceTier =
+                speed === 'fast' ? fastTier.id : getFastModeOffValue(selected.model)
+              void update({ mode: 'manual', target: { ...manual, serviceTier } })
+            }}
+          />
+        </SettingsLeaderRow>
+      ) : null}
+    </SettingsSection>
   )
 }
 
