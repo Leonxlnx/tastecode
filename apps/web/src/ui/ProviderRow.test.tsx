@@ -26,10 +26,16 @@ describe('provider row grammar', () => {
     expect(Array.from(row.children).map((child) => child.className)).toEqual([
       'provider-row__mark',
       'provider-row__identity',
-      'provider-row__status',
+      'set-leader',
+      'provider-row__status set-entity__status',
       'provider-row__secondary',
       'provider-row__primary',
     ])
+    // A settings entity row: its name in the entity role, its wire the shared leader.
+    expect(row.querySelector('.provider-row__identity > .set-entity__name')?.textContent).toBe(
+      'Codex',
+    )
+    expect(row.querySelector('.set-leader')?.getAttribute('aria-hidden')).toBe('true')
     expect(row.querySelector('.provider-row__mark svg')?.getAttribute('width')).toBe('18')
     expect(row.querySelector('.provider-row__mark')?.getAttribute('title')).toBe('codex-cli 1.4.0')
     expect(within(row).queryByText('codex-cli 1.4.0')).toBeNull()
@@ -62,9 +68,33 @@ describe('provider row grammar', () => {
       />,
     )
     const signOut = screen.getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-primary')
-    expect(signOut.className).toContain('is-danger')
-    expect(signOut.className).not.toContain('is-quiet')
+    expect(signOut.className).toBe('set-button set-button--danger')
+  })
+
+  it('draws sign-out as the danger button in either slot, and other secondary actions quiet', () => {
+    const { rerender } = render(
+      <ProviderRow
+        provider={{ id: 'acp', displayName: 'Kimi CLI', installed: true, auth: 'unknown' }}
+        status="Signed in"
+        secondary={{ label: 'Sign out', danger: true }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Sign out' }).className).toBe(
+      'set-button set-button--danger',
+    )
+
+    rerender(
+      <ProviderRow
+        provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
+        status="Installing…"
+        primary={{ label: 'Install' }}
+        secondary={{ label: 'Details' }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Install' }).className).toBe('set-button')
+    expect(screen.getByRole('button', { name: 'Details' }).className).toBe(
+      'set-button set-button--quiet',
+    )
   })
 
   it('keeps secondary actions before primary actions in focus order', () => {
