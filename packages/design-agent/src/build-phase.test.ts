@@ -9,7 +9,6 @@ import {
   designSourceQualityBaseline,
   designSourceQualityCorrectionPrompt,
   designWorkspaceFileBaseline,
-  exactBuildFileBaseline,
   parseBuildPhaseOutput,
   validateDesignSourceQuality,
   validateExactBuildFiles,
@@ -343,7 +342,7 @@ describe('build phase', () => {
     }
     try {
       writeFileSync(path.join(workspace, 'README.md'), 'pre-existing user file')
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
       for (const file of [
         'index.html',
         'styles.css',
@@ -377,7 +376,7 @@ describe('build phase', () => {
     try {
       mkdirSync(path.join(workspace, 'src'))
       writeFileSync(path.join(workspace, 'src', 'existing.ts'), 'pre-existing user file')
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       writeFileSync(path.join(workspace, 'src', 'unexpected.ts'), 'new file')
@@ -401,7 +400,7 @@ describe('build phase', () => {
         mkdirSync(path.join(workspace, directory), { recursive: true })
         writeFileSync(path.join(workspace, directory, 'existing.json'), '{}')
       }
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       for (const directory of ['.git', '.taste', 'node_modules/package', '.pnpm-store/v3']) {
@@ -445,7 +444,7 @@ describe('build phase', () => {
     }
     try {
       mkdirSync(path.join(workspace, 'src'))
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
 
       writeFileSync(path.join(workspace, 'index.html'), '<main></main>')
       for (const directory of ['.git', '.taste']) {
@@ -469,7 +468,7 @@ describe('build phase', () => {
     }
     try {
       mkdirSync(path.join(workspace, 'src'))
-      const baseline = exactBuildFileBaseline(workspace, brief)
+      const baseline = designWorkspaceFileBaseline(workspace)
       writeFileSync(path.join(workspace, 'src', 'index.ts'), 'export {}')
 
       expect(() => validateExactBuildFiles(workspace, brief, baseline)).not.toThrow()
@@ -521,7 +520,6 @@ describe('build phase', () => {
     const workspace = mkdtempSync(path.join(os.tmpdir(), 'harness-design-exact-framework-'))
     const brief = { ...artifacts[0], originalRequest }
     try {
-      expect(exactBuildFileBaseline(workspace, brief)).toBeUndefined()
       const [, brand, page, assets] = artifacts
       expect(designBuildPrompt(brief, brand, page, assets)).not.toContain('deliverable boundary')
       mkdirSync(path.join(workspace, 'app'))
