@@ -1,5 +1,6 @@
 import path from 'node:path'
 import type { SQLOutputValue } from 'node:sqlite'
+import { setImmediate as nextTurn } from 'node:timers/promises'
 import type { ProviderHistorySession } from '@harness/contracts'
 import { object } from './history-values.js'
 
@@ -33,6 +34,9 @@ type Row = Record<string, SQLOutputValue>
 type Database = import('node:sqlite').DatabaseSync
 
 export const PREVIEW_LENGTH = 200
+// One statement over an 89 MB index of 6,900 threads took 0.4-1.5 s, all in one
+// event-loop turn.
+const PAGE_ROWS = 500
 // Codex stamps a row before it commits it, and its sessions write concurrently,
 // so rows stamped shortly before the newest one seen are read again.
 const SKEW_MS = 30_000
@@ -54,7 +58,7 @@ export async function readStateIndex(
     try {
       const { DatabaseSync } = await import('node:sqlite')
       db = new DatabaseSync(path.join(home, file), { readOnly: true })
-      // One snapshot for every statement below.
+      // One snapshot for every statement and page below.
       db.exec('BEGIN')
       const columns = new Set(
         db
@@ -106,7 +110,7 @@ export async function readStateIndex(
         readAt: now,
         ...(stamped ? { newest: 0 } : {}),
       }
-      merge(index, db.prepare(`SELECT ${select} FROM threads`).all(), rows)
+      for await (const page of pages(db, select)) merge(index, page, rows)
       db.exec('COMMIT')
       return { index, changedFiles: compare(previous, index) }
     } catch {
@@ -130,6 +134,28 @@ function selectList(columns: Set<unknown>): string {
   const source = columns.has('source') ? 'source' : 'NULL'
   const stamp = columns.has('updated_at_ms') ? 'updated_at_ms' : 'NULL'
   return `id, rollout_path, cwd, ${name} AS name, substr(${preview}, 1, ${PREVIEW_LENGTH}) AS preview, ${created} AS created, ${updated} AS updated, ${source} AS source, ${stamp} AS stamp`
+}
+
+/** Every row, one page per event-loop turn. */
+async function* pages(db: Database, select: string): AsyncGenerator<Row[]> {
+  let page
+  try {
+    page = db.prepare(
+      `SELECT rowid AS position, ${select} FROM threads WHERE rowid > ? ORDER BY rowid LIMIT ${PAGE_ROWS}`,
+    )
+  } catch {
+    // A table without row ids is read in one statement.
+    yield db.prepare(`SELECT ${select} FROM threads`).all()
+    return
+  }
+  let after = Number.MIN_SAFE_INTEGER
+  for (;;) {
+    const rows = page.all(after)
+    if (rows.length) yield rows
+    if (rows.length < PAGE_ROWS) return
+    after = Number(rows.at(-1)!.position)
+    await nextTurn()
+  }
 }
 
 /** Applies `rows` to `index` and returns the rollout paths whose entries changed. */

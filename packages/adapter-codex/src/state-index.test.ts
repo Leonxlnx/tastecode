@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import { DatabaseSync, StatementSync } from 'node:sqlite'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readStateIndex, type StateIndex } from './state-index.js'
 
@@ -166,6 +166,40 @@ describe('Codex state index', () => {
     expect((await read()).index!.byId.get('one')?.session.title).toBe('Prompt one')
     now.mockReturnValue(at + 10 * 60_000)
     expect((await read()).index!.byId.get('one')?.session.title).toBe('Edited prompt')
+    db.close()
+  })
+
+  it('reads a large index in pages', async () => {
+    const { db, add, read } = await stateStore()
+    db.exec('BEGIN')
+    for (let row = 0; row < 1_234; row++) add(`thread-${row}`, at + row)
+    db.exec('COMMIT')
+    let pages = 0
+    const all = StatementSync.prototype.all
+    vi.spyOn(StatementSync.prototype, 'all').mockImplementation(function (
+      this: StatementSync,
+      ...parameters
+    ) {
+      if (this.sourceSQL.includes('rowid')) pages++
+      return all.apply(this, parameters)
+    })
+    // Pages already read at each event-loop turn during the read.
+    const seen: number[] = []
+    let reading = true
+    const record = () => {
+      seen.push(pages)
+      if (reading) setImmediate(record)
+    }
+    setImmediate(record)
+    try {
+      const { index } = await read()
+      expect(index!.byId.size).toBe(1_234)
+      expect(index!.byFile.size).toBe(1_234)
+    } finally {
+      reading = false
+    }
+    expect(pages).toBe(3)
+    expect(seen.some((count) => count > 0 && count < 3)).toBe(true)
     db.close()
   })
 
