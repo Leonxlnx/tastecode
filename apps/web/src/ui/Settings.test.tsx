@@ -31,9 +31,15 @@ vi.mock('../bridge.js', async (importOriginal) => ({
 }))
 
 vi.mock('./InstallTerminal.js', () => ({
-  InstallTerminal: (props: { installKey: string }) => {
+  InstallTerminal: (props: { installKey: string; profile?: string }) => {
     if (settingsLoading.terminal) throw settingsLoading.terminal
-    return <div data-testid="install-terminal" data-install-key={props.installKey} />
+    return (
+      <div
+        data-testid="install-terminal"
+        data-install-key={props.installKey}
+        data-profile={props.profile}
+      />
+    )
   },
 }))
 
@@ -894,7 +900,8 @@ describe('settings loading values', () => {
       settingsLoading.terminal = undefined
       terminal.resolve()
     })
-    expect(await screen.findByTestId('install-terminal')).toBeTruthy()
+    // The same look as the workspace terminal a sign-in opens.
+    expect((await screen.findByTestId('install-terminal')).dataset['profile']).toBe('workspace')
     expect(screen.queryByText('Opening terminal…')).toBeNull()
   })
 })

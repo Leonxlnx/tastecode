@@ -1893,13 +1893,17 @@
   white-space: nowrap;
 }
 
+/* An embedded provider terminal (an install or sign-in log) wears the
+   workspace terminal's look: its background, font and palette, here inside a
+   hairline frame. The workspace pane and the update notice drop the frame. */
 .install-terminal {
   box-sizing: border-box;
   height: 240px;
   overflow: hidden;
   padding: 8px 12px;
-  background: var(--bg);
-  border-top: 1px solid var(--line);
+  background: var(--terminal-workspace-bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 /* The provider roster is open type, not a card. Each provider is an entity
@@ -2101,16 +2105,6 @@
 /* Sign-in and install details hang under the provider's name. */
 .provider-settings__entry :is(.signin-card, .provider-terminal) {
   margin: 0 0 12px 32px;
-}
-
-.provider-settings__entry .provider-terminal {
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-}
-
-.provider-settings__entry .install-terminal {
-  border-top: 0;
 }
 
 /* Provider updates: one quiet line under the roster, at the note size. Both
@@ -2659,10 +2653,4 @@
   .theme-picker {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-.install-terminal {
-  margin: 0 12px 10px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
 }

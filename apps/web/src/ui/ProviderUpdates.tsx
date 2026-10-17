@@ -302,6 +302,7 @@ function ProviderUpdateItem(props: {
             <InstallTerminal
               transport={props.transport}
               installKey={key}
+              profile="workspace"
               appearance="notice"
               ariaLabel={`${update.displayName} update terminal`}
             />

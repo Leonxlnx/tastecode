@@ -84,8 +84,10 @@ describe('focus outline', () => {
 
   it('keeps the provider login terminal inside its neutral frame', () => {
     expect(settingsCss).toMatch(
-      /\.install-terminal\s*\{[^}]*box-sizing: border-box;[^}]*overflow: hidden;/s,
+      /\.install-terminal\s*\{[^}]*box-sizing: border-box;[^}]*overflow: hidden;[^}]*background: var\(--terminal-workspace-bg\);[^}]*border: 1px solid var\(--line\);[^}]*border-radius: var\(--r-lg\);/s,
     )
+    // One rule draws the frame; no second copy redraws it.
+    expect(settingsCss.match(/(^|\n)\.install-terminal \{/g)).toHaveLength(1)
     expect(settingsCss).not.toMatch(/\.install-terminal:focus-within\s*\{/)
   })
 })

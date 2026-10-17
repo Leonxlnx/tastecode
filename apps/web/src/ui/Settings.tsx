@@ -2876,6 +2876,7 @@ function CliSignInRow(props: {
   )
 }
 
+/** An install or sign-in log on the workspace terminal's look, like the expanded terminal. */
 function ProviderTerminal(props: { transport: Transport; installKey: string }) {
   return (
     <Suspense
@@ -2885,7 +2886,11 @@ function ProviderTerminal(props: { transport: Transport; installKey: string }) {
         </SkeletonStatus>
       }
     >
-      <InstallTerminal transport={props.transport} installKey={props.installKey} />
+      <InstallTerminal
+        transport={props.transport}
+        installKey={props.installKey}
+        profile="workspace"
+      />
     </Suspense>
   )
 }
