@@ -717,6 +717,8 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
   while (cells.length % 7 !== 0) cells.push(undefined)
 
   const months: Array<{ column: number; text: string }> = []
+  // The grid starts a year back from the last day, usually mid-month.
+  const partialStart = days[0]?.date.slice(8) !== '01'
   let previousMonth = ''
   let previousColumn = -10
   cells.forEach((cell, index) => {
@@ -725,7 +727,12 @@ function buildActivityGrid(daily: UsageHistoryDay[], endDate: string) {
     if (monthKey === previousMonth) return
     previousMonth = monthKey
     const column = Math.floor(index / 7) + 1
-    if (column - previousColumn < 3) return
+    if (column - previousColumn < 3) {
+      // Two labels would collide: a few days of the first month give way to
+      // the first full one, which the grid shows in its entirety.
+      if (months.length !== 1 || !partialStart) return
+      months.pop()
+    }
     months.push({ column, text: month.format(dateFromKey(cell.date)) })
     previousColumn = column
   })

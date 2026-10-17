@@ -171,6 +171,38 @@ describe('profile settings', () => {
     })
   })
 
+  it('labels the first full month of the heatmap, not the few days before it', async () => {
+    const result = historyResult()
+    result.startDate = '2025-10-16'
+    result.endDate = '2026-10-15'
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<ProfileSettings transport={transport} account={undefined} providerName="Codex" />)
+
+    await waitFor(() =>
+      expect(document.querySelectorAll('.profile-activity__months span').length).toBeGreaterThan(0),
+    )
+    const labels = Array.from(
+      document.querySelectorAll('.profile-activity__months span'),
+      (label) => label.textContent,
+    )
+    expect(labels).toEqual([
+      'Nov',
+      'Dec',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+    ])
+    const november = document.querySelector<HTMLElement>('.profile-activity__months span')
+    expect(november?.style.gridColumn).toBe('3 / span 4')
+  })
+
   it('counts cache writes as input in the cache hit rate, like the Usage page', async () => {
     const result = historyResult()
     result.totals = {
