@@ -21,7 +21,7 @@
     a.pr-button,
     a.pr-icon-button,
     a.media-viewer__action,
-    a.settings__action,
+    a.set-button,
     .pr-file-head a
   ):not(:where(.sheet__scrim, .command-palette__scrim, .rail__backdrop, [role='separator'])) {
     transition:

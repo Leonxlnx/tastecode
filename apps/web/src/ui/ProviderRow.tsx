@@ -19,12 +19,13 @@ export type ProviderAction = {
 
 /**
  * How the provider is wired to an account. The row draws it as the line
- * between the name and the status: solid when an account is attached, a
- * dotted leader while the provider waits for one, nothing when the provider
+ * between the name and the status: solid when an account is attached, the
+ * settings leader while the provider waits for one, nothing when the provider
  * is not on this machine.
  */
 export type ProviderLink = 'connected' | 'open' | 'none'
 
+/** A settings entity row: the provider's mark and name, its wire, status and actions. */
 export function ProviderRow(props: {
   provider: ProviderStatus
   status: ReactNode
@@ -36,7 +37,7 @@ export function ProviderRow(props: {
 }) {
   return (
     <div
-      className="settings__row provider-row"
+      className="provider-row"
       data-link={props.link ?? 'open'}
       data-live={props.live || undefined}
       data-fault={props.issue?.announce || undefined}
@@ -45,10 +46,11 @@ export function ProviderRow(props: {
         <ProviderIcon mark={providerMark(props.provider.id)} size={18} />
       </div>
       <div className="provider-row__identity">
-        <p className="settings__row-title">{props.provider.displayName}</p>
+        <p className="set-entity__name">{props.provider.displayName}</p>
       </div>
+      <span className="set-leader" aria-hidden />
       <div
-        className="provider-row__status"
+        className="provider-row__status set-entity__status"
         role={props.live ? 'status' : undefined}
         aria-atomic={props.live || undefined}
       >
@@ -73,14 +75,15 @@ const SKELETON_STATUS_WIDTHS = [148, 136, 64] as const
 export function ProviderRowSkeleton(props: { index: number }) {
   const at = props.index % SKELETON_NAME_WIDTHS.length
   return (
-    <div className="settings__row provider-row provider-row--skeleton" data-link="open" aria-hidden>
+    <div className="provider-row provider-row--skeleton" data-link="open" aria-hidden>
       <div className="provider-row__mark">
         <Skeleton className="skeleton--block" width={16} height={16} />
       </div>
       <div className="provider-row__identity">
         <Skeleton className="provider-row__skeleton-name" width={SKELETON_NAME_WIDTHS[at]} />
       </div>
-      <div className="provider-row__status">
+      <span className="set-leader" />
+      <div className="provider-row__status set-entity__status">
         <Skeleton className="provider-row__skeleton-status" width={SKELETON_STATUS_WIDTHS[at]} />
       </div>
     </div>
@@ -93,7 +96,12 @@ function ProviderRowAction(props: {
 }) {
   const action = props.action
   if (!action) return null
-  const className = `settings__action is-${props.tone}${action.danger ? ' is-danger' : ''}`
+  // Signing out reads the same in either slot; otherwise the secondary slot is quiet.
+  const className = action.danger
+    ? 'set-button set-button--danger'
+    : props.tone === 'secondary'
+      ? 'set-button set-button--quiet'
+      : 'set-button'
   return action.href ? (
     <a className={className} href={action.href} target="_blank" rel="noopener noreferrer">
       {action.label}
