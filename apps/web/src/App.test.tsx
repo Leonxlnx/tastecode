@@ -2837,7 +2837,7 @@ describe('web client', () => {
         ]),
       )
       let releaseAgents!: () => void
-      const agents = new Promise<ResultOf<'acp.agents'>>((resolve) => {
+      const agents = new Promise<unknown>((resolve) => {
         releaseAgents = () =>
           resolve({ agents: [{ id: 'kimi', name: 'Kimi CLI', installed: true, verified: true }] })
       })
