@@ -178,7 +178,7 @@ const defaultServices = {
     // Being signed in means one or more connected model providers, each
     // removed on its own; signing out of all of them is not one action.
     signOut: async () => {
-      throw new Error('Remove an OpenCode sign-in with `opencode auth logout` in a terminal.')
+      throw new Error('To remove an OpenCode sign-in, run "opencode auth logout" in a terminal.')
     },
   },
   pi: {},
