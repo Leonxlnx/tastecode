@@ -54,7 +54,10 @@ export type ProjectInventoryCacheOptions = {
   ttlMs?: number
   /** The longest one probe may run before it is stopped. */
   timeoutMs?: number
-  /** How long a project whose probe failed answers "unavailable" before the next try. */
+  /**
+   * How long after a failed probe the next one waits. Meanwhile a project
+   * keeps its last answer, or answers "unavailable" when it has none.
+   */
   retryMs?: number
   maxProjects?: number
   /** How long one look at an inventory keeps its folders watched. */
@@ -186,10 +189,10 @@ export class ProjectInventoryCache {
     const held = part === 'mcp' ? entry.servers : entry.commands
     const now = Date.now()
     const current = held !== undefined && now - held.at < this.#ttlMs
-    const retry = held !== undefined || entry.failedAt === undefined
-    if (!current && entry.state === 'idle' && (retry || now - entry.failedAt! >= this.#retryMs)) {
-      this.#enqueue(projectPath, entry)
-    }
+    // After a failed probe, even an expired answer waits out the retry delay:
+    // each read would otherwise start another 10-45 s agent that fails too.
+    const retry = entry.failedAt === undefined || now - entry.failedAt >= this.#retryMs
+    if (!current && entry.state === 'idle' && retry) this.#enqueue(projectPath, entry)
     const loading =
       entry.state !== 'idle' && (held === undefined || (part === 'mcp' && entry.partial))
     if (loading) entry.awaited.add(part)
@@ -318,7 +321,7 @@ export class ProjectInventoryCache {
         entry.dirty ? Number.NEGATIVE_INFINITY : Date.now(),
       ))
         changed.add(part)
-    } else if (!entry.commands && !entry.servers) entry.failedAt = Date.now()
+    } else entry.failedAt = Date.now()
     entry.dirty = false
     if (changed.size) this.#options.onChanged(projectPath, [...changed])
   }
