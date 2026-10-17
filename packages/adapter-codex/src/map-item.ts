@@ -98,14 +98,22 @@ const CollabAgentSchema = z.object({
           'shutdown',
           'notFound',
         ]),
+        message: z.string().nullish(),
       })
       .optional(),
   ),
 })
+/**
+ * Multi-agent v2 reports a spawned subagent with this item instead of a spawnAgent call.
+ * Codex 0.163 also sends kind `completed` when the subagent's turn ends, which the
+ * generated bindings do not list yet (fixtures/subagent-codex-0.163.jsonl).
+ */
 const SubAgentActivitySchema = z.object({
   type: z.literal('subAgentActivity'),
   id: z.string().optional(),
-  kind: z.enum(['started', 'interacted', 'interrupted']),
+  kind: z.enum(['started', 'interacted', 'interrupted', 'completed']),
+  agentThreadId: z.string().optional(),
+  agentPath: z.string().nullish(),
 })
 const ImageViewSchema = z.object({
   type: z.literal('imageView'),
@@ -308,7 +316,9 @@ export function mapThreadItem(
             ? 'Subagent started'
             : item.kind === 'interrupted'
               ? 'Subagent interrupted'
-              : 'Subagent active',
+              : item.kind === 'completed'
+                ? 'Subagent finished'
+                : 'Subagent active',
       }
 
     case 'webSearch':
