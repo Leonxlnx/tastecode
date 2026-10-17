@@ -18,6 +18,7 @@ export {
   type ClaudeProjectDiscoveryOptions,
   type ClaudeProjectInventory,
 } from './discovery.js'
+export { claudeInventoryWatchPaths, type ClaudeInventoryWatch } from './watch-paths.js'
 export { claudeAccount, parseClaudeAccount, signOutClaude, startClaudeLogin } from './auth.js'
 export { claudeLimitSource, type ClaudeLimitSource } from './limits.js'
 export { toDomainEvents, toUsage, type ClaudeEvent } from './events.js'
