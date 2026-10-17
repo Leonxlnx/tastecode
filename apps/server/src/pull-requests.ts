@@ -142,7 +142,7 @@ const RawMetadataMilestoneSchema = z.object({
   title: z.string().optional(),
 })
 const RawMetadataBranchSchema = z.object({ name: z.string().optional() })
-const RawCheckSchema = z.object({
+export const RawCheckSchema = z.object({
   __typename: z.enum(['CheckRun', 'StatusContext']).optional(),
   name: z.string().optional(),
   context: z.string().optional(),
@@ -1879,7 +1879,7 @@ function actor(raw: ParsedRawActor | null | undefined): PullRequestDetail['autho
   return { login, isBot: raw?.is_bot === true || /(?:\[bot\]|-bot$|bot$)/i.test(login) }
 }
 
-function normalizeState(state: string | undefined): PullRequestListItem['state'] {
+export function normalizeState(state: string | undefined): PullRequestListItem['state'] {
   const normalized = state?.toUpperCase()
   if (normalized === 'CLOSED' || normalized === 'MERGED') return normalized
   return 'OPEN'
@@ -1890,7 +1890,7 @@ function normalizeMergeable(value: string | undefined): PullRequestDetail['merge
   return 'UNKNOWN'
 }
 
-function normalizeReviewDecision(
+export function normalizeReviewDecision(
   value: string | null | undefined,
 ): PullRequestListItem['reviewDecision'] {
   if (value === 'APPROVED' || value === 'CHANGES_REQUESTED' || value === 'REVIEW_REQUIRED') {
@@ -1921,7 +1921,7 @@ function normalizeReviewState(
   return 'COMMENTED'
 }
 
-function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['state'] {
+export function checkState(raw: ParsedRawCheck): PullRequestDetail['checks'][number]['state'] {
   const value = (raw.conclusion || raw.state || raw.status || '').toUpperCase()
   if (value === 'SUCCESS') return 'success'
   if (
