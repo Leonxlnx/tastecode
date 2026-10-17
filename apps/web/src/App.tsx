@@ -268,6 +268,9 @@ const MACOS_FONT_SMOOTHING_KEY = 'harness.macosFontSmoothing'
 const DEBUG_SETTINGS_KEY = 'harness.debugSettings'
 const TERMINAL_HEIGHT_KEY = 'harness.terminal.height'
 const BOTTOM_TERMINAL_MOTION_MS = 260
+/** How long a project's branch list answers the new-chat branch menu without git. */
+const BRANCH_LIST_TTL_MS = 30_000
+const NO_BRANCHES: string[] = []
 const RAIL_WIDTH_KEY = 'harness.rail.width'
 const DEFAULT_RAIL_WIDTH = 256
 const WORKSPACE_PANEL_WIDTH_KEY = 'harness.workspacePanel.width'
@@ -801,6 +804,14 @@ export function App() {
   const [branches, setBranches] = useState<string[]>([])
   const [branchesPath, setBranchesPath] = useState<string>()
   const projectBranches = useRef(new Map<string, string>())
+  /** Each project's checked-out branch, as workspace.info last said. */
+  const checkedOutBranches = useRef(new Map<string, string | undefined>())
+  /** Branch lists by project, reused for BRANCH_LIST_TTL_MS. */
+  const branchLists = useRef(
+    new Map<string, { at: number; revision: number; branches: string[] }>(),
+  )
+  const [branchMenuOpened, setBranchMenuOpened] = useState(0)
+  const openBranchMenu = useCallback(() => setBranchMenuOpened((count) => count + 1), [])
   const [workspaceRefreshRevision, setWorkspaceRefreshRevision] = useState(0)
   const [account, setAccount] = useState<Account | undefined>()
   const [profileIdentity, setProfileIdentity] = useState(readProfileIdentityPreferences)
@@ -2442,33 +2453,76 @@ export function App() {
   useEffect(() => {
     if (!activePath) {
       setWorkspace(undefined)
-      setBranches([])
       return
     }
     let cancelled = false
-    void Promise.all([
-      transport.request('workspace.info', { path: activePath }).catch(() => undefined),
-      transport.request('workspace.branches', { path: activePath }).catch(() => undefined),
-    ]).then(([info, result]) => {
-      if (cancelled) return
-      setWorkspace(info)
-      setBranches(result?.branches ?? (info?.branch ? [info.branch] : []))
-      setBranchesPath(activePath)
-      const available = result?.branches ?? (info?.branch ? [info.branch] : [])
-      const remembered =
-        projectBranches.current.get(activePath) ?? readSetting(`harness.branch:${activePath}`)
-      const branch =
-        remembered && available.includes(remembered)
-          ? remembered
-          : available.includes('main')
-            ? 'main'
-            : info?.branch
-      if (branch) projectBranches.current.set(activePath, branch)
-    })
+    void transport
+      .request('workspace.info', { path: activePath })
+      .catch(() => undefined)
+      .then((info) => {
+        checkedOutBranches.current.set(activePath, info?.branch)
+        if (!cancelled) setWorkspace(info)
+      })
     return () => {
       cancelled = true
     }
   }, [transport, activePath, workspaceRefreshRevision])
+
+  // Listing branches runs git twice, and only a new chat's shelf offers them, so
+  // an open chat never asks. A list stays good for 30 s; opening the menu after
+  // that, or a finished turn, lists them again.
+  const branchShelfPath = activeId ? undefined : activePath
+  // A list loaded for another project must not name this one's branch.
+  const pathBranches = branchesPath === activePath ? branches : NO_BRANCHES
+  useEffect(() => {
+    if (!activePath) {
+      setBranches([])
+      return
+    }
+    if (!branchShelfPath) return
+    const path = branchShelfPath
+    const known = branchLists.current.get(path)
+    if (
+      known &&
+      known.revision === workspaceRefreshRevision &&
+      Date.now() - known.at < BRANCH_LIST_TTL_MS
+    ) {
+      setBranches(known.branches)
+      setBranchesPath(path)
+      return
+    }
+    let cancelled = false
+    void transport
+      .request('workspace.branches', { path })
+      .catch(() => undefined)
+      .then((result) => {
+        if (cancelled) return
+        const checkedOut = checkedOutBranches.current.get(path)
+        const available = result?.branches ?? (checkedOut ? [checkedOut] : [])
+        if (result) {
+          branchLists.current.set(path, {
+            at: Date.now(),
+            revision: workspaceRefreshRevision,
+            branches: available,
+          })
+        }
+        setBranches(available)
+        setBranchesPath(path)
+        const remembered =
+          projectBranches.current.get(path) ?? readSetting(`harness.branch:${path}`)
+        // Without a remembered branch or main, the chat starts on the checkout.
+        const branch =
+          remembered && available.includes(remembered)
+            ? remembered
+            : available.includes('main')
+              ? 'main'
+              : checkedOut
+        if (branch) projectBranches.current.set(path, branch)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [transport, activePath, branchShelfPath, workspaceRefreshRevision, branchMenuOpened])
 
   useEffect(() => {
     let cancelled = false
@@ -3275,9 +3329,11 @@ export function App() {
       try {
         let branch = projectBranches.current.get(projectPath)
         if (!branch) {
-          const { branches: available } = await transport.request('workspace.branches', {
-            path: projectPath,
-          })
+          const known = branchLists.current.get(projectPath)
+          const available =
+            known && Date.now() - known.at < BRANCH_LIST_TTL_MS
+              ? known.branches
+              : (await transport.request('workspace.branches', { path: projectPath })).branches
           const remembered = readSetting(`harness.branch:${projectPath}`)
           branch =
             remembered && available.includes(remembered)
@@ -4066,6 +4122,8 @@ export function App() {
             })
         projectBranches.current.set(activePath, branch)
         writeSetting(`harness.branch:${activePath}`, branch)
+        const known = branchLists.current.get(activePath)
+        if (known) known.branches = [branch, ...known.branches.filter((item) => item !== branch)]
         if (activePathRef.current !== activePath || activeIdRef.current) return
         setWorkspace((current) => info ?? (current ? { ...current, branch } : current))
         setBranches((current) => [branch, ...current.filter((item) => item !== branch)])
@@ -5773,9 +5831,10 @@ export function App() {
                         : undefined) ??
                       active?.session.worktreeBranch ??
                       workspace?.branch ??
-                      branches[0]
+                      pathBranches[0]
                     }
-                    branches={branches}
+                    branches={pathBranches}
+                    onBranchMenuOpen={openBranchMenu}
                     branchesLoading={Boolean(activePath) && branchesPath !== activePath}
                     models={selectableModels}
                     modelsLoaded={modelsLoaded}
@@ -5870,7 +5929,9 @@ export function App() {
                       threadId={activeId}
                       projectPath={activePath}
                       projectName={activeProject ? displayName(activeProject) : undefined}
-                      branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                      branch={
+                        active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]
+                      }
                       theme={themeColorScheme}
                       sideChatParentStatus={sideChatParentStatus}
                       sideChatStartOptions={sideChatStartOptions}
@@ -5905,7 +5966,7 @@ export function App() {
                 threadId={activeId}
                 projectPath={activePath}
                 projectName={activeProject ? displayName(activeProject) : undefined}
-                branch={active?.session.worktreeBranch ?? workspace?.branch ?? branches[0]}
+                branch={active?.session.worktreeBranch ?? workspace?.branch ?? pathBranches[0]}
                 theme={themeColorScheme}
                 sideChatParentStatus={sideChatParentStatus}
                 sideChatStartOptions={sideChatStartOptions}

@@ -184,6 +184,50 @@ describe('durable history ownership', () => {
     }
   })
 
+  it('keeps provider listing metadata across reopening, also in a database that predates it', () => {
+    const { store, root, location } = setup()
+    store.close()
+    stores.splice(stores.indexOf(store), 1)
+    // A database written before the table existed.
+    const raw = new DatabaseSync(location)
+    raw.exec('DROP TABLE provider_history_metadata')
+    raw.close()
+    const reopened = new Store(location)
+    const session = {
+      id: 'native',
+      workspacePath: root,
+      title: 'Native',
+      createdAt: 1,
+      updatedAt: 2,
+      revision: '3:10:2:2',
+      locator: path.join(root, 'native.jsonl'),
+    }
+    reopened.saveProviderHistoryMetadata(
+      'claude-code',
+      new Map([
+        [session.locator, { revision: 'one', session }],
+        ['empty', { revision: 'one', session: null }],
+        ['gone', { revision: 'one', session: null }],
+      ]),
+      [],
+    )
+    reopened.saveProviderHistoryMetadata(
+      'claude-code',
+      new Map([['empty', { revision: 'two', session: null }]]),
+      ['gone'],
+    )
+    reopened.close()
+    const again = new Store(location)
+    stores.push(again)
+    expect(again.providerHistoryMetadata('claude-code')).toEqual(
+      new Map([
+        [session.locator, { revision: 'one', session }],
+        ['empty', { revision: 'two', session: null }],
+      ]),
+    )
+    expect(again.providerHistoryMetadata('codex')).toEqual(new Map())
+  })
+
   it('archives provider import metadata and active membership before pruning', () => {
     const { store, root } = setup()
     store.saveProviderHistory('codex', 'thread', {

@@ -454,6 +454,8 @@ function ComposerComponent(props: {
   branch: string | undefined
   branches: string[]
   branchesLoading?: boolean
+  /** The branch menu opened; the owner may list branches again. */
+  onBranchMenuOpen?: (() => void) | undefined
   models: ModelChoice[]
   /** Whether the list has come back yet, so an empty list is not read as pending. */
   modelsLoaded: boolean
@@ -1575,6 +1577,7 @@ function ComposerComponent(props: {
                   panelRole="dialog"
                   panelLabel="Choose branch"
                   panelClassName="branch-menu"
+                  onOpen={props.onBranchMenuOpen}
                   trigger={() => (
                     <span className="shelf-control__content">
                       <GitBranch size={15} aria-hidden />

@@ -805,6 +805,17 @@ function openCodeRuntime(
  * client, is where that has to be impossible.
  */
 const openCodeModelListings = new Map<string, Promise<Model[]>>()
+/** Listings whose process is running; a closing server stops them. */
+const runningListings = new Set<{ dispose(): Promise<void> }>()
+
+/**
+ * Stops model listings that are still running. Their processes belong to no
+ * session, so without this a server that closes while one starts (an OpenCode
+ * serve can take 30 s) exits and leaves it running.
+ */
+export async function stopModelListings(): Promise<void> {
+  await Promise.allSettled([...runningListings].map((listing) => listing.dispose()))
+}
 
 function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   const key = harness?.id ?? 'default'
@@ -813,10 +824,12 @@ function listOpenCodeModels(harness?: CustomHarness): Promise<Model[]> {
   const listing = (async () => {
     const { OpenCodeAdapter } = await loadOpenCodeAdapter()
     const adapter = new OpenCodeAdapter(harness ? { spawn: customHarnessSpawn(harness) } : {})
+    runningListings.add(adapter)
     try {
       const listing = adapter.listModels()
       return harness ? await customHarnessOperation(harness, 'list models', listing) : await listing
     } finally {
+      runningListings.delete(adapter)
       await adapter.dispose()
     }
   })().finally(() => {
