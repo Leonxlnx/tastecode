@@ -62,9 +62,33 @@ describe('provider row grammar', () => {
       />,
     )
     const signOut = screen.getByRole('button', { name: 'Sign out' })
-    expect(signOut.className).toContain('is-primary')
-    expect(signOut.className).toContain('is-danger')
-    expect(signOut.className).not.toContain('is-quiet')
+    expect(signOut.className).toBe('set-button set-button--danger')
+  })
+
+  it('draws sign-out as the danger button in either slot, and other secondary actions quiet', () => {
+    const { rerender } = render(
+      <ProviderRow
+        provider={{ id: 'acp', displayName: 'Kimi CLI', installed: true, auth: 'unknown' }}
+        status="Signed in"
+        secondary={{ label: 'Sign out', danger: true }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Sign out' }).className).toBe(
+      'set-button set-button--danger',
+    )
+
+    rerender(
+      <ProviderRow
+        provider={{ id: 'grok', displayName: 'Grok', installed: true, auth: 'unknown' }}
+        status="Installing…"
+        primary={{ label: 'Install' }}
+        secondary={{ label: 'Details' }}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Install' }).className).toBe('set-button')
+    expect(screen.getByRole('button', { name: 'Details' }).className).toBe(
+      'set-button set-button--quiet',
+    )
   })
 
   it('keeps secondary actions before primary actions in focus order', () => {
