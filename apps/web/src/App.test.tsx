@@ -5181,6 +5181,66 @@ describe('new chats', () => {
     },
   )
 
+  it('shows a running sign-in in its one workspace terminal again from Settings', async () => {
+    desktopShell.enabled = true
+    serverProjects = []
+    serverProviders = [
+      ...serverProviders,
+      {
+        id: 'claude-code',
+        displayName: 'Claude Code',
+        installed: true,
+        auth: 'unknown',
+        setup: {
+          installUrl: 'https://code.claude.com/docs/en/getting-started',
+          login: 'provider',
+        },
+      },
+    ]
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      if (method === 'auth.status') {
+        const provider = methods['auth.status'].params.parse(params).provider
+        return Promise.resolve({ signedIn: provider !== 'claude-code' })
+      }
+      if (method === 'providers.launch') return Promise.resolve({ terminalId: 'term-claude-show' })
+      if (method === 'terminal.close') return Promise.resolve({})
+      return request(method, params)
+    })
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe(): void {}
+        unobserve(): void {}
+        disconnect(): void {}
+      },
+    )
+    const showTerminal = async () => {
+      fireEvent.click(await screen.findByRole('button', { name: 'Show terminal' }))
+      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+      await waitFor(() =>
+        expect(screen.getAllByLabelText('Claude Code login terminal')).toHaveLength(1),
+      )
+      expect(screen.getAllByRole('button', { name: 'Close Claude Code login' })).toHaveLength(1)
+    }
+
+    render(<App />)
+    await openProviderSettings()
+    fireEvent.click(await screen.findByRole('button', { name: 'Sign in' }))
+    expect(await screen.findByLabelText('Claude Code login terminal')).toBeTruthy()
+
+    // Closing the tab while the CLI still runs returns to Settings, which can bring it back.
+    fireEvent.click(screen.getByRole('button', { name: 'Close Claude Code login' }))
+    await screen.findByRole('dialog', { name: 'Settings' })
+    expect(screen.queryByLabelText('Claude Code login terminal')).toBeNull()
+    await showTerminal()
+
+    // Settings opened on top of the open terminal reaches the same one.
+    await openProviderSettings()
+    await showTerminal()
+  })
+
   it('offers a stored custom model from an enabled nightly provider', async () => {
     const stored = '[{"provider":"cursor","modelId":"cursor-large","displayName":"Cursor Large"}]'
     serverProviders = [

@@ -5012,14 +5012,22 @@ export function App() {
   const openProviderLoginTerminal = useCallback(
     (target: ProviderLoginTerminalTarget) => {
       setWorkspacePanelHasMounted(true)
-      setProviderLoginTerminal({
-        ...target,
-        id: nextProviderLoginTerminalId.current++,
-        visible: true,
-        restorePanelOpen: workspacePanelOpen,
-        restorePanelExpanded: workspacePanelExpanded,
-        restoreSettings: settingsOpen,
-      })
+      const id = nextProviderLoginTerminalId.current++
+      // Asking again for the terminal that is already open (Show terminal from
+      // Settings opened on top of it) keeps its one tab and where closing it
+      // returns to, instead of attaching a second tab to the same terminal.
+      setProviderLoginTerminal((current) =>
+        current?.visible && current.installKey === target.installKey
+          ? current
+          : {
+              ...target,
+              id,
+              visible: true,
+              restorePanelOpen: workspacePanelOpen,
+              restorePanelExpanded: workspacePanelExpanded,
+              restoreSettings: settingsOpen,
+            },
+      )
       setSettingsOpen(false)
       setWorkspacePanelOpen(true)
       setWorkspacePanelExpanded(true)
