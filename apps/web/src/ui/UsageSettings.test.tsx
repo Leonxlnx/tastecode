@@ -199,6 +199,32 @@ describe('usage settings', () => {
     expect(request).toHaveBeenCalledTimes(2)
   })
 
+  it('labels the cost a partial estimate when over 5% of tokens have no price', async () => {
+    const result = historyResult('30d')
+    result.totals = usageTotals({
+      processedTokens: 1_000_000,
+      pricedTokens: 6_000,
+      providerReportedTokens: 4_000,
+      unpricedTokens: 990_000,
+      estimatedCostUsd: 12.34,
+    })
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    const view = render(<UsageSettings transport={transport} />)
+
+    const value = await screen.findByText('$12.34', { selector: '.usage-cost__value' })
+    expect(value.classList.contains('usage-cost__value--partial')).toBe(true)
+    expect(screen.getByText('Partial estimate · 1.0% of tokens priced')).toBeTruthy()
+    expect(screen.queryByText('At current public model rates')).toBeNull()
+    view.unmount()
+
+    result.totals = { ...result.totals, pricedTokens: 946_000, unpricedTokens: 50_000 }
+    const fullTransport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<UsageSettings transport={fullTransport} />)
+    const full = await screen.findByText('$12.34', { selector: '.usage-cost__value' })
+    expect(full.classList.contains('usage-cost__value--partial')).toBe(false)
+    expect(screen.getByText('At current public model rates')).toBeTruthy()
+  })
+
   it('uses the product names for every provider', async () => {
     const providers: Array<{ id: ProviderId; label: string }> = [
       { id: 'codex', label: 'Codex' },

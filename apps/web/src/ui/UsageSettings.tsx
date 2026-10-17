@@ -150,13 +150,21 @@ export function UsageSettings(props: { transport: Transport }) {
 
 function CostSummary(props: { data: ResultOf<'usage.history'> }) {
   const totalCost = props.data.totals.estimatedCostUsd
+  const priced = pricedShare(props.data.totals)
+  const partial = priced !== undefined && priced < FULL_ESTIMATE_SHARE
   return (
     <section className="usage-cost" aria-labelledby="usage-cost-title">
       <p className="usage-eyebrow" id="usage-cost-title">
         Estimated API cost
       </p>
-      <p className="usage-cost__value">{formatMoney(totalCost)}</p>
-      <p className="usage-cost__caption">At current public model rates</p>
+      <p className={`usage-cost__value${partial ? ' usage-cost__value--partial' : ''}`}>
+        {formatMoney(totalCost)}
+      </p>
+      <p className="usage-cost__caption">
+        {partial
+          ? `Partial estimate · ${formatPercent(Math.floor(priced * 1_000) / 1_000)} of tokens priced`
+          : 'At current public model rates'}
+      </p>
 
       <div className="usage-cost__providers">
         {props.data.providers.length > 0 ? (
@@ -729,6 +737,18 @@ function niceMaximum(value: number): number {
   const normalized = value / scale
   const nice = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10
   return nice * scale
+}
+
+/**
+ * The dollar figure counts as the cost of the period only when at least this
+ * share of its tokens has a public or provider-reported price.
+ */
+const FULL_ESTIMATE_SHARE = 0.95
+
+/** Share of tokens with a price, or undefined when there are no tokens. */
+function pricedShare(totals: UsageHistoryTotals): number | undefined {
+  if (totals.processedTokens <= 0) return undefined
+  return (totals.pricedTokens + totals.providerReportedTokens) / totals.processedTokens
 }
 
 function costQuality(totals: UsageHistoryTotals) {
