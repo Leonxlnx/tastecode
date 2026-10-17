@@ -68,6 +68,15 @@ import {
   RowMeasureContext,
   useDisclosure,
 } from './disclosure.js'
+import {
+  runningSubagentCount,
+  runningSubagentsText,
+  subagentActivityLabel,
+  SubagentGlyph,
+  SubagentGroup,
+  SubagentRow,
+  waitingSubagentsLabel,
+} from './SubagentRow.js'
 import { FindBarSkeleton } from './SurfaceSkeletons.js'
 import {
   activityGroupAt,
@@ -1445,7 +1454,7 @@ const Row = memo(function Row({
   if (activity) {
     // A batch of one would only repeat its call; the call is the row.
     const lone = !activityLive && !activity.complete ? loneToolCall(activity) : undefined
-    if (lone) return <AuxDisclosure key={lone.id} item={lone} live={false} />
+    if (lone) return <ActivityRow key={lone.id} item={lone} live={false} />
     return (
       <ActivityStack
         key={activity.complete ? 'complete' : 'working'}
@@ -1556,8 +1565,13 @@ const Row = memo(function Row({
     )
   }
 
-  return <AuxDisclosure item={item} live={live} />
+  return <ActivityRow item={item} live={live} />
 })
+
+/** A call that started a subagent draws as that subagent; anything else as a plain row. */
+function ActivityRow({ item, live }: { item: Item; live: boolean }) {
+  return item.subagent ? <SubagentRow item={item} /> : <AuxDisclosure item={item} live={live} />
+}
 
 function loneToolCall(activity: ActivityRenderSource): Item | undefined {
   const items = activityItemsForRender(activity.group, activity.items, activity.liveItems)
@@ -1983,23 +1997,32 @@ function thoughtDuration(ms: number): string {
 /**
  * Every run of tool calls between two thoughts or messages folds into one
  * batch. A lone call stays a row of its own, and a list that is nothing but
- * tool calls is already the batch its summary names.
+ * tool calls is already the batch its summary names. Subagents started one
+ * after another gather under a header of their own and never fold into a
+ * tool batch, unless they are all there is to show.
  */
 function groupToolRuns(items: Item[]): (Item | Item[])[] {
-  if (items.every(isStackedActivity)) return items
+  if (items.every((item) => item.subagent)) return items
+  const flat = items.every(isStackedActivity)
   const rows: (Item | Item[])[] = []
   for (const item of items) {
     const previous = rows.at(-1)
-    if (isStackedActivity(item) && Array.isArray(previous)) {
-      previous.push(item)
-    } else if (isStackedActivity(item) && previous && !Array.isArray(previous)) {
-      if (isStackedActivity(previous)) rows[rows.length - 1] = [previous, item]
-      else rows.push(item)
+    const kind = toolRunKind(item, flat)
+    const previousKind =
+      previous && toolRunKind(Array.isArray(previous) ? previous[0]! : previous, flat)
+    if (kind && kind === previousKind) {
+      if (Array.isArray(previous)) previous.push(item)
+      else rows[rows.length - 1] = [previous!, item]
     } else {
       rows.push(item)
     }
   }
   return rows
+}
+
+function toolRunKind(item: Item, flat: boolean): 'subagents' | 'tools' | undefined {
+  if (item.subagent) return 'subagents'
+  return !flat && isStackedActivity(item) ? 'tools' : undefined
 }
 
 function ToolBatch({ items, live }: { items: Item[]; live: boolean }) {
@@ -2072,12 +2095,18 @@ function ActivityStack({
         ? undefined
         : toolTally(operationalActivity, false)
   const stopped = !live && activity.stopped === true
+  // Counted in the group the projection already holds, never across the transcript.
+  const runningSubagents = runningSubagentCount(completedActivity)
+  // While the main agent waits on subagents they are the news, whatever call it waits in.
+  const waiting = live && current ? waitingSubagentsLabel(completedActivity) : undefined
   const label =
     live && current
-      ? liveActivityLabel(current)
+      ? (waiting ?? liveActivityLabel(current))
       : tally
         ? toolTallyText(tally)
-        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}`
+        : `${stopped ? 'Stopped after' : 'Worked for'} ${workedFor(activity.group.elapsedMs)}${
+            runningSubagents > 0 ? ` · ${runningSubagentsText(runningSubagents)}` : ''
+          }`
   const summaryItem = live ? current : (operationalActivity[0] ?? completedActivity[0])
   const summaryRef = useRef<HTMLButtonElement>(null)
   const summaryId = summaryItem?.id
@@ -2130,6 +2159,8 @@ function ActivityStack({
               toolBatchGlyph(operationalActivity)
             ) : stopped ? (
               <Stop strokeWidth={1.8} />
+            ) : waiting ? (
+              <SubagentGlyph />
             ) : (
               glyph(summaryItem)
             )}
@@ -2139,7 +2170,9 @@ function ActivityStack({
           <ToolTallyLabel tally={tally} announce />
         ) : (
           <span className="activity__label" aria-live="polite" aria-atomic="true">
-            {live && current ? activityLabelParts(current, label) : label}
+            {live && current && !waiting && !current.subagent
+              ? activityLabelParts(current, label)
+              : label}
           </span>
         )}
         <ChevronRight className="activity__chevron" size={15} strokeWidth={1.8} aria-hidden />
@@ -2160,7 +2193,11 @@ function ActivityStack({
             <div className="activity__body">
               {(visibleActivity ? groupToolRuns(visibleActivity) : []).map((item) => {
                 if (Array.isArray(item)) {
-                  return <ToolBatch key={item[0]!.id} items={item} live={live} />
+                  return item[0]!.subagent ? (
+                    <SubagentGroup key={item[0]!.id} items={item} />
+                  ) : (
+                    <ToolBatch key={item[0]!.id} items={item} live={live} />
+                  )
                 }
                 if (item.type === 'reasoning') {
                   return (
@@ -2183,11 +2220,7 @@ function ActivityStack({
                   )
                 }
                 return (
-                  <AuxDisclosure
-                    key={item.id}
-                    item={item}
-                    live={live && item.status === 'started'}
-                  />
+                  <ActivityRow key={item.id} item={item} live={live && item.status === 'started'} />
                 )
               })}
             </div>
@@ -2451,9 +2484,11 @@ type ToolKind =
   | 'generated-image'
   | 'plan'
   | 'compaction'
+  | 'subagent'
   | 'tool'
 
 function toolKind(item: Item): ToolKind {
+  if (item.subagent) return 'subagent'
   switch (item.type) {
     case 'command':
       return 'command'
@@ -2531,6 +2566,8 @@ function toolPhrase(kind: ToolKind, count: number): string {
       return 'Updated the plan'
     case 'compaction':
       return 'Compacted context'
+    case 'subagent':
+      return `Ran ${counted('subagent', 'subagents')}`
     case 'tool':
       return `Used ${counted('tool', 'tools')}`
   }
@@ -2607,6 +2644,7 @@ function liveActivityLabel(item: Item): string {
       return `${ongoing ? 'Editing' : 'Edited'} ${target}`
     }
     case 'tool_call': {
+      if (item.subagent) return subagentActivityLabel(item.subagent)
       const text = toolText(item)
       if (isImageView(item)) {
         if (item.status === 'failed') return 'Could not view image'
@@ -3012,6 +3050,7 @@ export function workedFor(ms: number): string {
 
 function glyph(item: Item) {
   if (isContextCompaction(item)) return <ArrowDownToLine size={13} />
+  if (item.subagent) return <SubagentGlyph />
 
   switch (item.type) {
     case 'message':
@@ -3051,6 +3090,7 @@ function summariseLive(item: Item): string {
     case 'file_change':
       return ongoing ? 'Editing files' : 'Edited files'
     case 'tool_call': {
+      if (item.subagent) return subagentActivityLabel(item.subagent)
       const text = toolText(item)
       const designPhase = designPhaseLabel(text)
       if (designPhase) return designPhase
