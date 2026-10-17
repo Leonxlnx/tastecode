@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import path from 'node:path'
 import { spawnCli } from '@harness/proc'
+import { captureCli, type CapturedCli } from '@harness/proc/cli'
 
 /**
  * How cursor-agent really starts on Windows.
@@ -86,4 +87,29 @@ export function spawnCursorAgent(
     ...options,
     env: { ...launcher.env, ...options.env },
   })
+}
+
+/**
+ * How long a short cursor-agent command may take. Each one starts node and
+ * most go online: on a busy Windows machine `status` took 3.5–12.8 s and
+ * `models` 9–14.5 s, so the general five-second CLI limit failed them. The
+ * model listing gets longer still (CURSOR_MODELS_TIMEOUT_MS in listing.ts).
+ */
+export const CURSOR_COMMAND_TIMEOUT_MS = 30_000
+
+/**
+ * runCli for cursor-agent: the same start as a turn, so `status`, `models`
+ * and `logout` skip the cmd.exe and PowerShell hops on Windows as well.
+ */
+export function runCursorAgent(
+  command: string,
+  args: string[],
+  timeoutMs = CURSOR_COMMAND_TIMEOUT_MS,
+): Promise<CapturedCli> {
+  const child = spawnCursorAgent(command, args)
+  const captured = captureCli(child, timeoutMs)
+  // Nothing is sent; EOF keeps a command that reads stdin from waiting.
+  child.stdin.on('error', () => undefined)
+  child.stdin.end()
+  return captured
 }
