@@ -638,6 +638,9 @@ function WorkspaceToolSurface(props: {
         threadId={props.threadId}
         branch={props.branch}
         theme={props.theme}
+        turnRunning={
+          props.sideChatParentStatus !== 'idle' && props.sideChatParentStatus !== 'failed'
+        }
       />
     )
   }
