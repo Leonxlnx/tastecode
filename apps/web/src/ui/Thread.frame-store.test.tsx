@@ -8,6 +8,8 @@ import { emptyThread, reduceDeltas, type ThreadState } from '../thread-store.js'
 import { LiveMarkdownParser } from './live-markdown.js'
 
 const virtualizerRender = vi.hoisted(() => vi.fn())
+/** Set to model rows the virtualizer measured taller without the transcript rendering again. */
+const virtualLayout = vi.hoisted(() => ({ total: undefined as number | undefined }))
 
 vi.mock('@tanstack/react-virtual', () => ({
   useVirtualizer: ({ count }: { count: number }) => {
@@ -21,7 +23,7 @@ vi.mock('@tanstack/react-virtual', () => ({
           end: (index + 1) * 72,
           size: 72,
         })),
-      getTotalSize: () => count * 72,
+      getTotalSize: () => virtualLayout.total ?? count * 72,
       measurementsCache: [],
       measureElement: () => undefined,
       indexFromElement: (node: Element) => Number(node.getAttribute('data-index')),
@@ -48,6 +50,8 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   device.prefersReducedMotion = 'no-preference'
+  virtualLayout.total = undefined
+  vi.restoreAllMocks()
 })
 
 describe('Thread live frame isolation', () => {
@@ -289,14 +293,18 @@ describe('Thread live frame isolation', () => {
       activeTurn: { id: 'turn-1', startedAt: 1 },
     }
     const store = new ThreadFrameStore(initial)
+    vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(200)
+    vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(
+      () => virtualLayout.total ?? 72,
+    )
     const view = render(
       <Thread frameStore={store} onDecide={() => undefined} onAnswerUserInput={() => undefined} />,
     )
     const scroller = view.container.querySelector<HTMLElement>('.thread')!
-    Object.defineProperties(scroller, {
-      scrollHeight: { configurable: true, value: 1_000 },
-      clientHeight: { configurable: true, value: 200 },
-    })
+    const transcriptRenders = virtualizerRender.mock.calls.length
+    // The live row measured a few lines taller; the transcript owner has not
+    // rendered since, so only the frame subscriber can follow it.
+    virtualLayout.total = 1_000
 
     const live = reduceDeltas(initial, [
       {
@@ -309,6 +317,7 @@ describe('Thread live frame isolation', () => {
     act(() => store.publish(live))
 
     expect(scroller.scrollTop).toBe(800)
+    expect(virtualizerRender).toHaveBeenCalledTimes(transcriptRenders)
   })
 
   it('uses one frame version for a range without reacting to outside rows', () => {
