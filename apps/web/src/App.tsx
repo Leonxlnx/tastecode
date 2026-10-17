@@ -530,6 +530,11 @@ export function App() {
     (requestedProvider?: ProviderId) => usageController.refresh(requestedProvider),
     [usageController],
   )
+  const retryUsage = useCallback(
+    (requestedProvider: ProviderId) => usageController.refresh(requestedProvider, 'retry'),
+    [usageController],
+  )
+  const showUsage = useCallback(() => usageController.show(), [usageController])
   const consumeReset = useCallback(
     async (requestedProvider: ProviderId, idempotencyKey: string, creditId?: string) => {
       try {
@@ -1770,6 +1775,11 @@ export function App() {
     const offUsageChanged = transport.on('usage.changed', ({ provider }) => {
       usageController.changed(provider)
     })
+    // Live windows reach the bars as the server folds them in, not only after
+    // the spaced usage.changed signal and a new request.
+    const offUsageLimits = transport.on('usage.limits', ({ source }) => {
+      usageController.applySource(source)
+    })
     const offSequenceGap = transport.onSequenceGap(() => {
       threadController.markHistoriesForRecovery()
       resync.current()
@@ -1836,6 +1846,7 @@ export function App() {
       offPreviewCapture()
       offSidebarSettings()
       offUsageChanged()
+      offUsageLimits()
       offSequenceGap()
       offState()
       transport.close()
@@ -2838,7 +2849,8 @@ export function App() {
     })
   }, [activeId, thread.running, refreshCheckpoints])
 
-  const usageThreadId = activeId && !activeId.startsWith('pending:') ? activeId : undefined
+  // Plan limits belong to the account, so a chat switch neither asks again nor
+  // resets them; the thread token totals the request could carry are unused.
   const usageProviders = useMemo(
     () => [
       provider,
@@ -2850,17 +2862,8 @@ export function App() {
   )
 
   useLayoutEffect(() => {
-    usageController.select(
-      usageProviders.map((sourceProvider) => ({
-        provider: sourceProvider,
-        ...(sourceProvider === provider && usageThreadId
-          ? {
-              threadId: usageThreadId,
-            }
-          : {}),
-      })),
-    )
-  }, [usageController, usageThreadId, provider, usageProviders])
+    usageController.select(usageProviders.map((sourceProvider) => ({ provider: sourceProvider })))
+  }, [usageController, usageProviders])
 
   // First load, plus the one-time handover from localStorage. Anything found
   // there stays recoverable until the server acknowledges that project.
@@ -5653,7 +5656,8 @@ export function App() {
           providerName={providerName(provider, sourceAgentName)}
           keybindings={keybindings}
           usageStates={usageState}
-          onRetryUsage={refreshUsage}
+          onShowUsage={showUsage}
+          onRetryUsage={retryUsage}
           onConsumeReset={consumeReset}
           mode={sidebarSettings.mode}
           inbox={sidebarInbox}

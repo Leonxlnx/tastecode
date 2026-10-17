@@ -214,6 +214,8 @@ function SidebarComponent(props: {
   providerName: string
   keybindings?: Keybindings | undefined
   usageStates?: AccountLimitsState[] | undefined
+  /** The account popup shows plan limits; returns the release for when it closes. */
+  onShowUsage?: (() => () => void) | undefined
   onRetryUsage?: ((provider: ProviderId) => void) | undefined
   onConsumeReset?:
     | ((
@@ -930,6 +932,7 @@ function SidebarComponent(props: {
                       <Suspense fallback={<AccountLimitsLoading states={props.usageStates} />}>
                         <RenderedAccountLimits
                           states={props.usageStates}
+                          onShow={props.onShowUsage}
                           onRetry={props.onRetryUsage ?? noop}
                           onConsumeReset={props.onConsumeReset}
                         />

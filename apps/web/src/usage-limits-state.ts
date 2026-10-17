@@ -1,4 +1,10 @@
-import type { ParamsOf, ProviderId, ResultOf } from '@harness/contracts'
+import type {
+  ParamsOf,
+  ProviderId,
+  ProviderLimitSource,
+  ResultOf,
+  UsageReadIntent,
+} from '@harness/contracts'
 import { UsageSummaryController, type UsageSummaryState } from './usage-summary-state.js'
 
 type Target = { provider: ProviderId; threadId?: string | undefined }
@@ -18,6 +24,10 @@ export class UsageLimitsController {
   #order: ProviderId[] = []
   #snapshot: UsageSummaryState[] = []
   #disposed = false
+  /** Views that show the limits now, such as the account popup or the Usage page. */
+  #shown = 0
+  #showRefresh = false
+  readonly #intent = (): UsageReadIntent => (this.#shown > 0 ? 'visible' : 'background')
 
   constructor(load: LoadSummary, coalesceMs = 100) {
     this.#load = load
@@ -50,7 +60,7 @@ export class UsageLimitsController {
     for (const target of unique) {
       let entry = this.#entries.get(target.provider)
       if (!entry) {
-        const controller = new UsageSummaryController(this.#load, this.#coalesceMs)
+        const controller = new UsageSummaryController(this.#load, this.#coalesceMs, this.#intent)
         entry = { controller, unsubscribe: controller.subscribe(() => this.#publish()) }
         this.#entries.set(target.provider, entry)
       }
@@ -59,13 +69,44 @@ export class UsageLimitsController {
     this.#publish()
   }
 
-  refresh(provider?: ProviderId): void {
-    if (provider) this.#entries.get(provider)?.controller.refresh()
-    else for (const entry of this.#entries.values()) entry.controller.refresh()
+  refresh(provider?: ProviderId, intent?: UsageReadIntent): void {
+    if (provider) this.#entries.get(provider)?.controller.refresh(intent)
+    else for (const entry of this.#entries.values()) entry.controller.refresh(intent)
+  }
+
+  /**
+   * A view that shows the limits opened. While any is open, requests say so,
+   * which lets the server read sources it otherwise reads only on view; the
+   * opening itself asks once. Returns the release for when the view closes.
+   */
+  show(): () => void {
+    if (this.#disposed) return () => {}
+    this.#shown += 1
+    // A view that closes and opens again in the same task, as under
+    // StrictMode, asks only once.
+    if (this.#shown === 1 && !this.#showRefresh) {
+      this.#showRefresh = true
+      queueMicrotask(() => {
+        this.#showRefresh = false
+        if (this.#shown > 0 && !this.#disposed) this.refresh()
+      })
+    }
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.#shown -= 1
+    }
   }
 
   changed(provider: ProviderId): void {
     this.#entries.get(provider)?.controller.changed(provider)
+  }
+
+  /** A pushed snapshot replaces that provider's limits without a request. */
+  applySource(source: ProviderLimitSource): void {
+    if (this.#disposed) return
+    this.#entries.get(source.provider)?.controller.applySource(source)
   }
 
   dispose(): void {
