@@ -1841,6 +1841,132 @@ describe('Claude Agent SDK session', () => {
     expect(models.some((model) => model.id === 'opus[1m]')).toBe(false)
     adapter.dispose()
   })
+
+  describe('when discovery does not answer', () => {
+    const aliases: ModelInfo[] = [
+      {
+        value: 'default',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Default (recommended)',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+      {
+        value: 'claude-fable-5-1[1m]',
+        resolvedModel: 'claude-fable-5-1',
+        displayName: 'Fable',
+        description: 'Fable 5.1',
+        supportsEffort: true,
+      },
+      {
+        value: 'opus',
+        resolvedModel: 'claude-opus-5-5',
+        displayName: 'Opus',
+        description: 'Opus 5.5',
+        supportsEffort: true,
+      },
+    ]
+    let configDirs = 0
+    /** A config directory no other test has listed, so the process-wide memory starts empty. */
+    const freshEnvironment = () => ({ CLAUDE_CONFIG_DIR: `claude-config-${(configDirs += 1)}` })
+
+    function adapterFor(
+      environment: NodeJS.ProcessEnv,
+      answer: (query: FakeQuery) => Promise<ModelInfo[]>,
+    ) {
+      const logs: string[] = []
+      const createQuery: ClaudeQueryFactory = (input) => {
+        const query = new FakeQuery([], input.options.mcpServers)
+        query.supportedModels = () => answer(query)
+        return query
+      }
+      const adapter = new ClaudeCodeAdapter({ createQuery, environment })
+      adapter.on('log', (line) => logs.push(line))
+      return { adapter, logs }
+    }
+
+    it('keeps the last live ids instead of swapping in the catalog ids', async () => {
+      const environment = freshEnvironment()
+      const live = adapterFor(environment, async () => aliases)
+      const listed = (await live.adapter.listModels()).map((model) => model.id)
+      expect(listed.slice(0, 2)).toEqual(['claude-fable-5-1[1m]', 'opus'])
+      live.adapter.dispose()
+
+      const failing = adapterFor(environment, async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      expect((await failing.adapter.listModels()).map((model) => model.id)).toEqual(listed)
+      expect(failing.logs).toEqual([
+        'Claude model discovery kept the last live list: Error: Claude model discovery timed out',
+      ])
+      failing.adapter.dispose()
+
+      const empty = adapterFor(environment, async () => [])
+      expect((await empty.adapter.listModels()).map((model) => model.id)).toEqual(listed)
+      expect(empty.logs).toEqual([
+        'Claude model discovery kept the last live list: the runtime listed no models',
+      ])
+      empty.adapter.dispose()
+    })
+
+    it('keeps the last live ids through the 30 s discovery timeout', async () => {
+      const environment = freshEnvironment()
+      const live = adapterFor(environment, async () => aliases)
+      const listed = (await live.adapter.listModels()).map((model) => model.id)
+      live.adapter.dispose()
+
+      vi.useFakeTimers()
+      try {
+        const stalled = adapterFor(environment, () => new Promise<ModelInfo[]>(() => {}))
+        const pending = stalled.adapter.listModels()
+        await vi.advanceTimersByTimeAsync(30_000)
+        expect((await pending).map((model) => model.id)).toEqual(listed)
+        stalled.adapter.dispose()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('falls back to the catalog only before any live answer for that config directory', async () => {
+      const listedElsewhere = adapterFor(freshEnvironment(), async () => aliases)
+      await listedElsewhere.adapter.listModels()
+      listedElsewhere.adapter.dispose()
+
+      const cold = adapterFor(freshEnvironment(), async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      expect(await cold.adapter.listModels()).toEqual(CLAUDE_MODELS)
+      expect(cold.logs).toEqual([
+        'Claude model discovery fell back to known values: Error: Claude model discovery timed out',
+      ])
+      cold.adapter.dispose()
+    })
+
+    it('rejects a refresh before any live answer instead of answering with the catalog', async () => {
+      const environment = freshEnvironment()
+      const cold = adapterFor(environment, async () => {
+        throw new Error('Claude model discovery timed out')
+      })
+      // The caller's list may hold this account's alias ids from an earlier launch.
+      await expect(cold.adapter.listModels({ refresh: true })).rejects.toThrow(
+        'Claude model discovery did not answer: Error: Claude model discovery timed out',
+      )
+      cold.adapter.dispose()
+      const empty = adapterFor(environment, async () => [])
+      await expect(empty.adapter.listModels({ refresh: true })).rejects.toThrow(
+        /^Claude model discovery did not answer: the runtime listed no models$/,
+      )
+      empty.adapter.dispose()
+
+      const live = adapterFor(environment, async () => aliases)
+      const listed = await live.adapter.listModels({ refresh: true })
+      live.adapter.dispose()
+      const stalled = adapterFor(environment, async () => [])
+      // Once this process has a live answer, a refresh keeps it.
+      await expect(stalled.adapter.listModels({ refresh: true })).resolves.toEqual(listed)
+      stalled.adapter.dispose()
+    })
+  })
 })
 
 describe('Claude static model catalog', () => {

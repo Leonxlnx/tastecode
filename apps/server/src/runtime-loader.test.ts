@@ -45,6 +45,16 @@ describe('provider runtime loading', () => {
     expect(listModels).toHaveBeenCalledTimes(2)
   })
 
+  it('tells the loaded runtime when a model read refreshes a kept list', async () => {
+    const loaded = fakeRuntime()
+    const listModels = vi.spyOn(loaded, 'listModels')
+    adapters.providerRuntime.mockReturnValue(loaded)
+
+    await providerRuntime('claude-code', () => {}).listModels(undefined, { refresh: true })
+
+    expect(listModels).toHaveBeenCalledExactlyOnceWith(undefined, { refresh: true })
+  })
+
   it('preserves which providers support restart resume', () => {
     adapters.providerRuntime.mockReturnValue(fakeRuntime())
 

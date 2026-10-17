@@ -15,12 +15,14 @@ import { z } from 'zod'
 import { App, resolveSendAvailability } from './App.js'
 import type { NativeMenuAction, NativeMenuActionSource } from './bridge.js'
 import { DESIGN_BRIEF_ATTACHMENT } from './design-agent/briefing.js'
-import { serializeModelCatalogCache } from './model-catalog-cache.js'
-import { choicesFor, MODEL_VISIBILITY_VERSION, type ModelChoice } from './model-catalog.js'
+import { serializeModelCatalogCache as serializeCatalogWithinLimits } from './model-catalog-cache.js'
+import { choicesFor, type ModelChoice } from './model-catalog.js'
+import { parseModelVisibility, type ModelVisibilityRecord } from './model-catalog-visibility.js'
 import { KEYBINDING_DEFINITIONS, type Shortcut } from './shortcuts.js'
 import { TERMINAL_PLACEMENT_KEY } from './terminal-placement.js'
-import { IndeterminateRequestError, type ConnectionState } from './transport.js'
+import { IndeterminateRequestError, type ConnectionState, type Transport } from './transport.js'
 import { resetInstalls } from './provider-install.js'
+import { providerUpdatesStore } from './provider-updates.js'
 import { mockKeyboardModifierState } from './test-keyboard.js'
 import { NEWEST_HISTORY_TURNS } from './thread-controller.js'
 
@@ -60,6 +62,8 @@ const transport = vi.hoisted(() => ({
   stateListeners: new Set<(state: ConnectionState) => void>(),
   sequenceGapListeners: new Set<(expected: number, received: number) => void>(),
   urls: new Array<string>(),
+  /** The app's own connection, for stores keyed by it. */
+  instance: undefined as object | undefined,
   state: 'open' as ConnectionState,
   connect: vi.fn(),
   close: vi.fn(),
@@ -119,6 +123,7 @@ vi.mock('./transport.js', async (importOriginal) => {
     Transport: class {
       constructor(url: string) {
         transport.urls.push(url)
+        transport.instance = this
       }
       get state() {
         return transport.state
@@ -641,6 +646,15 @@ async function openProviderSettings() {
   fireEvent.click(await within(settings).findByRole('button', { name: 'Providers' }))
 }
 
+/** Test snapshots are small, so they always fit the cache. */
+function serializeModelCatalogCache(
+  ...args: Parameters<typeof serializeCatalogWithinLimits>
+): string {
+  const raw = serializeCatalogWithinLimits(...args)
+  if (raw === undefined) throw new Error('test catalog exceeds the cache limits')
+  return raw
+}
+
 function cachedCodexChoice(): ModelChoice {
   return {
     key: 'codex:gpt-6.1-sol',
@@ -806,16 +820,6 @@ function grokServerProvider(): TestServerProvider {
   return { ...claudeCodeServerProvider(), id: 'grok', displayName: 'Grok' }
 }
 
-/** The older build's list once Claude Code is back on its current lineup. */
-const MIGRATED_OLDER_BUILD_HIDDEN_MODELS = [
-  'codex:gpt-5.5',
-  'codex:gpt-5.4',
-  'claude-code:opus%5B1m%5D',
-  ...claudeCodeLineup()
-    .slice(4)
-    .map((model) => `claude-code:${model.id}`),
-]
-
 /** Codex and Claude Code list their catalogs; Grok's discovery always fails. */
 function mockDiscoveryWithFailingGrok(claudeModels?: Promise<{ models: Model[] }>) {
   const request = transport.request.getMockImplementation()
@@ -856,29 +860,88 @@ function offeredModelNames(provider: string): string[] {
     .map((choice) => choice.model.displayName)
 }
 
-function savedHiddenModels(): string[] {
-  return (JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]).sort()
+function savedVisibility(): ModelVisibilityRecord | undefined {
+  return parseModelVisibility(localStorage.getItem('harness.modelVisibility.v2'))
 }
 
-/** Rows a pending migration moved while Grok kept the profile behind, as `key@version`. */
-function migratedVisibilityRows(): string[] | null {
-  const stored = JSON.parse(
-    localStorage.getItem('harness.modelVisibilityRows') ?? 'null',
-  ) as Record<string, string> | null
-  return stored
-    ? Object.entries(stored)
-        .map(([key, version]) => `${key}@${version}`)
-        .sort()
-    : null
+/** The saved choices, as `key=shown` or `key=hidden`, sorted. */
+function savedOverrides(): string[] {
+  return Object.entries(savedVisibility()?.overrides ?? {})
+    .map(([key, override]) => `${key}=${override.visible ? 'shown' : 'hidden'}`)
+    .sort()
 }
 
-function currentRows(keys: readonly string[]): string[] {
-  return keys.map((key) => `${key}@${MODEL_VISIBILITY_VERSION}`).sort()
-}
+/** Leon's list as an older build saved it at format version 4, keys only. */
+const LEON_HIDDEN_MODELS = [
+  'codex:gpt-5.5',
+  'codex:gpt-5.4',
+  'codex:gpt-5.4-mini',
+  'codex:gpt-5.3-codex-spark',
+  'claude-code:claude-fable-5',
+  'claude-code:claude-opus-4-8',
+  'claude-code:claude-opus-4-7',
+  'claude-code:claude-opus-4-6',
+  'claude-code:claude-opus-4-5',
+  'claude-code:claude-sonnet-4-6',
+  'claude-code:opus%5B1m%5D',
+  'claude-code:claude-opus-5',
+  'claude-code:claude-sonnet-5',
+  'claude-code:claude-haiku-4-5-20251001',
+  'claude-code:claude-haiku-4-5',
+]
+/** The rows of that list its build recorded at version 8; the rest were no longer listed. */
+const LEON_RECORDED_ROWS = LEON_HIDDEN_MODELS.filter(
+  (key) =>
+    ![
+      'codex:gpt-5.4',
+      'codex:gpt-5.4-mini',
+      'codex:gpt-5.3-codex-spark',
+      'claude-code:opus%5B1m%5D',
+    ].includes(key),
+)
 
-const CLAUDE_CODE_LINEUP_KEYS = claudeCodeLineup().map((model) => `claude-code:${model.id}`)
-/** Every row the Grok-failing discovery mock lists for Claude Code and Codex. */
-const LISTED_ROW_KEYS = [...CLAUDE_CODE_LINEUP_KEYS, 'codex:gpt-6.1-sol', 'codex:gpt-5.5']
+/** The lineups listed live on 2026-10-16: codex-cli 0.163, Claude Code and Grok. */
+function mockLiveDiscovery() {
+  const request = transport.request.getMockImplementation()
+  if (!request) throw new Error('missing request mock')
+  const row = (id: string, displayName: string, isDefault = false): Model => ({
+    id,
+    displayName,
+    isDefault,
+    reasoningEfforts: [],
+    serviceTiers: [],
+  })
+  const lineups = new Map<string, Model[]>([
+    [
+      'codex',
+      [
+        row('gpt-6-astra', 'GPT-6-Astra'),
+        row('gpt-6.1-sol', 'GPT-6.1-Sol', true),
+        row('gpt-5.6-terra', 'GPT-5.6-Terra'),
+        row('gpt-6-luna', 'GPT-6-Luna'),
+        row('gpt-6-sol', 'GPT-6-Sol'),
+        row('gpt-5.6-sol', 'GPT-5.6-Sol'),
+        row('gpt-5.6-luna', 'GPT-5.6-Luna'),
+        row('gpt-5.5', 'GPT-5.5'),
+      ],
+    ],
+    ['claude-code', claudeCodeLineup()],
+    [
+      'grok',
+      [
+        row('grok-4.7', 'Grok 4.7', true),
+        row('grok-4.7-build-fast', 'Grok 4.7 Build Fast'),
+        row('grok-4.6', 'Grok 4.6'),
+        row('grok-4.5', 'Grok 4.5'),
+      ],
+    ],
+  ])
+  transport.request.mockImplementation((method: string, params: unknown) => {
+    if (method !== 'models.list') return request(method, params)
+    const { provider } = methods['models.list'].params.parse(params)
+    return Promise.resolve({ models: lineups.get(provider) ?? [] })
+  })
+}
 
 function dispatchTransitionEnd(element: Element, propertyName: string) {
   const event = new Event('transitionend', { bubbles: true })
@@ -1001,12 +1064,55 @@ describe('web client', () => {
     await waitFor(() =>
       expect(composerProps().models.map((choice) => choice.key)).toContain(cachedCodexChoice().key),
     )
+    // The settled source reaches the cache on the trailing write.
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).not.toBeNull(), {
+      timeout: 3_000,
+    })
     const cache = JSON.parse(localStorage.getItem('harness.modelCatalog.v1')!)
     expect(cache.validatedSources.map((source: { source: string }) => source.source)).toEqual([
       'codex',
     ])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
     expect(composerProps().modelsLoaded).toBe(true)
+  })
+
+  it('writes the cache once for sources that settle together, then for the full catalog', async () => {
+    for (const id of ['claude-code', 'grok', 'cursor'] as const) {
+      serverProviders.push({ ...serverProviders[0]!, id, displayName: id })
+    }
+    let releaseCursor!: () => void
+    const cursorModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseCursor = () =>
+        resolve({ models: [{ ...cachedCodexChoice().model, id: 'cursor-model' }] })
+    })
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) => {
+      if (method !== 'models.list') return request(method, params)
+      const { provider } = methods[method].params.parse(params)
+      if (provider === 'cursor') return cursorModels
+      return Promise.resolve({
+        models: [{ ...cachedCodexChoice().model, id: `${provider}-model` }],
+      })
+    })
+    const setItem = vi.spyOn(localStorage, 'setItem')
+    const cacheWrites = () =>
+      setItem.mock.calls
+        .filter(([key]) => key === 'harness.modelCatalog.v1')
+        .map(([, value]) =>
+          (JSON.parse(value) as { validatedSources: { source: string }[] }).validatedSources
+            .map((entry) => entry.source)
+            .sort(),
+        )
+    try {
+      render(<App />)
+      await waitFor(() => expect(cacheWrites()).toEqual([['claude-code', 'codex', 'grok']]), {
+        timeout: 3_000,
+      })
+      await act(async () => releaseCursor())
+      await waitFor(() => expect(cacheWrites()).toHaveLength(2))
+      expect(cacheWrites()[1]).toEqual(['claude-code', 'codex', 'cursor', 'grok'])
+    } finally {
+      setItem.mockRestore()
+    }
   })
 
   it('does not renew an unresolved source cache when another provider completes', async () => {
@@ -1044,6 +1150,26 @@ describe('web client', () => {
       'codex',
     ])
     expect(cache.models.map((choice: { key: string }) => choice.key)).toContain(stale.key)
+  })
+
+  it('drops the model catalog cache once the catalog outgrows it', async () => {
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const models = Array.from({ length: 2_001 }, (_, index) => ({
+      ...cachedCodexChoice().model,
+      id: `listed-${index}`,
+      displayName: `Listed ${index}`,
+      isDefault: index === 0,
+    }))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method, params) =>
+      method === 'models.list' ? Promise.resolve({ models }) : request(method, params),
+    )
+    render(<App />)
+    await waitFor(() => expect(localStorage.getItem('harness.modelCatalog.v1')).toBeNull())
+    expect(composerProps().modelsLoaded).toBe(true)
   })
 
   it('retains a legacy project list through an unacknowledged outage', async () => {
@@ -1843,64 +1969,8 @@ describe('web client', () => {
     })
   })
 
-  it('persists curated model defaults only after the first catalog arrives', async () => {
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    let releaseModels!: (value: unknown) => void
-    const models = new Promise((resolve) => {
-      releaseModels = resolve
-    })
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list' ? models : request(method, params),
-    )
-
-    render(<App />)
-    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
-
-    releaseModels({
-      models: [
-        { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
-        { ...cachedCodexChoice().model, id: 'new-model', displayName: 'New model' },
-        {
-          id: 'gpt-6.1-sol',
-          displayName: 'GPT-5.6 Sol',
-          isDefault: true,
-          reasoningEfforts: [],
-          serviceTiers: [],
-        },
-        {
-          id: 'gpt-5.5',
-          displayName: 'GPT-5.5',
-          isDefault: false,
-          reasoningEfforts: [],
-          serviceTiers: [],
-        },
-      ],
-    })
-
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-5.5"]'),
-    )
-  })
-
-  it('hides curated older models per source while the rest of discovery is pending', async () => {
-    serverProviders = [
-      ...serverProviders,
-      {
-        id: 'claude-code',
-        displayName: 'Claude Code',
-        installed: true,
-        auth: 'authenticated',
-        capabilities: {
-          steer: false,
-          fork: false,
-          interrupt: true,
-          reasoningItems: true,
-          approvals: false,
-          images: false,
-        },
-      },
-    ]
+  it('hides older generations per source as soon as it answers, and saves no defaults', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
     // The names the adapters give these rows; the defaults read their generation there.
     const names = new Map([
       ['opus', 'Opus 5.5'],
@@ -1929,26 +1999,283 @@ describe('web client', () => {
 
     render(<App />)
 
-    // Codex has answered and Claude Code has not: the picker must already
-    // leave out the older Codex model instead of listing it until every
-    // provider is done, and nothing is saved before the first full catalog.
+    // Codex has answered and Claude Code has not: the picker already leaves
+    // out the older Codex model instead of listing it until every provider
+    // is done.
     await waitFor(() => expect(offeredKeys()).toContain('codex:gpt-6.1-sol'))
     expect(offeredKeys()).not.toContain('codex:gpt-5.5')
-    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
 
     await act(async () => {
       releaseClaude({ models: [listed('opus', true), listed('claude-opus-4-8')] })
       await claudeModels
     })
 
+    await waitFor(() => expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus']))
+    // Defaults follow the catalog; only the moment Opus 5.5 took over is saved.
+    expect(savedVisibility()?.overrides).toEqual({})
+    expect(Object.keys(savedVisibility()?.firstSeen ?? {})).toEqual(['claude-code:opus'])
+  })
+
+  it('keeps a visibility edit made while live discovery is pending', async () => {
+    // Load Settings first so this test measures discovery ordering.
+    await import('./ui/Settings.js')
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([cachedCodexChoice()]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    let releaseModels!: (value: unknown) => void
+    const models = new Promise((resolve) => {
+      releaseModels = resolve
+    })
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? models : request(method, params),
+    )
+
+    render(<App />)
+    openSettings()
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(await within(settings).findByRole('button', { name: 'Models' }))
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
+    )
+
+    await waitFor(() => expect(savedOverrides()).toEqual(['codex:gpt-6.1-sol=hidden']))
+    releaseModels({
+      models: [
+        cachedCodexChoice().model,
+        {
+          id: 'gpt-5.5',
+          displayName: 'GPT-5.5',
+          isDefault: false,
+          reasoningEfforts: [],
+          serviceTiers: [],
+        },
+      ],
+    })
+
+    // The composer button names GPT-5.5 too once it is the visible choice, so
+    // look for the Settings row by its switch.
+    const legacy = await screen.findByRole('switch', { name: 'Include GPT-5.5 in model picker' })
+    // The edit stays; GPT-5.5, listed only now, is hidden by its default
+    // without anything saved for it.
+    expect(legacy.getAttribute('aria-checked')).toBe('false')
+    expect(savedOverrides()).toEqual(['codex:gpt-6.1-sol=hidden'])
+  })
+
+  it('never replaces a saved model-visibility choice with defaults', async () => {
+    const saved = {
+      overrides: { 'codex:gpt-6.1-sol': { visible: false, at: 1 } },
+      firstSeen: {},
+    }
+    localStorage.setItem('harness.modelVisibility.v2', JSON.stringify(saved))
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list'
+        ? Promise.resolve({
+            models: [
+              {
+                id: 'gpt-6.1-sol',
+                displayName: 'GPT-5.6 Sol',
+                isDefault: true,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+              {
+                id: 'gpt-5.5',
+                displayName: 'GPT-5.5',
+                isDefault: false,
+                reasoningEfforts: [],
+                serviceTiers: [],
+              },
+            ],
+          })
+        : request(method, params),
+    )
+
+    render(<App />)
+
     await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe(
-        '["codex:gpt-5.5","claude-code:claude-opus-4-8"]',
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
+    )
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(savedVisibility()).toEqual(saved)
+  })
+
+  it("imports Leon's saved list once: newer generations take over, his own choice stays", async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    // Format version 4, every row he still has listed recorded at 8, and one
+    // model he hid himself.
+    const hidden = [...LEON_HIDDEN_MODELS, 'codex:gpt-6-astra']
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(hidden))
+    localStorage.setItem(
+      'harness.modelVisibilityRows',
+      JSON.stringify(
+        Object.fromEntries(LEON_RECORDED_ROWS.concat('codex:gpt-6-astra').map((key) => [key, '8'])),
       ),
     )
-    expect(offeredKeys()).toEqual(['codex:gpt-6.1-sol', 'claude-code:opus'])
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
+    localStorage.setItem('harness.listedModels', '[]')
+    mockLiveDiscovery()
+
+    render(<App />)
+
+    await waitFor(() => expect(offeredModelNames('grok')).toEqual(['Grok 4.7']))
+    await waitFor(() =>
+      expect(offeredModelNames('codex')).toEqual(['GPT-6.1-Sol', 'GPT-5.6-Terra', 'GPT-6-Luna']),
+    )
+    expect(offeredModelNames('claude-code')).toEqual([
+      'Fable 5.1',
+      'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+    ])
+    await waitFor(() =>
+      expect(savedOverrides()).toEqual([
+        // A row his list hid that Claude Code no longer lists keeps its state.
+        'claude-code:claude-haiku-4-5=hidden',
+        'codex:gpt-6-astra=hidden',
+      ]),
+    )
+    expect(savedVisibility()?.legacyHidden).toBeUndefined()
+    for (const key of [
+      'harness.hiddenModels',
+      'harness.modelVisibilityVersion',
+      'harness.modelVisibilityRows',
+      'harness.listedModels',
+    ]) {
+      expect(localStorage.getItem(key)).toBeNull()
+    }
   })
+
+  it('returns an older build’s list to the current lineups from the cached catalog', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider()]
+    // Version 4 predates Claude Code's reset (7) and Codex's (8), so every
+    // entry in this list was a default of that build, not a choice.
+    localStorage.setItem('harness.modelVisibilityVersion', '4')
+    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
+    localStorage.setItem(
+      'harness.modelCatalog.v1',
+      serializeModelCatalogCache([
+        ...choicesFor(
+          { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+          claudeCodeLineup(),
+        ),
+        cachedCodexChoice(),
+      ]),
+    )
+    const request = transport.request.getMockImplementation()
+    if (!request) throw new Error('missing request mock')
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? new Promise(() => undefined) : request(method, params),
+    )
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
+    )
+    // The first frame already shows Sonnet 5.5 and Haiku 5.5, which that
+    // build hid while their aliases named an older generation.
+    expect(offeredModelNames('claude-code')).toEqual([
+      'Fable 5.1',
+      'Opus 5.5',
+      'Sonnet 5.5',
+      'Haiku 5.5',
+    ])
+    expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
+    await waitFor(() => expect(savedVisibility()).toBeDefined())
+    expect(savedVisibility()?.overrides).toEqual({})
+    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
+  })
+
+  it('imports a source the cache did not list once it is listed after the restored selection', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    localStorage.setItem('harness.provider', 'claude-code')
+    localStorage.setItem('harness.model', 'claude-code:haiku')
+    // Saved at version 8: the user hid Sonnet 5.5; Opus 5 is an old default.
+    localStorage.setItem('harness.modelVisibilityVersion', '8')
+    localStorage.setItem(
+      'harness.hiddenModels',
+      JSON.stringify(['claude-code:sonnet', 'claude-code:claude-opus-5']),
+    )
+    let releaseClaude!: (value: { models: Model[] }) => void
+    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseClaude = resolve
+    })
+    mockDiscoveryWithFailingGrok(claudeModels)
+
+    render(<App />)
+
+    await waitFor(() =>
+      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
+    )
+    // Only the restored selection paints for Claude Code, so its entries wait.
+    expect(offeredModelNames('claude-code')).toEqual(['haiku'])
+    await waitFor(() =>
+      expect(savedVisibility()?.legacyHidden).toEqual([
+        'claude-code:sonnet',
+        'claude-code:claude-opus-5',
+      ]),
+    )
+
+    await act(async () => {
+      releaseClaude({ models: claudeCodeLineup() })
+      await claudeModels
+    })
+    await settleDiscoveryWithFailingGrok(1)
+
+    expect(offeredModelNames('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
+    await waitFor(() => expect(savedOverrides()).toEqual(['claude-code:sonnet=hidden']))
+    expect(savedVisibility()?.legacyHidden).toBeUndefined()
+  })
+
+  it.each([
+    ['from the cached catalog', true],
+    ['once Claude Code is listed', false],
+  ])(
+    'keeps Opus 5 turned on across reloads while Grok cannot be listed, shown %s',
+    async (_label, cached) => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+      if (cached) {
+        localStorage.setItem(
+          'harness.modelCatalog.v1',
+          serializeModelCatalogCache([
+            ...choicesFor(
+              { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
+              claudeCodeLineup(),
+            ),
+            cachedCodexChoice(),
+          ]),
+        )
+      }
+      mockDiscoveryWithFailingGrok()
+      const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
+
+      const first = render(<App />)
+      await settleDiscoveryWithFailingGrok(1)
+
+      expect(offeredModelNames('claude-code')).toEqual(currentLineup)
+      expect(offeredModelNames('codex')).toEqual(['GPT-5.6 Sol'])
+      openSettings()
+      await act(() => vi.dynamicImportSettled())
+      fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
+      fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
+      await waitFor(() => expect(savedOverrides()).toEqual(['claude-code:claude-opus-5=shown']))
+      first.unmount()
+
+      for (const launch of [2, 3]) {
+        const view = render(<App />)
+        await settleDiscoveryWithFailingGrok(launch)
+
+        expect(offeredModelNames('claude-code')).toEqual([...currentLineup, 'Opus 5'])
+        expect(savedOverrides()).toEqual(['claude-code:claude-opus-5=shown'])
+        view.unmount()
+      }
+    },
+  )
 
   it('never starts a chat on another provider than the picker names while its source loads', async () => {
     const capabilities = {
@@ -2028,278 +2355,9 @@ describe('web client', () => {
     )
   })
 
-  it.each(['failed', 'empty'] as const)(
-    'waits for every installed beta catalog when one is %s',
-    async (claudeCatalog) => {
-      serverProviders = [
-        ...serverProviders,
-        {
-          id: 'claude-code',
-          displayName: 'Claude Code',
-          installed: true,
-          auth: 'authenticated',
-          capabilities: {
-            steer: false,
-            fork: false,
-            interrupt: true,
-            reasoningItems: true,
-            approvals: false,
-            images: false,
-          },
-        },
-      ]
-      const request = transport.request.getMockImplementation()
-      if (!request) throw new Error('missing request mock')
-      transport.request.mockImplementation((method: string, params: unknown) => {
-        if (method !== 'models.list') return request(method, params)
-        if (methods['models.list'].params.parse(params).provider === 'claude-code') {
-          return claudeCatalog === 'failed'
-            ? Promise.reject(new Error('Claude catalog unavailable'))
-            : Promise.resolve({ models: [] })
-        }
-        return Promise.resolve({
-          models: [
-            {
-              id: 'gpt-5.5',
-              displayName: 'GPT-5.5',
-              isDefault: true,
-              reasoningEfforts: [],
-              serviceTiers: [],
-            },
-          ],
-        })
-      })
-
-      render(<App />)
-
-      await waitFor(() =>
-        expect(transport.request).toHaveBeenCalledWith('models.list', {
-          provider: 'claude-code',
-        }),
-      )
-      expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
-    },
-  )
-
-  it('keeps a visibility edit made while live discovery is pending', async () => {
-    // Load Settings first so this test measures discovery ordering.
-    await import('./ui/Settings.js')
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem(
-      'harness.modelCatalog.v1',
-      serializeModelCatalogCache([cachedCodexChoice()]),
-    )
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    let releaseModels!: (value: unknown) => void
-    const models = new Promise((resolve) => {
-      releaseModels = resolve
-    })
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list' ? models : request(method, params),
-    )
-
-    render(<App />)
-    openSettings()
-    const settings = await screen.findByRole('dialog', { name: 'Settings' })
-    fireEvent.click(await within(settings).findByRole('button', { name: 'Models' }))
-    fireEvent.click(
-      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
-    )
-
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]'),
-    )
-    releaseModels({
-      models: [
-        cachedCodexChoice().model,
-        {
-          id: 'gpt-5.5',
-          displayName: 'GPT-5.5',
-          isDefault: false,
-          reasoningEfforts: [],
-          serviceTiers: [],
-        },
-      ],
-    })
-
-    // The composer button names GPT-5.5 too once it is the visible choice, so
-    // look for the Settings row by its switch.
-    await waitFor(() =>
-      expect(screen.getByRole('switch', { name: 'Include GPT-5.5 in model picker' })).toBeTruthy(),
-    )
-    // The edit stays; GPT-5.5, listed only now, takes its default once.
-    expect(localStorage.getItem('harness.hiddenModels')).toBe(
-      '["codex:gpt-6.1-sol","codex:gpt-5.5"]',
-    )
-  })
-
-  it("keeps a new profile's first choice made while its first discovery is pending", async () => {
-    localStorage.setItem(
-      'harness.modelCatalog.v1',
-      serializeModelCatalogCache([cachedCodexChoice()]),
-    )
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    let releaseModels!: (value: unknown) => void
-    const models = new Promise((resolve) => {
-      releaseModels = resolve
-    })
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list' ? models : request(method, params),
-    )
-
-    render(<App />)
-    openSettings()
-    await act(() => vi.dynamicImportSettled())
-    fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
-    fireEvent.click(
-      await screen.findByRole('switch', { name: 'Include GPT-5.6 Sol in model picker' }),
-    )
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe('["codex:gpt-6.1-sol"]'),
-    )
-    releaseModels({
-      models: [cachedCodexChoice().model, { ...cachedCodexChoice().model, id: 'gpt-5.5' }],
-    })
-
-    // Every source answered: the profile is current, with the choice kept and
-    // the newly listed GPT-5.5 on its default.
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
-    )
-    expect(savedHiddenModels()).toEqual(['codex:gpt-5.5', 'codex:gpt-6.1-sol'])
-  })
-
-  it('never replaces a saved model-visibility choice with curated defaults', async () => {
-    const saved = '["codex:gpt-6.1-sol"]'
-    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
-    localStorage.setItem('harness.hiddenModels', saved)
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list'
-        ? Promise.resolve({
-            models: [
-              {
-                id: 'gpt-6.1-sol',
-                displayName: 'GPT-5.6 Sol',
-                isDefault: true,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-              {
-                id: 'gpt-5.5',
-                displayName: 'GPT-5.5',
-                isDefault: false,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-            ],
-          })
-        : request(method, params),
-    )
-
-    render(<App />)
-
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'codex' }),
-    )
-    expect(localStorage.getItem('harness.hiddenModels')).toBe(saved)
-  })
-
-  it('migrates an existing profile to the exact public-beta model defaults once', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '3')
-    localStorage.setItem('harness.hiddenModels', '["codex:gpt-6-astra"]')
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list'
-        ? Promise.resolve({
-            models: [
-              cachedCodexChoice().model,
-              { ...cachedCodexChoice().model, id: 'gpt-6-astra', displayName: 'GPT-6 Astra' },
-              {
-                id: 'gpt-5.2',
-                displayName: 'GPT-5.2',
-                isDefault: false,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-              {
-                id: 'gpt-5.3-codex-spark',
-                displayName: 'GPT-5.3-Codex-Spark',
-                isDefault: false,
-                reasoningEfforts: [],
-                serviceTiers: [],
-              },
-            ],
-          })
-        : request(method, params),
-    )
-
-    render(<App />)
-
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.hiddenModels')).toBe(
-        '["codex:gpt-5.2","codex:gpt-5.3-codex-spark"]',
-      ),
-    )
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION)
-  })
-
-  it('returns Claude Code to the current lineup for a profile an older build saved', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider()]
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) => {
-      if (method !== 'models.list') return request(method, params)
-      return Promise.resolve({
-        models:
-          methods['models.list'].params.parse(params).provider === 'claude-code'
-            ? claudeCodeLineup()
-            : [cachedCodexChoice().model, { ...cachedCodexChoice().model, id: 'gpt-5.5' }],
-      })
-    })
-    const offered = (provider: string) =>
-      composerProps()
-        .models.filter((choice) => choice.provider === provider)
-        .map((choice) => choice.model.displayName)
-
-    render(<App />)
-
-    await waitFor(() =>
-      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe(MODEL_VISIBILITY_VERSION),
-    )
-    expect(offered('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
-    // Codex keeps its saved choices: GPT-5.5 stays hidden, Sol stays shown.
-    expect(composerProps().models.map((choice) => choice.key)).toContain('codex:gpt-6.1-sol')
-    // The version is recorded during discovery; the hidden list is saved by
-    // the effect after the next commit, so wait for it rather than read once.
-    await waitFor(() => {
-      const hidden = JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]') as string[]
-      expect(hidden.filter((key) => key.startsWith('codex:'))).toEqual([
-        'codex:gpt-5.5',
-        'codex:gpt-5.4',
-      ])
-      expect(hidden.filter((key) => key.startsWith('claude-code:')).sort()).toEqual(
-        [
-          ...claudeCodeLineup()
-            .slice(4)
-            .map((model) => `claude-code:${model.id}`),
-          // A key the catalog no longer lists stays as saved.
-          'claude-code:opus%5B1m%5D',
-        ].sort(),
-      )
-    })
-  })
-
-  it('shows the current Claude lineup from the cached catalog before discovery answers', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider()]
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
+  it('keeps a choice made before a new profile is listed, while Grok cannot be listed', async () => {
+    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
+    // A launch before this one cached the catalog but saved no visibility.
     localStorage.setItem(
       'harness.modelCatalog.v1',
       serializeModelCatalogCache([
@@ -2310,122 +2368,39 @@ describe('web client', () => {
         cachedCodexChoice(),
       ]),
     )
-    const request = transport.request.getMockImplementation()
-    if (!request) throw new Error('missing request mock')
-    transport.request.mockImplementation((method: string, params: unknown) =>
-      method === 'models.list' ? new Promise(() => undefined) : request(method, params),
-    )
-
-    render(<App />)
-
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
-    )
-    expect(
-      composerProps()
-        .models.filter((choice) => choice.provider === 'claude-code')
-        .map((choice) => choice.model.displayName),
-    ).toEqual(['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'])
-    // Every cached row is migrated; the profile as a whole reaches the current
-    // version only once every source has been listed.
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
-    expect(migratedVisibilityRows()).toEqual(
-      currentRows([...CLAUDE_CODE_LINEUP_KEYS, 'codex:gpt-6.1-sol']),
-    )
-    expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
-  })
-
-  it.each([
-    ['from the cached catalog', true],
-    ['once Claude Code is listed', false],
-  ])(
-    'keeps Opus 5 turned on across reloads while Grok cannot be listed, migrated %s',
-    async (_label, cached) => {
-      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
-      localStorage.setItem('harness.modelVisibilityVersion', '4')
-      localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
-      if (cached) {
-        // The cache predates the dated Haiku 4.5 row Claude Code lists now.
-        localStorage.setItem(
-          'harness.modelCatalog.v1',
-          serializeModelCatalogCache([
-            ...choicesFor(
-              { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-              claudeCodeLineup().filter((model) => model.id !== 'claude-haiku-4-5-20251001'),
-            ),
-            cachedCodexChoice(),
-          ]),
-        )
-      }
-      mockDiscoveryWithFailingGrok()
-      const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
-
-      const first = render(<App />)
-      await settleDiscoveryWithFailingGrok(1)
-
-      expect(offeredModelNames('claude-code')).toEqual(currentLineup)
-      expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
-      expect(migratedVisibilityRows()).toEqual(currentRows(LISTED_ROW_KEYS))
-      expect(localStorage.getItem('harness.modelVisibilityVersion')).toBe('4')
-      openSettings()
-      await act(() => vi.dynamicImportSettled())
-      fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
-      fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
-      await waitFor(() => expect(savedHiddenModels()).not.toContain('claude-code:claude-opus-5'))
-      first.unmount()
-
-      for (const launch of [2, 3]) {
-        const view = render(<App />)
-        await settleDiscoveryWithFailingGrok(launch)
-
-        expect(offeredModelNames('claude-code')).toEqual([...currentLineup, 'Opus 5'])
-        expect(savedHiddenModels()).toEqual(
-          MIGRATED_OLDER_BUILD_HIDDEN_MODELS.filter(
-            (key) => key !== 'claude-code:claude-opus-5',
-          ).sort(),
-        )
-        view.unmount()
-      }
-    },
-  )
-
-  it('keeps the first visibility choice of a new profile while Grok cannot be listed', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
-    mockDiscoveryWithFailingGrok()
-    const currentLineup = ['Fable 5.1', 'Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']
+    let releaseClaude!: (value: { models: Model[] }) => void
+    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+      releaseClaude = resolve
+    })
+    mockDiscoveryWithFailingGrok(claudeModels)
 
     const first = render(<App />)
-    await settleDiscoveryWithFailingGrok(1)
-
-    // Grok keeps discovery from saving the curated defaults.
-    expect(offeredModelNames('claude-code')).toEqual(currentLineup)
-    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
-    expect(localStorage.getItem('harness.modelVisibilityVersion')).toBeNull()
     openSettings()
     await act(() => vi.dynamicImportSettled())
     fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
-    fireEvent.click(await screen.findByRole('switch', { name: 'Include Opus 5 in model picker' }))
-    await waitFor(() => expect(localStorage.getItem('harness.hiddenModels')).not.toBeNull())
-    const chosen = savedHiddenModels()
-    expect(chosen).toEqual(
-      [
-        ...CLAUDE_CODE_LINEUP_KEYS.slice(4).filter((key) => key !== 'claude-code:claude-opus-5'),
-        'codex:gpt-5.5',
-      ].sort(),
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include Sonnet 5.5 in model picker' }),
     )
+    await waitFor(() => expect(savedOverrides()).toEqual(['claude-code:sonnet=hidden']))
+    await act(async () => {
+      releaseClaude({ models: claudeCodeLineup() })
+      await claudeModels
+    })
+    await settleDiscoveryWithFailingGrok(1)
     first.unmount()
 
+    mockDiscoveryWithFailingGrok()
     for (const launch of [2, 3]) {
       const view = render(<App />)
       await settleDiscoveryWithFailingGrok(launch)
 
-      expect(offeredModelNames('claude-code')).toEqual([...currentLineup, 'Opus 5'])
-      expect(savedHiddenModels()).toEqual(chosen)
+      expect(offeredModelNames('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
+      expect(savedOverrides()).toEqual(['claude-code:sonnet=hidden'])
       view.unmount()
     }
   })
 
-  it("keeps a new profile's first choice on an ACP agent row while Grok cannot be listed", async () => {
+  it('keeps a choice on an ACP agent row while Grok cannot be listed', async () => {
     serverProviders = [
       ...serverProviders,
       claudeCodeServerProvider(),
@@ -2459,12 +2434,11 @@ describe('web client', () => {
     await waitFor(() =>
       expect(composerProps().models.map((choice) => choice.key)).toContain('acp:kimi:model-x'),
     )
-    expect(localStorage.getItem('harness.hiddenModels')).toBeNull()
     openSettings()
     await act(() => vi.dynamicImportSettled())
     fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
     fireEvent.click(await screen.findByRole('switch', { name: 'Include Model X in model picker' }))
-    await waitFor(() => expect(savedHiddenModels()).toContain('acp:kimi:model-x'))
+    await waitFor(() => expect(savedOverrides()).toEqual(['acp:kimi:model-x=hidden']))
     first.unmount()
 
     for (const launch of [2, 3]) {
@@ -2478,208 +2452,279 @@ describe('web client', () => {
       )
       await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
 
-      expect(savedHiddenModels()).toContain('acp:kimi:model-x')
+      expect(savedOverrides()).toEqual(['acp:kimi:model-x=hidden'])
       expect(composerProps().models.map((choice) => choice.key)).not.toContain('acp:kimi:model-x')
       view.unmount()
     }
   })
 
-  it('saves the defaults with the first choice made before a new profile is listed', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
-    // A launch before this one cached the catalog but saved no visibility.
-    localStorage.setItem(
-      'harness.modelCatalog.v1',
-      serializeModelCatalogCache([
-        ...choicesFor(
-          { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-          claudeCodeLineup(),
-        ),
-        cachedCodexChoice(),
-      ]),
-    )
-    let releaseClaude!: (value: { models: Model[] }) => void
-    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
-      releaseClaude = resolve
+  it('lets a newly listed generation take over in the same session, once', async () => {
+    // Load Settings first so this test measures discovery ordering.
+    await import('./ui/Settings.js')
+    const row = (id: string, displayName: string, isDefault = false): Model => ({
+      id,
+      displayName,
+      isDefault,
+      reasoningEfforts: [],
+      serviceTiers: [],
     })
-    mockDiscoveryWithFailingGrok(claudeModels)
+    let lineup = [row('gpt-6.1-sol', 'GPT-6.1-Sol', true), row('gpt-5.6-terra', 'GPT-5.6-Terra')]
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? Promise.resolve({ models: lineup }) : request(method, params),
+    )
+    const refreshes = () =>
+      transport.request.mock.calls.filter(([method]) => method === 'models.list').length
 
     const first = render(<App />)
+    await waitFor(() =>
+      expect(offeredModelNames('codex')).toEqual(['GPT-6.1-Sol', 'GPT-5.6-Terra']),
+    )
+    openSettings()
+    const settings = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(await within(settings).findByRole('button', { name: 'Models' }))
+    // Turned off and on again: an explicit choice to show GPT-5.6-Terra.
+    const terra = () =>
+      screen.getByRole('switch', { name: 'Include GPT-5.6-Terra in model picker' })
+    fireEvent.click(
+      await screen.findByRole('switch', { name: 'Include GPT-5.6-Terra in model picker' }),
+    )
+    fireEvent.click(terra())
+    await waitFor(() => expect(savedOverrides()).toEqual(['codex:gpt-5.6-terra=shown']))
+
+    // A refresh lists GPT-6-Terra: the older generation gives way although
+    // the user had shown it, without a restart.
+    // A later moment than the choice, as it always is outside a test.
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 5)))
+    lineup = [...lineup, row('gpt-6-terra', 'GPT-6-Terra')]
+    const before = refreshes()
+    act(() => {
+      setConnectionState('reconnecting')
+      setConnectionState('open')
+    })
+    await waitFor(() => expect(refreshes()).toBe(before + 1))
+    await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6.1-Sol', 'GPT-6-Terra']))
+    expect(terra().getAttribute('aria-checked')).toBe('false')
+
+    // Showing it again now sticks across a reload.
+    fireEvent.click(terra())
+    await waitFor(() => expect(terra().getAttribute('aria-checked')).toBe('true'))
+    first.unmount()
+    render(<App />)
+    await waitFor(() =>
+      expect(offeredModelNames('codex')).toEqual(['GPT-6.1-Sol', 'GPT-5.6-Terra', 'GPT-6-Terra']),
+    )
+  })
+
+  it('saves All on a large source as one change', async () => {
+    serverProviders = [grokServerProvider()]
+    localStorage.setItem('harness.provider', 'grok')
+    const rows: Model[] = Array.from({ length: 300 }, (_, index) => ({
+      id: `grok-row-${index}`,
+      displayName: `Row ${String.fromCharCode(97 + (index % 26))}${'z'.repeat(Math.floor(index / 26))}`,
+      isDefault: index === 0,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    }))
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) =>
+      method === 'models.list' ? Promise.resolve({ models: rows }) : request(method, params),
+    )
+
+    render(<App />)
+    // A source this large starts with its first four rows.
+    await waitFor(() => expect(offeredModelNames('grok')).toHaveLength(4))
     openSettings()
     await act(() => vi.dynamicImportSettled())
     fireEvent.click(await screen.findByRole('button', { name: 'Models' }))
-    fireEvent.click(
-      await screen.findByRole('switch', { name: 'Include Sonnet 5.5 in model picker' }),
-    )
-    await waitFor(() => expect(savedHiddenModels()).toContain('claude-code:sonnet'))
-    // Every older generation the cached picker already knew is saved hidden with it.
-    expect(savedHiddenModels()).toEqual(
-      expect.arrayContaining([...CLAUDE_CODE_LINEUP_KEYS.slice(4), 'claude-code:sonnet']),
-    )
-    expect(savedHiddenModels()).not.toContain('claude-code:opus')
-    await act(async () => {
-      releaseClaude({ models: claudeCodeLineup() })
-      await claudeModels
-    })
-    await settleDiscoveryWithFailingGrok(1)
-    first.unmount()
-
-    mockDiscoveryWithFailingGrok()
-    for (const launch of [2, 3]) {
-      const view = render(<App />)
-      await settleDiscoveryWithFailingGrok(launch)
-
-      expect(offeredModelNames('claude-code')).toEqual(['Fable 5.1', 'Opus 5.5', 'Haiku 5.5'])
-      expect(savedHiddenModels()).toEqual(
-        [...CLAUDE_CODE_LINEUP_KEYS.slice(4), 'claude-code:sonnet', 'codex:gpt-5.5'].sort(),
+    const setItem = vi.spyOn(localStorage, 'setItem')
+    try {
+      fireEvent.click(
+        await screen.findByRole('button', { name: 'Show all Grok models in model picker' }),
       )
-      view.unmount()
+      await waitFor(() => expect(offeredModelNames('grok')).toHaveLength(300))
+      expect(
+        setItem.mock.calls.filter(([key]) => key === 'harness.modelVisibility.v2'),
+      ).toHaveLength(1)
+      expect(savedOverrides()).toHaveLength(296)
+    } finally {
+      setItem.mockRestore()
     }
   })
 
-  it.each(['4', '5', '6', '7', MODEL_VISIBILITY_VERSION])(
-    'brings a profile saved at version %s to the current Claude lineup while Grok fails',
-    async (version) => {
-      serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
-      localStorage.setItem('harness.modelVisibilityVersion', version)
-      localStorage.setItem(
-        'harness.hiddenModels',
-        JSON.stringify(
-          // Version 7 already moved Claude Code onto its current lineup.
-          Number(version) >= 7 ? MIGRATED_OLDER_BUILD_HIDDEN_MODELS : OLDER_BUILD_HIDDEN_MODELS,
-        ),
-      )
-      localStorage.setItem(
-        'harness.modelCatalog.v1',
-        serializeModelCatalogCache([
-          ...choicesFor(
-            { provider: 'claude-code', sourceName: 'Claude Code', mark: 'anthropic' },
-            claudeCodeLineup(),
-          ),
-          cachedCodexChoice(),
-        ]),
-      )
-      mockDiscoveryWithFailingGrok()
+  it.each([
+    [7, 1],
+    [1, 0],
+  ])(
+    'lists the models again on focus %i hours after the last listing: %i more',
+    async (hours, more) => {
+      render(<App />)
+      await waitFor(() => expect(rpcCount('models.list')).toBe(1))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      vi.spyOn(Date, 'now').mockReturnValue(Date.now() + hours * 60 * 60_000)
 
-      for (const launch of [1, 2]) {
-        const view = render(<App />)
-        await settleDiscoveryWithFailingGrok(launch)
-
-        expect(offeredModelNames('claude-code')).toEqual([
-          'Fable 5.1',
-          'Opus 5.5',
-          'Sonnet 5.5',
-          'Haiku 5.5',
-        ])
-        expect(savedHiddenModels()).toEqual([...MIGRATED_OLDER_BUILD_HIDDEN_MODELS].sort())
-        expect(migratedVisibilityRows()).toEqual(
-          version === MODEL_VISIBILITY_VERSION ? null : currentRows(LISTED_ROW_KEYS),
-        )
-        view.unmount()
-      }
+      act(() => window.dispatchEvent(new Event('focus')))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('models.list')).toBe(1 + more)
+      // The window showing again right after does not list a second time.
+      act(() => document.dispatchEvent(new Event('visibilitychange')))
+      await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+      expect(rpcCount('models.list')).toBe(1 + more)
     },
   )
 
-  it('migrates the rest of Claude Code once it is listed after the restored selection', async () => {
-    serverProviders = [...serverProviders, claudeCodeServerProvider(), grokServerProvider()]
-    localStorage.setItem('harness.provider', 'claude-code')
-    localStorage.setItem('harness.model', 'claude-code:sonnet')
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', JSON.stringify(OLDER_BUILD_HIDDEN_MODELS))
-    let releaseClaude!: (value: { models: Model[] }) => void
-    const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
-      releaseClaude = resolve
+  it('lists the models again once the app updated a provider', async () => {
+    let updated = false
+    const request = transport.request.getMockImplementation()!
+    transport.request.mockImplementation((method: string, params: unknown) => {
+      switch (method) {
+        case 'providers.updates':
+          return Promise.resolve({
+            updates: [
+              {
+                provider: 'codex',
+                displayName: 'Codex',
+                currentVersion: updated ? '0.163.0' : '0.154.0',
+                latestVersion: '0.163.0',
+                updateAvailable: !updated,
+                canUpdate: true,
+              },
+            ],
+          })
+        case 'providers.update':
+          updated = true
+          return Promise.resolve({ terminalId: 'update-codex' })
+        case 'terminal.status':
+          return Promise.resolve({ status: 'exited', output: '', outputOffset: 0, exitCode: 0 })
+        default:
+          return request(method, params)
+      }
     })
-    mockDiscoveryWithFailingGrok(claudeModels)
 
     render(<App />)
+    await waitFor(() => expect(rpcCount('models.list')).toBe(1))
+    const store = providerUpdatesStore(transport.instance as Transport)
+    await act(() => store.start('codex'))
 
-    await waitFor(() =>
-      expect(transport.request).toHaveBeenCalledWith('models.list', { provider: 'claude-code' }),
-    )
-    // Without a cached catalog only the restored selection paints, migrated.
-    expect(composerProps().models.map((choice) => choice.key)).toContain('claude-code:sonnet')
-    expect(migratedVisibilityRows()).toEqual(currentRows(['claude-code:sonnet']))
-
-    await act(async () => {
-      releaseClaude({ models: claudeCodeLineup() })
-      await claudeModels
-    })
-    await settleDiscoveryWithFailingGrok(1)
-
-    expect(offeredModelNames('claude-code')).toEqual([
-      'Fable 5.1',
-      'Opus 5.5',
-      'Sonnet 5.5',
-      'Haiku 5.5',
-    ])
-    expect(migratedVisibilityRows()).toEqual(currentRows(LISTED_ROW_KEYS))
+    await waitFor(() => expect(store.snapshot().operations.codex?.phase).toBe('succeeded'))
+    await waitFor(() => expect(rpcCount('models.list')).toBe(2))
+    // Exactly once for the update.
+    await act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+    expect(rpcCount('models.list')).toBe(2)
   })
 
-  it.each([
-    ['a listed record', '["codex:gpt-6.1-sol","claude-code:opus"]', ['claude-code:claude-opus-5']],
-    ['no listed record', null, []],
-  ])(
-    'gives an older model a saved profile never listed its default with %s',
-    async (_label, listed, expectedHidden) => {
-      localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
-      localStorage.setItem('harness.hiddenModels', '[]')
-      if (listed) localStorage.setItem('harness.listedModels', listed)
-      serverProviders = [
-        ...serverProviders,
-        {
-          id: 'claude-code',
-          displayName: 'Claude Code',
-          installed: true,
-          auth: 'authenticated',
-          capabilities: {
-            steer: false,
-            fork: false,
-            interrupt: true,
-            reasoningItems: true,
-            approvals: false,
-            images: false,
-          },
-        },
+  describe('when the server announces a changed model list', () => {
+    const row = (id: string, displayName: string, isDefault = false): Model => ({
+      id,
+      displayName,
+      isDefault,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    })
+    const announce = (payload: { provider: string; agent?: string }) =>
+      act(() => transport.listeners.get('models.changed')?.(payload))
+    const settled = () => act(async () => new Promise((resolve) => window.setTimeout(resolve, 0)))
+
+    it('lists that source again on its own', async () => {
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'models.list' ? Promise.resolve({ models: lineup }) : request(method, params),
+      )
+
+      render(<App />)
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+      lineup = [...lineup, row('gpt-6.1-sol', 'GPT-6.1-Sol')]
+      announce({ provider: 'codex' })
+
+      await waitFor(() =>
+        expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol']),
+      )
+      expect(rpcCount('models.list')).toBe(2)
+      // Only that list, not the whole catalog.
+      expect(rpcCount('providers.list')).toBe(1)
+
+      // A source this catalog does not list is not requested.
+      announce({ provider: 'acp', agent: 'kimi' })
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+    })
+
+    it('lists once more after the listing a change arrived during', async () => {
+      const answers: Array<() => void> = []
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      const request = transport.request.getMockImplementation()!
+      transport.request.mockImplementation((method: string, params: unknown) =>
+        method === 'models.list'
+          ? new Promise((resolve) => {
+              const listed = lineup
+              answers.push(() => resolve({ models: listed }))
+            })
+          : request(method, params),
+      )
+
+      render(<App />)
+      await waitFor(() => expect(answers).toHaveLength(1))
+      lineup = [...lineup, row('gpt-6-luna', 'GPT-6-Luna')]
+      announce({ provider: 'codex' })
+      announce({ provider: 'codex' })
+      act(() => answers[0]!())
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+
+      await waitFor(() => expect(answers).toHaveLength(2))
+      act(() => answers[1]!())
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6-Luna']))
+      await settled()
+      expect(rpcCount('models.list')).toBe(2)
+    })
+
+    it('keeps the source where it stood', async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider()]
+      mockLiveDiscovery()
+      const sourceOrder = () => [
+        ...new Set(composerProps().models.map((choice) => choice.provider)),
       ]
-      const names = new Map([
-        ['opus', 'Opus 5.5'],
-        ['claude-opus-5', 'Opus 5'],
-      ])
-      const listedModel = (id: string) => ({
-        id,
-        displayName: names.get(id) ?? id,
-        isDefault: false,
-        reasoningEfforts: [],
-        serviceTiers: [],
+
+      render(<App />)
+      await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
+      await settled()
+      expect(sourceOrder()).toEqual(['codex', 'claude-code'])
+      announce({ provider: 'codex' })
+      await waitFor(() => expect(rpcCount('models.list')).toBe(3))
+      await settled()
+      expect(sourceOrder()).toEqual(['codex', 'claude-code'])
+    })
+
+    it('keeps a newer list that settled before the rest of the catalog', async () => {
+      serverProviders = [...serverProviders, claudeCodeServerProvider()]
+      let lineup = [row('gpt-6-astra', 'GPT-6-Astra', true)]
+      let releaseClaude!: () => void
+      const claudeModels = new Promise<{ models: Model[] }>((resolve) => {
+        releaseClaude = () => resolve({ models: claudeCodeLineup() })
       })
-      const request = transport.request.getMockImplementation()
-      if (!request) throw new Error('missing request mock')
+      const request = transport.request.getMockImplementation()!
       transport.request.mockImplementation((method: string, params: unknown) => {
         if (method !== 'models.list') return request(method, params)
-        return Promise.resolve({
-          models:
-            methods['models.list'].params.parse(params).provider === 'claude-code'
-              ? ['opus', 'claude-opus-5'].map(listedModel)
-              : [listedModel('gpt-6.1-sol')],
-        })
+        return methods['models.list'].params.parse(params).provider === 'claude-code'
+          ? claudeModels
+          : Promise.resolve({ models: lineup })
       })
 
       render(<App />)
-
-      // Without a record, Opus 5 may be a model the user turned on, so only
-      // the record is written; with one, the unlisted Opus 5 starts hidden.
+      await waitFor(() => expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra']))
+      lineup = [...lineup, row('gpt-6.1-sol', 'GPT-6.1-Sol')]
+      announce({ provider: 'codex' })
       await waitFor(() =>
-        expect(JSON.parse(localStorage.getItem('harness.listedModels') ?? '[]')).toEqual([
-          'codex:gpt-6.1-sol',
-          'claude-code:opus',
-          'claude-code:claude-opus-5',
-        ]),
+        expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol']),
       )
-      expect(JSON.parse(localStorage.getItem('harness.hiddenModels') ?? '[]')).toEqual(
-        expectedHidden,
-      )
-    },
-  )
+      // Claude Code still holds the catalog open; its end must not bring back
+      // the list Codex answered first.
+      await act(async () => releaseClaude())
+      await waitFor(() => expect(offeredModelNames('claude-code')).not.toEqual([]))
+      await settled()
+      expect(offeredModelNames('codex')).toEqual(['GPT-6-Astra', 'GPT-6.1-Sol'])
+    })
+  })
 
   it('explains project loading failures and recovers after reconnect', async () => {
     const request = transport.request.getMockImplementation()
@@ -8043,8 +8088,6 @@ describe('new chats', () => {
 
   describe('provider defaults', () => {
     beforeEach(() => {
-      localStorage.setItem('harness.modelVisibilityVersion', '4')
-      localStorage.setItem('harness.hiddenModels', '[]')
       localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
       const request = transport.request.getMockImplementation()
       if (!request) throw new Error('missing request mock')
@@ -8153,8 +8196,6 @@ describe('new chats', () => {
   })
 
   it('keeps highest reasoning effort at the highest stop when switching models', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', '[]')
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -8237,8 +8278,6 @@ describe('new chats', () => {
   it.each([false, true])(
     'keeps each chat model, design, and approval setup after switching and reloading (same model: %s)',
     async (sameModel) => {
-      localStorage.setItem('harness.modelVisibilityVersion', '4')
-      localStorage.setItem('harness.hiddenModels', '[]')
       serverProjects[0]!.sessions = [
         { id: 'chat-a', title: 'Chat A', provider: 'codex', createdAt: 1 },
         { id: 'chat-b', title: 'Chat B', provider: 'codex', createdAt: 2 },
@@ -8361,8 +8400,6 @@ describe('new chats', () => {
   )
 
   it('restores a chat setup after late discovery instead of the provider setup', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', '[]')
     localStorage.setItem('harness.model', 'codex:gpt-6.1-sol')
     localStorage.setItem('harness.effort', 'low')
     const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
@@ -8412,8 +8449,6 @@ describe('new chats', () => {
   })
 
   it('saves a fast mode toggle from the menu to the open chat setup', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', '[]')
     const saved = { modelKey: 'codex:gpt-5.6-mini', effort: 'high', serviceTier: 'priority' }
     localStorage.setItem('harness.modelByThread:untouched-thread', JSON.stringify(saved))
     const request = transport.request.getMockImplementation()!
@@ -8450,8 +8485,6 @@ describe('new chats', () => {
   })
 
   it('opens a chat saved on a model Codex no longer ships and continues on the default', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', '4')
-    localStorage.setItem('harness.hiddenModels', '[]')
     localStorage.setItem('harness.model', 'codex:gpt-5.4')
     serverProjects[0]!.sessions = [
       { id: 'chat-retired', title: 'Retired model chat', provider: 'codex', createdAt: 1 },
@@ -11599,7 +11632,6 @@ describe('reopening a session', () => {
   })
 
   it('uses a visible same-source model when the remembered one is hidden', async () => {
-    localStorage.setItem('harness.modelVisibilityVersion', MODEL_VISIBILITY_VERSION)
     const request = transport.request.getMockImplementation()
     if (!request) throw new Error('missing request mock')
     transport.request.mockImplementation((method: string, params: unknown) => {
@@ -11631,7 +11663,13 @@ describe('reopening a session', () => {
       'harness.customModels.v1',
       JSON.stringify([{ provider: 'claude-code', modelId: 'opus', displayName: 'Opus 5' }]),
     )
-    localStorage.setItem('harness.hiddenModels', JSON.stringify(['codex:gpt-5.6-mini']))
+    localStorage.setItem(
+      'harness.modelVisibility.v2',
+      JSON.stringify({
+        overrides: { 'codex:gpt-5.6-mini': { visible: false, at: 1 } },
+        firstSeen: {},
+      }),
+    )
     localStorage.setItem(
       'harness.modelBySource',
       JSON.stringify({ codex: { modelKey: 'codex:gpt-5.6-mini' } }),
