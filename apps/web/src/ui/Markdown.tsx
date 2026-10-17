@@ -430,6 +430,8 @@ const INITIAL_REVEAL_MAX_CHARACTERS = 200
  * Each catch-up renders only the blocks that closed since, in a transition.
  */
 const AHEAD_INTERVAL_MS = 300
+/** How long a finished reply waits for its renderer ahead to show all of it. */
+const AHEAD_SHOW_TIMEOUT_MS = 1000
 
 /**
  * The text a streaming reply's finished renderer renders ahead: the reply as
@@ -596,13 +598,34 @@ export const Markdown = memo(function Markdown({
   // commit that ends the reply: rendering a long reply's Markdown takes well
   // over a frame, and the live DOM stays until it is ready. History mounts
   // finished at once (a deferred value starts at its first value).
-  const settled = useDeferredValue(!live) && !live
+  const finished = useDeferredValue(!live) && !live
+  const richText = finished && needsRichMarkdown(text)
   // Until then, a rich reply's finished renderer renders it ahead, out of
   // view: the closed blocks while it streams, all of it while the reveal
-  // drains. Taking over then only has to show it.
+  // drains. Taking over then only has to show it, so it waits until that
+  // renderer shows the whole reply.
   const ahead = useTextAhead(text, streaming)
-  const rich = settled ? needsRichMarkdown(text) : ahead !== undefined
+  // It takes the whole text in a background render as well, not in the commit
+  // that ends the reply.
+  const aheadGrowing = useDeferredValue(streaming)
+  const aheadWanted = ahead !== undefined && (!finished || richText)
+  const rich = finished ? richText : aheadWanted
   const RichMarkdown = useCompletedMarkdown(rich)
+  const [aheadShown, setAheadShown] = useState<string | undefined>(undefined)
+  const aheadRendered = useRef((shown: string) => startTransition(() => setAheadShown(shown)))
+  // Once it has taken over, a later change of the text stays on it.
+  const [tookOver, setTookOver] = useState(false)
+  if (streaming && tookOver) setTookOver(false)
+  const waiting =
+    !tookOver && finished && aheadWanted && RichMarkdown !== undefined && aheadShown !== text
+  useEffect(() => {
+    if (!waiting) return
+    // A renderer that never reports must not keep the live DOM for good.
+    const timer = window.setTimeout(() => aheadRendered.current(text), AHEAD_SHOW_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [text, waiting])
+  const settled = finished && !waiting
+  if (settled && !tookOver) setTookOver(true)
   return (
     <>
       {/* A rich reply that completes before its renderer has loaded keeps
@@ -620,10 +643,11 @@ export const Markdown = memo(function Markdown({
       {RichMarkdown && rich ? (
         <RichMarkdown
           key="rich"
-          text={streaming ? (ahead ?? text) : text}
+          text={aheadGrowing ? (ahead ?? text) : text}
           projectPath={projectPath}
           hidden={!settled}
-          growing={streaming}
+          growing={aheadGrowing}
+          onRendered={settled ? undefined : aheadRendered.current}
         />
       ) : null}
       {settled && !rich ? <PlainCompletedMarkdown key="plain" text={text} /> : null}

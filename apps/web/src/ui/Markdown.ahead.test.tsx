@@ -1,6 +1,8 @@
 // @vitest-environment happy-dom
 import { act, cleanup, render } from '@testing-library/react'
+import { Profiler } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { preserveProjectFileLinks } from '../project-file-link.js'
 import { CompletedMarkdown } from './CompletedMarkdown.js'
 import { Markdown } from './Markdown.js'
 import { createRevealClock, replaceRevealClock } from './reveal-clock.js'
@@ -8,6 +10,11 @@ import { fakeRevealEnvironment } from './reveal-clock.fixture.js'
 
 /** The content of every finished-renderer block render, in order. */
 const blockRenders = vi.hoisted((): string[] => [])
+
+vi.mock('../project-file-link.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../project-file-link.js')>()
+  return { ...actual, preserveProjectFileLinks: vi.fn(actual.preserveProjectFileLinks) }
+})
 
 vi.mock('./LargeCodeBlock.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./LargeCodeBlock.js')>()
@@ -154,6 +161,36 @@ describe('a streaming rich reply', () => {
     expect(shown.querySelectorAll('li')).toHaveLength(2)
   })
 
+  it('gives the tree ahead the last words in a background render, not in the ending commit', () => {
+    const container = document.body.appendChild(document.createElement('div'))
+    // The finished renderer prepares a new text's links first thing.
+    const prepared = () => vi.mocked(preserveProjectFileLinks).mock.calls.length
+    const commits: number[] = []
+    const record = () => commits.push(prepared())
+    const tree = (text: string, streaming: boolean, version?: number, delta?: string) => (
+      <Profiler id="reply" onRender={record}>
+        <Markdown
+          text={text}
+          streaming={streaming}
+          {...(delta ? { liveUpdate: { kind: 'append' as const, text: delta } } : {})}
+          updateVersion={version}
+        />
+      </Profiler>
+    )
+    const view = render(tree(HEAD + CODE, true), { container })
+    catchUp()
+    view.rerender(tree(HEAD + CODE + TAIL, true, 1, TAIL))
+    commits.length = 0
+    const before = prepared()
+
+    view.rerender(tree(HEAD + CODE + TAIL, false))
+
+    // Untouched in the commit that ends the reply; given the text after it.
+    expect(commits[0]).toBe(before)
+    expect(commits.at(-1)).toBeGreaterThan(before)
+    expect(ahead(container)?.textContent).toContain('two')
+  })
+
   it('takes over at once from the tree rendered ahead when motion is reduced', () => {
     fake.setMotion(false)
     const view = stream(HEAD)
@@ -165,6 +202,36 @@ describe('a streaming rich reply', () => {
     expect(live(view.container)).toBeNull()
     expect(view.container.querySelector('.md')).toBe(tree)
     expect(tree.classList.contains('md-ahead')).toBe(false)
+  })
+})
+
+describe('the finished renderer', () => {
+  it('reports a text once the commit that shows all its blocks is done', () => {
+    vi.useRealTimers()
+    const seen: Array<[string, string]> = []
+    const container = document.body.appendChild(document.createElement('div'))
+    const onRendered = (text: string) => {
+      seen.push([text, container.querySelector('.md')?.textContent ?? ''])
+    }
+    const first = `${HEAD}${CODE}`
+    const view = render(<CompletedMarkdown text={first} hidden onRendered={onRendered} />, {
+      container,
+    })
+    expect(seen.map(([text]) => text)).toEqual([first])
+
+    const final = `${first}${TAIL}`
+    view.rerender(<CompletedMarkdown text={final} hidden onRendered={onRendered} />)
+    expect(seen.map(([text]) => text)).toEqual([first, final])
+    // Streamdown shows a new text's blocks a commit after the text: the
+    // report comes once the list is on screen.
+    expect(seen[1]![1]).toContain('two')
+  })
+
+  it('does not report while the text still grows', () => {
+    vi.useRealTimers()
+    const onRendered = vi.fn()
+    render(<CompletedMarkdown text={`${HEAD}${CODE}`} hidden growing onRendered={onRendered} />)
+    expect(onRendered).not.toHaveBeenCalled()
   })
 })
 

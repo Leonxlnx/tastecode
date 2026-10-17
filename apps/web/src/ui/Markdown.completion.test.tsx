@@ -114,6 +114,32 @@ describe('a rich reply completing', () => {
     expect(commits).toEqual(['live', 'completed'])
   })
 
+  it('waits at most a second for a renderer ahead that never reports', async () => {
+    const Markdown = await freshMarkdown()
+    // An earlier reply has loaded the rich renderer.
+    render(<Markdown text={RICH} streaming />)
+    await act(async () => {
+      chunk.release()
+      await import('./CompletedMarkdown.js')
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    cleanup()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const view = render(<Markdown text={RICH} streaming />)
+      // A catch-up mounts the (mocked) renderer ahead; it never reports.
+      act(() => void vi.advanceTimersByTime(300))
+      view.rerender(<Markdown text={RICH} />)
+      expect(view.container.querySelector('[data-streaming-markdown]')).not.toBeNull()
+
+      act(() => void vi.advanceTimersByTime(1000))
+      expect(view.container.querySelector('[data-streaming-markdown]')).toBeNull()
+      expect(view.container.querySelector('[data-completed-markdown]')?.textContent).toBe(RICH)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('mounts history finished in its first commit', async () => {
     const Markdown = await freshMarkdown()
     // An earlier reply has loaded the rich renderer.

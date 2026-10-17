@@ -3,11 +3,12 @@ import {
   memo,
   useCallback,
   useContext,
+  useLayoutEffect,
   useMemo,
   useState,
   type ComponentPropsWithoutRef,
 } from 'react'
-import { Streamdown, defaultRehypePlugins, type Components } from 'streamdown'
+import { Streamdown, defaultRehypePlugins, type BlockProps, type Components } from 'streamdown'
 import 'streamdown/styles.css'
 import { canRevealProjectFile, revealProjectFile } from '../bridge.js'
 import {
@@ -194,6 +195,61 @@ function preserveRelativeLinks() {
 const STREAMDOWN_PLUGINS = { code: shikiPlugin }
 const STREAMDOWN_CONTROLS = { code: true, table: true, mermaid: false }
 
+/**
+ * Which blocks a finished renderer has committed. Streamdown applies a new
+ * text's blocks one commit after the text itself, so a renderer that was
+ * given a reply's last words shows them only a commit later; this tells
+ * when it does.
+ */
+class BlockCommits {
+  private readonly shown: Array<string | undefined> = []
+  private wanted: { text: string; blocks: readonly string[] } | undefined
+  private notify: ((text: string) => void) | undefined
+
+  commit(index: number, content: string): void {
+    this.shown[index] = content
+    this.check()
+  }
+
+  forget(index: number, content: string): void {
+    if (this.shown[index] === content) this.shown[index] = undefined
+  }
+
+  /** Calls `notify` once, after the commit that shows all of `blocks`. */
+  expect(text: string, blocks: readonly string[], notify: (text: string) => void): void {
+    this.wanted = { text, blocks }
+    this.notify = notify
+    this.check()
+  }
+
+  stop(): void {
+    this.wanted = undefined
+    this.notify = undefined
+  }
+
+  private check(): void {
+    const wanted = this.wanted
+    const notify = this.notify
+    if (!wanted || !notify) return
+    if (wanted.blocks.some((block, index) => this.shown[index] !== block)) return
+    this.stop()
+    notify(wanted.text)
+  }
+}
+
+const BlockCommitsContext = createContext<BlockCommits | undefined>(undefined)
+
+/** A block that reports its commits to the renderer around it. */
+const ReportedBlock = memo(function ReportedBlock(props: BlockProps) {
+  const commits = useContext(BlockCommitsContext)
+  const { index, content } = props
+  useLayoutEffect(() => {
+    commits?.commit(index, content)
+    return () => commits?.forget(index, content)
+  }, [commits, content, index])
+  return <MarkdownBlock {...props} />
+})
+
 /** Full Markdown is loaded only for completed output that uses Markdown syntax.
  * Completed output skips Streamdown's repeated whole-string repair passes. */
 export const CompletedMarkdown = memo(function CompletedMarkdown({
@@ -201,6 +257,7 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   projectPath,
   hidden = false,
   growing = false,
+  onRendered,
 }: {
   text: string
   projectPath?: string | undefined
@@ -208,6 +265,11 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
   hidden?: boolean
   /** The text is still streaming: only its closed blocks render. */
   growing?: boolean
+  /**
+   * Called with `text` after the commit that shows all of its blocks (not
+   * while growing). Its identity should not change between renders.
+   */
+  onRendered?: ((text: string) => void) | undefined
 }) {
   const renderedText = useMemo(() => preserveProjectFileLinks(text), [text])
   // Per renderer: a text that grows is split again only from its open tail.
@@ -224,6 +286,13 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
     (markdown: string) => (closed?.source === markdown ? closed.blocks : splitBlocks(markdown)),
     [closed, splitBlocks],
   )
+  const [commits] = useState(() => new BlockCommits())
+  // After the blocks' own layout effects: a commit that already shows every
+  // block reports at once.
+  useLayoutEffect(() => {
+    if (!onRendered || growing) commits.stop()
+    else commits.expect(text, splitBlocks(renderedText), onRendered)
+  }, [commits, growing, onRendered, renderedText, splitBlocks, text])
   const imageSource = useContext(MarkdownImageContext)
   const rehypePlugins = useMemo(() => {
     const plugins = Object.values(defaultRehypePlugins)
@@ -236,24 +305,26 @@ export const CompletedMarkdown = memo(function CompletedMarkdown({
 
   return (
     <ProjectPathContext.Provider value={projectPath}>
-      <Streamdown
-        BlockComponent={MarkdownBlock}
-        className={hidden ? 'md md-ahead' : 'md'}
-        // Streaming mode keeps per-block rendering. Without `animated`,
-        // Streamdown applies a changed text's blocks in a transition, so new
-        // blocks render in slices instead of one task.
-        mode="streaming"
-        isAnimating={false}
-        parseIncompleteMarkdown={false}
-        parseMarkdownIntoBlocksFn={parseBlocks}
-        plugins={STREAMDOWN_PLUGINS}
-        controls={STREAMDOWN_CONTROLS}
-        icons={STREAMDOWN_ICONS}
-        components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
-        rehypePlugins={rehypePlugins}
-      >
-        {source}
-      </Streamdown>
+      <BlockCommitsContext.Provider value={commits}>
+        <Streamdown
+          BlockComponent={ReportedBlock}
+          className={hidden ? 'md md-ahead' : 'md'}
+          // Streaming mode keeps per-block rendering. Without `animated`,
+          // Streamdown applies a changed text's blocks in a transition, so new
+          // blocks render in slices instead of one task.
+          mode="streaming"
+          isAnimating={false}
+          parseIncompleteMarkdown={false}
+          parseMarkdownIntoBlocksFn={parseBlocks}
+          plugins={STREAMDOWN_PLUGINS}
+          controls={STREAMDOWN_CONTROLS}
+          icons={STREAMDOWN_ICONS}
+          components={imageSource ? IMAGE_COMPONENTS : STREAMDOWN_COMPONENTS}
+          rehypePlugins={rehypePlugins}
+        >
+          {source}
+        </Streamdown>
+      </BlockCommitsContext.Provider>
     </ProjectPathContext.Provider>
   )
 })
