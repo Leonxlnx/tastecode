@@ -8,7 +8,12 @@ import type { ProviderHistorySession, ProviderHistorySource } from '@harness/con
 import { parseCodexHistory } from './history-transcript.js'
 import { object, timestamp } from './history-values.js'
 import { transcriptRecords } from './rollout-records.js'
-import { indexedSessions, previewTitle, type IndexedSession } from './state-index.js'
+import {
+  previewTitle,
+  readStateIndex,
+  type IndexedSession,
+  type StateIndex,
+} from './state-index.js'
 
 type JsonObject = Record<string, unknown>
 type SavedFile = { file: string; archived: boolean; size: number; mtimeMs: number }
@@ -34,7 +39,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   const headers = new Map<string, { revision: string; session: ProviderHistorySession | null }>()
   // The server lists again on every background refresh. Unchanged stores and rollouts
   // reuse their previous results instead of re-reading the index and rehashing sessions.
-  let index: (Signature & { digest: string; byFile: Map<string, IndexedSession> }) | undefined
+  let index: (Signature & { state: StateIndex | undefined }) | undefined
   let sidecar: (Signature & { names: SessionNames }) | undefined
   const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let stats: { at: number; files: Map<string, SavedFile> } | undefined
@@ -47,39 +52,26 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       home,
       databases.flatMap((file) => [file, `${file}-wal`]),
     )
-    let indexChanged = false
+    // Rollouts whose index entries changed; their stats are taken again.
+    let changedFiles = new Set<string>()
     if (index?.signature !== indexFiles.signature || index.racy) {
-      const rows = await indexedSessions(home, databases)
       // A racy index is read again, but unchanged rows keep their sessions.
-      const digest = createHash('sha256').update(JSON.stringify(rows)).digest('hex')
-      indexChanged = index?.signature !== indexFiles.signature || index.digest !== digest
-      index = {
-        ...indexFiles,
-        digest,
-        byFile:
-          indexChanged || !index
-            ? new Map(
-                rows.flatMap((entry) =>
-                  entry.session.locator
-                    ? [[path.resolve(entry.session.locator), entry] as const]
-                    : [],
-                ),
-              )
-            : index.byFile,
-      }
+      const read = await readStateIndex(home, databases, index?.state)
+      changedFiles = read.changedFiles
+      index = { ...indexFiles, state: read.index }
     }
-    const byFile = index.byFile
+    const byFile = index.state?.byFile ?? new Map<string, IndexedSession>()
     const namesFile = await filesSignature(home, [SESSION_NAMES_FILE])
     if (sidecar?.signature !== namesFile.signature || sidecar.racy)
       sidecar = { ...namesFile, names: await sessionNames(home) }
     const names = sidecar.names
     const now = Date.now()
     const reusable =
-      !indexChanged && databases.length > 0 && stats && now - stats.at < INDEXED_STAT_REUSE_MS
+      databases.length > 0 && stats && now - stats.at < INDEXED_STAT_REUSE_MS
         ? stats.files
         : undefined
     const files = await savedFiles(home, (file) =>
-      reusable && byFile.has(file) ? reusable.get(file) : undefined,
+      reusable && byFile.has(file) && !changedFiles.has(file) ? reusable.get(file) : undefined,
     )
     if (!reusable) stats = { at: now, files: new Map() }
     for (const saved of files) stats!.files.set(saved.file, saved)
