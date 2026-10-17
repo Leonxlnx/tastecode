@@ -302,6 +302,7 @@ function ProviderUpdateItem(props: {
             <InstallTerminal
               transport={props.transport}
               installKey={key}
+              profile="workspace"
               appearance="notice"
               ariaLabel={`${update.displayName} update terminal`}
             />
@@ -335,7 +336,7 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
     <div className="provider-updates-check">
       {review ? (
         <button
-          className="ghost provider-updates-check__review"
+          className="set-button set-button--quiet provider-updates-check__review"
           type="button"
           onClick={store.showNotice}
         >
@@ -356,7 +357,7 @@ export function ProviderUpdateCheck(props: { transport: Transport }) {
         </span>
       )}
       <button
-        className="ghost provider-updates-check__refresh"
+        className="set-button set-button--quiet provider-updates-check__refresh"
         type="button"
         disabled={state.checking}
         onClick={() => void store.refresh(true)}
