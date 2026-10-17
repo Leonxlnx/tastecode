@@ -1,4 +1,4 @@
-import { ANTIGRAVITY_CAPABILITIES } from '@harness/adapter-antigravity'
+import { ANTIGRAVITY_CAPABILITIES, antigravityInstallCommand } from '@harness/adapter-antigravity'
 import { CURSOR_CAPABILITIES, cursorInstallCommand } from '@harness/adapter-cursor'
 import { OPENCODE_CAPABILITIES } from '@harness/adapter-opencode'
 import { PI_CAPABILITIES } from '@harness/adapter-pi'
@@ -135,10 +135,11 @@ const PROBES: Probe[] = [
     capabilities: ANTIGRAVITY_CAPABILITIES,
     setup: {
       installUrl: 'https://antigravity.google/docs/cli',
+      installCommand: antigravityInstallCommand(),
       login: 'provider',
     },
-    // First interactive run signs in with the user's Google account; there is
-    // no separate login subcommand as of agy 1.4.0.
+    // The installer does not sign in. agy's first interactive run asks for
+    // the Google account; there is no login subcommand as of agy 1.4.0.
     loginCommand: 'agy',
     // Every agy start launches its language server and may launch its
     // self-updater, which replaces agy.exe in place. A scan that started it

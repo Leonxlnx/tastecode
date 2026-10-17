@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { antigravityInstallCommand } from '@harness/adapter-antigravity'
 import { claudeInstallCommand } from '@harness/adapter-claude-code/updates'
 import { codexInstallCommand } from '@harness/adapter-codex/updates'
 import { cursorInstallCommand } from '@harness/adapter-cursor'
@@ -301,6 +302,12 @@ describe('install command resolution', () => {
     const cursor = find(await detectProviders(system()), 'cursor')
     expect(cursor.setup?.installCommand).toBe(cursorInstallCommand())
     await expect(installCommandFor('cursor')).resolves.toBe(cursorInstallCommand())
+  })
+
+  it('installs Antigravity with the installer Google documents', async () => {
+    const antigravity = find(await detectProviders(system()), 'antigravity')
+    expect(antigravity.setup?.installCommand).toBe(antigravityInstallCommand())
+    await expect(installCommandFor('antigravity')).resolves.toBe(antigravityInstallCommand())
   })
 
   it('refuses targets it cannot script instead of guessing', async () => {
