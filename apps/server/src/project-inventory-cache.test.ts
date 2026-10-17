@@ -363,6 +363,100 @@ describe('project inventory cache', () => {
     expect(probes).toHaveLength(2)
   })
 
+  it("answers a provider's skills from the same probe when it declares them", async () => {
+    const skillCapabilities = { inventory: true, configure: false, install: false }
+    const listeners: Array<(event: string, filename: string | null) => void> = []
+    const skill = {
+      id: '/home/dev/.grok/skills/help/SKILL.md',
+      name: 'help',
+      description: 'Help',
+      source: { type: 'folder' as const, path: '/home/dev/.grok/skills/help' },
+      scope: 'user' as const,
+      enabled: true,
+      dependencyErrors: [],
+    }
+    const { cache, probes, changes } = setup({
+      service: {
+        mcpCapabilities: capabilities,
+        skillCapabilities,
+        watchPaths: () => [{ directory: '/repo/.grok' }],
+        discover: (projectPath, { signal, onUpdate }) =>
+          new Promise((resolve, reject) => {
+            probes.push({ projectPath, signal, update: onUpdate, resolve, reject })
+          }),
+      },
+      watch: (_directory, listener) => {
+        listeners.push(listener)
+        return { close: () => {}, on: () => ({}) as never }
+      },
+    })
+
+    expect(cache.listSkills('/repo')).toEqual({
+      capabilities: skillCapabilities,
+      skills: [],
+      errors: [],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(probes).toHaveLength(1)
+    probes[0]!.resolve({ ...full, skills: [skill] })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(changes.map(([projectPath, parts]) => [projectPath, [...parts].sort()])).toEqual([
+      ['/repo', ['commands', 'mcp', 'skills']],
+    ])
+    expect(cache.listSkills('/repo')).toEqual({
+      capabilities: skillCapabilities,
+      skills: [skill],
+      errors: [],
+    })
+
+    // A look at the skills alone keeps the configuration watched, and a change names them.
+    changes.length = 0
+    cache.watch('/repo', ['skills'])
+    await vi.advanceTimersByTimeAsync(0)
+    listeners[0]!('change', 'skills')
+    await vi.advanceTimersByTimeAsync(500)
+    expect(changes).toEqual([['/repo', ['commands', 'mcp', 'skills']]])
+    cache.clear()
+  })
+
+  it('has no skills to show without the declaration or after a failed probe', async () => {
+    const plain = setup()
+    expect(plain.cache.listSkills('/repo')).toEqual({
+      capabilities: { inventory: false, configure: false, install: false },
+      skills: [],
+      errors: [],
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(plain.probes).toEqual([])
+    // Only a look at a part this inventory answers takes a watch lease.
+    const watchPaths = vi.fn(() => [])
+    const watched = setup({
+      service: { mcpCapabilities: capabilities, watchPaths, discover: async () => full },
+    })
+    watched.cache.watch('/repo', ['skills'])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(watchPaths).not.toHaveBeenCalled()
+
+    const skillCapabilities = { inventory: true, configure: false, install: false }
+    const failing = setup({
+      service: {
+        mcpCapabilities: capabilities,
+        skillCapabilities,
+        discover: async () => {
+          throw new Error('grok: command not found')
+        },
+      },
+    })
+    expect(failing.cache.listSkills('/repo').capabilities).toEqual(skillCapabilities)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(failing.changes).toEqual([['/repo', ['skills']]])
+    expect(failing.cache.listSkills('/repo')).toEqual({
+      capabilities: { inventory: false, configure: false, install: false },
+      skills: [],
+      errors: [],
+    })
+  })
+
   it('stops probes and stays quiet once cleared or forgotten', async () => {
     const { cache, probes, changes } = setup()
     await cache.listCommands('/a')

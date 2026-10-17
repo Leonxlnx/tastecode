@@ -1,9 +1,21 @@
-import type { McpCapabilities, McpServer, ProviderCommand, ResultOf } from '@harness/contracts'
+import type {
+  McpCapabilities,
+  McpServer,
+  ProviderCommand,
+  ResultOf,
+  Skill,
+  SkillCapabilities,
+} from '@harness/contracts'
 import { InventoryWatcher, type FolderWatch, type InventoryWatchTarget } from './inventory-watch.js'
 
 /** What a provider loads for one project when no chat is open there. */
-export type ProjectInventory = { commands: ProviderCommand[]; servers: McpServer[] }
-export type ProjectInventoryPart = 'commands' | 'mcp'
+export type ProjectInventory = {
+  commands: ProviderCommand[]
+  servers: McpServer[]
+  /** Only from a service that declares `skillCapabilities`. */
+  skills?: Skill[] | undefined
+}
+export type ProjectInventoryPart = 'commands' | 'mcp' | 'skills'
 
 /**
  * Reads a project's inventory by starting the provider without a chat. It
@@ -19,6 +31,8 @@ export type ProjectInventoryProbe = (
 export type ProjectInventoryService = {
   /** What the MCP inventory supports when the probe answers. */
   mcpCapabilities: McpCapabilities
+  /** Declared when the probe also reports the provider's skills. */
+  skillCapabilities?: SkillCapabilities | undefined
   discover: ProjectInventoryProbe
   /** Folders whose changes can change a project's answer, watched while someone looks. */
   watchPaths?: (projectPath: string) => InventoryWatchTarget[] | Promise<InventoryWatchTarget[]>
@@ -27,13 +41,15 @@ export type ProjectInventoryService = {
 /** The provider's own servers, before TasteCode's project overrides. */
 type McpList = { capabilities: McpCapabilities; servers: McpServer[]; loading?: boolean }
 type CommandList = ResultOf<'commands.list'>
+type SkillList = ResultOf<'skills.list'>
 type Held<T> = { value: T; at: number; live: boolean }
-type PartValue = { mcp: McpServer[]; commands: ProviderCommand[] }
+type PartValue = { mcp: McpServer[]; commands: ProviderCommand[]; skills: Skill[] }
 /** A cached part, and whether a probe that will report it is still running. */
 type Lookup<T> = { value: T | undefined; loading: boolean }
 type Entry = {
   commands?: Held<ProviderCommand[]> | undefined
   servers?: Held<McpServer[]> | undefined
+  skills?: Held<Skill[]> | undefined
   /** The servers came from a probe's early answer, and that probe still runs. */
   partial: boolean
   state: 'idle' | 'queued' | 'probing'
@@ -98,15 +114,18 @@ export class ProjectInventoryCache {
           ...(options.watch ? { watch: options.watch } : {}),
           // Readers re-read on the change; an open chat answers, else a probe refreshes.
           onChange: (projectPath) => {
-            if (this.invalidate(projectPath))
-              this.#options.onChanged(projectPath, ['commands', 'mcp'])
+            if (this.invalidate(projectPath)) this.#options.onChanged(projectPath, this.#parts)
           },
         })
       : undefined
   }
 
-  /** Watches the project's configuration while a lease lasts; renewing extends it. */
-  watch(projectPath: string): void {
+  /**
+   * Watches the project's configuration while a lease lasts; renewing extends
+   * it. Only a look at a part this inventory answers takes a lease.
+   */
+  watch(projectPath: string, parts: readonly string[] = this.#parts): void {
+    if (!parts.some((part) => (this.#parts as readonly string[]).includes(part))) return
     this.#watcher?.lease(projectPath)
   }
 
@@ -117,6 +136,7 @@ export class ProjectInventoryCache {
     if (entry.state === 'probing') entry.dirty = true
     if (entry.commands) entry.commands = { ...entry.commands, at: Number.NEGATIVE_INFINITY }
     if (entry.servers) entry.servers = { ...entry.servers, at: Number.NEGATIVE_INFINITY }
+    if (entry.skills) entry.skills = { ...entry.skills, at: Number.NEGATIVE_INFINITY }
     entry.failedAt = undefined
     return true
   }
@@ -160,6 +180,19 @@ export class ProjectInventoryCache {
     return { commands: value ?? [], loading }
   }
 
+  /**
+   * Skills come only from a probe; a chat does not list them. There is no
+   * loading flag in the answer: an empty list while the first probe runs is
+   * followed by a change when it lands.
+   */
+  listSkills(projectPath: string): SkillList {
+    const capabilities = this.#options.service.skillCapabilities
+    if (!capabilities) return { capabilities: NO_SKILLS, skills: [], errors: [] }
+    const { value, loading } = this.#read(projectPath, 'skills')
+    if (!value && !loading) return { capabilities: NO_SKILLS, skills: [], errors: [] }
+    return { capabilities, skills: value ?? [], errors: [] }
+  }
+
   /** A live answer about servers TasteCode added is wrong once that list changes. */
   forgetLiveServers(projectPath: string): void {
     const entry = this.#entries.get(projectPath)
@@ -184,9 +217,16 @@ export class ProjectInventoryCache {
     this.#queue.length = 0
   }
 
+  /** The parts a change notification names. */
+  get #parts(): ProjectInventoryPart[] {
+    return this.#options.service.skillCapabilities
+      ? ['commands', 'mcp', 'skills']
+      : ['commands', 'mcp']
+  }
+
   #read<P extends ProjectInventoryPart>(projectPath: string, part: P): Lookup<PartValue[P]> {
     const entry = this.#entry(projectPath)
-    const held = part === 'mcp' ? entry.servers : entry.commands
+    const held = part === 'mcp' ? entry.servers : part === 'skills' ? entry.skills : entry.commands
     const now = Date.now()
     const current = held !== undefined && now - held.at < this.#ttlMs
     // After a failed probe, even an expired answer waits out the retry delay:
@@ -199,7 +239,7 @@ export class ProjectInventoryCache {
     return { value: held?.value as PartValue[P] | undefined, loading }
   }
 
-  #storeLive(projectPath: string, part: ProjectInventoryPart, value: unknown[]): void {
+  #storeLive(projectPath: string, part: 'commands' | 'mcp', value: unknown[]): void {
     const entry = this.#entry(projectPath)
     const held = { value, at: Date.now(), live: true }
     if (part === 'mcp') {
@@ -344,9 +384,16 @@ export class ProjectInventoryCache {
       if (!same(entry.servers?.value, inventory.servers)) changed.push('mcp')
       entry.servers = { value: inventory.servers, at, live: false }
     }
+    if (this.#options.service.skillCapabilities && inventory.skills) {
+      if (!same(entry.skills?.value, inventory.skills)) changed.push('skills')
+      entry.skills = { value: inventory.skills, at, live: false }
+    }
     return changed
   }
 }
+
+/** A provider, or a project whose probe failed, with no skill inventory to show. */
+const NO_SKILLS: SkillCapabilities = { inventory: false, configure: false, install: false }
 
 function same(previous: unknown, next: unknown): boolean {
   return previous !== undefined && JSON.stringify(previous) === JSON.stringify(next)

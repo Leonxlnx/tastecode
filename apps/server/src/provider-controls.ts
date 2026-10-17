@@ -497,6 +497,12 @@ export class ProviderControls {
               this.#read(() => inventory.listCommands(projectPath, readActive)),
           }
         : {}),
+      ...(inventory && services.projectInventory?.skillCapabilities && !services.listSkills
+        ? {
+            listSkills: (projectPath: string) =>
+              this.#read(async () => inventory.listSkills(projectPath)),
+          }
+        : {}),
     }
     if (provider !== 'codex') return control
     return {
@@ -677,11 +683,12 @@ export class ProviderControls {
         if (this.#closed) return
         if (parts.includes('mcp')) this.#options.onMcpChanged?.(provider, projectPath)
         if (parts.includes('commands')) this.#options.onCommandsChanged?.(provider, projectPath)
+        if (parts.includes('skills')) this.#options.onSkillsChanged?.(provider, projectPath)
       },
       onError: (_projectPath, error) =>
         this.#options.onLog?.(
           provider,
-          `${provider} could not read a project's commands and MCP servers: ${error instanceof Error ? error.message : String(error)}`,
+          `${provider} could not read a project's commands, skills and MCP servers: ${error instanceof Error ? error.message : String(error)}`,
         ),
     })
     this.#projectInventories.set(provider, inventory)
@@ -898,9 +905,7 @@ export class ProviderControls {
 
   #watch(provider: ProviderId, projectPath: string, targets: WatchTarget[]) {
     this.#assertOpen()
-    if (targets.includes('mcp') || targets.includes('commands')) {
-      this.#projectInventories.get(provider)?.watch(projectPath)
-    }
+    this.#projectInventories.get(provider)?.watch(projectPath, targets)
     if (PROVIDER_CAPABILITIES[provider].notifications) {
       if (targets.includes('skills')) this.#skills.add(projectPath)
       if (targets.includes('mcp')) this.#mcp.add(projectPath)
