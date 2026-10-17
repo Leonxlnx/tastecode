@@ -531,3 +531,57 @@
   font: inherit;
   text-decoration: underline;
 }
+
+/* ---------- streaming reveal (reveal-clock.ts) ---------- */
+
+/* Streamed text is laid out as it arrives; the part not shown yet is painted
+   in transparent ink, so its line breaks are already final when it appears. */
+::highlight(md-veil) {
+  color: transparent;
+  text-decoration-color: transparent;
+}
+
+/* The soft leading edge: the characters shown last fade in through three
+   steps. A highlight's currentColor is not the colour of the text it covers,
+   so every element that sets its own text colour names it here as well. */
+.reply {
+  --reveal-ink: var(--response-text);
+}
+
+.reply--notice,
+.reasoning-summary,
+.md [data-streamdown='code-block-header'] {
+  --reveal-ink: var(--text-3);
+}
+
+.md a {
+  --reveal-ink: var(--response-text);
+  --reveal-decoration: var(--text-3);
+}
+
+.md blockquote {
+  --reveal-ink: var(--text-2);
+}
+
+.md .md-file-ref {
+  --reveal-ink: var(--file-reference);
+}
+
+.md pre {
+  --reveal-ink: var(--sdm-fg, var(--text));
+}
+
+::highlight(md-fresh-1) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 30%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 30%, transparent);
+}
+
+::highlight(md-fresh-2) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 55%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 55%, transparent);
+}
+
+::highlight(md-fresh-3) {
+  color: color-mix(in srgb, var(--reveal-ink, var(--text)) 80%, transparent);
+  text-decoration-color: color-mix(in srgb, var(--reveal-decoration, transparent) 80%, transparent);
+}

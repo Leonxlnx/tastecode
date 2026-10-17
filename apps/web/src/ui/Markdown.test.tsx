@@ -1,10 +1,12 @@
 // @vitest-environment happy-dom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { revealProjectFile } from '../bridge.js'
 import { preserveProjectFileLinks } from '../project-file-link.js'
 import { CompletedMarkdown } from './CompletedMarkdown.js'
 import { Markdown } from './Markdown.js'
+import { createRevealClock, replaceRevealClock } from './reveal-clock.js'
+import { fakeRevealEnvironment, visibleText } from './reveal-clock.fixture.js'
 
 vi.mock('../bridge.js', () => ({
   canRevealProjectFile: true,
@@ -285,7 +287,7 @@ describe('Completed Markdown', () => {
 })
 
 describe('Markdown streaming motion', () => {
-  // These read the DOM right after each append. Pacing has its own tests below.
+  // These read the DOM right after each append. The reveal has its own tests below.
   beforeEach(() => {
     device.prefersReducedMotion = 'reduce'
   })
@@ -330,7 +332,8 @@ describe('Markdown streaming motion', () => {
     expect(rendered.container.querySelector('li')?.textContent).toBe('one')
     expect(rendered.container.querySelector('pre')?.textContent).toContain('const a = 1')
     expect(rendered.container.querySelector('[data-live-markdown-leaf]')).toBeTruthy()
-    expect(rendered.container.querySelector('[style*="animation"]')).toBeTruthy()
+    // No per-append animation nodes: motion is the reveal clock's, not the DOM's.
+    expect(rendered.container.querySelector('[style*="animation"]')).toBeNull()
   })
 
   it('keeps rich structure in a large non-animated provider burst', () => {
@@ -345,7 +348,7 @@ describe('Markdown streaming motion', () => {
     expect(rendered.container.querySelector('[style*="animation"]')).toBeNull()
   })
 
-  it('folds finished streaming motion back into one text node', () => {
+  it('keeps a streamed leaf in one text node', () => {
     let text = 'start'
     const rendered = render(<Markdown text={text} streaming />)
 
@@ -359,9 +362,6 @@ describe('Markdown streaming motion', () => {
           updateVersion={version}
         />,
       )
-      const addition = rendered.container.querySelector<HTMLElement>('[style*="animation"]')
-      expect(addition).toBeTruthy()
-      fireEvent.animationEnd(addition!)
     }
 
     const leaf = rendered.container.querySelector('[data-live-markdown-leaf]')
@@ -415,30 +415,28 @@ describe('Markdown streaming motion', () => {
   })
 })
 
-describe('Markdown streaming pace', () => {
-  let frames: FrameRequestCallback[] = []
+describe('Markdown streaming reveal', () => {
+  let fake: ReturnType<typeof fakeRevealEnvironment>
   beforeEach(() => {
-    frames = []
-    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
-      frames.push(callback)
-      return frames.length
-    })
-    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined)
+    fake = fakeRevealEnvironment()
+    replaceRevealClock(createRevealClock(fake.env))
   })
   afterEach(() => {
-    vi.restoreAllMocks()
-    device.prefersReducedMotion = 'no-preference'
+    replaceRevealClock(undefined)
   })
 
-  const runFrame = (at: number) => {
-    const pending = frames
-    frames = []
-    for (const callback of pending) callback(at)
-  }
   const burst = ' and then a whole burst of words lands at once from the provider.'
+  const live = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>('[data-streaming-markdown]')!
+  const shown = (container: HTMLElement) => visibleText(live(container), fake.ranges())
+  const frames = (count: number) =>
+    act(() => {
+      for (let frame = 0; frame < count; frame += 1) fake.frame(16)
+    })
 
   function streamBurst() {
     const rendered = render(<Markdown text="It starts" streaming />)
+    frames(30)
     rendered.rerender(
       <Markdown
         text={`It starts${burst}`}
@@ -450,60 +448,113 @@ describe('Markdown streaming pace', () => {
     return rendered
   }
 
-  it('reveals a burst over the following frames instead of all at once', () => {
+  it('lays a burst out at once and reveals it character by character', () => {
     const { container } = streamBurst()
-    expect(container.textContent).toBe('It starts')
+    // Laid out in full, so its line breaks are final; shown a little later.
+    expect(live(container).textContent).toBe(`It starts${burst}`)
+    expect(shown(container)).toBe('It starts')
 
-    const start = performance.now()
-    runFrame(start + 16)
-    const afterOne = container.textContent ?? ''
-    expect(afterOne.length).toBeGreaterThan('It starts'.length)
-    expect(afterOne.length).toBeLessThan(`It starts${burst}`.length)
-
-    for (let frame = 2; frames.length > 0 && frame < 60; frame += 1) runFrame(start + frame * 16)
-    expect(container.textContent).toBe(`It starts${burst}`)
-    // The burst drains within about LIVE_TEXT_LAG_MS, not a word per frame.
-    expect(frames).toHaveLength(0)
+    const lengths: number[] = []
+    for (let frame = 0; frame < 40; frame += 1) {
+      frames(1)
+      lengths.push(shown(container).length)
+    }
+    expect(lengths[0]).toBeLessThan(`It starts${burst}`.length)
+    expect(lengths.at(-1)).toBe(`It starts${burst}`.length)
+    const steps = lengths.slice(1).map((length, index) => length - lengths[index]!)
+    // An isolated burst is shown within about 150 ms: a few characters a
+    // frame, speeding up and slowing down gradually instead of in word jumps.
+    const growing = steps.slice(
+      0,
+      steps.findLastIndex((step) => step > 0),
+    )
+    expect(Math.max(...growing)).toBeLessThanOrEqual(10)
+    expect(growing.every((step) => step > 0)).toBe(true)
+    const changes = growing.slice(1).map((step, index) => Math.abs(step - growing[index]!))
+    expect(Math.max(...changes)).toBeLessThanOrEqual(3)
+    expect(fake.pendingFrames()).toBe(0)
   })
 
-  it('holds a word the provider cut off until the rest of it arrives', () => {
-    const rendered = render(<Markdown text="Hello" streaming />)
-    rendered.rerender(
-      <Markdown
-        text="Hello there, partial wor"
-        streaming
-        liveUpdate={{ kind: 'append', text: ' there, partial wor' }}
-        updateVersion={1}
-      />,
-    )
-    const start = performance.now()
-    for (let frame = 1; frame <= 4; frame += 1) runFrame(start + frame * 16)
-    // Half a word at a line end would jump to the next line when the rest lands.
-    expect(rendered.container.textContent).toBe('Hello there, partial ')
-
-    rendered.rerender(
-      <Markdown
-        text="Hello there, partial words."
-        streaming
-        liveUpdate={{ kind: 'append', text: 'ds.' }}
-        updateVersion={2}
-      />,
-    )
-    // Once the provider is quiet for a moment, the tail shows as it is.
-    for (let frame = 5; frames.length > 0 && frame < 40; frame += 1) runFrame(start + frame * 16)
-    expect(rendered.container.textContent).toBe('Hello there, partial words.')
+  it('reveals the first words of a new reply too', () => {
+    const { container } = render(<Markdown text="Hello there" streaming />)
+    expect(live(container).textContent).toBe('Hello there')
+    expect(shown(container)).toBe('')
+    frames(30)
+    expect(shown(container)).toBe('Hello there')
   })
 
-  it('shows what is still waiting once the reply finishes', () => {
+  it('shows a reply opened mid-stream at once', () => {
+    const text = 'Opened later. '.repeat(40)
+    const { container } = render(<Markdown text={text} streaming />)
+    expect(fake.ranges()).toHaveLength(0)
+    expect(shown(container)).toBe(text)
+  })
+
+  it('keeps text nodes in place while the reveal holds a position in them', () => {
+    let text = 'start '
+    const rendered = render(<Markdown text={text} streaming />)
+    for (let version = 1; version <= 6; version += 1) {
+      const delta = 'word '.repeat(20)
+      text += delta
+      rendered.rerender(
+        <Markdown
+          text={text}
+          streaming
+          liveUpdate={{ kind: 'append', text: delta }}
+          updateVersion={version}
+        />,
+      )
+      frames(2)
+    }
+    // Sealed 256-character leaves stay spans instead of folding into one node.
+    expect(rendered.container.querySelectorAll('p > [data-live-markdown-leaf]').length).toBe(3)
+    frames(80)
+    expect(shown(rendered.container)).toBe(text)
+  })
+
+  it('hands over to the finished renderer only once the reveal has drained', () => {
     const { container, rerender } = streamBurst()
-    rerender(<Markdown text={`It starts${burst} **Done.**`} />)
-    expect(container.textContent).toBe(`It starts${burst} Done.`)
+    const element = live(container)
+    rerender(<Markdown text={`It starts${burst} Done.`} />)
+
+    // The live DOM stays while the rest drains, the final words included.
+    expect(live(container)).toBe(element)
+    expect(element.getAttribute('aria-busy')).toBe('false')
+    expect(element.textContent).toBe(`It starts${burst} Done.`)
+    expect(shown(container).length).toBeLessThan(element.textContent!.length)
+
+    frames(20)
+    expect(container.querySelector('[data-streaming-markdown]')).toBeNull()
+    expect(container.querySelector('[data-plain-markdown]')?.textContent).toBe(
+      `It starts${burst} Done.`,
+    )
+    expect(fake.ranges()).toHaveLength(0)
   })
 
   it('shows text as it lands when the reader asks for reduced motion', () => {
-    device.prefersReducedMotion = 'reduce'
-    const { container } = streamBurst()
-    expect(container.textContent).toBe(`It starts${burst}`)
-    expect(frames).toHaveLength(0)
+    fake.setMotion(false)
+    const { container, rerender } = streamBurst()
+    expect(fake.ranges()).toHaveLength(0)
+    expect(live(container).textContent).toBe(`It starts${burst}`)
+    expect(fake.pendingFrames()).toBe(0)
+
+    rerender(<Markdown text={`It starts${burst}`} />)
+    expect(container.querySelector('[data-plain-markdown]')?.textContent).toBe(`It starts${burst}`)
+  })
+
+  it('keeps a reply that finished without a reveal finished when motion comes back', () => {
+    const clock = createRevealClock(fake.env)
+    replaceRevealClock(clock)
+    const { container, rerender } = streamBurst()
+    // The window is hidden when the reply finishes.
+    fake.setMotion(false)
+    rerender(<Markdown text={`It starts${burst}`} />)
+    expect(container.querySelector('[data-plain-markdown]')).toBeTruthy()
+
+    const attach = vi.spyOn(clock, 'attach')
+    fake.setMotion(true)
+    rerender(<Markdown text={`It starts${burst}`} projectPath="E:\project" />)
+    expect(attach).not.toHaveBeenCalled()
+    expect(container.querySelector('[data-plain-markdown]')?.textContent).toBe(`It starts${burst}`)
   })
 })
