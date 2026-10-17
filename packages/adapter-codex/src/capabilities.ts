@@ -9,6 +9,9 @@ export const CODEX_CAPABILITIES: Capabilities = {
   userInput: true,
   autoReview: true,
   images: true,
+  // A subagent's thread streams on the chat's connection, so its tool calls and tokens
+  // count up while it runs.
+  subagents: 'progress',
   // Codex's catalog gives current models a 272K window, stretching to 872K on
   // the models that allow it. It compacts at 90% of the window unless told a
   // token count, clamps a later count back to 90%, and has no off switch.
