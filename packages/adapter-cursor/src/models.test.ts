@@ -14,10 +14,15 @@ const capture = readFileSync(
   new URL('./fixtures/cursor-models-2026-08-07.txt', import.meta.url),
   'utf8',
 )
+/** The same command on 2026-10-16 (2026.07.23-e383d2b), 264 model ids. */
+const today = readFileSync(
+  new URL('./fixtures/cursor-models-2026-10-16.txt', import.meta.url),
+  'utf8',
+)
 
-function rawIds(): Set<string> {
+function rawIds(listing = capture): Set<string> {
   const ids = new Set<string>()
-  for (const line of capture.split(/\r?\n/)) {
+  for (const line of listing.split(/\r?\n/)) {
     const match = line.trim().match(/^(\S+) - /)
     if (match && match[1] !== 'auto') ids.add(match[1]!)
   }
@@ -85,9 +90,12 @@ describe('cursor model collapse', () => {
     })
   })
 
-  it('resolves every offered combination to an id the CLI actually listed', () => {
-    const models = parseCursorModels(capture)
-    const listed = rawIds()
+  it.each([
+    ['2026-08-07', capture],
+    ['2026-10-16', today],
+  ])('resolves every offered combination of the %s listing to a listed id', (_day, listing) => {
+    const models = parseCursorModels(listing)
+    const listed = rawIds(listing)
     const index = getCursorIndex()
     for (const model of models) {
       const efforts = model.reasoningEfforts.length ? model.reasoningEfforts : [undefined]
@@ -101,6 +109,11 @@ describe('cursor model collapse', () => {
         }
       }
     }
+  })
+
+  it("collapses today's 264 listed ids into 53 base models", () => {
+    expect(rawIds(today).size).toBe(264)
+    expect(parseCursorModels(today)).toHaveLength(53)
   })
 
   it('degrades a missing fast twin to the standard variant instead of failing', () => {

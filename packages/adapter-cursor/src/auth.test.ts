@@ -18,9 +18,10 @@ function runs(answers: Record<string, CapturedRun | Error>) {
   const calls: string[] = []
   const run = async (command: string, args: string[], timeoutMs?: number) => {
     expect(command).toBe('cursor-agent')
-    // Measured 3.5–14.5 s on a busy machine; the five-second default failed it.
-    expect(timeoutMs).toBe(30_000)
+    // Measured 3.5–14.5 s on a busy machine; the five-second default failed
+    // it. The listing, shared with the picker, gets a minute.
     const key = args.join(' ')
+    expect(timeoutMs).toBe(key === 'models' ? 60_000 : 30_000)
     calls.push(key)
     const answer = answers[key]
     if (!answer) throw new Error(`unexpected cursor-agent ${key}`)
