@@ -4,6 +4,10 @@ import { providerDisplayName, providerMark } from '../provider-presentation.js'
 import type { UsageSummaryState } from '../usage-summary-state.js'
 import '../styles/account-limits.css'
 import { ProviderIcon } from './ProviderIcon.js'
+import { compactRelativeTime } from './session-clock.js'
+
+/** Values older than this say how old they are; younger ones read as current. */
+const AGE_SHOWN_AFTER_MS = 10 * 60_000
 
 type Limit = ResultOf<'usage.summary'>['limits'][number]
 type ConsumeReset = (
@@ -21,14 +25,28 @@ export type AccountLimitsState = UsageSummaryState
  */
 export function AccountLimits(props: {
   states: AccountLimitsState[]
+  /** Called once while the limits are on screen; returns the release for when they leave. */
+  onShow?: (() => () => void) | undefined
   onRetry: (provider: ProviderId) => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
   const panel = useRef<HTMLElement>(null)
-  const visibleStates = props.states.filter((state) => limitSource(state)?.status !== 'unavailable')
+  const onShow = useRef(props.onShow)
+  // A source without plan limits is left out; one that could not be read yet is not.
+  const visibleStates = props.states.filter((state) => {
+    const source = limitSource(state)
+    return source?.status !== 'unavailable' || source.reason === 'failed'
+  })
 
   // The popup lands on the list itself rather than on its first Retry or Use.
   useLayoutEffect(() => panel.current?.focus(), [])
+  useLayoutEffect(() => {
+    onShow.current = props.onShow
+  })
+  // Showing the limits is what lets the server read the sources it reads only
+  // on view. Once per mount, so a new callback identity does not ask again,
+  // and before paint, so a source not read yet already reads as checking.
+  useLayoutEffect(() => onShow.current?.(), [])
 
   const retry = (provider: ProviderId) => {
     // The Retry button unmounts while the source reloads; keep focus in the popup.
@@ -37,6 +55,9 @@ export function AccountLimits(props: {
   }
 
   if (visibleStates.length === 0) return null
+  // Ages are read when the popup opens and when the values change; nothing
+  // ticks while it stays open.
+  const now = Date.now()
 
   return (
     <section
@@ -51,6 +72,7 @@ export function AccountLimits(props: {
         <LimitSource
           key={state.provider}
           state={state}
+          now={now}
           onRetry={() => retry(state.provider)}
           onConsumeReset={props.onConsumeReset}
         />
@@ -61,6 +83,7 @@ export function AccountLimits(props: {
 
 function LimitSource(props: {
   state: AccountLimitsState
+  now: number
   onRetry: () => void
   onConsumeReset?: ConsumeReset | undefined
 }) {
@@ -69,7 +92,10 @@ function LimitSource(props: {
   const source = limitSource(props.state)
   const limits = source?.status === 'ready' ? source.limits : []
   const name = providerDisplayName(props.state.provider)
-  const status = sourceStatus(props.state, source, limits.length > 0)
+  const status = sourceStatus(props.state, source, limits.length > 0, props.now)
+  const retryable =
+    props.state.status === 'error' ||
+    (props.state.status === 'ready' && source?.status === 'unavailable')
   return (
     <section
       className="account-menu__source"
@@ -87,7 +113,7 @@ function LimitSource(props: {
             {status.detail ? <span className="visually-hidden">. {status.detail}</span> : null}
           </span>
         ) : null}
-        {props.state.status === 'error' ? (
+        {retryable ? (
           <button
             className="account-menu__retry"
             type="button"
@@ -111,20 +137,54 @@ function LimitSource(props: {
   )
 }
 
-/** The one muted word beside a provider's name, with any detail kept for hover. */
+/**
+ * The one muted phrase beside a provider's name, with any detail kept for
+ * hover. Values that could not be refreshed say how old they are rather than
+ * raising an error; values that are merely old say when they were updated.
+ */
 function sourceStatus(
   state: AccountLimitsState,
   source: ProviderLimitSource | undefined,
   hasValues: boolean,
+  now: number,
 ): { label: string; detail?: string | undefined } | undefined {
+  const checkedAt = source?.status === 'ready' ? source.checkedAt : undefined
   if (state.status === 'error') {
     return hasValues
-      ? { label: 'Last known', detail: `Couldn’t refresh plan limits. ${state.message}` }
+      ? {
+          label: lastKnownLabel(checkedAt, now),
+          detail: `Couldn’t refresh plan limits. ${state.message}`,
+        }
       : { label: 'Unavailable', detail: `Plan limits couldn’t be loaded. ${state.message}` }
   }
   if (!source) return { label: 'Checking…' }
+  // Only shown sources reach here unavailable: ones that could not be read yet.
+  if (source.status === 'unavailable') {
+    return state.status === 'loading'
+      ? { label: 'Checking…' }
+      : {
+          label: 'Unavailable',
+          detail: ['Plan limits couldn’t be loaded.', source.error].filter(Boolean).join(' '),
+        }
+  }
+  // The server kept these values through a failed refresh and retries on its own.
+  if (source.status === 'ready' && source.stale && hasValues) {
+    return {
+      label: lastKnownLabel(checkedAt, now),
+      detail: ['Couldn’t refresh plan limits.', source.refreshError].filter(Boolean).join(' '),
+    }
+  }
   if (!hasValues) return { label: 'None reported', detail: 'No plan limits reported.' }
+  if (checkedAt !== undefined && now - checkedAt >= AGE_SHOWN_AFTER_MS) {
+    return { label: `Updated ${compactRelativeTime(checkedAt, now)} ago` }
+  }
   return undefined
+}
+
+/** "Last known · 2h ago"; under a minute, or without a read time, just "Last known". */
+function lastKnownLabel(checkedAt: number | undefined, now: number): string {
+  if (checkedAt === undefined || now - checkedAt < 60_000) return 'Last known'
+  return `Last known · ${compactRelativeTime(checkedAt, now)} ago`
 }
 
 function LimitRow(props: {

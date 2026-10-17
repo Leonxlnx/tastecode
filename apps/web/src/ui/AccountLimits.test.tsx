@@ -90,6 +90,63 @@ describe('account limits', () => {
     expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
   })
 
+  it('says once that the limits are on screen and releases that when it closes', () => {
+    const release = vi.fn()
+    const onShow = vi.fn(() => release)
+    const state: AccountLimitsState = {
+      status: 'ready',
+      provider: 'codex',
+      summary: summary([{ label: 'Weekly', usedPercent: 12 }]),
+    }
+    const view = render(<AccountLimits states={[state]} onShow={onShow} onRetry={() => {}} />)
+    expect(onShow).toHaveBeenCalledOnce()
+    // New states and a new callback identity are no new showing.
+    view.rerender(
+      <AccountLimits
+        states={[{ ...state, status: 'loading' }]}
+        onShow={() => release}
+        onRetry={() => {}}
+      />,
+    )
+    expect(onShow).toHaveBeenCalledOnce()
+    expect(release).not.toHaveBeenCalled()
+    view.unmount()
+    expect(release).toHaveBeenCalledOnce()
+  })
+
+  it('keeps a source that was not read yet in view, as checking while it loads', () => {
+    const onRetry = vi.fn()
+    const notRead: AccountLimitsState = {
+      status: 'ready',
+      provider: 'claude-code',
+      summary: {
+        ...summary(),
+        limitSource: {
+          provider: 'claude-code',
+          status: 'unavailable',
+          reason: 'failed',
+          error: 'Plan limits are read when you open them.',
+        },
+      },
+    }
+    const view = render(
+      <AccountLimits states={[{ ...notRead, status: 'loading' }]} onRetry={onRetry} />,
+    )
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(statusOf(claude)?.textContent).toBe('Checking…')
+    expect(within(claude).queryByRole('button', { name: 'Retry' })).toBeNull()
+
+    // An answer that still has no values says why and can be asked again.
+    view.rerender(<AccountLimits states={[notRead]} onRetry={onRetry} />)
+    const status = statusOf(screen.getByRole('region', { name: 'Claude Code' }))!
+    expect(status.firstChild?.textContent).toBe('Unavailable')
+    expect(status.title).toBe(
+      'Plan limits couldn’t be loaded. Plan limits are read when you open them.',
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(onRetry).toHaveBeenCalledWith('claude-code')
+  })
+
   it('keeps ordered provider states and hides sources without limits', () => {
     render(
       <AccountLimits
@@ -204,6 +261,140 @@ describe('account limits', () => {
     expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
     expect(statusOf(grok)?.title).toBe('Couldn’t refresh plan limits. Timed out')
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('labels values the server kept through a failed refresh, without a Retry', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: 1_000 + 2 * 3_600_000 })
+    const kept = [{ id: 'five_hour', label: 'Session', usedPercent: 42 }]
+    render(
+      <AccountLimits
+        states={[
+          {
+            status: 'ready',
+            provider: 'claude-code',
+            summary: {
+              ...summary(kept),
+              limitSource: {
+                provider: 'claude-code',
+                status: 'ready',
+                limits: kept,
+                checkedAt: 1_000,
+                stale: true,
+                refreshError: 'Claude usage request timed out.',
+                retryAt: 2_000,
+              },
+            },
+          },
+          {
+            status: 'ready',
+            provider: 'grok',
+            summary: {
+              ...summary(kept),
+              limitSource: { provider: 'grok', status: 'ready', limits: kept, stale: true },
+            },
+          },
+        ]}
+        onRetry={vi.fn()}
+      />,
+    )
+
+    const claude = screen.getByRole('region', { name: 'Claude Code' })
+    expect(within(claude).getByText('58% left')).toBeTruthy()
+    // It says how old the values are instead of raising an error.
+    expect(statusOf(claude)?.firstChild?.textContent).toBe('Last known · 2h ago')
+    expect(statusOf(claude)?.title).toBe(
+      'Couldn’t refresh plan limits. Claude usage request timed out.',
+    )
+    // The server already retries on its own schedule.
+    expect(within(claude).queryByRole('button', { name: 'Retry' })).toBeNull()
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    // Without a read time it cannot say how old.
+    expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
+    expect(statusOf(grok)?.title).toBe('Couldn’t refresh plan limits.')
+  })
+
+  it('says when values were updated once they are older than ten minutes', () => {
+    const now = 50 * 60_000
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    const row = [{ id: 'five_hour', label: 'Session', usedPercent: 42 }]
+    const state = (
+      provider: AccountLimitsState['provider'],
+      checkedAt: number,
+      origin: 'live' | 'read',
+    ): AccountLimitsState => ({
+      status: 'ready',
+      provider,
+      summary: {
+        ...summary(row),
+        limitSource: { provider, status: 'ready', limits: row, checkedAt, origin },
+      },
+    })
+    const view = render(
+      <AccountLimits
+        states={[
+          state('codex', now - 9 * 60_000, 'live'),
+          state('claude-code', now - 12 * 60_000, 'live'),
+          state('grok', now - 47 * 60_000, 'read'),
+        ]}
+        onRetry={vi.fn()}
+      />,
+    )
+
+    expect(statusOf(screen.getByRole('region', { name: 'Codex' }))).toBeNull()
+    expect(statusOf(screen.getByRole('region', { name: 'Claude Code' }))?.textContent).toBe(
+      'Updated 12m ago',
+    )
+    expect(statusOf(screen.getByRole('region', { name: 'Grok' }))?.textContent).toBe(
+      'Updated 47m ago',
+    )
+    expect(view.container.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('says how old last known values are when a refresh request failed', () => {
+    const now = 3 * 86_400_000
+    vi.useFakeTimers({ toFake: ['Date'], now })
+    const row = [{ id: 'weekly', label: 'Weekly', usedPercent: 20 }]
+    render(
+      limits({
+        status: 'error',
+        provider: 'grok',
+        message: 'Grok billing request failed.',
+        summary: {
+          ...summary(row),
+          limitSource: {
+            provider: 'grok',
+            status: 'ready',
+            limits: row,
+            checkedAt: now - 30_000,
+          },
+        },
+      }),
+    )
+    const grok = screen.getByRole('region', { name: 'Grok' })
+    // Under a minute old, the age would only be noise.
+    expect(statusOf(grok)?.firstChild?.textContent).toBe('Last known')
+    expect(within(grok).getByText('80% left')).toBeTruthy()
+
+    cleanup()
+    render(
+      limits({
+        status: 'error',
+        provider: 'grok',
+        message: 'Grok billing request failed.',
+        summary: {
+          ...summary(row),
+          limitSource: {
+            provider: 'grok',
+            status: 'ready',
+            limits: row,
+            checkedAt: now - 2 * 86_400_000,
+          },
+        },
+      }),
+    )
+    expect(statusOf(screen.getByRole('region', { name: 'Grok' }))?.firstChild?.textContent).toBe(
+      'Last known · 2d ago',
+    )
   })
 
   it('orders and calms the nightly-only providers like the shipped ones', () => {
