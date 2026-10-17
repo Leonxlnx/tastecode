@@ -106,6 +106,11 @@ vi.mock('./providers.js', () => ({
     state.prewarmed += 1
   },
 }))
+vi.mock('./runtime-loader.js', () => ({
+  stopModelListings: async () => {
+    state.shutdown.push('listings')
+  },
+}))
 vi.mock('./provider-history.js', () => ({
   ProviderHistory: class {
     constructor(_store: unknown, sources: Array<{ provider: string }>) {
@@ -462,6 +467,13 @@ describe('server shutdown', () => {
 
     finishHistory()
     await closed
+  })
+
+  it('stops model listings that are still running', async () => {
+    await listen()
+    await running!.close()
+    running = undefined
+    expect(state.shutdown).toContain('listings')
   })
 })
 

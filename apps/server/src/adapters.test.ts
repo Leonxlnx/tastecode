@@ -228,7 +228,7 @@ vi.mock('@harness/proc/cli', async (importOriginal) => ({
   },
 }))
 
-const { providerRuntime } = await import('./adapters.js')
+const { providerRuntime, stopModelListings } = await import('./adapters.js')
 
 afterEach(() => {
   constructed.length = 0
@@ -763,5 +763,21 @@ describe('openCodeRuntime', () => {
     release?.()
     await second
     expect(constructed[1]?.disposed).toBe(true)
+  })
+
+  it('stops a listing that is still running when the server closes', async () => {
+    const listing = providerRuntime('opencode', () => {}).listModels()
+    await vi.waitFor(() => expect(constructed).toHaveLength(1))
+    expect(constructed[0]?.disposed).toBe(false)
+
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(true)
+
+    release?.()
+    await listing
+    // A finished listing is not stopped again.
+    constructed[0]!.disposed = false
+    await stopModelListings()
+    expect(constructed[0]?.disposed).toBe(false)
   })
 })
