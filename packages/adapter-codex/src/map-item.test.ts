@@ -122,6 +122,24 @@ describe('Codex collaboration items', () => {
       ),
     ).toMatchObject({ type: 'tool_call', status: 'failed', text: 'Subagent interrupted' })
   })
+
+  // Codex 0.163 sends this kind, which the generated bindings do not list (fixtures/subagent-codex-0.163.jsonl).
+  it('maps the notice of a finished subagent', () => {
+    const item = CodexThreadItemSchema.parse({
+      type: 'subAgentActivity',
+      model: null,
+      reasoningEffort: null,
+      id: 'subagent-completed-turn-1',
+      kind: 'completed',
+      agentThreadId: 'child-1',
+      agentPath: '/root/read_first_line',
+    })
+    expect(mapThreadItem(item, context)).toMatchObject({
+      type: 'tool_call',
+      status: 'completed',
+      text: 'Subagent finished',
+    })
+  })
 })
 
 describe('Codex assistant messages', () => {
