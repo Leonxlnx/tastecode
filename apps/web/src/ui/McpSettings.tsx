@@ -510,7 +510,10 @@ function ProviderMcpSettings(props: {
         <SettingsSection
           label="Project servers"
           note={
-            currentInventory?.capabilities.add && !currentInventory.capabilities.reload
+            // Once there is a change to apply: above the empty line it read as its lead-in.
+            currentInventory?.capabilities.add &&
+            !currentInventory.capabilities.reload &&
+            (projectServers.length > 0 || notice)
               ? 'Changes apply when you start or resume a session.'
               : undefined
           }

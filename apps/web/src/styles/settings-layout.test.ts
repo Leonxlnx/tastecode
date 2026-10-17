@@ -52,6 +52,10 @@ describe('settings viewport CSS', () => {
 
   it('spaces v1 pages by the header and section steps', () => {
     expect(systemCss).toMatch(/\.settings \.set-page__head \{[^}]*margin: 0 0 28px;/s)
+    // A narrow pane moves page actions under the description instead of squeezing it.
+    expect(systemCss).toMatch(
+      /@container settings-content \(max-width: 560px\) \{[\s\S]*?\.settings \.set-page__head \{[^}]*flex-wrap: wrap;/s,
+    )
     expect(systemCss).toMatch(
       /\.settings \.set-section \+ \.set-section,\s*\.settings \.set-row \+ \.set-section \{[^}]*margin-top: 36px;/s,
     )

@@ -386,6 +386,13 @@
   .settings .set-row__value {
     flex-wrap: wrap;
   }
+
+  /* Page actions that do not fit beside the title take their own line under
+     the description, rather than squeezing it into a narrow column. */
+  .settings .set-page__head {
+    flex-wrap: wrap;
+    row-gap: 14px;
+  }
 }
 
 /* Buttons: one set, every one 28px tall, fading through button-feedback.css.
