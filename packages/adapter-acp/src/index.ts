@@ -17,6 +17,7 @@ export {
   type AcpAgentSpec,
 } from './agents.js'
 export { prepareAcpMcpServers, validateAcpMcpServer, type AcpMcpServer } from './mcp.js'
+export { acpCommandName, acpCommandSkillPath, mapAcpCommands } from './commands.js'
 export { optionFor, type PermissionOption } from './approvals.js'
 export { Streamer } from './events.js'
 export {
