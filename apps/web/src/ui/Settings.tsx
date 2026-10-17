@@ -70,7 +70,15 @@ import {
   IconRotate as RotateCcw,
   IconUser as UserRound,
 } from '@tabler/icons-react'
-import { connectionMark, isCustomModelChoice, type ModelChoice } from '../model-catalog.js'
+import {
+  connectionMark,
+  isCustomModelChoice,
+  providerMark,
+  sourceKey,
+  type ModelChoice,
+} from '../model-catalog.js'
+import { agentPresentation, type ProviderPresentation } from '../provider-presentation.js'
+import type { ComposerError } from './ComposerErrors.js'
 import {
   pinnableModels,
   pinnedModelChoice,
@@ -287,6 +295,10 @@ function SettingsComponent(props: {
   providersLoading?: boolean | undefined
   models: ModelChoice[]
   modelsLoading?: boolean | undefined
+  /** Why a source's models could not be listed, by source key. */
+  modelErrors?: Readonly<Record<string, ComposerError>> | undefined
+  /** Sources whose models are being listed right now. */
+  pendingModelSources?: ReadonlySet<string> | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
   providerDefaults?: ProviderDefaultsControls | undefined
@@ -1379,8 +1391,16 @@ function ModelSettings(props: {
   transport: Transport
   models: ModelChoice[]
   modelsLoading?: boolean | undefined
+  /** Why a source's models could not be listed, by source key. */
+  modelErrors?: Readonly<Record<string, ComposerError>> | undefined
+  /** Sources whose models are being listed right now. */
+  pendingModelSources?: ReadonlySet<string> | undefined
+  providerStatuses: ProviderStatus[]
+  acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+  modelConnections?: ModelConnection[] | undefined
   hiddenModels: Set<string>
   onModelVisibilityChange: (key: string, visible: boolean) => void
+  onConnectionsChanged: () => void
 }) {
   // Existing stored custom choices remain usable in the composer, but raw
   // provider-id editing is intentionally absent from beta settings.
@@ -1389,10 +1409,43 @@ function ModelSettings(props: {
     [props.models],
   )
 
+  // A source whose models failed to load would otherwise vanish from the
+  // page. It keeps a section with the reason and a Retry; while it is asked
+  // again (or once Retry is pressed, until the next answer) the section
+  // shows that instead, so a retry never makes it blink out and back.
+  const errors = props.modelErrors
+  const [seenFailures, setSeenFailures] = useState<ReadonlySet<string>>(() => new Set())
+  const [retryFrom, setRetryFrom] = useState<typeof errors>()
+  const loaded = new Set(sources.map((group) => group.key))
+  const failing = Object.keys(errors ?? {}).filter((key) => !loaded.has(key))
+  if (failing.some((key) => !seenFailures.has(key))) {
+    setSeenFailures(new Set([...seenFailures, ...failing]))
+  }
+  const retrying = retryFrom !== undefined && retryFrom === errors
+  const failed = [...new Set([...seenFailures, ...failing])].flatMap((key) => {
+    if (loaded.has(key)) return []
+    const loading = retrying || props.pendingModelSources?.has(key) === true
+    const error = errors?.[key]
+    if (!loading && !error) return []
+    const presentation = modelSourcePresentation(key, props)
+    return [{ key, presentation, loading, error }]
+  })
+  // A refresh that never answers (the server itself went away) must not
+  // leave the sources loading for good.
+  useEffect(() => {
+    if (retryFrom === undefined) return
+    const timer = window.setTimeout(() => setRetryFrom(undefined), 30_000)
+    return () => window.clearTimeout(timer)
+  }, [retryFrom])
+  const retry = () => {
+    setRetryFrom(errors)
+    props.onConnectionsChanged()
+  }
+
   return (
     <SettingsPage title="Models" className="model-settings">
       <BackgroundModelSettings transport={props.transport} />
-      {sources.length > 0 ? (
+      {sources.length > 0 || failed.length > 0 ? (
         <div className="model-settings__sources">
           {sources.map((group) => (
             <ModelVisibilityGroup
@@ -1402,6 +1455,36 @@ function ModelSettings(props: {
               hiddenModels={props.hiddenModels}
               onModelVisibilityChange={props.onModelVisibilityChange}
             />
+          ))}
+          {failed.map((source) => (
+            <SettingsSection
+              key={source.key}
+              title={
+                source.presentation ? (
+                  <SourceIdentity presentation={source.presentation} />
+                ) : undefined
+              }
+              label={source.presentation ? undefined : 'Model source'}
+            >
+              {source.loading ? (
+                <SettingsNotice tone="progress">
+                  {source.presentation
+                    ? `Loading ${source.presentation.label} models…`
+                    : 'Loading models…'}
+                </SettingsNotice>
+              ) : (
+                <SettingsNotice
+                  tone="error"
+                  action={
+                    <button className="set-button" type="button" onClick={retry}>
+                      Retry
+                    </button>
+                  }
+                >
+                  {source.error?.message}
+                </SettingsNotice>
+              )}
+            </SettingsSection>
           ))}
         </div>
       ) : props.modelsLoading ? (
@@ -1414,6 +1497,28 @@ function ModelSettings(props: {
       )}
     </SettingsPage>
   )
+}
+
+/** The name and mark of a model source, from the roster it was listed from. */
+function modelSourcePresentation(
+  key: string,
+  roster: {
+    providerStatuses: ProviderStatus[]
+    acpAgents?: ResultOf<'acp.agents'>['agents'] | undefined
+    modelConnections?: ModelConnection[] | undefined
+  },
+): ProviderPresentation | undefined {
+  const status = roster.providerStatuses.find((entry) => sourceKey({ provider: entry.id }) === key)
+  if (status) return { label: status.displayName, mark: providerMark(status.id) }
+  const agent = roster.acpAgents?.find(
+    (entry) => sourceKey({ provider: 'acp', agentId: entry.id }) === key,
+  )
+  if (agent) return agentPresentation(agent.id, agent.name)
+  const connection = roster.modelConnections?.find(
+    (entry) => sourceKey({ provider: 'api', connectionId: entry.id }) === key,
+  )
+  if (connection) return { label: connection.displayName, mark: connectionMark(connection.preset) }
+  return undefined
 }
 
 const MODEL_SKELETON_WIDTHS = [132, 176, 108, 152] as const

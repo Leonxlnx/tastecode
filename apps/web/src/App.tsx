@@ -5874,6 +5874,8 @@ export function App() {
               providersLoading={catalogAvailability === 'loading'}
               models={models}
               modelsLoading={catalogAvailability === 'loading'}
+              modelErrors={modelErrors}
+              pendingModelSources={pendingModelSources}
               hiddenModels={hiddenModels}
               onModelVisibilityChange={changeModelVisibility}
               providerDefaults={providerDefaultsControls}

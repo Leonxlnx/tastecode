@@ -513,6 +513,140 @@ describe('settings reset confirmation', () => {
   })
 })
 
+describe('model sources that failed to load', () => {
+  const luna: ModelChoice = {
+    key: 'codex:luna',
+    provider: 'codex',
+    sourceName: 'Codex',
+    mark: 'openai',
+    model: {
+      id: 'luna',
+      displayName: 'Luna',
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+  }
+  const composer: ModelChoice = {
+    key: 'cursor:composer-2',
+    provider: 'cursor',
+    sourceName: 'Cursor',
+    mark: 'cursor',
+    model: {
+      id: 'composer-2',
+      displayName: 'Composer 2',
+      isDefault: true,
+      reasoningEfforts: [],
+      serviceTiers: [],
+    },
+  }
+  const cursorTimeout = {
+    id: 'models:cursor:1',
+    message: 'Could not load Cursor models. CLI did not respond within the time limit',
+  }
+  const noticeText = (notice: HTMLElement) => notice.querySelector('.set-notice__text')?.textContent
+  const sourceList = () => document.querySelector<HTMLElement>('.model-settings__sources')!
+  const titles = () =>
+    Array.from(sourceList().querySelectorAll('.set-section__title'), (title) => title.textContent)
+
+  it('keeps a failed source on the page with its reason and a Retry', () => {
+    const onConnectionsChanged = vi.fn()
+    const { rerenderSettings } = renderSettings({
+      initialSection: 'models',
+      overrides: {
+        providerStatuses: [
+          installedProvider('codex', 'Codex'),
+          installedProvider('cursor', 'Cursor'),
+        ],
+        models: [luna],
+        // Codex still lists the models of its last answer, so it needs no notice.
+        modelErrors: {
+          codex: { id: 'models:codex:1', message: 'Could not load Codex models. offline' },
+          cursor: cursorTimeout,
+        },
+        onConnectionsChanged,
+      },
+    })
+    expect(titles()).toEqual(['Codex', 'Cursor'])
+    expect(within(sourceList()).queryByText(/Could not load Codex models/)).toBeNull()
+    expect(screen.getByRole('switch', { name: 'Include Luna in model picker' })).toBeTruthy()
+    const cursor = screen.getByRole('region', { name: 'Cursor' })
+    expect(cursor.querySelector('.source-identity')?.getAttribute('title')).toBe('Cursor')
+    const notice = within(cursor).getByRole('alert')
+    expect(notice.classList.contains('set-notice')).toBe(true)
+    expect(noticeText(notice)).toBe(cursorTimeout.message)
+
+    // Retry asks every source again; the section stays and says so at once.
+    fireEvent.click(within(notice).getByRole('button', { name: 'Retry' }))
+    expect(onConnectionsChanged).toHaveBeenCalledOnce()
+    expect(within(cursor).queryByRole('alert')).toBeNull()
+    expect(noticeText(within(cursor).getByRole('status'))).toBe('Loading Cursor models…')
+
+    // The refresh is under way: older errors are gone, Cursor is pending.
+    rerenderSettings({ modelErrors: {}, pendingModelSources: new Set(['codex', 'cursor']) })
+    expect(titles()).toEqual(['Codex', 'Cursor'])
+    expect(
+      noticeText(within(screen.getByRole('region', { name: 'Cursor' })).getByRole('status')),
+    ).toBe('Loading Cursor models…')
+
+    // It fails again: the reason and Retry come back.
+    rerenderSettings({ modelErrors: { cursor: cursorTimeout }, pendingModelSources: new Set() })
+    expect(
+      within(screen.getByRole('region', { name: 'Cursor' })).getByRole('button', { name: 'Retry' }),
+    ).toBeTruthy()
+
+    // It answers: one ordinary source, no notice left.
+    rerenderSettings({ models: [luna, composer], modelErrors: {} })
+    expect(titles()).toEqual(['Codex', 'Cursor'])
+    expect(screen.getByRole('switch', { name: 'Include Composer 2 in model picker' })).toBeTruthy()
+    expect(sourceList().querySelector('.set-notice')).toBeNull()
+  })
+
+  it('lists failed sources instead of the empty line when nothing loaded', () => {
+    renderSettings({
+      initialSection: 'models',
+      overrides: {
+        providerStatuses: [installedProvider('cursor', 'Cursor')],
+        modelErrors: { cursor: cursorTimeout },
+      },
+    })
+    expect(
+      screen.queryByText('No models are available from your connected providers yet.'),
+    ).toBeNull()
+    expect(
+      noticeText(within(screen.getByRole('region', { name: 'Cursor' })).getByRole('alert')),
+    ).toBe(cursorTimeout.message)
+  })
+
+  it('names an agent source from the agent roster', () => {
+    renderSettings({
+      initialSection: 'models',
+      overrides: {
+        acpAgents: [
+          {
+            id: 'kimi',
+            name: 'Kimi CLI',
+            installed: true,
+            verified: true,
+            setup: { installUrl: 'https://example.com/kimi', login: 'provider' },
+          },
+        ],
+        modelErrors: {
+          'acp:kimi': {
+            id: 'models:acp:kimi:1',
+            message: 'Could not load Kimi CLI models. exit 1',
+          },
+        },
+      },
+    })
+    const kimi = screen.getByRole('region', { name: 'Kimi CLI' })
+    expect(kimi.querySelector('.source-identity svg')).toBeTruthy()
+    expect(noticeText(within(kimi).getByRole('alert'))).toBe(
+      'Could not load Kimi CLI models. exit 1',
+    )
+  })
+})
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: Error) => void
