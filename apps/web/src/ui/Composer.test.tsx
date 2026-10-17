@@ -28,8 +28,9 @@ function legacyComposerResourceTriggerAt(text: string, cursor: number) {
   const marker = match[2]
   if (marker !== '/' && marker !== '$' && marker !== '@') return undefined
   const query = match[3] ?? ''
-  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   const start = cursor - query.length - 1
+  if (marker === '/' && text.slice(0, start).trim() !== '') return undefined
+  if (marker === '/' && /^(?:side|btw|feedback)$/i.test(query)) return undefined
   let end = cursor
   while (end < text.length && /[\w.:-]/.test(text[end]!)) end += 1
   return { marker, query, start, end }
@@ -73,12 +74,26 @@ describe('composer resource triggers', () => {
       start: 5,
       end: 24,
     })
-    expect(composerResourceTriggerAt('Run /command-name', 17)).toEqual({
+    expect(composerResourceTriggerAt('/command-name', 13)).toEqual({
       marker: '/',
       query: 'command-name',
-      start: 4,
-      end: 17,
+      start: 0,
+      end: 13,
     })
+  })
+
+  it('opens slash commands only at the start of the message', () => {
+    expect(composerResourceTriggerAt('Run /command-name', 17)).toBeUndefined()
+    expect(composerResourceTriggerAt('Use (/context', 13)).toBeUndefined()
+    expect(composerResourceTriggerAt('first line\n/context', 19)).toBeUndefined()
+    expect(composerResourceTriggerAt('  \n /con', 8)).toEqual({
+      marker: '/',
+      query: 'con',
+      start: 4,
+      end: 8,
+    })
+    expect(composerResourceTriggerAt('Ask $skill', 10)).toMatchObject({ marker: '$' })
+    expect(composerResourceTriggerAt('Ask @docs', 9)).toMatchObject({ marker: '@' })
   })
 
   it('extends the replacement range past a cursor inside the token', () => {
@@ -311,10 +326,14 @@ describe('Composer loading controls', () => {
     renderComposer(vi.fn(), { transport: populatedResourceTransport() })
     const textarea = screen.getByRole('textbox', { name: 'Message' })
     textarea.focus()
-    for (const marker of ['/', '$', '@']) {
+    for (const [marker, name, loading] of [
+      ['/', 'Commands and skills', 'Loading commands and skills…'],
+      ['$', 'Skills', 'Loading skills…'],
+      ['@', 'MCP servers', 'Loading MCP servers…'],
+    ] as const) {
       fireEvent.change(textarea, { target: { value: marker } })
-      const status = expectSkeleton('Loading skills and MCP servers…', 'skeleton-group')
-      const list = screen.getByRole('listbox', { name: 'Skills and MCP servers' })
+      const status = expectSkeleton(loading, 'skeleton-group')
+      const list = screen.getByRole('listbox', { name })
       expect(list.classList.contains('composer-skeleton-picker__list')).toBe(true)
       expect(list.parentElement?.classList.contains('composer-skeleton-picker')).toBe(true)
       expect(textarea.getAttribute('aria-controls')).toBe(list.id)
@@ -327,13 +346,13 @@ describe('Composer loading controls', () => {
       expect(document.activeElement).toBe(textarea)
       expect(fireEvent.keyDown(textarea, { key: 'Tab' })).toBe(true)
       fireEvent.keyDown(textarea, { key: 'Escape' })
-      expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+      expect(screen.queryByText(loading)).toBeNull()
     }
 
-    fireEvent.change(textarea, { target: { value: '@skill' } })
-    fireEvent.change(textarea, { target: { value: '@' } })
+    fireEvent.change(textarea, { target: { value: '$skill' } })
+    fireEvent.change(textarea, { target: { value: '$' } })
     expect(await screen.findByRole('option', { name: /Airtable CLI/ })).toBeTruthy()
-    expect(screen.queryByText('Loading skills and MCP servers…')).toBeNull()
+    expect(screen.queryByText('Loading skills…')).toBeNull()
     expect(document.activeElement).toBe(textarea)
   })
 })
@@ -1346,7 +1365,7 @@ describe('Composer prompts', () => {
     const composer = screen.getByPlaceholderText('Do anything')
 
     fireEvent.change(composer, { target: { value: 'echo $HOME', selectionStart: 10 } })
-    await screen.findByText('No skills or MCP servers match “HOME”.')
+    await screen.findByText('No skills match “HOME”.')
     fireEvent.keyDown(composer, { key: 'Enter' })
 
     expect(onSend).toHaveBeenCalledWith('echo $HOME', [])
@@ -1367,37 +1386,32 @@ describe('Composer prompts', () => {
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
-  it('opens skills and MCP servers from dollar and selects the active row with Tab', async () => {
+  it('opens MCP servers from at and selects the active row with Tab', async () => {
     const onSend = vi.fn()
     const transport = populatedResourceTransport()
     renderComposer(onSend, { transport })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
+    fireEvent.change(composer, { target: { value: '@', selectionStart: 1 } })
 
-    const list = await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
-    const skill = screen.getByRole('option', { name: /Airtable CLI/ })
-    const mcp = screen.getByRole('option', { name: /Official Docs/ })
-    expect(list).toBeTruthy()
-    expect(skill.getAttribute('aria-selected')).toBe('true')
-
-    fireEvent.keyDown(composer, { key: 'ArrowDown' })
-    await waitFor(() => expect(mcp.getAttribute('aria-selected')).toBe('true'))
+    const mcp = await screen.findByRole('option', { name: /Official Docs/ })
+    expect(screen.queryByRole('option', { name: /Airtable CLI/ })).toBeNull()
+    expect(mcp.getAttribute('aria-selected')).toBe('true')
     fireEvent.keyDown(composer, { key: 'Tab' })
 
-    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
+    expect(screen.queryByRole('listbox', { name: 'MCP servers' })).toBeNull()
     expect(screen.getByText('Official Docs').closest('.chip--resource')).toBeTruthy()
     expect((composer as HTMLTextAreaElement).value).toBe('')
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(onSend).toHaveBeenCalledWith('@officialDocs', [])
   })
 
-  it('opens the combined picker from at, filters it, and highlights a clicked skill as a chip', async () => {
+  it('opens skills from dollar, filters them, and highlights a clicked skill as a chip', async () => {
     const onSend = vi.fn()
     renderComposer(onSend, { transport: populatedResourceTransport() })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    fireEvent.change(composer, { target: { value: '@air', selectionStart: 4 } })
+    fireEvent.change(composer, { target: { value: '$air', selectionStart: 4 } })
 
     const skill = await screen.findByRole('option', { name: /Airtable CLI/ })
     expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
@@ -1410,7 +1424,7 @@ describe('Composer prompts', () => {
     expect(onSend).toHaveBeenCalledWith('$airtable-cli', [])
   })
 
-  it('names user skills and global MCP servers from slash, at, and dollar', async () => {
+  it('lists skills under slash and dollar and MCP servers only under at', async () => {
     const transport = createResourceTransport(async (method) => {
       if (method === 'skills.list') {
         return {
@@ -1457,17 +1471,21 @@ describe('Composer prompts', () => {
           ],
         }
       }
+      if (method === 'commands.list') return { commands: [], loading: false }
       throw new Error(`Unexpected request: ${method}`)
     })
     renderComposer(vi.fn(), { transport })
     const composer = screen.getByPlaceholderText('Do anything')
 
-    for (const marker of ['/', '@', '$'] as const) {
+    for (const marker of ['/', '$'] as const) {
       fireEvent.change(composer, { target: { value: marker, selectionStart: 1 } })
       expect(await screen.findByRole('option', { name: /Animate/ })).toBeTruthy()
-      expect(screen.getByRole('option', { name: /Official Docs/ })).toBeTruthy()
+      expect(screen.queryByRole('option', { name: /Official Docs/ })).toBeNull()
       fireEvent.keyDown(composer, { key: 'Escape' })
     }
+    fireEvent.change(composer, { target: { value: '@', selectionStart: 1 } })
+    expect(await screen.findByRole('option', { name: /Official Docs/ })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /Animate/ })).toBeNull()
   })
 
   it('closes the resource picker before Escape interrupts a running turn', async () => {
@@ -1479,14 +1497,84 @@ describe('Composer prompts', () => {
     })
     const composer = screen.getByPlaceholderText('Do anything')
     fireEvent.change(composer, { target: { value: '$', selectionStart: 1 } })
-    await screen.findByRole('listbox', { name: 'Skills and MCP servers' })
+    await screen.findByRole('listbox', { name: 'Skills' })
 
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(onInterrupt).not.toHaveBeenCalled()
-    expect(screen.queryByRole('listbox', { name: 'Skills and MCP servers' })).toBeNull()
+    expect(screen.queryByRole('listbox', { name: 'Skills' })).toBeNull()
 
     fireEvent.keyDown(composer, { key: 'Escape' })
     expect(onInterrupt).toHaveBeenCalledOnce()
+  })
+})
+
+describe('Composer provider commands', () => {
+  it('offers commands only at the start of the message and inserts the chosen one as text', async () => {
+    const onSend = vi.fn()
+    const transport = commandResourceTransport()
+    renderComposer(onSend, { transport, provider: 'claude-code', threadId: 'thread-1' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: 'Explain /code', selectionStart: 13 } })
+    expect(screen.queryByRole('listbox')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: '/code', selectionStart: 5 } })
+    const option = await screen.findByRole('option', { name: /\/code-review/ })
+    expect(option.getAttribute('aria-selected')).toBe('true')
+    expect(option.getAttribute('title')).toBe('/code-review [low|high] [<pr#>]')
+    expect(transport.request).toHaveBeenCalledWith('commands.list', {
+      provider: 'claude-code',
+      projectPath: '/work/harness',
+      threadId: 'thread-1',
+    })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('/code-review ')
+    expect(document.querySelector('.chip--resource')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
+
+    fireEvent.change(composer, { target: { value: '/code-review high', selectionStart: 17 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    expect(onSend).toHaveBeenCalledWith('/code-review high', [])
+  })
+
+  it('sends an exactly typed command without arguments on the first Enter', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/context', selectionStart: 8 } })
+    await screen.findByRole('option', { name: /\/context/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/context', [])
+    expect(composer.value).toBe('')
+  })
+
+  it('completes an exactly typed command that takes arguments instead of sending it', async () => {
+    const onSend = vi.fn()
+    renderComposer(onSend, { transport: commandResourceTransport(), provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything') as HTMLTextAreaElement
+
+    fireEvent.change(composer, { target: { value: '/compact', selectionStart: 8 } })
+    await screen.findByRole('option', { name: /\/compact/ })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).not.toHaveBeenCalled()
+    expect(composer.value).toBe('/compact ')
+  })
+
+  it('sends a fully typed command the picker has not listed yet', () => {
+    const onSend = vi.fn()
+    const transport = createResourceTransport(() => new Promise(() => undefined))
+    renderComposer(onSend, { transport, provider: 'claude-code' })
+    const composer = screen.getByPlaceholderText('Do anything')
+
+    fireEvent.change(composer, { target: { value: '/usage', selectionStart: 6 } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+
+    expect(onSend).toHaveBeenCalledWith('/usage', [])
   })
 })
 
@@ -2228,6 +2316,7 @@ function createResourceTransport(
         servers: [],
       }
     }
+    if (method === 'commands.list') return { commands: [], loading: false }
     throw new Error(`Unexpected request: ${method}`)
   },
 ): Transport {
@@ -2284,6 +2373,39 @@ function populatedResourceTransport(): Transport {
             resourceTemplates: [],
           },
         ],
+      }
+    }
+    if (method === 'commands.list') return { commands: [], loading: false }
+    throw new Error(`Unexpected request: ${method}`)
+  })
+}
+
+/** Claude-shaped commands as the server lists them after the adapter filters built-ins. */
+function commandResourceTransport(): Transport {
+  return createResourceTransport(async (method) => {
+    if (method === 'skills.list') {
+      return {
+        capabilities: { inventory: false, configure: false, install: false },
+        skills: [],
+        errors: [],
+      }
+    }
+    if (method === 'commands.list') {
+      return {
+        commands: [
+          {
+            name: 'code-review',
+            description: 'Review the current diff',
+            argumentHint: '[low|high] [<pr#>]',
+          },
+          { name: 'context', description: 'Show current context usage' },
+          {
+            name: 'compact',
+            description: 'Free up context by summarizing the conversation so far',
+            argumentHint: '<optional custom summarization instructions>',
+          },
+        ],
+        loading: false,
       }
     }
     throw new Error(`Unexpected request: ${method}`)
