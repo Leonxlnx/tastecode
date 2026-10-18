@@ -35,6 +35,7 @@ import { z, ZodError } from 'zod'
 import type { JsonValue } from './generated/serde_json/JsonValue.js'
 import type { McpServerElicitationAction } from './generated/v2/McpServerElicitationAction.js'
 import type { RequestId } from './generated/RequestId.js'
+import { codexAccountEnvironment } from './account-home.js'
 import { CODEX_CAPABILITIES } from './capabilities.js'
 import {
   configuredMcpInventory,
@@ -631,6 +632,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
   #sessionThread: { id: string; workspacePath: string } | undefined
   #mcpServers: Record<string, JsonValue>
   #mcpEnvironment: NodeJS.ProcessEnv
+  readonly #accountEnvironment: NodeJS.ProcessEnv
   #mcpShellConfig: Record<string, JsonValue>
   #mcpLogins = new Map<string, string>()
   /**
@@ -661,6 +663,11 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
        */
       liveLimits?: boolean
       limitMemory?: CodexLimitMemory
+      /**
+       * The config folder of the account this process runs as. Its sessions,
+       * models, sign-in and limits are that account's. Absent: the default one.
+       */
+      accountHome?: string | undefined
     } = {},
   ) {
     super()
@@ -670,6 +677,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     const prepared = prepareMcpConfig(options.mcpServers ?? [], options.mcpCredentials ?? {})
     this.#mcpServers = prepared.servers
     this.#mcpEnvironment = prepared.environment
+    this.#accountEnvironment = codexAccountEnvironment(options.accountHome)
     this.#mcpShellConfig = mcpShellEnvironmentConfig(prepared.environment)
   }
 
@@ -712,7 +720,7 @@ export class CodexAdapter extends EventEmitter<CodexAdapterEvents> {
     // capability is real rather than a request the model can never make.
     const rpc = new StdioJsonRpc(
       this.#spawn('codex', ['app-server', '--enable', 'default_mode_request_user_input'], {
-        env: this.#mcpEnvironment,
+        env: { ...this.#mcpEnvironment, ...this.#accountEnvironment },
       }),
       'Codex',
       {
