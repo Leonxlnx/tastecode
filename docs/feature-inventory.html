@@ -225,7 +225,7 @@
       <div class="topbar-inner">
         <h1>Feature Inventory</h1>
         <span class="total" id="total">0 checked</span>
-        <span class="meta">2026-10-18 nightly 54ee3536 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly d1f57f65 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -1061,7 +1061,9 @@
                 <span class="d"
                   >a failed refresh shows Last known · &lt;age&gt; ago with the reason on hover;
                   values older than 10 minutes show Updated &lt;age&gt; ago; times are read when the
-                  popup opens or the values change, with no ticking timer</span
+                  popup opens or the values change, with no ticking timer; the first popup or Usage
+                  view after a launch opens on the last session's full read (saved per provider,
+                  never shown to the sidebar figure) until this session's read replaces it</span
                 ></span
               ></label
             >
@@ -2728,11 +2730,12 @@
                 >Profile accounts and local activity
                 <span class="d"
                   >Accounts lists each installed provider that signs in with its plan, Signed in,
-                  Signed out or Unavailable, opens on the last known plans while every provider is
-                  asked again, and Manage opens Providers; Local activity is a 12-month heatmap from
-                  the shared usage store, with month labels from the first full month, an Open Usage
-                  link and a refresh icon; the streak and the model breakdown are on Usage now;
-                  multiple accounts per provider are not built yet</span
+                  Signed out or Unavailable, opens on the last known plans (kept on this device
+                  across launches, sign-in state and plan only, never the email) while every
+                  provider is asked again, and Manage opens Providers; Local activity is a 12-month
+                  heatmap from the shared usage store, with month labels from the first full month,
+                  an Open Usage link and a refresh icon; the streak and the model breakdown are on
+                  Usage now; multiple accounts per provider are not built yet</span
                 ></span
               ></label
             >
