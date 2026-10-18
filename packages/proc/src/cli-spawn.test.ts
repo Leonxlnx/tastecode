@@ -6,6 +6,7 @@ import {
   invalidateCommandCache,
   isInstalled,
   locateCommand,
+  locateCommandSync,
   quoteCmdArgument,
   spawnCli,
 } from './cli.js'
@@ -211,6 +212,13 @@ describe('Windows command lookup cache', () => {
   it('locates in PATH order before PATHEXT order, like a launch', async () => {
     files('C:\\a\\gh.CMD', 'C:\\b\\gh.EXE')
     await expect(locateCommand('gh', search.env)).resolves.toBe('C:\\a\\gh.CMD')
+  })
+
+  it('locates synchronously in the same order, and a named extension only', () => {
+    files('C:\\a\\gh.CMD', 'C:\\b\\gh.exe')
+    expect(locateCommandSync('gh', search.env)).toBe('C:\\a\\gh.CMD')
+    expect(locateCommandSync('gh.exe', search.env)).toBe('C:\\b\\gh.exe')
+    expect(locateCommandSync('missing', search.env)).toBeUndefined()
   })
 
   it('launches what detection found without searching again', async () => {

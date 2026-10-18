@@ -10,6 +10,7 @@ export {
   invalidateCommandCache,
   isInstalled,
   locateCommand,
+  locateCommandSync,
   nativeShimTarget,
   runCli,
   spawnCli,

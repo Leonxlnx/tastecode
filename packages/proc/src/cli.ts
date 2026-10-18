@@ -250,6 +250,21 @@ export function locateCommand(
   return resolveWindowsExecutableAsync(command, env)
 }
 
+/**
+ * locateCommand for a caller that must name the file it spawns right now,
+ * such as an adapter that starts a native executable with spawnOwned. Same
+ * desktop PATH, same order and the same cache; a repeated lookup costs one stat.
+ */
+export function locateCommandSync(
+  command: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (process.platform !== 'win32') return resolveExecutable(command, environment)
+  const env = { ...environment }
+  applyDesktopPath(env)
+  return resolveWindowsExecutable(command, env)
+}
+
 /** npm's forwarding shim for a package whose bin is a native executable, LF line ends. */
 const NPM_NATIVE_SHIM =
   /^@ECHO off\nGOTO start\n:find_dp0\nSET dp0=%~dp0\nEXIT \/b\n:start\nSETLOCAL\nCALL :find_dp0\n"%dp0%\\([^"%\n]+\.exe)"[ \t]+%\*$/i
