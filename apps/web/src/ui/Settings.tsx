@@ -352,9 +352,14 @@ function SettingsComponent(props: {
   }, [props.initialSection, props.sectionRequest])
 
   // Every tab shares one scroller; a tab opens at its top, not at the offset
-  // the previous tab was left at.
+  // the previous tab was left at. A freshly mounted scroller is already at its
+  // top, and assigning scrollTop there forced a full layout inside the commit
+  // that opens Settings.
   const main = useRef<HTMLElement>(null)
+  const scrolledSection = useRef(section)
   useLayoutEffect(() => {
+    if (scrolledSection.current === section) return
+    scrolledSection.current = section
     if (main.current) main.current.scrollTop = 0
   }, [section])
 
