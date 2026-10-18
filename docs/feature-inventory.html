@@ -2191,6 +2191,68 @@
           <li>
             <label
               ><input type="checkbox" /><span
+                >Usage: local history of Codex, Claude Code and Grok
+                <span class="d"
+                  >ranges 7 days, 30 days, 90 days, 1 year and All (default 30 days); an icon
+                  refresh; a skeleton while loading; indexing and failure notices, where a refresh
+                  of an existing index is announced only once a later read still finds it running,
+                  so a quick refresh never moves the page; the page uses the Settings v1 page
+                  header, rows and segmented control, which no other tab on main uses yet</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Usage › Plan limits first
+                <span class="d"
+                  >every provider's windows with the share left on a rung meter and the reset
+                  countdown, from the same owner as the account popup; Last known, Checking and
+                  Unavailable with Retry; Limit reached, and a low state under 15%; no even-pace
+                  tick or Updated Xm ago, since main's limit sources report no window length or read
+                  time</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Usage › Activity, API value and Models
+                <span class="d"
+                  >Activity: today against the 7-day average, the period total and per active day,
+                  active days and the streak, and a daily chart (weekly past 3 months) stacked by
+                  provider, with a tooltip and a keyboard walk; API value: the total, per provider
+                  and cache savings, with Partial estimate · x% of tokens priced and muted figures
+                  under 95% priced tokens; Models: by tokens with share, value and approximate or
+                  unpriced badges, with Show all; a footer with the last index time, files, sources
+                  and warnings</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
+                >Local usage history index
+                <span class="d"
+                  >starts on the first usage.history request and scans Codex rollouts, Claude Code
+                  transcripts and the Grok log in a worker; TasteCode's own usage events count for a
+                  provider without local history; values are API-equivalent from cited list prices;
+                  malformed or parser-stale caches trigger a cold rebuild and failed background
+                  scans back off; one usage-history store per connection caches answers per range,
+                  polls a running scan at 2 s backing off to 10 s, stops while the window is hidden,
+                  and retries a dropped-connection failure once before it shows; the index is
+                  compacted per session, model and day (cache v8), grown logs are read on from a
+                  checkpoint, and a saved index above 4 MB is read in the worker</span
+                ></span
+              ></label
+            >
+          </li>
+          <li>
+            <label
+              ><input type="checkbox" /><span
                 >Data: project count and confirmed renderer-preference reset
                 <span class="d"
                   >Debug is a hidden settings category, toggled with Cmd/Ctrl+Alt+Shift+D and kept
@@ -2199,7 +2261,8 @@
                   to date) that drives the sidebar button and About without downloading anything,
                   plus simulated provider updates (one release, three, or a failure that recovers on
                   retry) that pop the update notice with releases one step past the installed
-                  versions and play the update without running a CLI or remembering a dismissal;
+                  versions and play the update without running a CLI or remembering a dismissal, and
+                  a reset of the local usage history index that rescans without deleting sessions;
                   projects, workspaces, files, history, and provider credentials remain untouched;
                   upgrades move legacy history and config into TasteCode paths without overwriting
                   existing TasteCode data; desktop background provider probes start in app storage
