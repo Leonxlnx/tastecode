@@ -291,7 +291,7 @@
           <a href="./feature-inventory.html">Inventory</a>
           <a href="./CLAUDE-HANDOFF.md">Claude handoff</a>
         </nav>
-        <span class="meta">2026-10-18 nightly 54ee3536 · includes main 0ad74ec3</span>
+        <span class="meta">2026-10-18 nightly d1f57f65 · includes main 0ad74ec3</span>
       </div>
     </div>
 
@@ -340,10 +340,12 @@
           where.exe, startup answers the first project list before background work, background reads
           wait for pauses in streaming, the history refresh backs off while idle, history metadata
           is kept in the database, Claude Code and Codex histories are read incrementally, and no
-          opencode serve is left behind. Subagents and pull requests (PRs #1764 to #1767, #1778,
-          #1783, #1801, #1805, #1806, #1824 to #1827): Claude Code, Codex and Grok subagents get
-          live rows, the chat header shows its pull request, and Review can commit, push and create
-          a pull request.
+          opencode serve is left behind. After the round was measured (PRs #1843, #1844), the first
+          Usage page or account popup after a launch opens on the last session's plan limits instead
+          of waiting for each CLI, and Profile's accounts open on the plans the last launch read.
+          Subagents and pull requests (PRs #1764 to #1767, #1778, #1783, #1801, #1805, #1806, #1824
+          to #1827): Claude Code, Codex and Grok subagents get live rows, the chat header shows its
+          pull request, and Review can commit, push and create a pull request.
         </p>
         <p>
           Checks on the integration tree (ed488891, Windows): <code>pnpm lint</code>,
