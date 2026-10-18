@@ -376,6 +376,33 @@ describe('Thread scroll position', () => {
       expect(layout.listWrites).toBe(2)
     })
 
+    it('reads no layout for the scroll events its own glide causes', () => {
+      const { view, scroller, grow } = streaming()
+      grow(60)
+      runFrame()
+      expect(scroller.scrollTop).toBeGreaterThan(1_000)
+      const reads = vi.spyOn(Element.prototype, 'scrollTop', 'get')
+
+      // The browser reports the glide's write in the next frame.
+      reads.mockClear()
+      fireEvent.scroll(scroller)
+      expect(reads).not.toHaveBeenCalled()
+      // Nothing was written since, so another event is not the glide's.
+      fireEvent.scroll(scroller)
+      expect(reads).toHaveBeenCalled()
+
+      // A wheel turn may have moved the scroll as well.
+      runFrame()
+      fireEvent.wheel(scroller, { deltaY: 100 })
+      reads.mockClear()
+      fireEvent.scroll(scroller)
+      expect(reads).toHaveBeenCalled()
+
+      settle(scroller)
+      expect(scroller.scrollTop).toBe(1_060)
+      expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
+    })
+
     it('keeps the end in view at once with reduced motion', () => {
       device.prefersReducedMotion = 'reduce'
       const { scroller, grow } = streaming()

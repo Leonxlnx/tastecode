@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
+  type UIEvent as ReactUIEvent,
   type WheelEvent as ReactWheelEvent,
   useCallback,
   useEffect,
@@ -102,6 +103,7 @@ import {
   type ScrollMode,
 } from './scroll-mode.js'
 import { createFollowGlide, type FollowGlide } from './scroll-follow.js'
+import { observeScrollOffset } from './scroll-offset.js'
 import { useVirtualItemKey } from './use-virtual-item-key.js'
 import { nearOlderHistoryEdge, prependedRowCount } from './older-history.js'
 import { shiftPendingScrollIndex } from './pending-scroll.js'
@@ -259,6 +261,43 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     holding: false,
     intent: undefined,
   })
+  /**
+   * Where the follow glide's last write landed, while nothing else has moved
+   * the scroll since, and the scroll event that took it. Streamed text changes
+   * the transcript between the write and that event, so reading scrollTop in
+   * the event laid the transcript out a second time every frame.
+   */
+  const glideScroll = useRef<{ top: number; at: number; event: Event | undefined } | undefined>(
+    undefined,
+  )
+  /**
+   * The position a scroll event reports, when it can only be the glide's own
+   * write: the glide wrote last, the end is followed, and the user has not
+   * touched, turned or keyed anything that could have moved the scroll. The
+   * list's observer and onScroll handle the same event; a later event reads.
+   */
+  const glideOwnedTop = useCallback((event: Event) => {
+    const own = glideScroll.current
+    if (!own) return undefined
+    const state = follow.current
+    const now = performance.now()
+    if (
+      (own.event !== undefined && own.event !== event) ||
+      now - own.at > GLIDE_EVENT_MS ||
+      modeRef.current !== 'follow-end' ||
+      state.holding ||
+      (state.intent !== undefined && now - state.intent.at < INTENT_MS)
+    ) {
+      glideScroll.current = undefined
+      return undefined
+    }
+    own.event = event
+    return own.top
+  }, [])
+  const scrollTopOf = useCallback(
+    (el: HTMLElement, event: Event) => glideOwnedTop(event) ?? el.scrollTop,
+    [glideOwnedTop],
+  )
   /** The virtual list's scroll correction still to be written; see scrollToFn. */
   const listScroll = useRef<ListScroll | undefined>(undefined)
   // While a turn streams, the end glides into view instead of jumping a line
@@ -272,6 +311,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         writtenScrollTop.current = top
         follow.current.knownTop = top
         el.scrollTop = top
+        // The write has just laid the transcript out, so this read is free.
+        glideScroll.current = { top: el.scrollTop, at: performance.now(), event: undefined }
       },
     }),
   )
@@ -292,6 +333,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
         return
       }
       writtenScrollTop.current = target
+      glideScroll.current = undefined
       follow.current.knownTop = target
       el.scrollTop = target
     },
@@ -474,6 +516,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
       if (!el) return
       const top = el.scrollTop
       writtenScrollTop.current = top
+      glideScroll.current = undefined
       follow.current.knownTop = top
       if (glide.running) glide.sync(top)
     },
@@ -520,6 +563,9 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     },
     [queueVirtualFlush, scrollList],
   )
+  const observeOffset = useCallback<
+    VirtualizerOptions<HTMLDivElement, Element>['observeElementOffset']
+  >((instance, callback) => observeScrollOffset(instance, callback, scrollTopOf), [scrollTopOf])
   /**
    * Rows this commit mounted that the list has no size for yet. The list read
    * each one's height as its ref attached, right after it had positioned the
@@ -548,6 +594,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const virtualizer = useVirtualizer({
     count: thread.items.length,
     scrollToFn,
+    observeElementOffset: observeOffset,
     measureElement,
     getScrollElement: () => scroller.current,
     // A wrong estimate costs a scroll correction when the row is first
@@ -721,6 +768,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     (releaseOn: readonly string[]) => {
       stopJump()
       glide.stop()
+      glideScroll.current = undefined
       const state = follow.current
       if (state.holding) return
       state.holding = true
@@ -766,6 +814,7 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     (event: ReactWheelEvent) => {
       // The user steering in any way ends a running jump on the spot.
       stopJump()
+      glideScroll.current = undefined
       if (event.deltaY === 0) return
       const unit =
         event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? follow.current.clientHeight : 1
@@ -776,6 +825,8 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   const onKeyDown = useCallback(
     (event: ReactKeyboardEvent) => {
       stopJump()
+      // Any key may move focus, and the scroll with it.
+      glideScroll.current = undefined
       // Keys typed into a field inside the transcript move a caret, not the view.
       if (event.defaultPrevented || isEditableTarget(event.target)) return
       const step = scrollKeyStep(event, follow.current.clientHeight)
@@ -784,58 +835,61 @@ export const Thread = memo(function Thread(props: ThreadProps) {
     [steer, stopJump],
   )
 
-  const onScroll = useCallback(() => {
-    const el = scroller.current
-    if (!el) return
-    const top = el.scrollTop
-    const state = follow.current
-    // Our own corrections are not the user's opinion. The event that lands
-    // where we wrote is ours; anything else is a real gesture.
-    if (writtenScrollTop.current !== undefined && Math.abs(top - writtenScrollTop.current) < 1) {
+  const onScroll = useCallback(
+    (event: ReactUIEvent<HTMLDivElement>) => {
+      const el = scroller.current
+      if (!el) return
+      const top = scrollTopOf(el, event.nativeEvent)
+      const state = follow.current
+      // Our own corrections are not the user's opinion. The event that lands
+      // where we wrote is ours; anything else is a real gesture.
+      if (writtenScrollTop.current !== undefined && Math.abs(top - writtenScrollTop.current) < 1) {
+        writtenScrollTop.current = undefined
+        state.knownTop = top
+        return
+      }
       writtenScrollTop.current = undefined
+      const mode = modeRef.current
+      const moved = top - state.knownTop
       state.knownTop = top
-      return
-    }
-    writtenScrollTop.current = undefined
-    const mode = modeRef.current
-    const moved = top - state.knownTop
-    state.knownTop = top
-    const intent =
-      state.intent && performance.now() - state.intent.at < INTENT_MS ? state.intent : undefined
-    const distance = endOf() - top
-    // At the settled end the follow aims for, or at the raw scroll limit,
-    // where the browser clamps a glide that ran ahead of a commit.
-    const atEnd = distance <= END_TOLERANCE_PX || el.scrollHeight - top - el.clientHeight <= 1
-    let nextMode: ScrollMode = mode
-    if (atEnd) nextMode = 'follow-end'
-    else if (mode === 'follow-end') {
-      // Only a move up is the user taking over. A glide trails the end, the
-      // virtual list corrects for rows it measured, and the end moves away
-      // with every line; none of that leaves the follow. isAtBottom's 80px
-      // slack is for starting a turn and must not trap a small gesture here.
-      if (moved < -2 || (intent?.up === true && moved < 0)) nextMode = 'free'
-    } else if (
-      (moved > 0 || intent?.up === false) &&
-      (distance <= REENGAGE_PX || intent?.toEnd === true)
-    ) {
-      // Heading back down and nearly there, or sent to the end. A wheel fixes
-      // its target when it starts, so it lands short of an end that kept
-      // moving; that is still the user asking to follow, and the glide closes
-      // the rest.
-      nextMode = 'follow-end'
-    } else if (mode === 'reveal-hold') nextMode = 'free'
-    if (nextMode === 'free') glide.stop()
-    else if (glide.running) glide.sync(top)
-    if (mode !== nextMode) {
-      // Update the ref before the next streamed chunk can run the layout
-      // effect and pull the viewport back to the end.
-      modeRef.current = nextMode
-      setMode(nextMode)
-      if (nextMode === 'follow-end') catchUp(el)
-    }
-    updateJump(distance)
-    if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
-  }, [canLoadOnScroll, catchUp, endOf, glide, loadOlder, updateJump])
+      const intent =
+        state.intent && performance.now() - state.intent.at < INTENT_MS ? state.intent : undefined
+      const distance = endOf() - top
+      // At the settled end the follow aims for, or at the raw scroll limit,
+      // where the browser clamps a glide that ran ahead of a commit.
+      const atEnd = distance <= END_TOLERANCE_PX || el.scrollHeight - top - el.clientHeight <= 1
+      let nextMode: ScrollMode = mode
+      if (atEnd) nextMode = 'follow-end'
+      else if (mode === 'follow-end') {
+        // Only a move up is the user taking over. A glide trails the end, the
+        // virtual list corrects for rows it measured, and the end moves away
+        // with every line; none of that leaves the follow. isAtBottom's 80px
+        // slack is for starting a turn and must not trap a small gesture here.
+        if (moved < -2 || (intent?.up === true && moved < 0)) nextMode = 'free'
+      } else if (
+        (moved > 0 || intent?.up === false) &&
+        (distance <= REENGAGE_PX || intent?.toEnd === true)
+      ) {
+        // Heading back down and nearly there, or sent to the end. A wheel fixes
+        // its target when it starts, so it lands short of an end that kept
+        // moving; that is still the user asking to follow, and the glide closes
+        // the rest.
+        nextMode = 'follow-end'
+      } else if (mode === 'reveal-hold') nextMode = 'free'
+      if (nextMode === 'free') glide.stop()
+      else if (glide.running) glide.sync(top)
+      if (mode !== nextMode) {
+        // Update the ref before the next streamed chunk can run the layout
+        // effect and pull the viewport back to the end.
+        modeRef.current = nextMode
+        setMode(nextMode)
+        if (nextMode === 'follow-end') catchUp(el)
+      }
+      updateJump(distance)
+      if (canLoadOnScroll() && nearOlderHistoryEdge(el)) void loadOlder()
+    },
+    [canLoadOnScroll, catchUp, endOf, glide, loadOlder, scrollTopOf, updateJump],
+  )
 
   // Ctrl+F cannot work with a virtualised list — the match may not be in the
   // DOM — so the app owns find instead of the browser.
@@ -1697,6 +1751,8 @@ const OPEN_SETTLE_MS = 400
 const REVEAL_GLIDE_SCREENS = 2
 /** How long a wheel turn or scroll key still explains the scroll events after it. */
 const INTENT_MS = 250
+/** A glide write's scroll event comes with the next frame; a later one is something else's. */
+const GLIDE_EVENT_MS = 100
 /** Within this of the end the viewport counts as at the end. */
 const END_TOLERANCE_PX = 2
 /** A scroll heading down that lands this close to the end follows it again. */
