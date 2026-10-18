@@ -44,8 +44,11 @@ type CommandList = ResultOf<'commands.list'>
 type SkillList = ResultOf<'skills.list'>
 type Held<T> = { value: T; at: number; live: boolean }
 type PartValue = { mcp: McpServer[]; commands: ProviderCommand[]; skills: Skill[] }
-/** A cached part, and whether a probe that will report it is still running. */
-type Lookup<T> = { value: T | undefined; loading: boolean }
+/**
+ * A cached part, whether a probe that will report it is still running, and
+ * whether the last probe failed while nothing was known.
+ */
+type Lookup<T> = { value: T | undefined; loading: boolean; failed: boolean }
 type Entry = {
   commands?: Held<ProviderCommand[]> | undefined
   servers?: Held<McpServer[]> | undefined
@@ -176,7 +179,11 @@ export class ProjectInventoryCache {
         // The chat closed during the read.
       }
     }
-    const { value, loading } = this.#read(projectPath, 'commands')
+    const { value, loading, failed } = this.#read(projectPath, 'commands')
+    // An empty list would read as "no commands or skills for this project".
+    // The answer has no failure flag, so a probe that failed with nothing
+    // known fails the read; clients show that, and ask again later.
+    if (failed) throw new Error(COMMANDS_UNAVAILABLE)
     return { commands: value ?? [], loading }
   }
 
@@ -236,7 +243,8 @@ export class ProjectInventoryCache {
     const loading =
       entry.state !== 'idle' && (held === undefined || (part === 'mcp' && entry.partial))
     if (loading) entry.awaited.add(part)
-    return { value: held?.value as PartValue[P] | undefined, loading }
+    const failed = held === undefined && !loading && entry.failedAt !== undefined
+    return { value: held?.value as PartValue[P] | undefined, loading, failed }
   }
 
   #storeLive(projectPath: string, part: 'commands' | 'mcp', value: unknown[]): void {
@@ -394,6 +402,7 @@ export class ProjectInventoryCache {
 
 /** A provider, or a project whose probe failed, with no skill inventory to show. */
 const NO_SKILLS: SkillCapabilities = { inventory: false, configure: false, install: false }
+const COMMANDS_UNAVAILABLE = 'The provider could not list its commands for this project yet.'
 
 function same(previous: unknown, next: unknown): boolean {
   return previous !== undefined && JSON.stringify(previous) === JSON.stringify(next)

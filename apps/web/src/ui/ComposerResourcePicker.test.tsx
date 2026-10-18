@@ -324,4 +324,22 @@ describe('ComposerResourcePicker', () => {
       await screen.findByText('Claude Code has no commands or skills for this project.'),
     ).toBeTruthy()
   })
+
+  it('says the commands could not be loaded when the provider could not list them', async () => {
+    const transport = new TestTransport(async (method) => {
+      if (method === 'skills.list') {
+        return {
+          capabilities: { inventory: true, configure: false, install: false },
+          skills: [],
+          errors: [],
+        }
+      }
+      // The server's answer after a project probe failed with nothing known.
+      throw new Error('The provider could not list its commands for this project yet.')
+    })
+    renderPicker(transport, slash(''))
+
+    expect(await screen.findByText('Couldn’t load commands.')).toBeTruthy()
+    expect(screen.queryByText(/has no commands or skills/)).toBeNull()
+  })
 })

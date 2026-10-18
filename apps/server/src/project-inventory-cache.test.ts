@@ -233,9 +233,12 @@ describe('project inventory cache', () => {
       capabilities: { ...capabilities, inventory: false },
       servers: [],
     })
-    await expect(cache.listCommands('/repo')).resolves.toEqual({ commands: [], loading: false })
+    // Not an empty list, which would read as "no commands for this project".
+    await expect(cache.listCommands('/repo')).rejects.toThrow(
+      'The provider could not list its commands for this project yet.',
+    )
     await vi.advanceTimersByTimeAsync(29_000)
-    await cache.listCommands('/repo')
+    await expect(cache.listCommands('/repo')).rejects.toThrow()
     await vi.advanceTimersByTimeAsync(0)
     expect(probes).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(1_000)
