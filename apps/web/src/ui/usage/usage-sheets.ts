@@ -79,7 +79,7 @@ export type UsageSheets = {
 
 const NO_LIMITS: SheetLimits = { rows: [], retryable: false }
 
-export function sheetLimit(limit: Limit): SheetLimit {
+function sheetLimit(limit: Limit): SheetLimit {
   const left = remaining(limit)
   const textual = limit.valueLabel !== undefined
   // Reached only when the provider says it is used up, not when 0.4% rounds to none.

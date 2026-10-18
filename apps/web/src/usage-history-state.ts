@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
-import type { ParamsOf, ResultOf, UsageHistoryRange, UsageHistoryTotals } from '@harness/contracts'
+import type { ParamsOf, ResultOf, UsageHistoryRange } from '@harness/contracts'
 import { IndeterminateRequestError, type Transport } from './transport.js'
 
 type History = ResultOf<'usage.history'>
@@ -324,10 +324,4 @@ export function useUsageHistory(transport: Transport, range: UsageHistoryRange) 
   }, [state.data])
   const data = state.data ?? (state.loading ? shown.current : undefined)
   return { data, loading: state.loading, error: state.error, refresh }
-}
-
-/** Share of input read from a provider's cache, counting cache writes as input. */
-export function cacheHitRate(totals: UsageHistoryTotals): number | undefined {
-  const input = totals.uncachedInputTokens + totals.cachedInputTokens + totals.cacheWriteInputTokens
-  return input > 0 ? totals.cachedInputTokens / input : undefined
 }
