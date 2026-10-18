@@ -1191,7 +1191,7 @@ export function startServer(
           totals,
           provider,
           (requestedProvider) => orchestrator.usageLimitSource(requestedProvider, p.intent),
-          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider),
+          (requestedProvider) => orchestrator.heldLimitSource(requestedProvider, p.intent),
         )
       }
 

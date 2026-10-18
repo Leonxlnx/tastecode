@@ -106,6 +106,30 @@ describe('provider limit sources', () => {
     expect(sources.disposed).toEqual([2, 1])
   })
 
+  it('answers the first shown view after a restart from the last session read', async () => {
+    const store = new Store(':memory:')
+    const handlers = { onEvent: () => {}, onLog: () => {}, onLogin: () => {} }
+    sources.grok.mockResolvedValue({
+      status: 'ready',
+      limits: [{ label: 'Monthly', usedPercent: 30 }],
+    })
+    const first = new Orchestrator(store, handlers)
+    await first.usageLimitSource('grok', 'visible')
+    await first.disposeAll()
+
+    const second = new Orchestrator(store, handlers)
+    // No vendor read is needed to paint the limits view again.
+    expect(second.heldLimitSource('grok', 'visible')).toMatchObject({
+      status: 'ready',
+      limits: [{ label: 'Monthly', usedPercent: 30 }],
+      origin: 'read',
+    })
+    // A passive figure still waits for this session's own values.
+    expect(second.heldLimitSource('grok', 'background')).toBeUndefined()
+    expect(sources.grok).toHaveBeenCalledOnce()
+    await second.disposeAll()
+  })
+
   it('preserves a supported provider unavailable state', async () => {
     sources.claude.mockResolvedValue({ status: 'unavailable' })
     const instance = orchestrator()

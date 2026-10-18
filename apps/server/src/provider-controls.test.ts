@@ -8,6 +8,7 @@ import {
   type Skill,
 } from '@harness/contracts'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { parseLimitSnapshot, serializeLimitSnapshot } from './limit-snapshot.js'
 import { PROVIDER_CAPABILITIES } from './provider-capabilities.js'
 import {
   ProviderControls,
@@ -2087,6 +2088,133 @@ describe('held limits first', () => {
     expect(hooks.onUsageChanged).toHaveBeenCalledExactlyOnceWith('grok')
     await expect(summary()).resolves.toMatchObject({ limits: [{ usedPercent: 40 }] })
     expect(usageLimitSource).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('limits from the last session', () => {
+  const totals = {
+    session: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+    today: {
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      totalTokens: 0,
+    },
+  }
+  const weekly = (usedPercent: number) => ({
+    status: 'ready' as const,
+    limits: [{ id: 'seven_day', label: 'Weekly', usedPercent }],
+  })
+  const lastSession = (provider: 'grok' | 'claude-code') => ({
+    read: () =>
+      serializeLimitSnapshot(
+        new Map([[provider, { provider, ...weekly(10), checkedAt: 0, origin: 'read' as const }]]),
+      ),
+    write: vi.fn<(value: string) => void>(),
+  })
+
+  it('answers a shown view from the last session at once and refreshes it', async () => {
+    const read = deferred<ReturnType<typeof weekly>>()
+    const usageLimitSource = vi.fn(() => read.promise)
+    const snapshot = lastSession('grok')
+    const { registry, hooks } = setup({
+      limitSnapshot: snapshot,
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    // The first view after a launch does not wait for the vendor read.
+    await expect(
+      usageSummaryWithLimits(
+        totals,
+        'grok',
+        () => grok.usageLimitSource('visible'),
+        () => grok.heldLimitSource('visible'),
+      ),
+    ).resolves.toMatchObject({ limits: [{ usedPercent: 10 }], limitSource: { checkedAt: 0 } })
+    await flush()
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+    read.resolve(weekly(40))
+    await flush()
+    expect(hooks.onLimitsChanged).toHaveBeenLastCalledWith(
+      'grok',
+      expect.objectContaining({ limits: weekly(40).limits, origin: 'read' }),
+    )
+    // The new read is what the next launch shows first.
+    expect(parseLimitSnapshot(snapshot.write.mock.lastCall?.[0]).get('grok')).toMatchObject({
+      limits: weekly(40).limits,
+    })
+  })
+
+  it('keeps the last session read as last known when the first read fails', async () => {
+    const usageLimitSource = vi.fn(async () => {
+      throw new Error('Grok billing request failed.')
+    })
+    const { registry, hooks } = setup({
+      limitSnapshot: lastSession('grok'),
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    const lastKnown = {
+      limits: weekly(10).limits,
+      checkedAt: 0,
+      stale: true,
+      refreshError: 'Grok billing request failed.',
+    }
+    await expect(grok.usageLimitSource('visible')).resolves.toMatchObject(lastKnown)
+    expect(hooks.onLimitsChanged).toHaveBeenLastCalledWith(
+      'grok',
+      expect.objectContaining(lastKnown),
+    )
+  })
+
+  it('never shows the last session read to a passive figure', async () => {
+    const usageLimitSource = vi.fn(async () => {
+      throw new Error('Grok billing request failed.')
+    })
+    const { registry } = setup({
+      limitSnapshot: lastSession('grok'),
+      services: { grok: { usageLimitSource } },
+    })
+    const grok = registry.forProvider('grok')
+    expect(grok.heldLimitSource('background')).toBeUndefined()
+    await expect(grok.usageLimitSource('background')).rejects.toThrow('billing request failed')
+    expect(grok.heldLimitSource('background')).toBeUndefined()
+    // A shown view inside the backoff learns that the newest read failed.
+    expect(grok.heldLimitSource('visible')).toMatchObject({ stale: true, checkedAt: 0 })
+    expect(usageLimitSource).toHaveBeenCalledOnce()
+  })
+
+  it('reads Claude for a passive figure only from this session', async () => {
+    const usageLimitSource = vi.fn(async () => weekly(40))
+    const { registry } = setup({
+      limitSnapshot: lastSession('claude-code'),
+      services: { 'claude-code': { usageLimitSource } },
+    })
+    const claude = registry.forProvider('claude-code')
+    await expect(claude.usageLimitSource('background')).resolves.toMatchObject({
+      status: 'unavailable',
+      reason: 'failed',
+    })
+    expect(usageLimitSource).not.toHaveBeenCalled()
+  })
+
+  it('forgets the last session read when the account changes', async () => {
+    const snapshot = lastSession('grok')
+    const { registry } = setup({
+      limitSnapshot: snapshot,
+      services: { grok: { usageLimitSource: async () => weekly(40), signOut: async () => {} } },
+    })
+    const grok = registry.forProvider('grok')
+    await grok.signOut()
+    expect(grok.heldLimitSource('visible')).toBeUndefined()
+    expect(parseLimitSnapshot(snapshot.write.mock.lastCall?.[0]).has('grok')).toBe(false)
   })
 })
 
