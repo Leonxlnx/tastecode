@@ -17,6 +17,7 @@ import type {
 import {
   JsonRpcValueSchema,
   killTree,
+  locateCommandSync,
   ProtocolFrameError,
   spawnOwned,
   readNdjson,
@@ -217,15 +218,18 @@ export function grokTurnArgs(
   ]
 }
 
-/** Resolve the binary: PATH name normally, the installer's fixed home as a
- *  fallback because a parent shell's stale PATH otherwise hides it. */
+/**
+ * Resolve the binary: the first one on the desktop PATH, the same search
+ * provider detection and the version check use, so turns run the CLI those
+ * report. The installer's fixed home is the fallback because a parent shell's
+ * stale PATH otherwise hides it. On Windows only the native executable
+ * counts: spawnOwned cannot start a .cmd shim.
+ */
 export function grokCommand(): string {
-  const installed = path.join(
-    homedir(),
-    '.grok',
-    'bin',
-    process.platform === 'win32' ? 'grok.exe' : 'grok',
-  )
+  const executable = process.platform === 'win32' ? 'grok.exe' : 'grok'
+  const onPath = locateCommandSync(executable)
+  if (onPath) return onPath
+  const installed = path.join(homedir(), '.grok', 'bin', executable)
   return existsSync(installed) ? installed : 'grok'
 }
 
