@@ -628,6 +628,46 @@ describe('native Codex history', () => {
     expect(items(await source.read(session)).map((entry) => entry.text)).toEqual(['Linked chat'])
   })
 
+  it('does not list every rollout again to read a session whose rollout was deleted', async () => {
+    const { file, source } = await store([event({ type: 'user_message', message: 'Gone soon' })])
+    const session = (await source.list())[0]!
+    await rm(file)
+    // The next background listing no longer finds it; the chat keeps the stored session.
+    expect(await source.list()).toEqual([])
+    const list = vi.spyOn(source, 'list')
+
+    expect(await source.read(session)).toEqual([])
+    expect(list).not.toHaveBeenCalled()
+  })
+
+  it('still lists again for a session whose rollout appeared after the last listing', async () => {
+    const { root, source } = await store([event({ type: 'user_message', message: 'First' })])
+    await source.list()
+    const file = path.join(root, 'sessions', '2026', '09', '15', 'rollout-later-session.jsonl')
+    await writeFile(
+      file,
+      [
+        record('session_meta', { id: 'later-session', cwd: '/project', timestamp: at }),
+        event({ type: 'user_message', message: 'Started after the listing' }),
+      ]
+        .map((line) => JSON.stringify(line))
+        .join('\n') + '\n',
+    )
+    const list = vi.spyOn(source, 'list')
+
+    const events = await source.read({
+      id: 'later-session',
+      workspacePath: '/project',
+      title: 'Later',
+      createdAt: Date.parse(at),
+      updatedAt: Date.parse(at),
+      revision: 'stored',
+      locator: file,
+    })
+    expect(list).toHaveBeenCalledOnce()
+    expect(items(events).map((entry) => entry.text)).toEqual(['Started after the listing'])
+  })
+
   it('isolates corrupt rows, corrupt indexes, missing stores, and unfinished writes', async () => {
     const { root, file, source } = await store([
       event({ type: 'task_started', turn_id: 'turn-one' }),

@@ -44,6 +44,8 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
   const results = new Map<string, { inputs: readonly unknown[]; session: ProviderHistorySession }>()
   let stats: { at: number; files: Map<string, SavedFile> } | undefined
   let listing: Promise<ProviderHistorySession[]> | undefined
+  /** Whether `known` holds a finished listing yet. */
+  let listed = false
 
   async function list(): Promise<ProviderHistorySession[]> {
     const databases = await stateFiles(home)
@@ -106,6 +108,7 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
     }
     known.clear()
     for (const [id, session] of sessions) known.set(id, session)
+    listed = true
     const existingFiles = new Set(files.map((file) => file.file))
     for (const file of headers.keys()) if (!existingFiles.has(file)) headers.delete(file)
     for (const file of results.keys()) if (!existingFiles.has(file)) results.delete(file)
@@ -122,7 +125,17 @@ export function createCodexHistorySource(options: CodexHistoryOptions = {}): Pro
       return listing
     },
     async read(session, options) {
-      if (!known.has(session.id)) await this.list()
+      if (!known.has(session.id)) {
+        // A session the last listing did not find is usually gone for good: Codex
+        // archived it and its rollout was deleted. Listing again walked both
+        // session folders and the index once more (120-150 ms on a profile with
+        // 206 rollouts) on every first open, and it still found nothing. Only a
+        // stored rollout that still exists is worth a new listing. One that
+        // moved is listed at its new place by the next refresh, under a new
+        // revision, and read then.
+        if (listed && session.locator && !(await fileExists(session.locator))) return []
+        await this.list()
+      }
       // Locators from callers never grant access to arbitrary local files.
       const saved = known.get(session.id)
       if (saved?.internal || !saved?.locator || !(await allowedFile(home, saved.locator))) return []
@@ -190,6 +203,14 @@ async function filesSignature(home: string, files: string[]): Promise<Signature>
     ),
   )
   return { signature: parts.join('|'), racy }
+}
+
+/** Only whether the path exists; reading it still needs `allowedFile`. */
+function fileExists(file: string): Promise<boolean> {
+  return stat(file).then(
+    () => true,
+    () => false,
+  )
 }
 
 async function allowedFile(home: string, file: string): Promise<boolean> {
