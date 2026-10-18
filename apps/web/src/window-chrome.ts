@@ -105,15 +105,20 @@ export function readWindowChrome(theme: Theme): WindowChrome {
 /**
  * Keeps the desktop caption buttons on the colour the page paints under them.
  * Runs when the theme or `surface` (a key for whatever decides what sits under
- * the title bar) changes, never per render, and again a frame later for a
- * surface that mounts lazily. Must be called after the hooks that apply the
- * theme, accent, backdrop and glass to the document.
+ * the title bar) changes, never per render. Must be called after the hooks
+ * that apply the theme, accent, backdrop and glass to the document.
+ *
+ * The page is read once, in the animation frame that paints the change, so
+ * the caption still turns with the page. Reading inside the commit as well
+ * forced a style and layout pass there (about 30 ms when Settings opens) that
+ * the frame then recalculated after the probe and the effects touched the
+ * document again.
  */
 export function useWindowChrome(theme: Theme, surface: string): void {
   const sent = useRef<string | undefined>(undefined)
   useLayoutEffect(() => {
     if (!isDesktop) return
-    const sync = () => {
+    const frame = requestAnimationFrame(() => {
       const chrome = readWindowChrome(theme)
       const key = JSON.stringify(chrome)
       if (key === sent.current) return
@@ -121,9 +126,7 @@ export function useWindowChrome(theme: Theme, surface: string): void {
       void setDesktopWindowChrome(chrome).catch(() => {
         if (sent.current === key) sent.current = undefined
       })
-    }
-    sync()
-    const frame = requestAnimationFrame(sync)
+    })
     return () => cancelAnimationFrame(frame)
   }, [theme, surface])
 }
