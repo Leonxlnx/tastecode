@@ -1,5 +1,6 @@
-import { lazy, memo, Suspense } from 'react'
+import { lazy, memo, Suspense, useEffect } from 'react'
 import { IconChevronDown as ChevronDown, IconBolt as Zap } from '@tabler/icons-react'
+import { preloadWhenIdle } from '../idle-preload.js'
 import { Menu } from './Menu.js'
 import { ProviderIcon } from './ProviderIcon.js'
 import { SkeletonRows, SkeletonStatus } from './Skeleton.js'
@@ -29,6 +30,8 @@ const loadModelSelectorPanel = (): Promise<LazyModelSelectorPanelModule> =>
     return { default: module.ModelSelectorPanel }
   }))
 const ModelSelectorPanel = lazy(loadModelSelectorPanel)
+/** Set once the first selector on screen asked for the panel to load in an idle moment. */
+let panelPreloadScheduled = false
 
 export {
   getCompactModelName,
@@ -43,6 +46,13 @@ export {
 export type { ModelSelectorProps } from './model-selector-utils.js'
 
 export const ModelSelector = memo(function ModelSelector(props: ModelSelectorProps) {
+  // The panel is its own chunk. Loading it in an idle moment keeps the first
+  // open from compiling and styling it on the click.
+  useEffect(() => {
+    if (panelPreloadScheduled) return
+    panelPreloadScheduled = true
+    preloadWhenIdle(loadModelSelectorPanel)
+  }, [])
   const choice = props.choice ?? getSelectedChoice(props.models, props.modelId)
   const model = choice?.model
   const selectedEffort = getSelectedEffort(model, props.effort)
