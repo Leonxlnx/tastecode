@@ -18,6 +18,7 @@ import {
   type ResultOf,
 } from '@harness/contracts'
 import type { AccountHomeSource } from '@harness/proc/account-home'
+import { AccountNotFoundError, type AccountDirectory } from './account-directory.js'
 import { accountRead } from './account-identity.js'
 import type { Store, StoredProviderAccount } from './store.js'
 
@@ -45,7 +46,6 @@ export const ACCOUNT_HOMES: AccountHomes = declared([
 
 /** What the default account is called until the user renames it. */
 const DEFAULT_LABEL = 'Default'
-const ACCOUNT_NOT_FOUND = 'That account does not exist any more.'
 /** The label's first letters make a managed folder recognisable on disk. */
 const ID_SLUG_LENGTH = 40
 
@@ -79,7 +79,7 @@ export type ProviderAccountsOptions = {
  * default account's non-secret settings only, never its sign-in. Nothing
  * here opens a file inside an account's folder.
  */
-export class ProviderAccounts {
+export class ProviderAccounts implements AccountDirectory {
   readonly #rows: AccountRows
   readonly #root: string
   readonly #homes: AccountHomes
@@ -242,7 +242,7 @@ export class ProviderAccounts {
     const account = this.#accounts(provider, this.#rows.providerAccounts(provider)).find(
       (each) => each.id === accountId,
     )
-    if (!account) throw new Error(ACCOUNT_NOT_FOUND)
+    if (!account) throw new AccountNotFoundError()
     return account
   }
 
