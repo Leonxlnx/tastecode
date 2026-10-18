@@ -15,7 +15,13 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import { useVirtualizer, type Range, type Virtualizer } from '@tanstack/react-virtual'
+import {
+  elementScroll,
+  useVirtualizer,
+  type Range,
+  type VirtualizerOptions,
+  type Virtualizer,
+} from '@tanstack/react-virtual'
 import type { ApprovalDecision, Item } from '@harness/contracts'
 import {
   IconArrowBarToDown as ArrowDownToLine,
@@ -447,8 +453,30 @@ export const Thread = memo(function Thread(props: ThreadProps) {
   // shorter and the scroll was clamped.
   const railReserve = showWorkingRail && railIndex === undefined ? WORKING_RAIL_PX : 0
 
+  /**
+   * The virtual list moves the scroll itself: when a row above the viewport
+   * changes size, and to reach a row. Those moves are ours too. The follow
+   * glide carries on from where they put the scroll; comparing the end with
+   * its own older position instead snapped the view onto the end. At a turn
+   * end that turned the glide's lag into a jump: the finished work above the
+   * reply collapsed, the list compensated, and the reply then moved up by
+   * the lag in one frame (8-10 px measured at an 800 px window).
+   */
+  const scrollToFn = useCallback<VirtualizerOptions<HTMLDivElement, Element>['scrollToFn']>(
+    (offset, options, instance) => {
+      elementScroll(offset, options, instance)
+      const el = scroller.current
+      if (!el) return
+      const top = el.scrollTop
+      writtenScrollTop.current = top
+      follow.current.knownTop = top
+      if (glide.running) glide.sync(top)
+    },
+    [glide],
+  )
   const virtualizer = useVirtualizer({
     count: thread.items.length,
+    scrollToFn,
     getScrollElement: () => scroller.current,
     // A wrong estimate costs a scroll correction when the row is first
     // measured. Hidden tool rows are most rows in a working session, so they

@@ -14,7 +14,20 @@ const layout = vi.hoisted(() => ({
   heightReads: 0,
   /** Where each row starts, for the rows a test places. */
   starts: [] as number[],
+  /** The scroll function Thread gave the list, if any. */
+  scrollToFn: undefined as ScrollToFn | undefined,
 }))
+
+type ScrollToFn = (
+  offset: number,
+  options: { adjustments?: number; behavior?: ScrollBehavior },
+  instance: { scrollElement: HTMLElement | null },
+) => void
+
+/** The list's default: scroll the element to offset plus adjustments. */
+const elementScroll: ScrollToFn = (offset, { adjustments = 0 }, instance) => {
+  if (instance.scrollElement) instance.scrollElement.scrollTop = offset + adjustments
+}
 
 vi.mock('@tanstack/react-virtual', () => {
   // The real virtualizer keeps its identity when rows load or change size.
@@ -34,8 +47,10 @@ vi.mock('@tanstack/react-virtual', () => {
     scrollToIndex: () => undefined,
   }
   return {
-    useVirtualizer: ({ count }: { count: number }) => {
+    elementScroll: (...args: Parameters<ScrollToFn>) => elementScroll(...args),
+    useVirtualizer: ({ count, scrollToFn }: { count: number; scrollToFn?: ScrollToFn }) => {
       layout.count = count
+      layout.scrollToFn = scrollToFn
       return virtualizer
     },
   }
@@ -299,6 +314,30 @@ describe('Thread scroll position', () => {
       expect(scroller.scrollTop).toBe(916)
       settle(scroller)
       expect(scroller.scrollTop).toBe(916)
+    })
+
+    it('glides on from where the list corrected the scroll for a row above', () => {
+      const { view, scroller, grow } = streaming()
+      grow(100)
+      runFrame()
+      runFrame()
+      // Mid-glide, finished work above the reply collapses by 120 px. The list
+      // moves the scroll up by as much, so the reply stays where it was.
+      const before = scroller.scrollTop
+      layout.height -= 120
+      const scrollTo = layout.scrollToFn ?? elementScroll
+      act(() => scrollTo(before, { adjustments: -120 }, { scrollElement: scroller }))
+      fireEvent.scroll(scroller)
+      const corrected = scroller.scrollTop
+      expect(corrected).toBe(before - 120)
+
+      // The next update does not snap onto the end: the glide carries on.
+      grow(0)
+      expect(scroller.scrollTop).toBe(corrected)
+      const tops = settle(scroller)
+      expect(steps(corrected, tops).every((move) => move >= 0)).toBe(true)
+      expect(scroller.scrollTop).toBe(980)
+      expect(view.queryByRole('button', { name: 'Jump to latest' })).toBeNull()
     })
 
     it('keeps the end in view at once with reduced motion', () => {
