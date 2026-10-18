@@ -13,6 +13,7 @@ import { UsageLimits, type PlanLimitsSource } from './usage/UsageLimits.js'
 import { UsageModels } from './usage/UsageModels.js'
 import { UsageValue } from './usage/UsageValue.js'
 import { formatDateRange, formatInteger } from './usage/usage-format.js'
+import { useIndexingNotice } from './usage/useIndexingNotice.js'
 
 const RANGE_OPTIONS = [
   { value: '7d', label: '7 days', period: 'Last 7 days' },
@@ -39,6 +40,7 @@ export function UsageSettings(props: {
   const [range, setRange] = useState<UsageHistoryRange>('30d')
   const { data, loading, error, refresh } = useUsageHistory(props.transport, range)
   const scanning = data?.scan.status === 'scanning'
+  const indexingNotice = useIndexingNotice(data)
   const busy = loading || scanning
   const period = RANGE_OPTIONS.find((option) => option.value === range)?.period ?? ''
 
@@ -74,7 +76,7 @@ export function UsageSettings(props: {
         </>
       }
     >
-      {scanning && data ? (
+      {indexingNotice && data ? (
         <SettingsNotice tone="progress">
           Indexing local usage
           {data.scan.filesTotal > 0

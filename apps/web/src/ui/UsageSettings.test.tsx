@@ -73,7 +73,9 @@ describe('usage settings', () => {
     render(<UsageSettings transport={transport} />)
     await advance(0)
 
-    expect(screen.getByText(/Indexing local usage · 10 of 100 files/)).toBeTruthy()
+    // A refresh of an existing index that is over by the next read is never
+    // announced: the notice would only push the page down and back up.
+    expect(screen.queryByText(/Indexing local usage/)).toBeNull()
     expect(screen.getByText('4 sessions · Jul 10 to Aug 8, 2026')).toBeTruthy()
     await advance(1_999)
     expect(request).toHaveBeenCalledTimes(1)
@@ -82,12 +84,47 @@ describe('usage settings', () => {
     expect(screen.queryByText(/Indexing local usage/)).toBeNull()
   })
 
+  it('announces a refresh that a later read still finds running', async () => {
+    vi.useFakeTimers()
+    let call = 0
+    const request = vi.fn(async () => {
+      const result = historyResult('30d')
+      call += 1
+      if (call < 3) result.scan = { status: 'scanning', filesProcessed: call * 10, filesTotal: 100 }
+      return result
+    })
+    const transport = { request } as unknown as Transport
+    render(<UsageSettings transport={transport} />)
+    await advance(0)
+
+    expect(screen.queryByText(/Indexing local usage/)).toBeNull()
+    await advance(2_000)
+    expect(screen.getByText(/Indexing local usage · 20 of 100 files/)).toBeTruthy()
+    await advance(3_000)
+    expect(request).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(/Indexing local usage/)).toBeNull()
+  })
+
+  it('says at once that a first index is running', async () => {
+    vi.useFakeTimers()
+    const result = historyResult('30d')
+    result.generatedAt = 0
+    result.scan = { status: 'scanning', filesProcessed: 0, filesTotal: 0 }
+    const transport = { request: vi.fn(async () => result) } as unknown as Transport
+    render(<UsageSettings transport={transport} />)
+    await advance(0)
+
+    expect(screen.getByText(/Indexing local usage · finding sessions/)).toBeTruthy()
+  })
+
   it('keeps polling a background scan after a transient refresh failure', async () => {
     vi.useFakeTimers()
     let call = 0
     const request = vi.fn(async () => {
       const result = historyResult('30d')
       if (call === 0) {
+        // A first index, which says so at once.
+        result.generatedAt = 0
         result.scan = { status: 'scanning', filesProcessed: 10, filesTotal: 100 }
       } else if (call === 1) {
         call += 1
@@ -112,6 +149,7 @@ describe('usage settings', () => {
   it('cancels a pending scan poll when the page unmounts', async () => {
     vi.useFakeTimers()
     const result = historyResult('30d')
+    result.generatedAt = 0
     result.scan = { status: 'scanning', filesProcessed: 10, filesTotal: 100 }
     const request = vi.fn(async () => result)
     const transport = { request } as unknown as Transport

@@ -26,6 +26,7 @@ import { ProfileCoin, useStruckName, type CoinSide } from './ProfileCoin.js'
 import { SealGuideToggle, SealNotes } from './SealGuide.js'
 import { Skeleton, SkeletonStatus } from './Skeleton.js'
 import { SettingsNotice, SettingsPage } from './settings/SettingsLayout.js'
+import { useIndexingNotice } from './usage/useIndexingNotice.js'
 import { isComposingKey, isConfirmEnter } from '../shortcuts.js'
 import '../styles/profile-settings.css'
 
@@ -424,6 +425,7 @@ function ProfileActivity(props: { transport: Transport; onOpenUsage?: (() => voi
   const { data, loading, error, refresh } = useUsageHistory(props.transport, 'all')
   const titleId = useId()
   const scanning = data?.scan.status === 'scanning'
+  const indexingNotice = useIndexingNotice(data)
   const busy = loading || scanning
   const activity = useMemo(
     () => (data ? buildActivityGrid(data.daily, data.endDate) : undefined),
@@ -471,7 +473,7 @@ function ProfileActivity(props: { transport: Transport; onOpenUsage?: (() => voi
         </div>
       </div>
 
-      {scanning ? (
+      {indexingNotice && data ? (
         <SettingsNotice tone="progress">
           Indexing local activity
           {data.scan.filesTotal > 0

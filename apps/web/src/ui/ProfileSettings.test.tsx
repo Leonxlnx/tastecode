@@ -274,6 +274,8 @@ describe('profile settings', () => {
       call += 1
       if (call === 1) {
         const result = historyResult()
+        // A first index, which says so at once.
+        result.generatedAt = 0
         result.scan = { status: 'scanning', filesProcessed: 3, filesTotal: 7 }
         return result
       }
