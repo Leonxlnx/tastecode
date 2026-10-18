@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { DomainEventSchema, type DomainEvent } from '@harness/contracts'
 import { canCreateSymlinks } from '@harness/proc/symlink.test-support'
 import { createGrokHistorySource } from './history.js'
+import { withInstructions } from './prompt-instructions.js'
 
 const canSymlink = canCreateSymlinks()
 
@@ -88,6 +89,33 @@ describe('Grok native history', () => {
       expect(await source.read(session!)).toEqual([])
     },
   )
+
+  it('replays the first prompt as the user sent it, without TasteCode instructions', async () => {
+    const { source, directory } = await fixture()
+    const block = withInstructions('Read the README', 'Use TasteCode conventions.')
+    await save(directory, 'updates.jsonl', [
+      // The CLI may split the prompt anywhere, the block included.
+      update('user_message_chunk', { content: { type: 'text', text: block.slice(0, 30) } }, 1),
+      update('user_message_chunk', { content: { type: 'text', text: block.slice(30) } }, 2),
+      update('agent_message_chunk', { content: { type: 'text', text: 'Done.' } }, 3),
+      update('turn_completed', { stop_reason: 'end_turn' }, 4),
+    ])
+    await save(directory, 'chat_history.jsonl', [{ type: 'user', content: block }])
+    const [session] = await source.list()
+    const user = items(await source.read(session!)).filter((item) => item.role === 'user')
+    expect(user.map((item) => item.text)).toEqual(['Read the README'])
+  })
+
+  it('replays chat-history prompts without TasteCode instructions too', async () => {
+    const { source, directory } = await fixture()
+    await save(directory, 'chat_history.jsonl', [
+      { type: 'user', content: withInstructions('hello', 'Be brief.'), prompt_index: 0 },
+      { type: 'assistant', content: 'Hi.' },
+    ])
+    const [session] = await source.list()
+    const user = items(await source.read(session!)).filter((item) => item.role === 'user')
+    expect(user.map((item) => item.text)).toEqual(['hello'])
+  })
 
   it('keeps reused native tool ids and late background results distinct', async () => {
     const { source, directory } = await fixture()
